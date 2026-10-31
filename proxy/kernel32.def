@@ -1,0 +1,14 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+LoadLibraryA
+GetProcAddress
+GetEnvironmentVariableA
+CreateFileA
+WriteFile
+CloseHandle
+GetTickCount
+InitOnceExecuteOnce
+GetTempPathA
+InitializeCriticalSection
+EnterCriticalSection
+LeaveCriticalSection

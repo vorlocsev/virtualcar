@@ -1,0 +1,34 @@
+# Build outputs and executable binaries (including J2534 DLLs)
+_build/
+build/
+dist/
+*.exe
+*.dll
+*.lib
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.a
+*.so
+*.dylib
+# Never commit original diagnostic software or emulator binaries
+VirtualCarJ2534.dll
+SectorV.exe
+# Raw observations and diagnostic traces (may reveal vehicle details)
+*.jsonl
+j2534-diagnostics*.json
+j2534-summary*.json
+traces/raw/
+*.dmp
+*.DMP
+# Local environment
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+.DS_Store
