@@ -77,27 +77,36 @@ def _flow_control(raw):
     return can_id in (0x726, 0x18DA50F1) and raw[4] & 0xF0 == 0x30
 
 
-def _p3_uds(tx, head):
-    """Evaluate only 3 UDS header bytes. No VIN/data payload is retained."""
+def _p3_uds(tx, head, uds_length):
+    """Evaluate only UDS header and declared length, never identity data."""
     if len(head) < 3:
         tx["_invalid"] = True
     elif head[0] == 0x7F and head[1] == 0x22:
-        tx["_p3_negative"] = True
+        if head[2] == 0x78:
+            # NRC responsePending is not a terminal rejection or ECU identity.
+            tx["_p3_pending"] += 1
+        else:
+            tx["_p3_negative"] = True
     elif (tx["service"].startswith("22") and tx["service"] != "other"
           and head[:3] == bytes.fromhex("62" + tx["service"][2:])):
-        tx["_complete"] = True
+        if uds_length <= 3:
+            # 0x62 + DID without a data-record byte proves no complete DID.
+            tx["_p3_missing_data"] = True
+        else:
+            tx["_complete"] = True
     else:
         tx["_p3_mismatch"] = True
 
 
 def _p3_frame(tx, payload, protocol):
     """Track raw CAN ISO-TP, or already reassembled J2534 ISO15765 RX."""
-    if tx["_complete"] or tx["_p3_negative"] or tx["_p3_mismatch"] or tx["_invalid"]:
+    if (tx["_complete"] or tx["_p3_negative"] or tx["_p3_mismatch"]
+            or tx["_p3_missing_data"] or tx["_invalid"]):
         tx["off_route_rx"] += 1
         return
     if protocol == "ISO15765":
         tx["rx_frames"] += 1
-        _p3_uds(tx, payload[:3])
+        _p3_uds(tx, payload[:3], len(payload))
         return
     head = payload[0]
     kind = head & 0xF0
@@ -107,7 +116,7 @@ def _p3_frame(tx, payload, protocol):
         if size < 3 or size > 7 or size > len(payload) - 1:
             tx["_invalid"] = True
         else:
-            _p3_uds(tx, payload[1:4])
+            _p3_uds(tx, payload[1:4], size)
     elif kind == 0x10 and tx["_p3_total"] is None:
         tx["rx_frames"] += 1
         if len(payload) < 8:
@@ -134,7 +143,7 @@ def _p3_frame(tx, payload, protocol):
         tx["_p3_received"] += chunk
         tx["_p3_sequence"] = (tx["_p3_sequence"] + 1) & 0x0F
         if tx["_p3_received"] >= tx["_p3_total"]:
-            _p3_uds(tx, tx["_p3_header"])
+            _p3_uds(tx, tx["_p3_header"], tx["_p3_total"])
     else:
         tx["rx_frames"] += 1
         tx["_invalid"] = True
@@ -155,10 +164,17 @@ def _result(tx):
         status, reason = "partial_rx", ("invalid_iso_tp_framing" if tx["route"] == "P3" else "invalid_d2_sequence")
     elif tx["_p3_negative"]:
         status, reason = "negative_response", "uds_negative_response_observed"
+    elif tx["_p3_missing_data"]:
+        status, reason = "partial_rx", "missing_uds_identifier_data"
     elif tx["_p3_mismatch"]:
         status, reason = "unverified", "uds_response_does_not_match_request"
     elif tx["_complete"]:
         status, reason = "delivered", ("p3_uds_transport_only" if tx["route"] == "P3" else "complete_d2_transport_only")
+    elif tx["_p3_pending"]:
+        if tx["_timeout"]:
+            status, reason = "timeout", "j2534_timeout_after_response_pending"
+        else:
+            status, reason = "unverified", "uds_response_pending_only"
     elif tx["rx_frames"]:
         status, reason = "partial_rx", "incomplete_or_unverified_transport"
     elif tx["_timeout"]:
@@ -176,6 +192,7 @@ def _result(tx):
         "id_format": tx["id_format"], "channel": tx["channel"],
         "protocol": tx["protocol"], "baud_bps": tx["baud_bps"],
         "target": tx["target"], "rx_frames": tx["rx_frames"],
+        "response_pending_frames": tx["_p3_pending"],
         "off_route_rx": tx["off_route_rx"], "window_ms": window,
         "status": status, "reason": reason,
     }
@@ -226,6 +243,7 @@ def audit(lines):
             "_timeout": False, "_end_reason": "no_delivery_evidence",
             "_p3_total": None, "_p3_received": 0, "_p3_sequence": 1,
             "_p3_header": b"", "_p3_negative": False, "_p3_mismatch": False,
+            "_p3_missing_data": False, "_p3_pending": 0,
         }
         s["active"][channel] = tx
 
@@ -399,7 +417,9 @@ def audit(lines):
             "J2534 RX delivery does not prove diagnostic-client ECU acceptance.",
             "Legacy logs without channel, flags or timestamps leave route metadata unknown.",
             "No A3/A6 or P3 positive ECU identity is inferred without a verified fixture.",
-            "negative_response identifies UDS rejection, not successful ECU discovery.",
+            "negative_response identifies a final UDS rejection, not successful ECU discovery.",
+            "UDS NRC 0x78 is nonterminal; pending-only probes stay unverified unless a read timeout is logged.",
+            "A positive ReadDataByIdentifier header requires at least one data-record byte.",
             "P3 transport checks parse only UDS headers and ISO-TP lengths, not VIN or identity authenticity.",
             "Window is observed first-to-last delivered RX, not a claimed ECU processing duration.",
         ],

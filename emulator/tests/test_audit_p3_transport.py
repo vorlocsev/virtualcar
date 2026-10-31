@@ -50,9 +50,9 @@ def result(lines):
 
 class P3TransportEvidenceTests(unittest.TestCase):
     def test_01_can_single_frame_11bit_and_29bit(self):
-        lines = tx(ch=1) + rx(bytes.fromhex("03 62 F1 14 00 00 00 00"), ch=1)
+        lines = tx(ch=1) + rx(bytes.fromhex("04 62 F1 14 41 00 00 00"), ch=1)
         lines += tx(can=0x18DA50F1, ch=2, flags=0x100)
-        lines += rx(bytes.fromhex("03 62 F1 14 00 00 00 00"),
+        lines += rx(bytes.fromhex("04 62 F1 14 41 00 00 00"),
                     can=0x18DAF150, ch=2, flags=0x100)
         data = result(lines)
         self.assertEqual([x["status"] for x in data], ["delivered", "delivered"])
@@ -123,7 +123,7 @@ class P3TransportEvidenceTests(unittest.TestCase):
         self.assertEqual(one["status"], "unverified")
         self.assertEqual(one["reason"], "uds_response_does_not_match_request")
         bad_route = tx()
-        bad_route += rx(bytes.fromhex("03 62 F1 14 00 00 00 00"), can=0x7E8)
+        bad_route += rx(bytes.fromhex("04 62 F1 14 41 00 00 00"), can=0x7E8)
         one = result(bad_route)[0]
         self.assertEqual((one["status"], one["off_route_rx"], one["rx_frames"]),
                          ("unverified", 1, 0))
@@ -135,7 +135,7 @@ class P3TransportEvidenceTests(unittest.TestCase):
         lines += [log("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",
                       be(1, 5, 0, 500000, 105000))]
         lines += [log("J2534 CLEAR_RX_BUFFER: queued and staged D2 dropped")]
-        lines += rx(bytes.fromhex("03 62 F1 14 00 00 00 00"), ch=2)
+        lines += rx(bytes.fromhex("04 62 F1 14 41 00 00 00"), ch=2)
         items = result(lines)
         self.assertEqual([(x["channel"], x["status"]) for x in items],
                          [(1, "partial_rx"), (2, "delivered")])
