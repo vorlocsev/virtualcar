@@ -27,6 +27,9 @@ type Fixture struct {
 
 type Profile struct {
 	VIN           string
+	ECUCount      int
+	HasCEM726     bool
+	HasCEM29      bool
 	ModelYear     int
 	StrictRouting bool
 	Advisories    []string
@@ -98,6 +101,29 @@ func ReadProfile(input string) Profile {
 	ini := parseINI(input)
 	p := Profile{VIN: strings.ToUpper(ini["VEHICLE"]["VIN"])}
 	p.StrictRouting = ini["P2"]["STRICTROUTING"] == "1"
+
+	// Diagnostic route hints only; no ECU identity is inferred.
+	countRaw := ini["VEHICLE"]["ECUCOUNT"]
+	p.ECUCount = 2 // mirrors DLL default when ECUCount is absent
+	if countRaw != "" {
+		parsed, err := strconv.Atoi(countRaw)
+		if err != nil || parsed < 1 || parsed > 8 {
+			p.ECUCount = 1 // mirrors DLL fallback on invalid count
+		} else {
+			p.ECUCount = parsed
+		}
+	}
+	for i := 0; i < p.ECUCount; i++ {
+		sec := ini[fmt.Sprintf("ECU%d", i)]
+		defaultID := uint32(0x7E0)
+		if i == 1 { defaultID = 0x726 }
+		id := defaultID
+		if raw := sec["REQUESTID"]; raw != "" {
+			if parsed, err := parseID(raw); err == nil { id = parsed }
+		}
+		if id == 0x726 { p.HasCEM726 = true }
+		if id == 0x18DA50F1 { p.HasCEM29 = true }
+	}
 	if !validateVIN(p.VIN) {
 		p.Issues = append(p.Issues, "VIN в [Vehicle] отсутствует либо не соответствует 17-символьному формату")
 	}
@@ -296,6 +322,19 @@ func (p Profile) Report() string {
 	var b strings.Builder
 	b.WriteString("АУДИТ P2 CEM (только чтение)\n")
 	fmt.Fprintf(&b, "VIN [Vehicle]: %s\n", redactVIN(p.VIN))
+
+	fmt.Fprintf(&b, "Смоделированных UDS ECU: %d\n", p.ECUCount)
+	if !p.HasCEM726 {
+		b.WriteString("МАРШРУТ 0x726: не настроен; запросы CEM F114 по CAN 11-bit останутся без ответа.\n")
+	} else {
+		b.WriteString("МАРШРУТ 0x726: настроен; точность ответа CEM требует отдельной проверки.\n")
+	}
+	if !p.HasCEM29 {
+		b.WriteString("МАРШРУТ 0x18DA50F1: не настроен; запросы CEM F110/F114/F106 по CAN 29-bit останутся без ответа.\n")
+	} else {
+		b.WriteString("МАРШРУТ 0x18DA50F1: настроен; поддержку конкретных DID необходимо проверять отдельно.\n")
+	}
+	b.WriteString("ОГРАНИЧЕНИЕ DLL dev28: D2 A3/A6 и B9D0 не обрабатываются, наличие донорского B9FB это не исправляет.\n")
 	for _, issue := range p.Issues {
 		fmt.Fprintf(&b, "ВНИМАНИЕ: %s\n", issue)
 	}
