@@ -92,15 +92,15 @@ class J2534EvidenceTests(unittest.TestCase):
     def test_04_multichannel_and_11_vs_29bit_routing(self):
         lines = tx(0x726, P3, ch=1, proto=6, flags=0, baud=500000)
         lines += tx(0x18DA50F1, P3, ch=2, proto=6, flags=0x100, baud=500000)
-        lines += rx(0x18DAF150, bytes.fromhex("06 62 F1 14 00 00 00 00"),
+        lines += rx(0x18DAF150, bytes.fromhex("62 F1 14 00 00 00 00"),
                     ch=2, proto=6, flags=0x100)
-        lines += rx(0x72E, bytes.fromhex("06 62 F1 14 00 00 00 00"),
+        lines += rx(0x72E, bytes.fromhex("62 F1 14 00 00 00 00"),
                     ch=1, proto=6)
         states = tool.audit(lines)["transactions"]
         self.assertEqual([(x["channel"], x["id_format"]) for x in states],
                          [(1, "11bit"), (2, "29bit")])
         self.assertEqual([x["status"] for x in states], ["delivered", "delivered"])
-        self.assertTrue(all(x["reason"] == "j2534_rx_on_lab_route_only" for x in states))
+        self.assertTrue(all(x["reason"] == "p3_uds_transport_only" for x in states))
         self.assertIn("does not prove", tool.audit(lines)["notes"][0])
         # Concurrent probes: a fixture diagnosis belongs to the latest TX channel.
         other = tx(0xFFFFE, D2FB, ch=1) + tx(0xFFFFE, D2F0, ch=2)
