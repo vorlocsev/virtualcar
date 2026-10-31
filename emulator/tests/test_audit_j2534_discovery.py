@@ -100,7 +100,14 @@ class J2534EvidenceTests(unittest.TestCase):
         self.assertEqual([(x["channel"], x["id_format"]) for x in states],
                          [(1, "11bit"), (2, "29bit")])
         self.assertEqual([x["status"] for x in states], ["delivered", "delivered"])
+        self.assertTrue(all(x["reason"] == "j2534_rx_on_lab_route_only" for x in states))
         self.assertIn("does not prove", tool.audit(lines)["notes"][0])
+        # Concurrent probes: a fixture diagnosis belongs to the latest TX channel.
+        other = tx(0xFFFFE, D2FB, ch=1) + tx(0xFFFFE, D2F0, ch=2)
+        other.append(event("P2 D2 read command: no validated response fixture", D2F0[:4]))
+        diagnosed = tool.audit(other)["transactions"]
+        self.assertEqual([(x["channel"], x["status"]) for x in diagnosed],
+                         [(1, "unverified"), (2, "no_fixture")])
 
     def test_05_off_route_does_not_complete_d2(self):
         lines = tx(0xFFFFE, D2FB, ch=1)
@@ -123,6 +130,16 @@ class J2534EvidenceTests(unittest.TestCase):
         states = tool.audit(lines)["transactions"]
         self.assertEqual([x["rx_frames"] for x in states], [1, 13])
         self.assertEqual([x["status"] for x in states], ["partial_rx", "delivered"])
+        # Disconnecting channel 1 must not terminate channel 2.
+        concurrent = tx(0xFFFFE, D2FB, ch=1)
+        concurrent += tx(0xFFFFE, D2FB, ch=2)
+        concurrent += [event("PassThruDisconnect channel (BE)", be(1)),
+                       event("PassThruDisconnect")]
+        concurrent += frames13(ch=2)
+        received = tool.audit(concurrent)["transactions"]
+        self.assertEqual([(x["channel"], x["status"]) for x in received],
+                         [(1, "unverified"), (2, "delivered")])
+        self.assertEqual(received[0]["reason"], "channel_disconnected")
 
     def test_07_legacy_timestamp_and_unknown_channel(self):
         lines = [
