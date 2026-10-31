@@ -1,0 +1,35 @@
+name: Virtual Car Emulator Windows x86
+on:
+  push:
+    branches: [development]
+    paths: ["emulator/**", ".github/workflows/emulator.yml"]
+  pull_request:
+    paths: ["emulator/**", ".github/workflows/emulator.yml"]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: emulator
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang lld binutils gcc python3
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Original J2534 protocol regression with Vehicle Core
+        run: gcc -std=c11 -O2 -Wall -Wextra -o /tmp/virtualcar_test tests/virtualcar_test.c src/p2core/p2_cem_router.c src/p2core/p2_ls_observer.c src/p2core/p2_vehicle_core.c src/p2core/p2_j2534_bridge.c && /tmp/virtualcar_test
+      - name: Build emulator J2534 DLL
+        run: bash ./build-cross.sh
+      - name: Validate Windows x86 and J2534 exports
+        run: |
+          file VirtualCarJ2534.dll | grep 'PE32.*Intel i386'
+          objdump -p VirtualCarJ2534.dll | grep 'PassThruReadMsgs'
+          objdump -p VirtualCarJ2534.dll | grep 'KERNEL32.dll'
+      - name: Audit and import tests
+        run: |
+          cd control && go test ./... -count=1
+          cd .. && python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Cross-build control EXE
+        run: cd control && GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H windowsgui' -o ../VirtualCarControl.exe .

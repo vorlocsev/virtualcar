@@ -1,0 +1,330 @@
+/* Linux host-side protocol test, with Win32 APIs stubbed. */
+#define HOST_TEST 1
+#include "../src/virtualcar.c"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static U32 tick=0;
+void Sleep(U32 ms){tick+=ms;}
+U32 GetTickCount(void){return tick;}
+int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
+int QueryPerformanceCounter(I64 *v){*v=(I64)tick*1000;return 1;}
+U32 GetCurrentProcessId(void){return 0xAABBCCDD;}
+U32 GetModuleFileNameA(PTR mod,char*out,U32 n){(void)mod;strncpy(out,"C:\\SectorV\\VirtualCarJ2534.dll",n);return (U32)strlen(out);}
+U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32 n,const char*path){
+ (void)path;
+ /* Only host-test fixture: the distributed INI keeps count=0 by default. */
+ if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
+ if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrame0")==0)d="CC 40 7F B9 31 00 00 00";
+ if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"FrameCount")==0)d="3";
+ if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"Frame0")==0)d="8F 50 F9 F0 00 08 68 85";
+ if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"Frame1")==0)d="09 13 20 20 41 30 65 70";
+ if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"Frame2")==0)d="4C 24 20 20 41 00 00 00";
+ if(strcmp(s,"ECU1")==0 && strcmp(k,"DIDF1B0Hex")==0)d="53 49 4D 2D 43 45 4D";
+ if(strcmp(s,"ECU1")==0 && strcmp(k,"DIDF1A3Hex")==0)d="53 49 4D 2D 31 2E 30";
+ snprintf(out,n,"%s",d);return (U32)strlen(out);
+}
+U32 GetTempPathA(U32 n,char*out){snprintf(out,n,"/tmp/");return 5;}
+HANDLE CreateFileA(const char *p,U32 a,U32 sh,PTR sec,U32 creation,U32 flags,HANDLE template){(void)p;(void)a;(void)sh;(void)sec;(void)creation;(void)flags;(void)template;return INVALID_HANDLE;}
+U32 SetFilePointer(HANDLE file,U32 low,PTR high,U32 method){(void)file;(void)low;(void)high;(void)method;return 0;}
+int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){(void)f;(void)b;(void)n;(void)w;(void)o;return 1;}
+int CloseHandle(HANDLE file){(void)file;return 1;}
+long InterlockedCompareExchange(volatile long*dst,long exchange,long compare){long v=*dst;if(v==compare)*dst=exchange;return v;}
+long InterlockedExchange(volatile long*dst,long val){long v=*dst;*dst=val;return v;}
+#define REQUIRE(expr) do{if(!(expr)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#expr);exit(1);}}while(0)
+static PASSTHRU_MSG frame(U32 proto,U32 id,const U8 *data,U32 len){PASSTHRU_MSG m={0};m.ProtocolID=proto;m.DataSize=len+4;m.Data[0]=(U8)(id>>24);m.Data[1]=(U8)(id>>16);m.Data[2]=(U8)(id>>8);m.Data[3]=(U8)id;if(len)memcpy(m.Data+4,data,len);return m;}
+static PASSTHRU_MSG readmsg(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_OK);REQUIRE(n==1);return m;}
+static void send(U32 cid,PASSTHRU_MSG *m){U32 n=1;REQUIRE(PassThruWriteMsgs(cid,m,&n,10)==ERR_OK);REQUIRE(n==1);}
+int main(){
+ U32 dev=0,cid=0,batt=0,n=0;
+ REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
+ const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
+ tick=1234;send(cid,&m);
+ PASSTHRU_MSG r=readmsg(cid);
+ REQUIRE(r.DataSize==24);REQUIRE(r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x90);
+ REQUIRE(r.ExtraDataIndex==r.DataSize);REQUIRE(r.Timestamp==1234000u);
+ REQUIRE(memcmp(r.Data+7,"YV1CZ0002A0000001",17)==0);
+ const U8 bad_req[]={0x27,0x01};m=frame(PROTO_ISO15765,0x7E0,bad_req,2);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.DataSize==7&&r.Data[4]==0x7F&&r.Data[5]==0x27&&r.Data[6]==0x33);
+ SCONFIG c={1,0};SCONFIG_LIST cfg={1,&c};REQUIRE(PassThruIoctl(cid,IO_GET_CONFIG,&cfg,0)==ERR_OK);REQUIRE(c.Value==500000);
+ const U8 part_req[]={0x22,0xF1,0x87};m=frame(PROTO_ISO15765,0x7E0,part_req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x87);
+ REQUIRE(memcmp(r.Data+7,"VIRTUAL-ECU",11)==0);
+ const U8 denied_write[]={0x2E,0xF1,0x90,0x00};m=frame(PROTO_ISO15765,0x7E0,denied_write,4);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[4]==0x7F&&r.Data[5]==0x2E&&r.Data[6]==0x33);
+ /* The P3 CEM address seen in SectorV's log must return a UDS response. */
+ const U8 cem_req[]={0x22,0xF1,0x14};m=frame(PROTO_ISO15765,0x726,cem_req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[2]==0x07&&r.Data[3]==0x2E);
+ REQUIRE(r.DataSize==24);
+ REQUIRE(r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x14);
+ REQUIRE(memcmp(r.Data+7,"YV1CZ0002A0000001",17)==0);
+ /* User-supplied, read-only DID fixtures must echo exactly, not be invented. */
+ const U8 b0req[]={0x22,0xF1,0xB0};m=frame(PROTO_ISO15765,0x726,b0req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.DataSize==14 && r.Data[4]==0x62 && r.Data[5]==0xF1 && r.Data[6]==0xB0);
+ REQUIRE(memcmp(r.Data+7,"SIM-CEM",7)==0);
+ const U8 a3req[]={0x22,0xF1,0xA3};m=frame(PROTO_ISO15765,0x726,a3req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.DataSize==14 && r.Data[4]==0x62 && r.Data[5]==0xF1 && r.Data[6]==0xA3);
+ REQUIRE(memcmp(r.Data+7,"SIM-1.0",7)==0);
+ /* ECM without opt-in fixtures still returns 7F 22 31. */
+ m=frame(PROTO_ISO15765,0x7E0,b0req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.DataSize==7 && r.Data[4]==0x7F && r.Data[5]==0x22 && r.Data[6]==0x31);
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000,&cid)==ERR_OK);
+ const U8 sf[]={0x03,0x22,0xF1,0x90,0,0,0,0};m=frame(PROTO_CAN,0x7E0,sf,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE((r.Data[4]&0xF0)==0x10&&r.Data[5]==20);
+ const U8 fc[]={0x30,0,0,0,0,0,0,0};m=frame(PROTO_CAN,0x7E0,fc,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x21);r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
+ /* Exact P3 single-frame CAN request observed in the SectorV trace. */
+ const U8 cem_sf[]={0x03,0x22,0xF1,0x14,0,0,0,0};
+ m=frame(PROTO_CAN,0x726,cem_sf,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[2]==0x07 && r.Data[3]==0x2E);
+ REQUIRE(r.Data[4]==0x10 && r.Data[5]==0x14);
+ REQUIRE(r.Data[6]==0x62 && r.Data[7]==0xF1 && r.Data[8]==0x14);
+ /* Raw CAN transport must not release Consecutive Frames before FC. */
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ m=frame(PROTO_CAN,0x726,fc,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x21);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
+ /* ISO-TP FC must match the ECU request ID; obey nonzero block size. */
+ m=frame(PROTO_CAN,0x726,cem_sf,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[4]==0x10); /* FF */
+ const U8 fc1[]={0x30,0x01,0,0,0,0,0,0};
+ m=frame(PROTO_CAN,0x7E0,fc1,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ m=frame(PROTO_CAN,0x726,fc1,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x21);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ m=frame(PROTO_CAN,0x726,fc1,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* WAIT does not release CFs; OVERFLOW cancels the transfer. */
+ m=frame(PROTO_CAN,0x726,cem_sf,8);send(cid,&m);r=readmsg(cid);
+ const U8 fcwait[]={0x31,0,0,0,0,0,0,0};
+ m=frame(PROTO_CAN,0x726,fcwait,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ const U8 fcover[]={0x32,0,0,0,0,0,0,0};
+ m=frame(PROTO_CAN,0x726,fcover,8);send(cid,&m);
+ m=frame(PROTO_CAN,0x726,fc,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* dev27: A3 is observed by the integrated Vehicle Core, but no unsupported
+    E3 02 confirmation is fabricated. TX byte pattern is shared by multiple
+    application workflows. */
+ const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
+ m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
+ REQUIRE(g_vehicle_bridge.inspected_tx>0);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==1);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Core is observational: the tested D2 B9FB response must remain byte-identical. */
+ /* P2/P1 29-bit D2 B9 FB read-only replay fixture. */
+ REQUIRE(g_d2[0].frame_count==1);
+ const U8 synthetic[]={0xCC,0x40,0x7F,0xB9,0x31,0,0,0};
+ const U8 d2req[]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,d2req,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[0]==0x00&&r.Data[1]==0x80&&r.Data[2]==0x00&&r.Data[3]==0x03);
+ REQUIRE((r.RxStatus&CAN_29BIT_ID)==CAN_29BIT_ID);
+ REQUIRE(memcmp(r.Data+4,synthetic,8)==0);
+ /* Published D2 B9 F0 example uses response ID 0x01000003, three frames.
+    Frames are paced; they must NOT arrive all at once. */
+ REQUIRE(g_d2[3].frame_count==3);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==1);
+ REQUIRE(g_vehicle_bridge.vehicle.b9fb_seen>=1);
+ const U8 d2f0[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,d2f0,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[0]==0x01 && r.Data[1]==0x00 && r.Data[2]==0x00 && r.Data[3]==0x03);
+ REQUIRE(r.Data[4]==0x8F && r.Data[5]==0x50 && r.Data[6]==0xF9 && r.Data[7]==0xF0);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x09);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x4C);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* One configured B9FB fixture must not be misapplied to B9F0. */
+ REQUIRE(g_d2[2].frame_count==0);
+ /* B9FB with an explicit synthetic, non-sensitive fixture: verify 29-bit
+    response ID 0x01200003 and paced multi-frame delivery. */
+ g_d2[2].frame_count=3;
+ g_d2[2].frame[0][0]=0x8F;g_d2[2].frame[0][1]=0x50;g_d2[2].frame[0][2]=0xF9;g_d2[2].frame[0][3]=0xFB;
+ g_d2[2].frame[1][0]=0x09;g_d2[2].frame[1][1]='S';g_d2[2].frame[1][2]='I';g_d2[2].frame[1][3]='M';
+ g_d2[2].frame[2][0]=0x4F;
+ const U8 d2fb[]={0xCB,0x50,0xB9,0xFB,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,d2fb,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[0]==0x01&&r.Data[1]==0x20&&r.Data[2]==0x00&&r.Data[3]==0x03);
+ REQUIRE((r.RxStatus&CAN_29BIT_ID)==CAN_29BIT_ID);
+ REQUIRE(r.Data[4]==0x8F&&r.Data[7]==0xFB);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,35)==ERR_OK);REQUIRE(r.Data[4]==0x09);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,35)==ERR_OK);REQUIRE(r.Data[4]==0x4F);
+ /* Regression: a published-frame-shaped 13-frame B9FB response must
+    arrive in exact sequence with explicit pacing (no truncated VIN). */
+ static const U8 lab_b9fb[13][8]={
+  {0x8F,0x50,0xF9,0xFB,0x57,0x00,0x30,0x66},
+  {0x09,0x70,0x28,0x30,0x30,0x35,0x0D,0x0A},
+  {0x0A,0x59,0x56,0x31,0x43,0x5A,0x30,0x30},
+  {0x0B,0x30,0x32,0x41,0x30,0x30,0x30,0x30},
+  {0x0C,0x30,0x30,0x31,0x0D,0x0A,0x32,0x35},
+  {0x0D,0x31,0x35,0x36,0x38,0x39,0x35,0x32},
+  {0x0E,0x0D,0x0A,0x32,0x39,0x35,0x0D,0x0A},
+  {0x0F,0x31,0x39,0x38,0x36,0x32,0x35,0x0D},
+  {0x08,0x0A,0x32,0x31,0x0D,0x0A,0x32,0x30},
+  {0x09,0x30,0x35,0x31,0x32,0x0D,0x0A,0x30},
+  {0x0A,0x30,0x30,0x30,0x34,0x33,0x33,0x38},
+  {0x0B,0x36,0x30,0x34,0x30,0x38,0x32,0x32},
+  {0x4F,0x30,0x36,0x39,0x33,0x31,0x0D,0x0A},
+ };
+ g_d2[2].frame_count=13;
+ for(U32 z=0;z<13;z++)memcpy(g_d2[2].frame[z],lab_b9fb[z],8);
+ m=frame(PROTO_CAN,0x000FFFFE,d2fb,8);send(cid,&m);
+ for(U32 z=0;z<13;z++){
+   n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,35)==ERR_OK);REQUIRE(n==1);
+   REQUIRE(r.DataSize==12 && r.ProtocolID==PROTO_CAN);
+   REQUIRE(memcmp(r.Data+4,lab_b9fb[z],8)==0);
+ }
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Regression 0.3.5: switching to strict 125/500 CEM routes. */
+ g_p2_strict_routing=1;
+ SCONFIG speed={1,125000};SCONFIG_LIST config={1,&speed};
+ REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&config,0)==ERR_OK);
+ m=frame(PROTO_CAN,0x000FFFFE,d2fb,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ m=frame(PROTO_CAN,0x000FFFFE,d2req,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[5]==0x40 && r.Data[6]==0x7F);
+ speed.Value=500000;REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&config,0)==ERR_OK);
+ m=frame(PROTO_CAN,0x000FFFFE,d2req,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ g_p2_strict_routing=0;
+ /* Regression: new B9FB attempt must discard old queued D2 frames. */
+ m=frame(PROTO_CAN,0x000FFFFE,d2fb,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x8F);
+ tick+=100;for(U32 z=0;z<3;z++)pump_d2(channel(cid));
+ REQUIRE(channel(cid)->count==3);
+ m=frame(PROTO_CAN,0x000FFFFE,d2fb,8);send(cid,&m);
+ REQUIRE(channel(cid)->count==1);r=readmsg(cid);
+ REQUIRE(r.Data[4]==0x8F && r.Data[5]==0x50);
+ /* CLEAR_RX_BUFFER must cancel staged and queued D2 frames. */
+ REQUIRE(PassThruIoctl(cid,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ tick+=100;n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Alternate VIDA D2 base 0x10, including intermediate end 0x55 and
+    repeated first marker, must validate as one response. */
+ D2_PROFILE synthetic_series={0};synthetic_series.target=0x50;
+ synthetic_series.subcommand=0xFB;synthetic_series.response_id=0x01200003;
+ synthetic_series.frame_count=5;
+ const U8 series_frame[5][8]={
+  {0x97,0x50,0xF9,0xFB,0x57,0x00,0x31,0x82},
+  {0x11,0x17,0x96,'0','0','2',0x0D,0x0A},
+  {0x55,0xFF,0xFF,0xFF,0xFF,0,0,0},
+  {0x8F,0x50,0xF9,0xFB,0xFF,0xFF,0xFF,0xFF},
+  {0x4C,0xFF,0xFF,0xFF,0xFF,0,0,0}
+ };
+ for(U32 z=0;z<5;z++)memcpy(synthetic_series.frame[z],series_frame[z],8);
+ REQUIRE(validate_d2_fixture(&synthetic_series));
+ synthetic_series.frame[1][0]=0x12;REQUIRE(!validate_d2_fixture(&synthetic_series));
+ synthetic_series.frame[1][0]=0x11;
+ synthetic_series.frame[4][0]=0x55;REQUIRE(!validate_d2_fixture(&synthetic_series));
+ /* Periodic API must run repeatedly until Stop or CLEAR_PERIODIC_MSGS. */
+ U32 periodid=0;
+ const U8 period_req[]={0x03,0x22,0xF1,0x87,0,0,0,0};
+ m=frame(PROTO_CAN,0x7E0,period_req,8);
+ REQUIRE(PassThruStartPeriodicMsg(cid,&m,&periodid,4)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(cid,&m,&periodid,15)==ERR_OK);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ tick+=16;r=readmsg(cid);REQUIRE(r.Data[4]==0x10 || r.Data[4]==0x0E);
+ /* If the read-only response is multi-frame, consume FF and abort staged
+    ISO-TP transfer before the next periodic tick. */
+ if(channel(cid)->pending_len){channel(cid)->pending_len=0;channel(cid)->pending_pos=0;}
+ tick+=16;r=readmsg(cid);REQUIRE(r.Data[2]==0x07 && r.Data[3]==0xE8);
+ REQUIRE(PassThruStopPeriodicMsg(cid,periodid)==ERR_OK);
+ tick+=50;n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ REQUIRE(PassThruStopPeriodicMsg(cid,periodid)==ERR_INVALID_MSG_ID);
+ REQUIRE(PassThruStartPeriodicMsg(cid,&m,&periodid,15)==ERR_OK);
+ REQUIRE(PassThruIoctl(cid,IO_CLEAR_PERIODIC_MSGS,0,0)==ERR_OK);
+ tick+=50;n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* FC140 replay derived from an internally consistent synthetic lab block.
+    Use 21 D2 frames for 145-byte stream (echo + 142-byte configuration).
+    This test is NOT evidence of a real B9FC response CAN identifier. */
+ D2_PROFILE fc_fixture={0};fc_fixture.target=0x50;fc_fixture.subcommand=0xFC;
+ fc_fixture.response_id=0x01200003;fc_fixture.frame_count=21;
+ U8 fc_stream[145]={0};fc_stream[0]=0x50;fc_stream[1]=0xF9;fc_stream[2]=0xFC;
+ fc_stream[3]=0x8C;
+ for(U32 z=0;z<140;z++)fc_stream[5+z]=(U8)(z%3u);
+ U32 fc_sum=0;for(U32 z=0;z<140;z++)fc_sum+=fc_stream[5+z];
+ fc_stream[4]=(U8)fc_sum;
+ for(U32 z=0;z<21;z++){
+   U32 len=(z==20?5:7);
+   fc_fixture.frame[z][0]=(U8)(z==0?0x8F:(z==20?0x4D:(0x08|(z&7))));
+   memcpy(fc_fixture.frame[z]+1,fc_stream+7*z,len);
+ }
+ REQUIRE(validate_d2_fixture(&fc_fixture));
+ REQUIRE(validate_fc140_fixture(&fc_fixture));
+ fc_fixture.frame[2][4]^=1;
+ REQUIRE(!validate_fc140_fixture(&fc_fixture));
+ fc_fixture.frame[2][4]^=1;
+ fc_fixture.frame[20][0]=0x4F;
+ REQUIRE(!validate_fc140_fixture(&fc_fixture));
+ fc_fixture.frame[20][0]=0x4D;
+ g_d2[5]=fc_fixture;
+ const U8 fc_req[]={0xCB,0x50,0xB9,0xFC,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,fc_req,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[4]==0x8F && r.Data[5]==0x50 && r.Data[6]==0xF9 && r.Data[7]==0xFC);
+ tick+=500;
+ for(U32 z=0;z<20;z++){
+    r=readmsg(cid);
+    REQUIRE(r.Data[4]==fc_fixture.frame[z+1][0]);
+ }
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Wrong baud must NOT emit the XC90 HS fixture when strict P2 is enabled. */
+ U32 previous_strict=g_p2_strict_routing;g_p2_strict_routing=1;
+ channel(cid)->baud=125000;
+ m=frame(PROTO_CAN,0x000FFFFE,fc_req,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ channel(cid)->baud=500000;g_p2_strict_routing=previous_strict;
+ g_d2[5].frame_count=0;
+ g_d2[2].frame_count=0;
+ /* A second CEM target with no fixture must remain silent, not invent data. */
+ const U8 d2req50[]={0xCB,0x50,0xB9,0xFB,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,d2req50,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,2)==ERR_TIMEOUT);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Functional protected request must be ignored, not return two fake NRCs. */
+ const U8 freset[]={0x02,0x11,0x81,0,0,0,0,0};
+ m=frame(PROTO_CAN,0x7DF,freset,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* D2 FF C8 discovery probe must never receive a made-up acknowledgment. */
+ const U8 ff_c8[]={0xFF,0xC8,0,0,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,ff_c8,8);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* VDASH first passively monitors CAN: enable opt-in synthetic bench frames. */
+ g_passive_enabled=1;g_passive_period_ms=50;g_passive_id=0x555;
+ g_ch[cid-1].passive_next_tick=GetTickCount()+50;
+ PASSTHRU_MSG mask=frame(PROTO_CAN,0,0,0);mask.DataSize=4;
+ PASSTHRU_MSG pat=mask;
+ U32 filterID=0;
+ REQUIRE(PassThruStartMsgFilter(cid,1,&mask,&pat,0,&filterID)==ERR_OK);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,100)==ERR_OK);
+ REQUIRE(r.Data[2]==0x05&&r.Data[3]==0x55&&r.DataSize==12);
+ REQUIRE(memcmp(r.Data+4,"VCARLAB",7)==0);
+ REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
+ g_passive_enabled=0;
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+ /* VDASH ISO15765 request 0x7DF 09 02: one ECM answer and optional RxStart. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0x800,500000,&cid)==ERR_OK);
+ mask=frame(PROTO_ISO15765,0xFFFFFFFF,0,0);mask.DataSize=4;
+ pat=frame(PROTO_ISO15765,0x7E8,0,0);pat.DataSize=4;
+ PASSTHRU_MSG flow=frame(PROTO_ISO15765,0x7E0,0,0);flow.DataSize=4;
+ REQUIRE(PassThruStartMsgFilter(cid,3,&mask,&pat,&flow,&filterID)==ERR_OK);
+ g_iso_rx_start=1;
+ const U8 obd_vin[]={0x09,0x02};m=frame(PROTO_ISO15765,0x7DF,obd_vin,2);send(cid,&m);
+ r=readmsg(cid);
+ REQUIRE(r.RxStatus==START_OF_MESSAGE&&r.DataSize==4&&r.Data[3]==0xE8);
+ REQUIRE(r.ExtraDataIndex==0);REQUIRE(r.Timestamp==tick*1000u);
+ r=readmsg(cid);
+ REQUIRE(r.RxStatus==0&&r.DataSize==24&&r.Data[3]==0xE8);
+ REQUIRE(r.ExtraDataIndex==r.DataSize);REQUIRE(r.Timestamp==tick*1000u);
+ REQUIRE(r.Data[4]==0x49&&r.Data[5]==0x02&&r.Data[6]==0x01);
+ REQUIRE(memcmp(r.Data+7,"YV1CZ0002A0000001",17)==0);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ g_iso_rx_start=0;
+ REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+ REQUIRE(PassThruClose(dev)==ERR_OK);
+ puts("PASS: 0.3.6 FC140 verified replay, strict routing, D2 retry/clear, periodic, P3/VDASH/security");return 0;
+}
