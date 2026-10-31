@@ -18,18 +18,28 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - name: Original J2534 protocol regression with Vehicle Core
+      - name: J2534 regression including READ128 and Vehicle Core
         run: gcc -std=c11 -O2 -Wall -Wextra -o /tmp/virtualcar_test tests/virtualcar_test.c src/p2core/p2_cem_router.c src/p2core/p2_ls_observer.c src/p2core/p2_vehicle_core.c src/p2core/p2_j2534_bridge.c && /tmp/virtualcar_test
-      - name: Build emulator J2534 DLL
+      - name: Build Windows x86 J2534 DLL
         run: bash ./build-cross.sh
-      - name: Validate Windows x86 and J2534 exports
+      - name: Validate architecture and PassThru exports
         run: |
           file VirtualCarJ2534.dll | grep 'PE32.*Intel i386'
-          objdump -p VirtualCarJ2534.dll | grep 'PassThruReadMsgs'
-          objdump -p VirtualCarJ2534.dll | grep 'KERNEL32.dll'
-      - name: Audit and import tests
-        run: |
-          cd control && go test ./... -count=1
-          cd .. && python3 -m unittest discover -s tests -p 'test_*.py'
-      - name: Cross-build control EXE
+          test "$(objdump -p VirtualCarJ2534.dll | grep -Ec '^\s*\[ *[0-9]+\].*PassThru[A-Za-z]+$')" -ge 14
+          objdump -p VirtualCarJ2534.dll | grep 'DLL Name: KERNEL32.dll'
+      - name: Python fixture and profile tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Go tests / vet
+        run: cd control && go test ./... -count=1 && go vet ./...
+      - name: Build Windows x86 GUI
         run: cd control && GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H windowsgui' -o ../VirtualCarControl.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-dev28-Windows-x86-LAB
+          path: |
+            emulator/VirtualCarJ2534.dll
+            emulator/VirtualCarControl.exe
+            emulator/virtualcar.ini
+            emulator/virtualcar-default.ini
+            emulator/virtualcar-p2.ini
+            emulator/README_DEV28.md

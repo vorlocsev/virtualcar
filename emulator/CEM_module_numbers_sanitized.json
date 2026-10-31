@@ -1,0 +1,112 @@
+[
+  {
+    "file": "cem.bin",
+    "size": 327680,
+    "ascii_number_candidates": [
+      {
+        "offset": "0x4FF40",
+        "number": "30728539"
+      },
+      {
+        "offset": "0x4FF68",
+        "number": "30728541"
+      }
+    ],
+    "f0_table_entries": [
+      {
+        "entry_offset": "0x0472E",
+        "address": "0x00002164",
+        "within_flash_image": false
+      }
+    ],
+    "note": "These strings and table addresses do not establish the live B9F0 reply."
+  },
+  {
+    "file": "11.bin",
+    "size": 327680,
+    "ascii_number_candidates": [
+      {
+        "offset": "0x4FF40",
+        "number": "30786476"
+      },
+      {
+        "offset": "0x4FF68",
+        "number": "30728541"
+      }
+    ],
+    "f0_table_entries": [
+      {
+        "entry_offset": "0x0472E",
+        "address": "0x00002164",
+        "within_flash_image": false
+      }
+    ],
+    "note": "These strings and table addresses do not establish the live B9F0 reply."
+  },
+  {
+    "file": "M30855FWUGP.bin",
+    "size": 327680,
+    "ascii_number_candidates": [
+      {
+        "offset": "0x4FF40",
+        "number": "30728542"
+      },
+      {
+        "offset": "0x4FF68",
+        "number": "30728541"
+      }
+    ],
+    "f0_table_entries": [
+      {
+        "entry_offset": "0x0A752",
+        "address": "0x00001CD4",
+        "within_flash_image": false
+      }
+    ],
+    "note": "These strings and table addresses do not establish the live B9F0 reply."
+  },
+  {
+    "file": "M30855FWUGP.bin",
+    "size": 327680,
+    "ascii_number_candidates": [
+      {
+        "offset": "0x4FF40",
+        "number": "30786475"
+      },
+      {
+        "offset": "0x4FF68",
+        "number": "30728541"
+      }
+    ],
+    "f0_table_entries": [
+      {
+        "entry_offset": "0x0472E",
+        "address": "0x00002164",
+        "within_flash_image": false
+      }
+    ],
+    "note": "These strings and table addresses do not establish the live B9F0 reply."
+  },
+  {
+    "file": "CEM(M35835FJ_M30855FW)(2005-)(WELD)-P-FLASH-xc90_02092026.bin",
+    "size": 327680,
+    "ascii_number_candidates": [
+      {
+        "offset": "0x4FF40",
+        "number": "30765148"
+      },
+      {
+        "offset": "0x4FF68",
+        "number": "30728541"
+      }
+    ],
+    "f0_table_entries": [
+      {
+        "entry_offset": "0x067DC",
+        "address": "0x0000205E",
+        "within_flash_image": false
+      }
+    ],
+    "note": "These strings and table addresses do not establish the live B9F0 reply."
+  }
+]

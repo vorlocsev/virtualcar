@@ -37,8 +37,11 @@ typedef void *HANDLE;
 #define MAX_ECUS 8
 #define MAX_D2_FRAMES 64
 #define MAX_PERIODIC 4
-#define MAX_D2_FIXTURES 6
-#define MAX_EXTRA_DID 96
+#define MAX_D2_FIXTURES 14
+#define BASE_D2_FIXTURES 6
+#define MAX_PASSIVE_TRACES 12
+#define MAX_EXTRA_DID 192
+#define MAX_EXTRA_DID_SLOTS 4
 #define MAX_FILTERS 24
 #define START_OF_MESSAGE 0x00000002u
 #define CAN_29BIT_ID 0x00000100u
@@ -119,17 +122,22 @@ static U32 g_battery_mv=12500;
 /* Optional diagnostic traffic is synthetic VCARLAB, never a Volvo CAN trace. */
 static U32 g_passive_enabled=0,g_passive_id=0x555,g_passive_period_ms=50;
 static U8 g_passive_payload[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0x00};
+/* Optional PASSIVE CAN replay of user-supplied, recorded frames.
+   Profiles are empty by default; no vehicle traffic is synthesized. */
+typedef struct {U32 id,baud,period_ms;U8 data[8];int enabled;} TRACE_FRAME;
+static TRACE_FRAME g_trace[MAX_PASSIVE_TRACES];
+static U32 g_trace_count=0;
 static U32 g_iso_rx_start=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
-typedef struct {U32 req,resp;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2];} ECU;
+typedef struct {U32 req,resp;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
 static ECU g_ecu[MAX_ECUS];
 /* Optional read-only replay fixtures: user must supply verified, non-sensitive
    CAN frames. No invented B9 FB vehicle-configuration payloads. */
 typedef struct {
     U8 target,subcommand;
-    U32 response_id, frame_count;
+    U32 response_id, frame_count, baud;
     U8 frame[MAX_D2_FRAMES][8];
 } D2_PROFILE;
 static D2_PROFILE g_d2[MAX_D2_FIXTURES];
@@ -140,15 +148,16 @@ typedef struct {
     int used; U32 id,protocol,baud,flags;
     FILTER filters[MAX_FILTERS]; U32 filters_count;
     U32 passive_next_tick;
+    U32 trace_next_tick[MAX_PASSIVE_TRACES];
     U64 d2_next_us;
     U32 d2_spacing_ms,d2_response_id,d2_count,d2_pos,d2_generation,d2_frame_number;
     U8 d2_frame[MAX_D2_FRAMES][8];
     PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U32 r,w,count;
     PERIODIC periodic[MAX_PERIODIC];
-    U8 pending[128]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn; U32 read_timeout_count;
+    U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn; U32 read_timeout_count;
 } CHANNEL;
 static CHANNEL g_ch[MAX_CHANNELS];
-/* Read-only Vehicle Core observer; always serialized under g_lock. */
+/* Read-only vehicle-state observer, serialized by g_lock. */
 static p2_j2534_bridge g_vehicle_bridge;
 
 /* High-resolution monotonic time for D2 scheduling and RX timestamps.
@@ -323,6 +332,26 @@ static void load_config(void) {
         g_ecu[i].extra_len[0]=parse_hex_blob(v,g_ecu[i].extra_did[0],MAX_EXTRA_DID);
         GetPrivateProfileStringA(key,"DIDF1A3Hex","",v,sizeof(v),g_profile_path);
         g_ecu[i].extra_len[1]=parse_hex_blob(v,g_ecu[i].extra_did[1],MAX_EXTRA_DID);
+        /* Optional, exact read-only DID responses for verified ECU captures.
+           Data are never synthesized from the VIN or another ECU's fixtures.
+           Allow only the F1xx identification range; reserved/special DIDs
+           retain their explicitly implemented handlers. */
+        {U32 slot;
+         for(slot=0;slot<MAX_EXTRA_DID_SLOTS;slot++){
+             char kcode[20],kbytes[20];
+             str_copy(kcode,"DID0Code",sizeof(kcode));kcode[3]=(char)('0'+slot);
+             str_copy(kbytes,"DID0Hex",sizeof(kbytes));kbytes[3]=(char)('0'+slot);
+             GetPrivateProfileStringA(key,kcode,"",v,sizeof(v),g_profile_path);
+             g_ecu[i].did_code[slot]=parse_hex(v,0xFFFFFFFFu);
+             if(g_ecu[i].did_code[slot]<0xF100u||g_ecu[i].did_code[slot]>0xF1FFu ||
+                g_ecu[i].did_code[slot]==0xF114u||g_ecu[i].did_code[slot]==0xF190u||
+                g_ecu[i].did_code[slot]==0xF1B0u||g_ecu[i].did_code[slot]==0xF1A3u){
+                 g_ecu[i].did_code[slot]=0;continue;
+             }
+             GetPrivateProfileStringA(key,kbytes,"",v,sizeof(v),g_profile_path);
+             g_ecu[i].did_len[slot]=parse_hex_blob(v,g_ecu[i].did_bytes[slot],MAX_EXTRA_DID);
+             if(!g_ecu[i].did_len[slot])g_ecu[i].did_code[slot]=0;
+         }}
     }
     /* P2 D2 fixtures: 40/50 CEM x B9FB (vehicle information), B9F0
        (module part number), B9FC (vehicle configuration). No response is
@@ -331,6 +360,33 @@ static void load_config(void) {
        not guaranteed for every P2 model or CAN bus. */
     GetPrivateProfileStringA("P2","StrictRouting","0",v,sizeof(v),g_profile_path);
     g_p2_strict_routing=parse_num(v,0)?1:0;
+    /* Recorded bus traffic: exact source frames are configured per network.
+       Never enable the trace through a guessed vehicle or part number. */
+    bytes_zero(g_trace,sizeof(g_trace));g_trace_count=0;
+    GetPrivateProfileStringA("PassiveTrace","Enabled","0",v,sizeof(v),g_profile_path);
+    if(parse_num(v,0)==1){
+        U32 j,cnt;
+        GetPrivateProfileStringA("PassiveTrace","Count","0",v,sizeof(v),g_profile_path);
+        cnt=parse_num(v,0);if(cnt>MAX_PASSIVE_TRACES)cnt=0;
+        for(j=0;j<cnt;j++){
+            char section[24];TRACE_FRAME *t=&g_trace[j];
+            str_copy(section,"Trace",sizeof(section));
+            {char suffix[3];suffix[0]=(char)('0'+j/10);suffix[1]=(char)('0'+j%10);suffix[2]=0;
+             if(j<10)str_append(section,suffix+1,sizeof(section));
+             else str_append(section,suffix,sizeof(section));}
+            GetPrivateProfileStringA(section,"Id","",v,sizeof(v),g_profile_path);
+            t->id=parse_hex(v,0xFFFFFFFFu);
+            GetPrivateProfileStringA(section,"Baud","",v,sizeof(v),g_profile_path);
+            t->baud=parse_num(v,0);
+            GetPrivateProfileStringA(section,"PeriodMs","100",v,sizeof(v),g_profile_path);
+            t->period_ms=parse_num(v,0);
+            GetPrivateProfileStringA(section,"Data","",v,sizeof(v),g_profile_path);
+            if(t->id<=0x1FFFFFFFu && (t->baud==125000u||t->baud==500000u) &&
+               t->period_ms>=20u && t->period_ms<=5000u && parse_frame8(v,t->data)){
+                t->enabled=1;g_trace_count++;
+            }else logline("PassiveTrace invalid recorded frame ignored",0,0);
+        }
+    }
     GetPrivateProfileStringA("P2","ReplaySpacingMs","12",v,sizeof(v),g_profile_path);
     g_d2_spacing_ms=parse_num(v,12);
     if(g_d2_spacing_ms>250)g_d2_spacing_ms=250;
@@ -341,17 +397,44 @@ static void load_config(void) {
            New indices 4 and 5 are verified-FC replay slots. */
         d->target=(U8)((i==0||i==1||i==4)?0x40:0x50);
         d->subcommand=(U8)(i>=4?0xFC:((i%2)==0?0xFB:0xF0));
+        d->baud=(d->target==0x40?125000u:500000u);
+        if(i>=BASE_D2_FIXTURES){
+            char digits[3];U32 target,opcode;
+            str_copy(section,"D2_Node",sizeof(section));
+            digits[0]=(char)('0'+i-BASE_D2_FIXTURES);digits[1]=0;
+            str_append(section,digits,sizeof(section));
+            GetPrivateProfileStringA(section,"Enabled","0",v,sizeof(v),g_profile_path);
+            if(parse_num(v,0)!=1)continue;
+            GetPrivateProfileStringA(section,"Target","",v,sizeof(v),g_profile_path);
+            target=parse_hex(v,0xFFFFFFFFu);
+            GetPrivateProfileStringA(section,"Opcode","",v,sizeof(v),g_profile_path);
+            opcode=parse_hex(v,0xFFFFFFFFu);
+            GetPrivateProfileStringA(section,"Baud","",v,sizeof(v),g_profile_path);
+            d->baud=parse_num(v,0);
+            if(target>0xFFu||target==0x40u||target==0x50u||
+               (opcode!=0xF0u&&opcode!=0xFBu&&opcode!=0xFCu)||
+               (d->baud!=125000u&&d->baud!=500000u)){
+                logline("D2 extra ECU fixture invalid target/opcode/baud ignored",0,0);
+                continue;
+            }
+            d->target=(U8)target;d->subcommand=(U8)opcode;
+        }
         /* Keep the old B9FB section names for existing users. */
         if(i==0)str_copy(section,"D2_40",sizeof(section));
         else if(i==2)str_copy(section,"D2_50",sizeof(section));
         else if(i==1)str_copy(section,"D2_40_B9F0",sizeof(section));
         else if(i==3)str_copy(section,"D2_50_B9F0",sizeof(section));
         else if(i==4)str_copy(section,"D2_40_B9FC",sizeof(section));
-        else str_copy(section,"D2_50_B9FC",sizeof(section));
+        else if(i==5)str_copy(section,"D2_50_B9FC",sizeof(section));
+        /* For optional D2_Node slots, section is already assigned above. */
         d->response_id=(d->target==0x40?0x00800003u:0x01000003u);
         if(d->target==0x50 && d->subcommand==0xFB)d->response_id=0x01200003u;
         GetPrivateProfileStringA(section,"ResponseId","",v,sizeof(v),g_profile_path);
-        d->response_id=parse_hex(v,d->response_id);
+        d->response_id=parse_hex(v,i>=BASE_D2_FIXTURES?0xFFFFFFFFu:d->response_id);
+        if(d->response_id>0x1FFFFFFFu){
+            if(i>=BASE_D2_FIXTURES)logline("D2 extra ECU invalid ResponseId ignored",0,0);
+            continue;
+        }
         GetPrivateProfileStringA(section,"FrameCount","",v,sizeof(v),g_profile_path);
         if(!v[0] && d->subcommand==0xFB)
             GetPrivateProfileStringA(section,"B9FBFrameCount","0",v,sizeof(v),g_profile_path);
@@ -381,7 +464,11 @@ static void load_config(void) {
        guessed. Other fixtures are checked for D2 framing only. */
     U32 invalid_p2=0;
     for(i=0;i<MAX_D2_FIXTURES;i++){
-        D2_PROFILE *d=&g_d2[i];
+        U32 j;D2_PROFILE *d=&g_d2[i];
+        /* Do not permit duplicate optional targets to shadow the first match. */
+        if(i>=BASE_D2_FIXTURES && d->frame_count)
+            for(j=0;j<i;j++)if(g_d2[j].frame_count && g_d2[j].target==d->target &&
+                g_d2[j].subcommand==d->subcommand){d->frame_count=0;invalid_p2++;break;}
         if(d->frame_count && (!validate_d2_fixture(d) || !validate_fc140_fixture(d))){
             d->frame_count=0;invalid_p2++;
         }
@@ -389,7 +476,11 @@ static void load_config(void) {
     n=GetTempPathA(sizeof(g_log_path)-32,g_log_path);
     if(n==0||n>=sizeof(g_log_path)-32)str_copy(g_log_path,"C:\\Windows\\Temp\\SectorVVirtualCar.log",sizeof(g_log_path));
     else str_append(g_log_path,"SectorVVirtualCar.log",sizeof(g_log_path));
-    logline("VirtualCar DLL initialized (v0.3.6 P2 B9FC)",0,0);
+    logline("VirtualCar DLL initialized (v0.3.6.6 extended configuration DID)",0,0);
+    {U8 network_counts[8];U32 active_extra=0,k;
+     for(k=BASE_D2_FIXTURES;k<MAX_D2_FIXTURES;k++)if(g_d2[k].frame_count)active_extra++;
+     u32_be(network_counts,g_trace_count);u32_be(network_counts+4,active_extra);
+     logline("Network ACTIVE passive frames / extra D2 fixtures (BE)",network_counts,8);}
     if(invalid_p2){U8 number[4];u32_be(number,invalid_p2);
         logline("P2 invalid D2 fixtures disabled (count, BE)",number,4);}
     {
@@ -454,6 +545,20 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
     logline(status==START_OF_MESSAGE?"RX START_OF_MESSAGE (ISO15765)":"RX (simulated)",msg->Data,msg->DataSize);
 }
 static void enqueue(CHANNEL *c,U32 response_id,const U8 *payload,U32 len){enqueue_status(c,response_id,payload,len,0);}
+/* Bus-specific recorded traffic. Never cross CAN-LS/HS speed boundaries. */
+static void pump_recorded_trace(CHANNEL *c){
+    U32 i,now;
+    if(c->protocol!=PROTO_CAN)return;
+    now=GetTickCount();
+    for(i=0;i<MAX_PASSIVE_TRACES;i++){
+        TRACE_FRAME *t=&g_trace[i];
+        if(!t->enabled||t->baud!=c->baud||c->count>=MAX_QUEUE)continue;
+        if((U32)(now-c->trace_next_tick[i])>=0x80000000u)continue;
+        c->trace_next_tick[i]=now+t->period_ms;
+        enqueue(c,t->id,t->data,8);
+        logline("Passive CAN recorded fixture replay (not OEM-authenticated)",0,0);
+    }
+}
 static void maybe_passive_frame(CHANNEL *c){
     U32 now;
     if(!g_passive_enabled||c->protocol!=PROTO_CAN||c->count>=MAX_QUEUE)return;
@@ -512,6 +617,16 @@ static U32 answer_uds(const ECU *ecu,const U8 *req,U32 len,U8 *res) {
             if(req[2]==0x14)logline("P3 CEM F114 VIN reply (synthetic lab data)",0,0);
             return 20;
         }
+        /* Exact configured identification replies take precedence over
+           synthetic F187/F189 labels, but cannot override VIN/F114 or B0/A3.
+           Duplicate code slots: first explicit fixture wins. */
+        {U32 did=((U32)req[1]<<8)|req[2];
+         for(i=0;i<MAX_EXTRA_DID_SLOTS;i++)if(ecu->did_len[i]&&ecu->did_code[i]==did){
+             res[0]=0x62;res[1]=req[1];res[2]=req[2];
+             bytes_copy(res+3,ecu->did_bytes[i],ecu->did_len[i]);
+             logline("Read-only configured ECU DID reply (not OEM verified)",req+1,2);
+             return 3+ecu->did_len[i];
+         }}
         if(req[1]==0xF1&&(req[2]==0x87||req[2]==0x89)){
             const char *s=req[2]==0x87?ecu->part:ecu->sw;n=str_len(s);if(n>48)n=48;
             res[0]=0x62;res[1]=0xF1;res[2]=req[2];for(i=0;i<n;i++)res[i+3]=(U8)s[i];return 3+n;
@@ -584,9 +699,7 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         discarded=drop_queued_d2(c);
         if(discarded){U8 count_be[4];u32_be(count_be,discarded);
             logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
-        if(g_p2_strict_routing &&
-           ((d->target==0x50 && c->baud!=500000u) ||
-            (d->target==0x40 && c->baud!=125000u))){
+        if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
             logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
             return 1;
         }
@@ -601,7 +714,7 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         }else logline("P2 D2 read command: no validated response fixture",data,4);
         return 1;
     }
-    logline("P2 D2 command: unknown CEM target",data,4);return 1;
+    logline("P2 D2 command: no recorded ECU fixture for target",data,4);return 1;
 }
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     U32 id,i,n,sz;U8 payload[256],answer[256];const ECU *ecu;
@@ -689,7 +802,10 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(i==MAX_CHANNELS){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
     g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
-    g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;*channel_id=i+1;
+    g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
+    {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
+        g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
+    *channel_id=i+1;
     p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
@@ -706,7 +822,7 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     for(i=0;i<n;i++){
         if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5){*count=i;unlock_state();return error(ERR_INVALID_MSG);}
         logline("TX (app request)",msgs[i].Data,msgs[i].DataSize);
-        /* Observe actual J2534 TX without changing status, payload or response. */
+        /* The observer cannot affect J2534 return codes or ECU responses. */
         {
             p2_bridge_tx_result observed;
             if (p2_bridge_inspect_tx(&g_vehicle_bridge,id,msgs[i].TxFlags,
@@ -720,18 +836,20 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
 }
 EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
     U32 want,actual=0,started;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
-    want=*count;if(want==0||want>MAX_QUEUE)return error(ERR_INVALID_MSG);
+    /* NumMsgs is the caller buffer capacity; MAX_QUEUE is only our internal queue. */
+    want=*count;if(want==0)return error(ERR_INVALID_MSG);
     started=GetTickCount();
     for(;;){
         CHANNEL *c;lock_state();c=channel(id);
         if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
         maybe_passive_frame(c);
+        pump_recorded_trace(c);
         pump_periodic(c);
         pump_d2(c);
         while(c->count&&actual<want){
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
             logline("PassThruReadMsgs -> delivered",msgs[actual].Data,msgs[actual].DataSize);
-            /* Passive LS broadcast decoding is disabled until proven for MY2009. */
+            /* Community LS signal inference is disabled by default. */
             if(g_vehicle_bridge.vehicle.cfg.enable_community_ls_signals)
                 (void)p2_bridge_inspect_rx(&g_vehicle_bridge,id,msgs[actual].RxStatus,
                     msgs[actual].Data,msgs[actual].DataSize,
@@ -827,7 +945,7 @@ EXPORT U32 WINCALL PassThruSetProgrammingVoltage(U32 device,U32 pin,U32 voltage)
 EXPORT U32 WINCALL PassThruReadVersion(U32 device,char *firmware,char *dll,char *api){
     if(device!=1||!g_open)return error(ERR_INVALID_DEVICE_ID);
     if(!firmware||!dll||!api)return error(ERR_NULL_PARAMETER);
-    str_copy(firmware,"SIMULATED-1.6",80);str_copy(dll,"VirtualCar-0.3.6",80);str_copy(api,"04.04",80);return error(ERR_OK);
+    str_copy(firmware,"SIMULATED-1.6",80);str_copy(dll,"VirtualCar-0.3.6.6",80);str_copy(api,"04.04",80);return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruGetLastError(char *description){
     static const char *names[]={"STATUS_NOERROR","ERR_NOT_SUPPORTED","ERR_INVALID_CHANNEL_ID","ERR_INVALID_PROTOCOL_ID","ERR_NULL_PARAMETER","ERR_INVALID_IOCTL_VALUE","ERR_INVALID_FLAGS","ERR_FAILED","ERR_DEVICE_NOT_CONNECTED","ERR_TIMEOUT","ERR_INVALID_MSG","ERR_INVALID_TIME_INTERVAL","ERR_EXCEEDED_LIMIT","ERR_INVALID_MSG_ID","ERR_DEVICE_IN_USE","ERR_INVALID_IOCTL_ID","ERR_BUFFER_EMPTY","ERR_BUFFER_FULL","ERR_BUFFER_OVERFLOW","ERR_PIN_INVALID","ERR_CHANNEL_IN_USE","ERR_MSG_PROTOCOL_ID","ERR_INVALID_FILTER_ID","ERR_NO_FLOW_CONTROL","ERR_NOT_UNIQUE","ERR_INVALID_BAUDRATE","ERR_INVALID_DEVICE_ID"};

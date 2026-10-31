@@ -22,6 +22,15 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
  if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"Frame2")==0)d="4C 24 20 20 41 00 00 00";
  if(strcmp(s,"ECU1")==0 && strcmp(k,"DIDF1B0Hex")==0)d="53 49 4D 2D 43 45 4D";
  if(strcmp(s,"ECU1")==0 && strcmp(k,"DIDF1A3Hex")==0)d="53 49 4D 2D 31 2E 30";
+ if(strcmp(s,"ECU1")==0 && strcmp(k,"DID0Code")==0)d="F18C";
+ if(strcmp(s,"ECU1")==0 && strcmp(k,"DID0Hex")==0)d="4C 41 42 2D 49 44";
+ if(strcmp(s,"ECU1")==0 && strcmp(k,"DID1Code")==0)d="F106";
+ if(strcmp(s,"ECU1")==0 && strcmp(k,"DID1Hex")==0){
+    for(U32 z=0;z<142;z++){
+      snprintf(out+z*3,n-z*3,"%02X%s",(unsigned)z,z+1<142?" ":"");
+    }
+    return (U32)strlen(out);
+ }
  snprintf(out,n,"%s",d);return (U32)strlen(out);
 }
 U32 GetTempPathA(U32 n,char*out){snprintf(out,n,"/tmp/");return 5;}
@@ -41,9 +50,13 @@ int main(){
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
+ /* J2534 NumMsgs 128, larger than MAX_QUEUE 64, is legal. */
+ PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(128,sizeof(*batch));REQUIRE(batch!=0);
+ n=128;REQUIRE(PassThruReadMsgs(cid,batch,&n,0)==ERR_BUFFER_EMPTY && n==0);
+ n=128;REQUIRE(PassThruReadMsgs(cid,batch,&n,3)==ERR_TIMEOUT && n==0);
  tick=1234;send(cid,&m);
- PASSTHRU_MSG r=readmsg(cid);
- REQUIRE(r.DataSize==24);REQUIRE(r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x90);
+ n=128;REQUIRE(PassThruReadMsgs(cid,batch,&n,0)==ERR_OK && n==1);
+ PASSTHRU_MSG r=batch[0];free(batch);REQUIRE(r.DataSize==24);REQUIRE(r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x90);
  REQUIRE(r.ExtraDataIndex==r.DataSize);REQUIRE(r.Timestamp==1234000u);
  REQUIRE(memcmp(r.Data+7,"YV1CZ0002A0000001",17)==0);
  const U8 bad_req[]={0x27,0x01};m=frame(PROTO_ISO15765,0x7E0,bad_req,2);send(cid,&m);r=readmsg(cid);
@@ -67,6 +80,17 @@ int main(){
  const U8 a3req[]={0x22,0xF1,0xA3};m=frame(PROTO_ISO15765,0x726,a3req,3);send(cid,&m);r=readmsg(cid);
  REQUIRE(r.DataSize==14 && r.Data[4]==0x62 && r.Data[5]==0xF1 && r.Data[6]==0xA3);
  REQUIRE(memcmp(r.Data+7,"SIM-1.0",7)==0);
+ /* Additional diagnostic DID replays are opt-in, per-ECU and read-only.
+    F18C is a laboratory test marker, not a real Volvo module identifier. */
+ const U8 extra_req[]={0x22,0xF1,0x8C};m=frame(PROTO_ISO15765,0x726,extra_req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.DataSize==13 && r.Data[4]==0x62 && r.Data[5]==0xF1 && r.Data[6]==0x8C);
+ REQUIRE(memcmp(r.Data+7,"LAB-ID",6)==0);
+ m=frame(PROTO_ISO15765,0x7E0,extra_req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.DataSize==7 && r.Data[4]==0x7F && r.Data[5]==0x22 && r.Data[6]==0x31);
+ /* F106 A/B fixture: full 142-byte read-only config must remain intact. */
+ const U8 f106_req[]={0x22,0xF1,0x06};m=frame(PROTO_ISO15765,0x726,f106_req,3);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.DataSize==149 && r.Data[4]==0x62 && r.Data[5]==0xF1 && r.Data[6]==0x06);
+ for(U32 z=0;z<142;z++)REQUIRE(r.Data[7+z]==(U8)z);
  /* ECM without opt-in fixtures still returns 7F 22 31. */
  m=frame(PROTO_ISO15765,0x7E0,b0req,3);send(cid,&m);r=readmsg(cid);
  REQUIRE(r.DataSize==7 && r.Data[4]==0x7F && r.Data[5]==0x22 && r.Data[6]==0x31);
@@ -108,15 +132,29 @@ int main(){
  m=frame(PROTO_CAN,0x726,fcover,8);send(cid,&m);
  m=frame(PROTO_CAN,0x726,fc,8);send(cid,&m);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
- /* dev27: A3 is observed by the integrated Vehicle Core, but no unsupported
-    E3 02 confirmation is fabricated. TX byte pattern is shared by multiple
-    application workflows. */
+ /* Raw CAN multi-frame F106: initial FF plus 20 CF on matching FC. */
+ const U8 f106_sf[]={0x03,0x22,0xF1,0x06,0,0,0,0};
+ m=frame(PROTO_CAN,0x726,f106_sf,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[4]==0x10 && r.Data[5]==0x91 && r.Data[6]==0x62 && r.Data[7]==0xF1 && r.Data[8]==0x06);
+ REQUIRE(channel(cid)->pending_len==145 && channel(cid)->pending_pos==6);
+ m=frame(PROTO_CAN,0x726,fc,8);send(cid,&m);
+ U8 assembled[145];memcpy(assembled,r.Data+6,6);U32 offset=6;
+ for(U32 z=0;z<20;z++){
+   r=readmsg(cid);REQUIRE((r.Data[4]&0xF0)==0x20);
+   REQUIRE((r.Data[4]&15)==((z+1)&15));
+   U32 bytes=145-offset;if(bytes>7)bytes=7;
+   memcpy(assembled+offset,r.Data+5,bytes);offset+=bytes;
+ }
+ REQUIRE(offset==145 && channel(cid)->pending_len==0);
+ REQUIRE(assembled[0]==0x62&&assembled[1]==0xF1&&assembled[2]==0x06);
+ for(U32 z=0;z<142;z++)REQUIRE(assembled[3+z]==(U8)z);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Observer classifies A3, but never fabricates a positive E3 reply. */
  const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
  m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
  REQUIRE(g_vehicle_bridge.inspected_tx>0);
  REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==1);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
- /* Core is observational: the tested D2 B9FB response must remain byte-identical. */
  /* P2/P1 29-bit D2 B9 FB read-only replay fixture. */
  REQUIRE(g_d2[0].frame_count==1);
  const U8 synthetic[]={0xCC,0x40,0x7F,0xB9,0x31,0,0,0};
@@ -304,6 +342,44 @@ int main(){
  REQUIRE(memcmp(r.Data+4,"VCARLAB",7)==0);
  REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
  g_passive_enabled=0;
+ /* v0.3.6.4: extensible network node, recorded D2 fixture only.
+    Synthetic bytes are used for tests, never placed in the shipping profile. */
+ D2_PROFILE *node=&g_d2[6];bytes_zero(node,sizeof(*node));
+ node->target=0x11;node->subcommand=0xF0;node->baud=500000u;
+ node->response_id=0x01A00003u;node->frame_count=2;
+ const U8 node_ff[8]={0x8F,0x11,0xF9,0xF0,'T','E','S','T'};
+ const U8 node_end[8]={0x4F,'N','O','D','E',0,0,0};
+ memcpy(node->frame[0],node_ff,8);memcpy(node->frame[1],node_end,8);
+ REQUIRE(validate_d2_fixture(node));
+ const U8 node_req[]={0xCB,0x11,0xB9,0xF0,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,node_req,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[0]==0x01&&r.Data[1]==0xA0&&r.Data[2]==0&&r.Data[3]==3);
+ REQUIRE(r.RxStatus&CAN_29BIT_ID);
+ REQUIRE(memcmp(r.Data+4,node_ff,8)==0);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);
+ REQUIRE(memcmp(r.Data+4,node_end,8)==0);
+ /* Extra nodes must be network-specific even when global strict mode is off. */
+ channel(cid)->baud=125000u;send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ channel(cid)->baud=500000u;
+ node->frame[0][1]=0x50;REQUIRE(!validate_d2_fixture(node));
+ node->frame[0][1]=0x11;REQUIRE(validate_d2_fixture(node));
+ node->frame_count=0;
+ /* v0.3.6.4: passive recorded CAN fixture is strictly bus-specific. */
+ TRACE_FRAME *trace=&g_trace[0];bytes_zero(trace,sizeof(*trace));
+ trace->id=0x321;trace->baud=125000;trace->period_ms=40;trace->enabled=1;
+ for(U32 z=0;z<8;z++)trace->data[z]=(U8)(0xA0+z);
+ channel(cid)->trace_next_tick[0]=GetTickCount()+40;
+ tick+=50;
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ channel(cid)->baud=125000u;
+ r=readmsg(cid);REQUIRE(r.Data[2]==3 && r.Data[3]==0x21);
+ REQUIRE(memcmp(r.Data+4,trace->data,8)==0);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Disabling the fixture is silent even on the correct network. */
+ trace->enabled=0;tick+=50;
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ channel(cid)->baud=500000u;
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
  /* VDASH ISO15765 request 0x7DF 09 02: one ECM answer and optional RxStart. */
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0x800,500000,&cid)==ERR_OK);
@@ -326,5 +402,5 @@ int main(){
  REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
  REQUIRE(PassThruClose(dev)==ERR_OK);
- puts("PASS: 0.3.6 FC140 verified replay, strict routing, D2 retry/clear, periodic, P3/VDASH/security");return 0;
+ puts("PASS: 0.3.6.6 142-byte F106, ECU nodes, recorded bus fixtures, FC140, P3/VDASH, read-only");return 0;
 }

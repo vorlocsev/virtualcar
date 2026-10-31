@@ -12,7 +12,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sectorv-virtualcar-control/ecunet"
 	"sectorv-virtualcar-control/p2audit"
+	"sectorv-virtualcar-control/simple"
 	"strings"
 	"syscall"
 	"time"
@@ -34,40 +36,57 @@ const (
 	WS_VISIBLE          = 0x10000000
 	WS_CHILD            = 0x40000000
 	SW_SHOW             = 5
+	SW_HIDE             = 0
+	SWP_NOMOVE          = 0x0002
+	SWP_NOZORDER        = 0x0004
+	WM_SETFONT          = 0x0030
 	COLOR_WINDOW        = 5
 )
 
 var (
-	user32        = syscall.NewLazyDLL("user32.dll")
-	kernel32      = syscall.NewLazyDLL("kernel32.dll")
-	advapi32      = syscall.NewLazyDLL("advapi32.dll")
-	regClass      = user32.NewProc("RegisterClassExW")
-	createWindow  = user32.NewProc("CreateWindowExW")
-	defWindow     = user32.NewProc("DefWindowProcW")
-	getMessage    = user32.NewProc("GetMessageW")
-	translate     = user32.NewProc("TranslateMessage")
-	dispatch      = user32.NewProc("DispatchMessageW")
-	showWindow    = user32.NewProc("ShowWindow")
-	updateWindow  = user32.NewProc("UpdateWindow")
-	msgBox        = user32.NewProc("MessageBoxW")
-	setText       = user32.NewProc("SetWindowTextW")
-	postQuit      = user32.NewProc("PostQuitMessage")
-	postMessage   = user32.NewProc("PostMessageW")
-	enableWindow  = user32.NewProc("EnableWindow")
-	getModule     = kernel32.NewProc("GetModuleHandleW")
-	regCreate     = advapi32.NewProc("RegCreateKeyExW")
-	regOpen       = advapi32.NewProc("RegOpenKeyExW")
-	regSet        = advapi32.NewProc("RegSetValueExW")
-	regQuery      = advapi32.NewProc("RegQueryValueExW")
-	regDelete     = advapi32.NewProc("RegDeleteTreeW")
-	regClose      = advapi32.NewProc("RegCloseKey")
-	baseDir       string
-	mainWin       uintptr
-	statusWnd     uintptr
-	activeAction  int
-	activeCancel  context.CancelFunc
-	actionResults = make(chan actionResult, 1)
-	actionButtons []uintptr
+	user32          = syscall.NewLazyDLL("user32.dll")
+	kernel32        = syscall.NewLazyDLL("kernel32.dll")
+	advapi32        = syscall.NewLazyDLL("advapi32.dll")
+	gdi32           = syscall.NewLazyDLL("gdi32.dll")
+	regClass        = user32.NewProc("RegisterClassExW")
+	createWindow    = user32.NewProc("CreateWindowExW")
+	defWindow       = user32.NewProc("DefWindowProcW")
+	getMessage      = user32.NewProc("GetMessageW")
+	translate       = user32.NewProc("TranslateMessage")
+	dispatch        = user32.NewProc("DispatchMessageW")
+	showWindow      = user32.NewProc("ShowWindow")
+	updateWindow    = user32.NewProc("UpdateWindow")
+	msgBox          = user32.NewProc("MessageBoxW")
+	setText         = user32.NewProc("SetWindowTextW")
+	postQuit        = user32.NewProc("PostQuitMessage")
+	postMessage     = user32.NewProc("PostMessageW")
+	enableWindow    = user32.NewProc("EnableWindow")
+	setWindowPos    = user32.NewProc("SetWindowPos")
+	sendMessage     = user32.NewProc("SendMessageW")
+	createFont      = gdi32.NewProc("CreateFontW")
+	deleteObject    = gdi32.NewProc("DeleteObject")
+	getModule       = kernel32.NewProc("GetModuleHandleW")
+	regCreate       = advapi32.NewProc("RegCreateKeyExW")
+	regOpen         = advapi32.NewProc("RegOpenKeyExW")
+	regSet          = advapi32.NewProc("RegSetValueExW")
+	regQuery        = advapi32.NewProc("RegQueryValueExW")
+	regDelete       = advapi32.NewProc("RegDeleteTreeW")
+	regClose        = advapi32.NewProc("RegCloseKey")
+	baseDir         string
+	mainWin         uintptr
+	statusWnd       uintptr
+	activeAction    int
+	activeCancel    context.CancelFunc
+	actionResults   = make(chan actionResult, 1)
+	actionButtons   []uintptr
+	advancedButtons []uintptr
+	advancedOpen    bool
+	advancedToggle  uintptr
+	lastCompleted   int
+	profileWnd      uintptr
+	adapterWnd      uintptr
+	uiFont          uintptr
+	headingFont     uintptr
 )
 
 const subkey = `SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car`
@@ -262,18 +281,12 @@ func switchLabProfile(mode string) (string, error) {
 		src = "virtualcar-vdash-lab.ini"
 	case "p2":
 		src = "virtualcar-p2.ini"
+	case "donor":
+		src = filepath.Join("private-P2-donor-2005", "xc90v8-2005-donor.ini")
 	case "p2demo":
-		// Prefer the private XC90 fixture if the user extracted private-P2.
-		// The public lab profile has an unrelated synthetic VIN and must not
-		// silently replace a user's read-only test fixture.
-		privateSource := filepath.Join("private-P2", "virtualcar-p2-b9fb-lab-vin.ini")
-		if _, err := os.Stat(filepath.Join(baseDir, privateSource)); err == nil {
-			src = privateSource
-		} else if !os.IsNotExist(err) {
-			return "", fmt.Errorf("проверка личного P2 профиля: %w", err)
-		} else {
-			src = "virtualcar-p2-b9fb-lab-vin.ini"
-		}
+		// Never substitute the public synthetic MY2010 lab fixture for the
+		// user's MY2009 profile, including in the advanced screen.
+		src = filepath.Join("private-P2", "virtualcar-p2-b9fb-lab-vin.ini")
 	case "default":
 		src = "virtualcar-default.ini"
 	default:
@@ -285,10 +298,10 @@ func switchLabProfile(mode string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("не удалось прочитать %s: %w", src, err)
 	}
-	if ((mode == "p2" || mode == "p2demo") && (!strings.Contains(string(blob), "[P2]") || !strings.Contains(string(blob), "[D2_50]"))) || (mode != "p2" && mode != "p2demo" && (!strings.Contains(string(blob), "[ECU1]") || !strings.Contains(string(blob), "DIDF1B0Hex=") || !strings.Contains(string(blob), "DIDF1A3Hex="))) {
+	if ((mode == "p2" || mode == "p2demo" || mode == "donor") && (!strings.Contains(string(blob), "[P2]") || !strings.Contains(string(blob), "[D2_50]"))) || (mode != "p2" && mode != "p2demo" && mode != "donor" && (!strings.Contains(string(blob), "[ECU1]") || !strings.Contains(string(blob), "DIDF1B0Hex=") || !strings.Contains(string(blob), "DIDF1A3Hex="))) {
 		return "", fmt.Errorf("файл %s не содержит ожидаемые настройки CEM", src)
 	}
-	if mode == "p2demo" {
+	if mode == "p2demo" || mode == "donor" {
 		pf := p2audit.ReadProfile(string(blob))
 		validFB := false
 		for _, fixture := range pf.Fixtures {
@@ -298,6 +311,25 @@ func switchLabProfile(mode string) (string, error) {
 		}
 		if !validFB {
 			return "", fmt.Errorf("P2 B9FB профиль не прошёл проверку 13 кадров и VIN; virtualcar.ini не изменён")
+		}
+		if mode == "p2demo" {
+			if err := simple.ProfileReady(blob, 2009); err != nil {
+				return "", fmt.Errorf("личный XC90 2009: %w", err)
+			}
+		}
+		if mode == "donor" {
+			if err := simple.ProfileReady(blob, 2005); err != nil {
+				return "", fmt.Errorf("проверка донора 2005: %w", err)
+			}
+			foundFC := false
+			for _, f := range pf.Fixtures {
+				if f.Name == "D2_50_B9FC" && f.Valid && f.Count == 21 {
+					foundFC = true
+				}
+			}
+			if !foundFC {
+				return "", errors.New("донорский B9FC: ожидалось 21 проверенных кадров; профиль не изменён")
+			}
 		}
 	}
 	previous, err := os.ReadFile(destPath)
@@ -338,6 +370,9 @@ func switchLabProfile(mode string) (string, error) {
 		} else {
 			result += "P2 B9FB: 13 кадров из опубликованного D2 лога, исходный VIN заменён синтетическим. Остальные исторические поля НЕ соответствуют XC90: идентификация не гарантирована."
 		}
+	}
+	if mode == "donor" {
+		result += "Донор XC90 V8 2005 активирован. B9FB/FC: исторические подтверждённые данные. НЕЛЬЗЯ выдавать этот профиль за XC90 V8 2009."
 	}
 	if mode == "vdash" {
 		result += "VDASH LAB: включён синтетический CAN 0x555 и ISO15765 RxStart. Это диагностический A/B тест, не зажигание Volvo."
@@ -669,6 +704,8 @@ func analyzeLog() (string, error) {
 		{"Запрос CEM F1B0", "TX (app request) 00 00 07 26 03 22 F1 B0"},
 		{"Ответ F1B0", "F1B0 configured lab fixture"},
 		{"Запрос CEM F1A3", "TX (app request) 00 00 07 26 03 22 F1 A3"},
+		{"Запрос CEM F106", "TX (app request) 00 00 07 26 03 22 F1 06"},
+		{"Ответ CEM F106 из настроенной трассы", "Read-only configured ECU DID reply (not OEM verified) F1 06"},
 		{"Ответ F1A3", "F1A3 configured lab fixture"},
 		{"P2 D2 B9F0/B9FB запрошен", "TX (app request) 00 0F FF FE CB"},
 		{"P2 D2 запись воспроизведена", "P2 D2 read-only recorded frames staged"},
@@ -696,6 +733,7 @@ func analyzeLog() (string, error) {
 		if strings.Contains(line, "TX (app request)") || strings.Contains(line, "Active INI:") ||
 			strings.Contains(line, "PassThruIoctl READ_VBATT") || strings.Contains(line, "fixture lengths") ||
 			strings.Contains(line, "F1B0 configured") || strings.Contains(line, "F1A3 configured") ||
+			strings.Contains(line, "configured ECU DID reply") ||
 			strings.Contains(line, "P2 D2") || strings.Contains(line, "P2 fixture") ||
 			strings.Contains(line, "PassThruReadMsgs timeout") {
 			relevant = append(relevant, line)
@@ -773,6 +811,82 @@ func p2Audit() (string, error) {
 	return report, nil
 }
 
+// prepare2009 is the beginner path: never silently activate the public
+// synthetic INI when the user's private XC90 profile is missing.
+func prepare2005() (string, error) {
+	privateFile := filepath.Join(baseDir, "private-P2-donor-2005", "xc90v8-2005-donor.ini")
+	data, err := os.ReadFile(privateFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("не найден донорский профиль XC90 V8 2005. Распакуйте приватный архив в новую папку, затем повторите подготовку")
+		}
+		return "", fmt.Errorf("чтение личного профиля: %w", err)
+	}
+	if err := simple.ProfileReady(data, 2005); err != nil {
+		return "", fmt.Errorf("личный профиль не подходит: %w", err)
+	}
+	// Registry setup may require administrator rights. Do not overwrite the
+	// currently selected profile before the J2534 registration succeeds.
+	if err := registrationProblem(); err != nil {
+		if err := install(); err != nil {
+			return "", fmt.Errorf("регистрация J2534 не выполнена: %w\nЗапустите VirtualCarControl.exe от имени администратора, нажмите «Подготовить» ещё раз", err)
+		}
+	}
+	_, err = switchLabProfile("donor")
+	if err != nil {
+		return "", err
+	}
+	active, err := os.ReadFile(filepath.Join(baseDir, "virtualcar.ini"))
+	if err != nil {
+		return "", err
+	}
+	if err := simple.ProfileReady(active, 2005); err != nil {
+		return "", err
+	}
+	return "Готово!\n\nАдаптер J2534 зарегистрирован, XC90 V8 2005 выбран, все 13 кадров B9FB проверены.\n\nПолностью закройте SectorV, если он уже открыт. Затем нажмите «Начать тест».\n\nVDASH успешно отобразил VIN в предыдущем тесте; чтение остальных ECU пока исследуется.", nil
+}
+
+func beginQuickTest() (string, error) {
+	if err := registrationProblem(); err != nil {
+		return "", fmt.Errorf("J2534 не подготовлен: %w\nСначала нажмите «Подготовить»", err)
+	}
+	data, err := os.ReadFile(filepath.Join(baseDir, "virtualcar.ini"))
+	if err != nil {
+		return "", err
+	}
+	p := p2audit.ReadProfile(string(data))
+	if p.ModelYear != 2009 && p.ModelYear != 2005 {
+		return "", errors.New("не выбран XC90 P2 с ответом B9FB. Нажмите «Подготовить»")
+	}
+	if err := simple.ProfileReady(data, p.ModelYear); err != nil {
+		return "", fmt.Errorf("активный профиль неполон: %w\nСначала нажмите «Подготовить»", err)
+	}
+	_, err = markSession()
+	if err != nil {
+		return "", err
+	}
+	return "Новая сессия начата.\n\n1. Полностью закройте VDASH и SectorV.\n2. Откройте VDASH (или SectorV), выберите виртуальный J2534 и запустите обнаружение.\n3. Вернитесь сюда и нажмите «Показать результат».\n\nОтдельная кнопка включения эмулятора не нужна: DLL запускается клиентом.", nil
+}
+
+func quickResult() (string, error) {
+	data, err := os.ReadFile(filepath.Join(os.TempDir(), "SectorVVirtualCar.log"))
+	if os.IsNotExist(err) {
+		return simple.Result(nil), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	net := ecunet.Analyze(string(data))
+	summary := simple.Result(data)
+	if net.VDASHVinDelivered > 0 && net.SectorB9FB == 0 {
+		summary = "VDASH: полный ответ VIN доставлен через J2534.\nФакт отображения VIN подтверждается только интерфейсом VDASH."
+	}
+	summary += "\n\n" + net.Report()
+	// Store a small shareable result without copying the potentially private raw log.
+	_ = os.WriteFile(filepath.Join(os.TempDir(), "SectorVVirtualCar-quick-result.txt"), []byte(summary+"\r\n"), 0644)
+	return summary, nil
+}
+
 // Run potentially untrusted/hanging J2534 DLL calls in a *separate process*.
 // A goroutine alone would leave a stuck native call alive; CommandContext can
 // terminate the process after its deadline without freezing this Win32 window.
@@ -816,6 +930,14 @@ func runCLI(action string) int {
 		output, err = p2SelfTest()
 	case "--p2-audit":
 		output, err = p2Audit()
+	case "--quick-prepare":
+		output, err = prepare2005()
+	case "--quick-start":
+		output, err = beginQuickTest()
+	case "--quick-result":
+		output, err = quickResult()
+	case "--profile-donor":
+		output, err = switchLabProfile("donor")
 	default:
 		fmt.Fprintln(os.Stderr, "Unknown action:", action)
 		return 2
@@ -838,8 +960,8 @@ func startAction(id int) {
 	if activeAction != 0 {
 		return
 	}
-	commands := map[int]string{101: "--install", 102: "--self-test", 105: "--uninstall", 106: "--cem-test", 107: "--diagnose", 108: "--analyze-log", 109: "--mark-session", 110: "--profile-experimental", 111: "--profile-default", 112: "--profile-vdash", 113: "--profile-p2", 114: "--p2-test", 115: "--profile-p2-demo", 116: "--p2-audit"}
-	descriptions := map[int]string{101: "Установка адаптера", 102: "Самопроверка", 105: "Удаление адаптера", 106: "Проверка CEM P3 / D2", 107: "Диагностика регистрации", 108: "Анализ журнала SectorV", 109: "Новая сессия P2/P3", 110: "Тестовый профиль", 111: "Базовый профиль", 112: "VDASH LAB профиль", 113: "P2 без B9FB", 114: "Проверка P2 D2", 115: "P2 VIN (личный или лабораторный)", 116: "Аудит P2 профиля и журнала"}
+	commands := map[int]string{101: "--install", 102: "--self-test", 105: "--uninstall", 106: "--cem-test", 107: "--diagnose", 108: "--analyze-log", 109: "--mark-session", 110: "--profile-experimental", 111: "--profile-default", 112: "--profile-vdash", 113: "--profile-p2", 114: "--p2-test", 115: "--profile-p2-demo", 116: "--p2-audit", 117: "--quick-prepare", 118: "--quick-start", 119: "--quick-result", 120: "--profile-donor"}
+	descriptions := map[int]string{101: "Установка адаптера", 102: "Самопроверка", 105: "Удаление адаптера", 106: "Проверка CEM P3 / D2", 107: "Диагностика регистрации", 108: "Анализ журнала SectorV", 109: "Новая сессия P2/P3", 110: "Тестовый профиль", 111: "Базовый профиль", 112: "VDASH LAB профиль", 113: "P2 без B9FB", 114: "Проверка P2 D2", 115: "P2 VIN (личный или лабораторный)", 116: "Аудит P2 профиля и журнала", 117: "Подготовка XC90 2009", 118: "Новая сессия SectorV", 119: "Результат SectorV", 120: "Донорский XC90 2005"}
 	command := commands[id]
 	if command == "" {
 		return
@@ -887,8 +1009,8 @@ func finishAction() {
 	for _, h := range actionButtons {
 		enableWindow.Call(h, 1)
 	}
-	updateStatus()
 	if result.err != nil {
+		updateStatus()
 		message := result.err.Error()
 		if result.output != "" {
 			message += "\n\n" + result.output
@@ -896,25 +1018,78 @@ func finishAction() {
 		alert("Ошибка / таймаут", message)
 		return
 	}
-	title := map[int]string{101: "Установлено", 102: "Самопроверка успешна", 105: "Удалено", 106: "Проверка CEM завершена", 107: "Диагностика J2534", 108: "Анализ журнала", 109: "Начало захвата", 110: "Тестовый профиль", 111: "Базовый профиль", 112: "VDASH LAB профиль", 113: "P2 без B9FB", 114: "Проверка P2 D2", 115: "P2 VIN (личный или лабораторный)", 116: "Аудит P2 профиля и журнала"}[result.id]
+	lastCompleted = result.id
+	updateStatus()
+	title := map[int]string{101: "Установлено", 102: "Самопроверка успешна", 105: "Удалено", 106: "Проверка CEM завершена", 107: "Диагностика J2534", 108: "Анализ журнала", 109: "Начало захвата", 110: "Тестовый профиль", 111: "Базовый профиль", 112: "VDASH LAB профиль", 113: "P2 без B9FB", 114: "Проверка P2 D2", 115: "P2 VIN (личный или лабораторный)", 116: "Аудит P2 профиля и журнала", 117: "Подготовка XC90 2009", 118: "Новая сессия SectorV", 119: "Результат SectorV", 120: "Донорский XC90 2005"}[result.id]
 	alert(title, result.output)
 }
 
 func execNotepad(path string) error { return exec.Command("notepad.exe", path).Start() }
 func updateStatus() {
-	s := "Статус: требуется установка/исправление J2534 (кнопка 1)"
+	adapter := "Адаптер J2534: не готов (подготовьте один раз)"
 	if err := registrationProblem(); err == nil {
-		s = "Статус: регистрация исправна (J2534 04.04, x86)"
+		adapter = "Адаптер J2534: готов"
+	}
+	if adapterWnd != 0 {
+		setText.Call(adapterWnd, uintptr(unsafe.Pointer(ptr(adapter))))
+	}
+	label := "Профиль: отсутствует"
+	if data, err := os.ReadFile(filepath.Join(baseDir, "virtualcar.ini")); err == nil {
+		label = "Профиль: " + simple.ProfileLabel(data)
+	}
+	if profileWnd != 0 {
+		setText.Call(profileWnd, uintptr(unsafe.Pointer(ptr(label))))
+	}
+	instructions := "Начните с кнопки «Подготовить»."
+	if err := registrationProblem(); err == nil {
+		if data, e := os.ReadFile(filepath.Join(baseDir, "virtualcar.ini")); e == nil {
+			if simple.ProfileReady(data, 2009) == nil || simple.ProfileReady(data, 2005) == nil {
+				instructions = "Готово. Теперь нажмите «Начать тест»."
+			}
+		}
+	}
+	switch lastCompleted {
+	case 118:
+		instructions = "Сессия начата. Проведите поиск в SectorV, затем откройте результат."
+	case 119:
+		instructions = "Результат показан. Для подробностей откройте «Полный аудит P2»."
 	}
 	if statusWnd != 0 {
-		setText.Call(statusWnd, uintptr(unsafe.Pointer(ptr(s))))
+		setText.Call(statusWnd, uintptr(unsafe.Pointer(ptr(instructions))))
 	}
 }
 func mk(class, text string, x, y, w, h int32, id uintptr) uintptr {
 	classPtr := ptr(class)
 	namePtr := ptr(text)
 	handle, _, _ := createWindow.Call(0, uintptr(unsafe.Pointer(classPtr)), uintptr(unsafe.Pointer(namePtr)), WS_VISIBLE|WS_CHILD, uintptr(x), uintptr(y), uintptr(w), uintptr(h), mainWin, id, 0, 0)
+	if handle != 0 && uiFont != 0 {
+		sendMessage.Call(handle, WM_SETFONT, uiFont, 1)
+	}
 	return handle
+}
+func winFont(height, weight int) uintptr {
+	h, _, _ := createFont.Call(uintptr(int32(height)), 0, 0, 0, uintptr(weight), 0, 0, 0, 1, 0, 0, 5, 0, uintptr(unsafe.Pointer(ptr("Segoe UI"))))
+	return h
+}
+func toggleAdvanced() {
+	advancedOpen = !advancedOpen
+	visibility := uintptr(SW_HIDE)
+	windowHeight := uintptr(457)
+	if advancedOpen {
+		visibility = SW_SHOW
+		windowHeight = 640
+	}
+	for _, h := range advancedButtons {
+		showWindow.Call(h, visibility)
+	}
+	if advancedToggle != 0 {
+		title := "Дополнительные настройки  ▾"
+		if advancedOpen {
+			title = "Скрыть дополнительные настройки  ▴"
+		}
+		setText.Call(advancedToggle, uintptr(unsafe.Pointer(ptr(title))))
+	}
+	setWindowPos.Call(mainWin, 0, 0, 0, 620, windowHeight, SWP_NOMOVE|SWP_NOZORDER)
 }
 
 type wcEx struct {
@@ -945,41 +1120,62 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 	switch msg {
 	case WM_CREATE:
 		mainWin = hwnd
-		mk("STATIC", "Виртуальный автомобиль | J2534", 20, 18, 560, 26, 0)
-		mk("STATIC", "Лабораторный эмулятор. Реальный автомобиль не требуется.", 20, 52, 580, 24, 0)
-		statusWnd = mk("STATIC", "Проверка адаптера...", 20, 88, 580, 24, 0)
-		actionButtons = []uintptr{
-			mk("BUTTON", "1. Установить адаптер", 20, 130, 260, 40, 101),
-			mk("BUTTON", "2. Проверить эмулятор", 300, 130, 260, 40, 102),
-			mk("BUTTON", "5. Проверка CEM P3 / D2", 20, 236, 540, 40, 106),
-			mk("BUTTON", "6. Удалить адаптер", 20, 289, 540, 40, 105),
+		uiFont = winFont(-17, 400)
+		headingFont = winFont(-25, 650)
+		title := mk("STATIC", "SectorV Virtual Car", 22, 17, 565, 30, 0)
+		if headingFont != 0 {
+			sendMessage.Call(title, WM_SETFONT, headingFont, 1)
 		}
-		mk("BUTTON", "3. Профиль автомобиля", 20, 183, 260, 40, 103)
-		mk("BUTTON", "4. Журнал обмена", 300, 183, 260, 40, 104)
-		/* The P2 replay self-test occupies the old noninteractive caption slot. */
-		actionButtons = append(actionButtons, mk("BUTTON", "7. Диагностика J2534", 20, 340, 260, 40, 107),
-			mk("BUTTON", "8. Анализ журнала", 300, 340, 260, 40, 108),
-			mk("BUTTON", "9. Начать новую сессию", 300, 388, 260, 32, 109),
-			mk("BUTTON", "14. Проверка P2 D2", 20, 388, 260, 32, 114),
-			mk("BUTTON", "10. Тестовый профиль CEM", 20, 438, 260, 40, 110),
-			mk("BUTTON", "11. Базовый профиль", 300, 438, 260, 40, 111),
-			mk("BUTTON", "12. VDASH LAB", 20, 489, 260, 36, 112),
-			mk("BUTTON", "13. P2 (без ответов B9FB)", 300, 489, 260, 36, 113),
-			mk("BUTTON", "15. Личный P2 / тест VIN", 20, 533, 260, 32, 115),
-			mk("BUTTON", "16. Аудит P2", 300, 533, 260, 32, 116))
+		mk("STATIC", "Volvo XC90 V8 · P2 · виртуальный адаптер J2534", 22, 52, 560, 25, 0)
+		adapterWnd = mk("STATIC", "Адаптер J2534: проверка...", 22, 82, 560, 23, 0)
+		profileWnd = mk("STATIC", "Профиль: проверка...", 22, 105, 565, 23, 0)
+		actionButtons = []uintptr{
+			mk("BUTTON", "1. Подготовить XC90 V8 2005", 22, 137, 552, 50, 117),
+			mk("BUTTON", "2. Начать тест в VDASH / SectorV", 22, 195, 552, 50, 118),
+			mk("BUTTON", "3. Показать результат", 22, 253, 552, 50, 119),
+		}
+		statusWnd = mk("STATIC", "Сначала подготовьте профиль и J2534.", 22, 316, 565, 42, 0)
+		advancedToggle = mk("BUTTON", "Дополнительные настройки  ▾", 22, 359, 552, 35, 150)
+		advancedButtons = []uintptr{
+			mk("BUTTON", "XC90 2009 (отдельный профиль)", 22, 406, 267, 35, 115),
+			mk("BUTTON", "Донор XC90 2005", 307, 406, 267, 35, 120),
+			mk("BUTTON", "Проверить D2", 22, 448, 267, 35, 114),
+			mk("BUTTON", "Полный аудит P2", 307, 448, 267, 35, 116),
+			mk("BUTTON", "Проверить J2534", 22, 490, 267, 35, 107),
+			mk("BUTTON", "Открыть журнал", 307, 490, 267, 35, 104),
+			mk("BUTTON", "Редактировать INI", 22, 532, 267, 35, 103),
+			mk("BUTTON", "Удалить адаптер", 307, 532, 267, 35, 105),
+		}
+		for _, h := range advancedButtons {
+			showWindow.Call(h, SW_HIDE)
+		}
+		actionButtons = append(actionButtons, advancedButtons[0], advancedButtons[1], advancedButtons[2], advancedButtons[3], advancedButtons[4], advancedButtons[7])
 		updateStatus()
 		return 0
 	case WM_COMMAND:
 		id := wp & 0xFFFF
 		switch id {
-		case 101, 102, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116:
+		case 101, 102, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120:
 			startAction(int(id))
+		case 105:
+			// Destructive registry action stays advanced and requires consent.
+			r, _, _ := msgBox.Call(mainWin, uintptr(unsafe.Pointer(ptr("Удалить виртуальный адаптер J2534 из реестра?\nФайлы приложения останутся на месте."))), uintptr(unsafe.Pointer(ptr("Подтверждение"))), 0x24)
+			if r == 6 {
+				startAction(105)
+			}
+		case 150:
+			toggleAdvanced()
 		case 103:
 			if err := execNotepad(filepath.Join(baseDir, "virtualcar.ini")); err != nil {
 				alert("Ошибка", err.Error())
 			}
 		case 104:
-			if err := execNotepad(filepath.Join(os.TempDir(), "SectorVVirtualCar.log")); err != nil {
+			logFile := filepath.Join(os.TempDir(), "SectorVVirtualCar.log")
+			if _, err := os.Stat(logFile); os.IsNotExist(err) {
+				alert("Журнал", "Журнал пока не создан. Сначала начните тест и откройте SectorV.")
+			} else if err != nil {
+				alert("Ошибка", err.Error())
+			} else if err := execNotepad(logFile); err != nil {
 				alert("Ошибка", err.Error())
 			}
 		}
@@ -990,6 +1186,12 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 	case WM_DESTROY:
 		if activeCancel != nil {
 			activeCancel()
+		}
+		if uiFont != 0 {
+			deleteObject.Call(uiFont)
+		}
+		if headingFont != 0 {
+			deleteObject.Call(headingFont)
 		}
 		postQuit.Call(0)
 		return 0
@@ -1020,8 +1222,8 @@ func main() {
 		alert("Error", "Could not register UI window class")
 		return
 	}
-	name := ptr("SectorV Virtual Car 0.3.6.1 | Управление")
-	hwnd, _, _ := createWindow.Call(0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(name)), WS_OVERLAPPEDWINDOW|WS_VISIBLE, 180, 150, 630, 640, 0, 0, hInst, 0)
+	name := ptr("SectorV Virtual Car 0.3.6.6")
+	hwnd, _, _ := createWindow.Call(0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(name)), WS_OVERLAPPEDWINDOW|WS_VISIBLE, 180, 150, 620, 457, 0, 0, hInst, 0)
 	if hwnd == 0 {
 		alert("Error", "Could not create UI window")
 		return
