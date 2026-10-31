@@ -2,8 +2,26 @@ name: Windows x86 cross-build and tests
 on:
   push:
     branches: [main]
+    paths:
+      - "proxy/**"
+      - "cmd/**"
+      - "trace_attribution/**"
+      - "tests/**"
+      - "scripts/**"
+      - "build_dev26.sh"
+      - "go.mod"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches: [main, development]
+    paths:
+      - "proxy/**"
+      - "cmd/**"
+      - "trace_attribution/**"
+      - "tests/**"
+      - "scripts/**"
+      - "build_dev26.sh"
+      - "go.mod"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 permissions:
   contents: read
