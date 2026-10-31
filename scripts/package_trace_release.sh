@@ -15,9 +15,9 @@ test -s "$app"
 test -s "$proxy"
 # Gates 3-4: reject PE32+ / x64 and other wrong target formats.
 file "$app" | grep -q "PE32 executable"
-file "$app" | grep -q "Intel 80386"
+file "$app" | grep -Eq 'Intel (i386|80386)'
 file "$proxy" | grep -q "PE32 executable"
-file "$proxy" | grep -q "Intel 80386"
+file "$proxy" | grep -Eq 'Intel (i386|80386)'
 # Gate 5: all fourteen documented J2534 PassThru exports must be present.
 test "$(objdump -p "$proxy" | grep -c 'PassThru')" -eq 14
 # Gate 6: do not accidentally package local original/proprietary binaries.
