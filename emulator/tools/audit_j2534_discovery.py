@@ -57,11 +57,87 @@ def _request(raw):
         if data[0] in (0xA3, 0xA6):
             return ("D2", f"{data[0]:02X}", None, can_id)
     if can_id in (0x726, 0x18DA50F1):
-        # Identification may use 22 F1xx, but reporting does not imply support.
-        if len(data) >= 4 and data[1] == 0x22:
+        # CAN exposes a Single Frame PCI, ISO15765 J2534 exposes raw UDS.
+        # A Flow Control frame is transport, never a fresh diagnostic request.
+        if data[0] & 0xF0 == 0x30:
+            return None
+        if len(data) >= 3 and data[0] == 0x22:
+            return ("P3", f"22{data[1]:02X}{data[2]:02X}", None, can_id)
+        if len(data) >= 4 and 3 <= data[0] <= 7 and data[1] == 0x22:
             return ("P3", f"22{data[2]:02X}{data[3]:02X}", None, can_id)
         return ("P3", "other", None, can_id)
     return None
+
+
+def _flow_control(raw):
+    """A CAN ISO-TP FC preserves an in-progress P3 transaction."""
+    if len(raw) < 5:
+        return False
+    can_id = int.from_bytes(raw[:4], "big")
+    return can_id in (0x726, 0x18DA50F1) and raw[4] & 0xF0 == 0x30
+
+
+def _p3_uds(tx, head):
+    """Evaluate only 3 UDS header bytes. No VIN/data payload is retained."""
+    if len(head) < 3:
+        tx["_invalid"] = True
+    elif head[0] == 0x7F and head[1] == 0x22:
+        tx["_p3_negative"] = True
+    elif (tx["service"].startswith("22") and tx["service"] != "other"
+          and head[:3] == bytes.fromhex("62" + tx["service"][2:])):
+        tx["_complete"] = True
+    else:
+        tx["_p3_mismatch"] = True
+
+
+def _p3_frame(tx, payload, protocol):
+    """Track raw CAN ISO-TP, or already reassembled J2534 ISO15765 RX."""
+    if tx["_complete"] or tx["_p3_negative"] or tx["_p3_mismatch"] or tx["_invalid"]:
+        tx["off_route_rx"] += 1
+        return
+    if protocol == "ISO15765":
+        tx["rx_frames"] += 1
+        _p3_uds(tx, payload[:3])
+        return
+    head = payload[0]
+    kind = head & 0xF0
+    if kind == 0x00 and tx["_p3_total"] is None:
+        size = head & 0x0F
+        tx["rx_frames"] += 1
+        if size < 3 or size > 7 or size > len(payload) - 1:
+            tx["_invalid"] = True
+        else:
+            _p3_uds(tx, payload[1:4])
+    elif kind == 0x10 and tx["_p3_total"] is None:
+        tx["rx_frames"] += 1
+        if len(payload) < 8:
+            tx["_invalid"] = True
+            return
+        total = ((head & 0x0F) << 8) | payload[1]
+        if total <= 7 or total > 4095:
+            tx["_invalid"] = True
+            return
+        tx["_p3_total"] = total
+        tx["_p3_received"] = 6
+        tx["_p3_sequence"] = 1
+        tx["_p3_header"] = payload[2:5]  # UDS header only, never VIN.
+    elif kind == 0x20 and tx["_p3_total"] is not None:
+        tx["rx_frames"] += 1
+        if (head & 0x0F) != tx["_p3_sequence"]:
+            tx["_invalid"] = True
+            return
+        remaining = tx["_p3_total"] - tx["_p3_received"]
+        chunk = min(len(payload) - 1, remaining)
+        if chunk <= 0 or (chunk < 7 and chunk < remaining):
+            tx["_invalid"] = True
+            return
+        tx["_p3_received"] += chunk
+        tx["_p3_sequence"] = (tx["_p3_sequence"] + 1) & 0x0F
+        if tx["_p3_received"] >= tx["_p3_total"]:
+            _p3_uds(tx, tx["_p3_header"])
+    else:
+        tx["rx_frames"] += 1
+        tx["_invalid"] = True
 
 
 def _id_format(can_id, flags):
@@ -76,9 +152,13 @@ def _result(tx):
     elif tx["_no_fixture"]:
         status, reason = "no_fixture", "explicit_missing_fixture"
     elif tx["_invalid"]:
-        status, reason = "partial_rx", "invalid_d2_sequence"
+        status, reason = "partial_rx", ("invalid_iso_tp_framing" if tx["route"] == "P3" else "invalid_d2_sequence")
+    elif tx["_p3_negative"]:
+        status, reason = "negative_response", "uds_negative_response_observed"
+    elif tx["_p3_mismatch"]:
+        status, reason = "unverified", "uds_response_does_not_match_request"
     elif tx["_complete"]:
-        status, reason = "delivered", ("j2534_rx_on_lab_route_only" if tx["route"] == "P3" else "complete_d2_transport_only")
+        status, reason = "delivered", ("p3_uds_transport_only" if tx["route"] == "P3" else "complete_d2_transport_only")
     elif tx["rx_frames"]:
         status, reason = "partial_rx", "incomplete_or_unverified_transport"
     elif tx["_timeout"]:
@@ -144,6 +224,8 @@ def audit(lines):
             "_complete": False, "_invalid": False,
             "_no_fixture": False, "_bad_route": False,
             "_timeout": False, "_end_reason": "no_delivery_evidence",
+            "_p3_total": None, "_p3_received": 0, "_p3_sequence": 1,
+            "_p3_header": b"", "_p3_negative": False, "_p3_mismatch": False,
         }
         s["active"][channel] = tx
 
@@ -171,9 +253,9 @@ def audit(lines):
             if can_id != expected:
                 tx["off_route_rx"] += 1
                 return
-            tx["rx_frames"] += 1
-            # P3 payload delivery is not validated as UDS success.
-            tx["_complete"] = True
+            # The protocol is from the requesting channel, not an unrelated RX.
+            # ISO15765 J2534 returns reassembled UDS; CAN returns PCI frames.
+            _p3_frame(tx, payload, tx["protocol"])
         else:
             head = payload[0]
             if tx["_rxid"] is None:
@@ -251,6 +333,10 @@ def audit(lines):
             req = _request(raw)
             if req:
                 start(s, req, stamp)
+            elif _flow_control(raw):
+                # Flow Control belongs to an ongoing CAN ISO-TP response.
+                # It must not supersede a diagnostic request.
+                pass
             else:
                 # Unrelated TX ends a legacy single-channel observation,
                 # but not other channels' in-flight requests.
@@ -313,6 +399,8 @@ def audit(lines):
             "J2534 RX delivery does not prove diagnostic-client ECU acceptance.",
             "Legacy logs without channel, flags or timestamps leave route metadata unknown.",
             "No A3/A6 or P3 positive ECU identity is inferred without a verified fixture.",
+            "negative_response identifies UDS rejection, not successful ECU discovery.",
+            "P3 transport checks parse only UDS headers and ISO-TP lengths, not VIN or identity authenticity.",
             "Window is observed first-to-last delivered RX, not a claimed ECU processing duration.",
         ],
         "transactions": results,

@@ -26,11 +26,12 @@
 
 ## 3. Проверенный снимок состояния (31.10.2026)
 
-- На момент записи **development HEAD `de8656c9c01c5eacacce09e8bdd415341a40fbb1`**. При новом сеансе обязательно читать **текущий** HEAD, он мог измениться.
+- Последний проверенный `development` **перед dev32**: `9890565f1256c8f8bef95ded31a804f6f77c4571` (dev31 PR #6). Проверять фактический HEAD: после dev32 он может измениться.
 - `main`: `a2cdffc1f8fb915406cdacdafd906944c76854c3`, ранний dev26. **Не объединять без ручных end-to-end проверок**.
 - **PR #2** `development → main`: https://github.com/vorlocsev/virtualcar/pull/2 — **draft/open**, это ворота проверки в VMware; не закрывать и не сливать автоматически.
 - **PR #3** завершён: регламент Chat+GitHub, path-filtered CI, изменения документации.
-- Для HEAD `de8656c` завершились **success** два независимых CI: [Emulator x86](https://github.com/vorlocsev/virtualcar/actions/runs/41186286130), [Proxy/OneClick](https://github.com/vorlocsev/virtualcar/actions/runs/41186286096).
+- **PR #6** завершён в `development`: dev31 безопасный J2534 CEM evidence audit; восемь offline Python-групп, метаданные TX/RX и каналов. **PR #7**: dev32 P3 ISO-TP/Flow Control/negative-response, статус сверять по GitHub.
+- Для dev31 HEAD `9890565` оба CI завершились **success**: [Emulator x86](https://github.com/vorlocsev/virtualcar/actions/runs/41188724240), [Proxy/OneClick](https://github.com/vorlocsev/virtualcar/actions/runs/41188724236). Результат dev32 проверять только на SHA PR #7.
 - Новые PR должны открываться **из отдельной ветки в `development`**, максимум один фокус на PR. В CI есть отдельные workflows для эмулятора и прокси; успешная сборка не доказывает работу в VMware.
 - Dev30: проверка SavvyCAN CSV; офлайн выполнены **26 Python-тестов**, но при новом изменении запускать актуальные CI вместо повторения устаревшей цифры.
 
@@ -54,18 +55,18 @@
 
 ## 5. Что делать в новом чате первым
 
-**Первая задача: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** Сначала открыть Issue, HEAD, PR #2 и свежие GitHub Actions. Затем начать один отдельный PR в `development` для **доказательного анализатора read-only J2534 трасс**:
+**Активный блокер: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** Открыть HEAD `development`, PR #7, PR #2 и Actions **на точном SHA**. После интеграции dev32 следующий результат должен опираться на реальный обезличенный read-only лог из VMware, а не на дополнительную синтетическую идентификацию CEM.
 
-1. Сопоставить фактические TX/RX для A3, A6, B9F0, B9FB и P3 с ID, протоколом, каналом и временным окном.
-2. Чётко различать `no fixture`, `unsupported`, `timeout`, `partial response`, `delivered`, `unverified`; не называть таймаут «успешным CEM».
-3. Не путать 11/29-bit CAN ID, HS/LS 500/125, CAN/ISO15765/PS.
-4. Проверить многокадровые ответы, порядок, `CLEAR_RX_BUFFER`, отсутствие фиктивного RX.
-5. Проверить приватность: никакого полного VIN, секретов или реального дампа в коммитах и артефактах.
-6. Не менять рабочий B9FB и READ128 в этом PR; зафиксировать регрессии.
-7. Проверить сборку/тесты на соответствующем HEAD в GitHub Actions.
-8. Отдельно перечислить оставшиеся VMware-проверки и неизвестные эталонные ответы.
+1. Сверить `PassThruWriteMsgs/ReadMsgs` с временными метками, ChannelID, baud, protocol и 11/29-bit форматами; отдельно сравнить D2 и P3 маршруты.
+2. Проверить `A3/A6/B9F0/B9FB` и `0x726/0x18DA50F1` без предположений о положительных ответах.
+3. Отличать `no_fixture`, `unsupported`, `timeout`, `partial_rx`, `negative_response`, `delivered` и `unverified`. Доставка RX не означает принятие VIN диагностическим клиентом.
+4. Не допускать смешения каналов, сброса при ISO-TP Flow Control и ложной полноты First Frame.
+5. Сохранять B9FB 13 кадров, READ128 и отсутствие новых положительных ECU-ответов.
+6. Не публиковать частный INI, VIN, исходные дампы или журналы; использовать только метаданные и синтетические тесты.
+7. Для нового PR выполнять 6–8 содержательных проверок и CI на HEAD.
+8. До результата реального запуска Windows/VMware и проверки физического J2534 не объявлять CEM обнаруженным.
 
-Когда проверки завершены, можно объединить **задачный PR в `development`**, но **не PR #2 в `main`** без отдельного подтверждения.
+**PR #2 `development → main` остаётся отдельным gate: не сливать и не выпускать релиз без явного подтверждения.**
 
 ## 6. Проверки и сборка
 
