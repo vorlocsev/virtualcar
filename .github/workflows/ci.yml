@@ -24,3 +24,62 @@ jobs:
           file SectorV-Trace-OneClick-v0.3.6.7-dev26.exe cmd/oneclick/assets/VirtualCarTrace32.dll
           objdump -p cmd/oneclick/assets/VirtualCarTrace32.dll | grep -E 'DLL Name:|PassThru' | head -50
           test "$(objdump -p cmd/oneclick/assets/VirtualCarTrace32.dll | grep -c 'PassThru')" -eq 14
+      - name: Package trace-only x86 prerelease with eight safety gates
+        run: bash scripts/package_trace_release.sh
+      - name: Upload verified trace prerelease
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtualcar-trace-release
+          path: |
+            _build/release/VirtualCar-Trace-OneClick-Windows-x86.zip
+            _build/release/SHA256SUMS.txt
+            _build/release/RELEASE-NOTES.md
+          if-no-files-found: error
+          retention-days: 14
+
+  trace-prerelease:
+    name: Publish verified trace-only prerelease
+    needs: [cross-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download exact-CI Windows x86 release files
+        uses: actions/download-artifact@v4
+        with:
+          name: virtualcar-trace-release
+          path: dist
+      - name: Verify SHA-256 and source-safe release scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          test -s VirtualCar-Trace-OneClick-Windows-x86.zip
+          test -s RELEASE-NOTES.md
+          sha256sum -c SHA256SUMS.txt
+          unzip -tq VirtualCar-Trace-OneClick-Windows-x86.zip
+          test "$(unzip -Z1 VirtualCar-Trace-OneClick-Windows-x86.zip | wc -l)" -eq 2
+          unzip -p VirtualCar-Trace-OneClick-Windows-x86.zip README-TRACE-ONLY.txt |
+            grep -q 'NOT A CAR EMULATOR'
+      - name: Publish immutable commit-scoped prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA:0:12}"
+          tag="trace-dev26-${short}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "The exact-commit trace prerelease already exists: $tag"
+            exit 0
+          fi
+          gh release create "$tag" \
+            dist/VirtualCar-Trace-OneClick-Windows-x86.zip \
+            dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Virtual Car Trace dev26 (${short})" \
+            --notes-file dist/RELEASE-NOTES.md
