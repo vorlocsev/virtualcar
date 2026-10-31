@@ -1,6 +1,6 @@
 # Virtual Car development instructions
 
-These instructions apply to coding agents working in this repository. See docs/CHAT_GITHUB_WORKFLOW_RU.md for the operational process.
+These instructions apply to coding agents working in this repository. **For a new chat/session, read [NEXT_CHAT.md](NEXT_CHAT.md) first** and confirm its checkpoint against the live GitHub refs/Issues/PRs/Actions. See docs/CHAT_GITHUB_WORKFLOW_RU.md for the operational process.
 
 ## Source of truth
 - Use GitHub source and CI results as the authority. The uploaded ZIPs from historical stages are archival, not the live source of truth.
@@ -19,6 +19,10 @@ These instructions apply to coding agents working in this repository. See docs/C
 - Synthetic fixtures must be labeled synthetic. Redaction must not be represented as a real vehicle-identification response.
 - Keep externally researched CAN IDs model-year-specific; early P2 250 kbit/s HS mapping is not evidence for XC90 V8 2009 500 kbit/s.
 - Third-party GPL code must not be copied without a license review; link and summarize external research independently.
+
+## Session handoff
+- After a significant task PR is merged into development, update NEXT_CHAT.md with the new verified state and exact next actionable Issue.
+- New sessions start with the development branch, not default main; do not rely on previous chat messages or versioned ZIPs.
 
 ## Chat response contract
 - On 'далее', check issue/PR/CI status, continue the current highest-priority unblocked issue and produce a real repository change when justified.
