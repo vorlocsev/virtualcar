@@ -78,7 +78,7 @@ def _result(tx):
     elif tx["_invalid"]:
         status, reason = "partial_rx", "invalid_d2_sequence"
     elif tx["_complete"]:
-        status, reason = "delivered", "complete_d2_transport_only"
+        status, reason = "delivered", ("j2534_rx_on_lab_route_only" if tx["route"] == "P3" else "complete_d2_transport_only")
     elif tx["rx_frames"]:
         status, reason = "partial_rx", "incomplete_or_unverified_transport"
     elif tx["_timeout"]:
@@ -112,7 +112,8 @@ def audit(lines):
         if pid not in sessions:
             epoch += 1
             sessions[pid] = {"number": epoch, "active": {},
-                             "txctx": None, "rxctx": None, "clearctx": None}
+                             "txctx": None, "rxctx": None, "clearctx": None,
+                             "last_tx_channel": None, "disconnect_channel": None}
         return sessions[pid]
 
     def finish(s, channel, why):
@@ -125,6 +126,7 @@ def audit(lines):
         kind, service, target, can_id = request
         ctx = s["txctx"]
         channel = ctx[0] if ctx else None
+        s["last_tx_channel"] = channel
         finish(s, channel, "superseded_by_tx")
         flags = ctx[2] if ctx else None
         start_at = ctx[4] if ctx else stamp
@@ -225,6 +227,7 @@ def audit(lines):
             for ch in list(s["active"]):
                 finish(s, ch, "new_connection")
             s["txctx"] = s["rxctx"] = s["clearctx"] = None
+            s["last_tx_channel"] = s["disconnect_channel"] = None
         txctx = _context(text, "TX context channel/protocol/flags/baud/time-us (BE)")
         if txctx is not None:
             s["txctx"] = txctx
@@ -236,6 +239,11 @@ def audit(lines):
         clearctx = _context(text, "CLEAR_RX context channel/protocol/flags/baud/time-us (BE)")
         if clearctx is not None:
             s["clearctx"] = clearctx
+            continue
+        if text.startswith("PassThruDisconnect channel (BE)"):
+            data = _words(text.split("(BE)", 1)[-1])
+            if len(data) == 4:
+                s["disconnect_channel"] = int.from_bytes(data, "big")
             continue
         if "TX (app request)" in text or "PassThruWriteMsgs() msg" in text:
             marker = "TX (app request)" if "TX (app request)" in text else "Data = ["
@@ -256,15 +264,15 @@ def audit(lines):
             s["rxctx"] = None
             continue
         if "P2 D2 read command: no validated response fixture" in text or "P2 D2 command: no recorded ECU fixture" in text:
-            tx = active(s, None)
+            tx = active(s, s["last_tx_channel"])
             if tx:
                 tx["_no_fixture"] = True
         if "P2 D2 strict route rejected" in text:
-            tx = active(s, None)
+            tx = active(s, s["last_tx_channel"])
             if tx:
                 tx["_bad_route"] = True
         if "P3 CEM " in text and " unavailable" in text:
-            tx = active(s, None)
+            tx = active(s, s["last_tx_channel"])
             if tx:
                 tx["_no_fixture"] = True
         if "PassThruReadMsgs timeout:" in text:
@@ -280,10 +288,18 @@ def audit(lines):
             if tx:
                 finish(s, ch, "clear_rx_buffer")
             s["clearctx"] = None
-        if "PassThruClose" in text or "PassThruDisconnect" in text:
+        if text.startswith("PassThruClose"):
             for ch in list(s["active"]):
                 finish(s, ch, "connection_closed")
             s["txctx"] = s["rxctx"] = None
+            s["last_tx_channel"] = s["disconnect_channel"] = None
+        elif text.startswith("PassThruDisconnect"):
+            ch = s["disconnect_channel"]
+            if ch is None and len(s["active"]) == 1:
+                ch = next(iter(s["active"]))
+            if ch in s["active"]:
+                finish(s, ch, "channel_disconnected")
+            s["disconnect_channel"] = None
     for s in sessions.values():
         for ch in list(s["active"]):
             finish(s, ch, "end_of_log")
