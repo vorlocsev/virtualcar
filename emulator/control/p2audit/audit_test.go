@@ -303,3 +303,31 @@ func TestMissingResponseIsNotIncompleteD2(t *testing.T) {
 		t.Fatalf("misleading zero-frame audit: %s", report)
 	}
 }
+
+
+func TestDonorStyleP2ProfileWarnsAboutMissingCEMRoutes(t *testing.T) {
+	profile := "[Vehicle]\nVIN=YV1CZ0002A0000001\nModelYear=2010\nECUCount=1\n" +
+		"[ECU0]\nRequestId=7E0\nResponseId=7E8\n" +
+		"[D2_50]\nResponseId=01200003\nFrameCount=0\n"
+	p := ReadProfile(profile)
+	if p.ECUCount != 1 || p.HasCEM726 || p.HasCEM29 {
+		t.Fatalf("wrong route capabilities: %+v", p)
+	}
+	report := p.Report()
+	for _, s := range []string{"0x726: не настроен", "0x18DA50F1: не настроен", "D2 A3/A6"} {
+		if !strings.Contains(report, s) { t.Fatalf("missing %s: %s", s, report) }
+	}
+	if strings.Contains(report, p.VIN) { t.Fatal("full VIN leaked") }
+}
+
+func TestConfiguredElevenAndTwentyNineBitRoutes(t *testing.T) {
+	profile := "[Vehicle]\nVIN=YV1CZ0002A0000001\nECUCount=3\n" +
+		"[ECU0]\nRequestId=7E0\n" +
+		"[ECU1]\nRequestId=726\n" +
+		"[ECU2]\nRequestId=18DA50F1\n"
+	p := ReadProfile(profile)
+	if p.ECUCount != 3 || !p.HasCEM726 || !p.HasCEM29 { t.Fatalf("missing routes: %+v", p) }
+	if strings.Contains(p.Report(), "0x726: не настроен") || strings.Contains(p.Report(), "0x18DA50F1: не настроен") {
+		t.Fatal("configured routes reported missing")
+	}
+}
