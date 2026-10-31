@@ -1,12 +1,20 @@
 name: Virtual Car Emulator Windows x86
 on:
   push:
-    branches: [development]
+    branches: [main]
     paths: ["emulator/**", ".github/workflows/emulator.yml"]
   pull_request:
+    branches: [main, development]
     paths: ["emulator/**", ".github/workflows/emulator.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vc-emulator-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -35,7 +43,7 @@ jobs:
         run: cd control && GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H windowsgui' -o ../VirtualCarControl.exe .
       - uses: actions/upload-artifact@v4
         with:
-          name: VirtualCar-dev28-Windows-x86-LAB
+          name: VirtualCar-${{ github.sha }}-Windows-x86-LAB
           path: |
             emulator/VirtualCarJ2534.dll
             emulator/VirtualCarControl.exe
