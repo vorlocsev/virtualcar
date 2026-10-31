@@ -111,7 +111,8 @@ class P3TransportEvidenceTests(unittest.TestCase):
         one = result(lines)[0]
         self.assertEqual((one["status"], one["reason"]),
                          ("negative_response", "uds_negative_response_observed"))
-        self.assertNotIn("successful", json.dumps(audit.audit(lines)).lower())
+        self.assertFalse(audit.audit(lines)["replay_approved"])
+        self.assertNotEqual(one["status"], "delivered")
         direct = tx(data=bytes.fromhex("22 F1 14"), proto=6)
         direct += rx(bytes.fromhex("7F 22 31"), proto=6)
         self.assertEqual(result(direct)[0]["status"], "negative_response")
