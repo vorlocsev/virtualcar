@@ -20,8 +20,8 @@ MAX_TRANSACTIONS = 20000
 
 
 def _words(text):
-    if "Data = [" in text:
-        return bytes(int(x, 16) for x in LEGACY_BYTE.findall(text.split("Data = [", 1)[1]))
+    if "Data = [" in text or LEGACY_BYTE.search(text):
+        return bytes(int(x, 16) for x in LEGACY_BYTE.findall(text.split("Data = [", 1)[-1]))
     return bytes(int(x, 16) for x in HEX.findall(text))
 
 
@@ -71,10 +71,10 @@ def _id_format(can_id, flags):
 
 
 def _result(tx):
-    if tx["_no_fixture"]:
-        status, reason = "no_fixture", "explicit_missing_fixture"
-    elif tx["_bad_route"]:
+    if tx["_bad_route"]:
         status, reason = "unsupported", "strict_route_rejected"
+    elif tx["_no_fixture"]:
+        status, reason = "no_fixture", "explicit_missing_fixture"
     elif tx["_invalid"]:
         status, reason = "partial_rx", "invalid_d2_sequence"
     elif tx["_complete"]:
