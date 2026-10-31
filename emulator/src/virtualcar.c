@@ -813,6 +813,8 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
 }
 EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
     CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    {U8 channel_be[4];u32_be(channel_be,id);
+     logline("PassThruDisconnect channel (BE)",channel_be,4);}
     p2_bridge_disconnect(&g_vehicle_bridge,id);bytes_zero(c,sizeof(*c));logline("PassThruDisconnect",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
