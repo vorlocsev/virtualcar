@@ -821,6 +821,10 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
         if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5){*count=i;unlock_state();return error(ERR_INVALID_MSG);}
+        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+         u32_be(meta+8,msgs[i].TxFlags);u32_be(meta+12,c->baud);
+         u32_be(meta+16,(U32)now_us());
+         logline("TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("TX (app request)",msgs[i].Data,msgs[i].DataSize);
         /* The observer cannot affect J2534 return codes or ECU responses. */
         {
@@ -848,6 +852,10 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         pump_d2(c);
         while(c->count&&actual<want){
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
+            {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+             u32_be(meta+8,msgs[actual].RxStatus);u32_be(meta+12,c->baud);
+             u32_be(meta+16,(U32)now_us());
+             logline("RX context channel/protocol/status/baud/time-us (BE)",meta,20);}
             logline("PassThruReadMsgs -> delivered",msgs[actual].Data,msgs[actual].DataSize);
             /* Community LS signal inference is disabled by default. */
             if(g_vehicle_bridge.vehicle.cfg.enable_community_ls_signals)
@@ -965,6 +973,10 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_CLEAR_RX_BUFFER){
         c->r=c->w=c->count=0;c->d2_count=0;c->d2_pos=0;
         bytes_zero(c->queue_d2_gen,sizeof(c->queue_d2_gen));
+        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+         u32_be(meta+8,c->flags);u32_be(meta+12,c->baud);
+         u32_be(meta+16,(U32)now_us());
+         logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 CLEAR_RX_BUFFER: queued and staged D2 dropped",0,0);
         unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
