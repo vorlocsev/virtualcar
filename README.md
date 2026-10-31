@@ -2,6 +2,8 @@
 
 **Status:** experimental Windows x86 J2534 emulator and diagnostic tooling. Target: a virtual Volvo XC90 V8 MY2009, read-only, tested in VMware. The project is independent of Dvinholm.
 
+**Starting a new ChatGPT conversation?** Read [NEXT_CHAT.md](NEXT_CHAT.md) on the **development** branch. It contains the current checkpoint, next Issue and a copyable restart prompt.
+
 ## Two distinct components
 
 - **emulator/**: source of the virtual J2534 adapter from user-provided v0.3.6.6, integrated with the observational CEM Vehicle Core and J2534 READ128 fix on the development branch. Includes its own Windows x86 cross-build, Go Control GUI, fixtures and tests.
