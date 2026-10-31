@@ -26,12 +26,12 @@
 
 ## 3. Проверенный снимок состояния (31.10.2026)
 
-- Последний проверенный `development` **перед dev32**: `9890565f1256c8f8bef95ded31a804f6f77c4571` (dev31 PR #6). Проверять фактический HEAD: после dev32 он может измениться.
-- `main`: `a2cdffc1f8fb915406cdacdafd906944c76854c3`, ранний dev26. **Не объединять без ручных end-to-end проверок**.
+- Последний проверенный `development` **перед dev33**: `96220cc57d5f12c1431bce39eefe2d3f380aff6f` (dev32 PR #7). Проверять фактический HEAD после слияния dev33.
+- `main` при проверке начала dev33: `c20f1870d125ebca8683c97a11b507910824fb0f` (изменён отдельно от работы dev33). **Не объединять development в main без ручных end-to-end проверок**.
 - **PR #2** `development → main`: https://github.com/vorlocsev/virtualcar/pull/2 — **draft/open**, это ворота проверки в VMware; не закрывать и не сливать автоматически.
 - **PR #3** завершён: регламент Chat+GitHub, path-filtered CI, изменения документации.
-- **PR #6** завершён в `development`: dev31 безопасный J2534 CEM evidence audit; восемь offline Python-групп, метаданные TX/RX и каналов. **PR #7**: dev32 P3 ISO-TP/Flow Control/negative-response, статус сверять по GitHub.
-- Для dev31 HEAD `9890565` оба CI завершились **success**: [Emulator x86](https://github.com/vorlocsev/virtualcar/actions/runs/41188724240), [Proxy/OneClick](https://github.com/vorlocsev/virtualcar/actions/runs/41188724236). Результат dev32 проверять только на SHA PR #7.
+- **PR #6** завершён в `development`: dev31 безопасный J2534 CEM evidence audit. **PR #7** завершён: dev32 P3 ISO-TP/Flow Control/negative-response. **PR #10**: dev33 UDS NRC78 responsePending и запрет считать заголовок `62 F1xx` без данных полным ответом; статус сверять по GitHub.
+- Для dev32 HEAD `96220cc` оба CI завершились **success**: [Emulator x86](https://github.com/vorlocsev/virtualcar/actions/runs/41189336332), [Proxy/OneClick](https://github.com/vorlocsev/virtualcar/actions/runs/41189336296). Результат dev33 проверять только на SHA PR #10.
 - Новые PR должны открываться **из отдельной ветки в `development`**, максимум один фокус на PR. В CI есть отдельные workflows для эмулятора и прокси; успешная сборка не доказывает работу в VMware.
 - Dev30: проверка SavvyCAN CSV; офлайн выполнены **26 Python-тестов**, но при новом изменении запускать актуальные CI вместо повторения устаревшей цифры.
 
@@ -55,7 +55,7 @@
 
 ## 5. Что делать в новом чате первым
 
-**Активный блокер: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** Открыть HEAD `development`, PR #7, PR #2 и Actions **на точном SHA**. После интеграции dev32 следующий результат должен опираться на реальный обезличенный read-only лог из VMware, а не на дополнительную синтетическую идентификацию CEM.
+**Активный блокер: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** Открыть HEAD `development`, PR #10 (dev33), PR #2 и Actions **на точном SHA**. После интеграции dev32 следующий результат должен опираться на реальный обезличенный read-only лог из VMware, а не на дополнительную синтетическую идентификацию CEM.
 
 1. Сверить `PassThruWriteMsgs/ReadMsgs` с временными метками, ChannelID, baud, protocol и 11/29-bit форматами; отдельно сравнить D2 и P3 маршруты.
 2. Проверить `A3/A6/B9F0/B9FB` и `0x726/0x18DA50F1` без предположений о положительных ответах.
