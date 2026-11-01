@@ -170,13 +170,13 @@ typedef struct {
     U64 d2_next_us;
     U32 d2_spacing_ms,d2_response_id,d2_count,d2_pos,d2_generation,d2_frame_number;
     U8 d2_frame[MAX_D2_FRAMES][8];
-    PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U32 r,w,count;
+    PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U64 queue_ready_us[MAX_QUEUE]; U32 r,w,count;
     /* Diagnostic correlation metadata. Never sent to the J2534 client. */
     U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace;
     BACKEND_ABORT aborted[MAX_QUEUE];
     BACKEND_DROP drops[BACKEND_DROP_SLOTS];
     PERIODIC periodic[MAX_PERIODIC];
-    U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn; U32 read_timeout_count;
+    U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn; U64 pending_next_us; U32 pending_stmin_us,read_timeout_count;
 } CHANNEL;
 static CHANNEL g_ch[MAX_CHANNELS];
 /* Read-only vehicle-state observer, serialized by g_lock. */
@@ -778,7 +778,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
     msg->Data[0]=(U8)(response_id>>24);msg->Data[1]=(U8)(response_id>>16);
     msg->Data[2]=(U8)(response_id>>8);msg->Data[3]=(U8)response_id;
     for(i=0;i<len;i++)msg->Data[4+i]=payload[i];
-    c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;
+    c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;c->queue_ready_us[c->w]=0;
     c->queue_trace[c->w]=c->active_trace;
     c->w=(c->w+1)%MAX_QUEUE;c->count++;
     backend_event(c,c->active_trace,"filter_pass","UNKNOWN","none","unknown");
@@ -811,21 +811,24 @@ static void maybe_passive_frame(CHANNEL *c){
 }
 /* An FC applies only to the ECU that started the transfer.
    Block Size 0 means all remaining CFs; nonzero BS limits this burst.
-   This lab implementation still does not model STmin delays. */
+   STmin gates RX delivery and timestamps using the high-resolution clock. */
 static void send_can_cf(CHANNEL *c,U32 block_size) {
-    U8 f[8];U32 i,sz,frames=0;
+    U8 f[8];U32 i,sz,frames=0;U64 now,due;
     while(c->pending_pos<c->pending_len && (block_size==0 || frames<block_size)){
         if(c->count>=MAX_QUEUE)break; /* Preserve pending bytes until queue has space. */
         sz=c->pending_len-c->pending_pos;if(sz>7)sz=7;
         bytes_zero(f,8);f[0]=(U8)(0x20 | (c->pending_sn&15));
         for(i=0;i<sz;i++)f[i+1]=c->pending[c->pending_pos+i];
-        {U64 previous=c->active_trace;c->active_trace=c->pending_trace;
-         enqueue(c,c->pending_id,f,8);c->active_trace=previous;}
+        now=now_us();due=c->pending_next_us>now?c->pending_next_us:now;
+        {U32 slot=c->w,before=c->count;U64 previous=c->active_trace;c->active_trace=c->pending_trace;
+         enqueue(c,c->pending_id,f,8);c->active_trace=previous;
+         if(c->count>before){c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;}}
+        c->pending_next_us=due+(U64)c->pending_stmin_us;
         c->pending_pos+=sz;c->pending_sn++;frames++;
     }
     if(c->pending_pos==c->pending_len){
         U64 previous=c->pending_trace;
-        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;
+        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
         backend_end_if_drained(c,previous);
     }
 }
@@ -837,7 +840,7 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
     if(c->pending_len){
         U64 previous=c->pending_trace;
         logline("ISO-TP pending transfer superseded by a new ECU response",0,0);
-        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;
+        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
         backend_abort_pending(c,previous,BACKEND_ABORT_SUPERSEDED);
     }
     if(c->protocol==PROTO_ISO15765){
@@ -851,7 +854,7 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
     for(i=0;i<6;i++)f[i+2]=payload[i];
     enqueue(c,response_id,f,8);
     bytes_copy(c->pending,payload,len);c->pending_len=len;c->pending_pos=6;
-    c->pending_id=response_id;c->pending_sn=1;c->pending_trace=c->active_trace;
+    c->pending_id=response_id;c->pending_sn=1;c->pending_trace=c->active_trace;c->pending_next_us=0;c->pending_stmin_us=0;
 }
 static U32 answer_uds(const ECU *ecu,const U8 *req,U32 len,U8 *res) {
     U32 i,n;U8 service;
@@ -915,7 +918,7 @@ static U32 drop_queued_d2(CHANNEL *c){
         }
         if(to!=from){bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
             c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;
-            c->queue_trace[to]=c->queue_trace[from];}
+            c->queue_trace[to]=c->queue_trace[from];c->queue_ready_us[to]=c->queue_ready_us[from];}
         keep++;
     }
     c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
@@ -1020,7 +1023,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                 if((data[0]&15)==2){
                     U64 previous=c->pending_trace;
                     logline("ISO-TP FC OVERFLOW received; pending response discarded",msg->Data,msg->DataSize);
-                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;
+                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
                     backend_abort_pending(c,previous,BACKEND_ABORT_FC_OVERFLOW);
                     return;
                 }
@@ -1029,6 +1032,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                     logline("ISO-TP FC ignored (reserved STmin)",msg->Data,msg->DataSize);
                     return;
                 }
+                c->pending_stmin_us=data[2]<=0x7F?(U32)data[2]*1000u:(U32)(data[2]-0xF0u)*100u;
                 logline("ISO-TP FC CTS received; sending bounded CFs",msg->Data,msg->DataSize);
                 send_can_cf(c,n>=2?data[1]:0);return;
             }
@@ -1169,6 +1173,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         pump_periodic(c);
         pump_d2(c);
         while(c->count&&actual<want){
+            if(c->queue_ready_us[c->r] && now_us()<c->queue_ready_us[c->r])break;
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
             {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
              u32_be(meta+8,msgs[actual].RxStatus);u32_be(meta+12,c->baud);
@@ -1195,7 +1200,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
             }
             {U64 rid=c->queue_trace[c->r];
              backend_event(c,rid,"rx_dequeued","UNKNOWN","none","unknown");
-             c->queue_trace[c->r]=0;
+             c->queue_trace[c->r]=0;c->queue_ready_us[c->r]=0;
              c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
              backend_end_if_drained(c,rid);
             }
