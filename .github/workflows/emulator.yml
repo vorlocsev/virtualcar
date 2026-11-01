@@ -54,3 +54,31 @@ jobs:
             emulator/virtualcar-p2.ini
             emulator/README_DEV28.md
 
+  native-routes:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: VirtualCar-${{ github.sha }}-Windows-x86-LAB
+          path: native-input
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Actual x86 DLL route regression in an isolated synthetic profile
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-native-route-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/native-route-regression-audit.json
+          if-no-files-found: error
+
