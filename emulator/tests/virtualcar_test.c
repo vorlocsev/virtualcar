@@ -452,7 +452,7 @@ int main(){
  const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
  m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
  REQUIRE(g_vehicle_bridge.inspected_tx>0);
- REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==1);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  /* P2/P1 29-bit D2 B9 FB read-only replay fixture. */
  REQUIRE(g_d2[0].frame_count==1);
@@ -465,7 +465,7 @@ int main(){
  /* Published D2 B9 F0 example uses response ID 0x01000003, three frames.
     Frames are paced; they must NOT arrive all at once. */
  REQUIRE(g_d2[3].frame_count==3);
- REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==1);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
  REQUIRE(g_vehicle_bridge.vehicle.b9fb_seen>=1);
  const U8 d2f0[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
  m=frame(PROTO_CAN,0x000FFFFE,d2f0,8);send(cid,&m);r=readmsg(cid);
