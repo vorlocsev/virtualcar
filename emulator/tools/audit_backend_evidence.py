@@ -48,9 +48,12 @@ def _decode(line):
         return None
     if not isinstance(e, dict) or e.get("format") != FORMAT:
         return None
-    if e.get("kind") not in KINDS or e.get("route") not in ROUTES:
+    # Malformed nested values must not raise TypeError during set membership.
+    if any(type(e.get(k)) is not str for k in ("kind", "route", "reason", "outcome")):
         return None
-    if e.get("reason") not in REASONS or e.get("outcome") not in OUTCOMES:
+    if e["kind"] not in KINDS or e["route"] not in ROUTES:
+        return None
+    if e["reason"] not in REASONS or e["outcome"] not in OUTCOMES:
         return None
     if not isinstance(e.get("session_id"), str) or not SESSION.fullmatch(e["session_id"]):
         return None

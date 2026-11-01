@@ -107,11 +107,12 @@ class BackendEvidenceTests(unittest.TestCase):
                       private_vin=marker),
                   '{"format":"virtualcar-backend-v1","kind":"wrong","VIN":"' + marker + '"}\n',
                   evt("tx_received", reason=marker),
+                  evt("tx_received", route=[marker]),
                   marker * 300 + "\n")
         data = json.dumps(r)
         self.assertNotIn(marker, data)
         self.assertNotIn("secret", data)
-        self.assertEqual(r["summary"]["invalid_lines"], 3)
+        self.assertEqual(r["summary"]["invalid_lines"], 4)
         self.assertEqual(r["transactions"][0]["status"], "unverified")
 
     def test_07_no_timeout_inference_and_explicit_timeout(self):
