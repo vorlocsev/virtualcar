@@ -358,5 +358,73 @@ class BackendCoverageTests(unittest.TestCase):
         self.assertEqual(coverage(r, "P3_726_F190")["observed_requests"], 0)
         self.assertIsNone(r["transactions"][0]["service"])
 
+
+class UnimplementedCemProbeTests(unittest.TestCase):
+    def test_30_a3_target_40_is_known_but_unsupported_by_emulator(self):
+        r = audit(evt("tx_received"), evt("probe_classified", probe="D2_40_A3"),
+                  evt("route_selected", route="CEM"),
+                  evt("request_completed", route="CEM",
+                      reason="unimplemented_probe", outcome="no_response"))
+        t = r["transactions"][0]
+        self.assertEqual((t["status"], t["reason"]), ("unsupported", "unimplemented_probe"))
+        self.assertEqual((t["service"], t["target"], t["rx_dequeued"]), ("A3", "0x40", 0))
+        self.assertEqual(coverage(r, "D2_40_A3")["status_counts"], {"unsupported": 1})
+
+    def test_31_a6_target_50_has_no_fake_positive(self):
+        r = audit(evt("tx_received"), evt("probe_classified", probe="D2_50_A6"),
+                  evt("route_selected", route="CEM"),
+                  evt("request_completed", route="CEM", reason="unimplemented_probe",
+                      outcome="no_response"))
+        self.assertEqual(r["transactions"][0]["service"], "A6")
+        self.assertEqual(r["transactions"][0]["status"], "unsupported")
+        self.assertEqual(r["transactions"][0]["rx_queued"], 0)
+        self.assertFalse(r["identity_verified"])
+
+    def test_32_unimplemented_reason_is_only_valid_for_no_response(self):
+        r = audit(evt("tx_received"),
+                  evt("request_completed", reason="unimplemented_probe",
+                      outcome="responded"))
+        self.assertEqual(r["transactions"][0]["status"], "unverified")
+
+    def test_33_known_unimplemented_does_not_override_missing_b9_fixture(self):
+        r = audit(evt("tx_received", rid=1),
+                  evt("probe_classified", rid=1, probe="D2_40_A3"),
+                  evt("request_completed", rid=1, route="CEM",
+                      reason="unimplemented_probe", outcome="no_response"),
+                  evt("tx_received", rid=2),
+                  evt("probe_classified", rid=2, probe="D2_40_B9FB"),
+                  evt("request_completed", rid=2, route="CEM",
+                      reason="missing_profile", outcome="no_response"))
+        self.assertEqual([t["status"] for t in r["transactions"]],
+                         ["unsupported", "no_fixture"])
+        self.assertEqual(coverage(r, "D2_40_A3")["status_counts"], {"unsupported": 1})
+        self.assertEqual(coverage(r, "D2_40_B9FB")["status_counts"], {"no_fixture": 1})
+
+    def test_34_conflicting_routes_stay_unverified(self):
+        r = audit(evt("tx_received"), evt("probe_classified", probe="D2_50_A3"),
+                  evt("route_selected", route="CEM"),
+                  evt("route_selected", route="UNHANDLED"),
+                  evt("request_completed", route="CEM", reason="unimplemented_probe",
+                      outcome="no_response"))
+        self.assertEqual(r["transactions"][0]["status"], "unverified")
+        self.assertEqual(r["transactions"][0]["reason"], "inconsistent_route_or_channel")
+
+    def test_35_unimplemented_cannot_claim_delivered_with_dequeued_rx(self):
+        r = audit(evt("tx_received"), evt("probe_classified", probe="D2_50_A6"),
+                  evt("rx_queued"), evt("rx_dequeued"),
+                  evt("request_completed", route="CEM", reason="unimplemented_probe",
+                      outcome="no_response"))
+        self.assertEqual(r["transactions"][0]["reason"], "rx_evidence_with_no_response")
+
+    def test_36_injected_private_fields_do_not_escape_unimplemented_report(self):
+        private = "SYNTHETIC_PRIVATE_VIN_NOT_FROM_CAR"
+        r = audit(evt("tx_received", raw_payload=private),
+                  evt("probe_classified", probe="D2_40_A6", secret=private),
+                  evt("request_completed", route="CEM", reason="unimplemented_probe",
+                      outcome="no_response", vin=private))
+        self.assertNotIn(private, json.dumps(r))
+        self.assertEqual(r["transactions"][0]["status"], "unsupported")
+
+
 if __name__ == "__main__":
     unittest.main()

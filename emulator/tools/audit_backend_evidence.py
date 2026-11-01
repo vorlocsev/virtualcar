@@ -27,7 +27,7 @@ OUTCOMES = frozenset(("unknown", "responded", "no_response", "aborted",
                       "dropped", "unverified"))
 REASONS = frozenset((
     "none", "unsupported_bus", "missing_profile", "no_response",
-    "unhandled_request", "filter_reject", "queue_full", "other",
+    "unhandled_request", "unimplemented_probe", "filter_reject", "queue_full", "other",
     "tracking_limit", "flow_overflow", "superseded", "clear_rx_buffer",
     "channel_disconnect", "device_close", "d2_superseded", "read_timeout",
 ))
@@ -189,7 +189,7 @@ def _classify(r):
         return "unverified", "rx_evidence_with_no_response"
     if reason == "missing_profile" and outcome == "no_response":
         return "no_fixture", "explicit_missing_profile"
-    if reason in ("unsupported_bus", "unhandled_request") and outcome == "no_response":
+    if reason in ("unsupported_bus", "unhandled_request", "unimplemented_probe") and outcome == "no_response":
         return "unsupported", reason
     # Current DLL does not produce a terminal timeout. Never infer timeout
     # from missing events or from an unexplained PassThruClose.

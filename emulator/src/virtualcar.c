@@ -1024,8 +1024,22 @@ static void pump_d2(CHANNEL *c){
 }
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     U32 i;D2_PROFILE *d;
-    if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN || len<4)return 0;
-    if(data[0]!=0xCB || data[2]!=0xB9 || (data[3]!=0xFB&&data[3]!=0xF0&&data[3]!=0xFC))return 0;
+    if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
+    /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
+       responses. Keep them silent, but distinguish the known missing emulator
+       implementation from an arbitrary CAN ID or an absent B9 fixture.
+       Never synthesize E3/E6, an ignition state, or a module identity. */
+    if(len>=3 && (data[0]==0xCBu||data[0]==0xCFu||data[0]==0xCAu) &&
+       (data[1]==0x40u||data[1]==0x50u) &&
+       (data[2]==0xA3u||data[2]==0xA6u)){
+        backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
+        logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
+        backend_event(c,c->active_trace,"request_completed","CEM",
+                      "unimplemented_probe","no_response");
+        return 1;
+    }
+    if(len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
+       (data[3]!=0xFBu&&data[3]!=0xF0u&&data[3]!=0xFCu))return 0;
     backend_event(c,c->active_trace,"route_selected",
                   (data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER","none","unknown");
     {U8 detail[16];
