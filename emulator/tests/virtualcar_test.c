@@ -875,7 +875,7 @@ int main(){
  /* dev49 F11: lifecycle records must survive queue resets and be emitted
     at most once per request_id. These are synthetic lab fixture tests. */
  {
-  U32 lc=0,lc2=0,k;U64 first,second,third;
+  U32 lc=0,lc2=0;U64 first,second;
   CHANNEL *ch;
   const char *start;
   PASSTHRU_MSG tmp;
@@ -892,6 +892,8 @@ int main(){
   first=ch->queue_trace[ch->r];REQUIRE(first!=0);
   REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
   REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  REQUIRE(event_count_since(start,"\"kind\":\"rx_dropped\"")==1);
+  REQUIRE(strstr(start,"\"kind\":\"rx_dropped\"")<strstr(start,"\"kind\":\"request_completed\""));
   REQUIRE(terminal_for(start,first,"none","responded")==0);
   n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
   /* 2: CLEAR_RX cancels both queued first D2 frame and staged tail.
@@ -923,6 +925,8 @@ int main(){
   send(lc,&tmp);second=ch->d2_trace;
   REQUIRE(second && second!=first);
   REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+  REQUIRE(event_count_since(start,"\"kind\":\"rx_dropped\"")==1);
+  REQUIRE(strstr(start,"\"kind\":\"rx_dropped\"")<strstr(start,"\"kind\":\"request_completed\""));
   r=readmsg(lc);REQUIRE(r.Data[4]==0x8F);
   tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x09);
   tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x4C);
@@ -989,7 +993,6 @@ int main(){
    REQUIRE(backend_len==before);
    g_backend_enabled=1;
   }
-  k=0;REQUIRE(k==0);
  }
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
