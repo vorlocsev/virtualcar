@@ -437,6 +437,7 @@ int main(){
  m=frame(PROTO_ISO15765,0x7E0,vin_req,3);send(cid,&m);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  REQUIRE(strstr(backend_lines,"\"kind\":\"filter_drop\"")!=NULL);
+ REQUIRE(strstr(backend_lines,"\"outcome\":\"dropped\"")!=NULL);
  REQUIRE(PassThruStopMsgFilter(cid,blocked_filter)==ERR_OK);
  REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
