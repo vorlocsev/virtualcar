@@ -265,5 +265,98 @@ class BackendEvidenceTests(unittest.TestCase):
                   evt("request_completed", outcome="dropped", reason="queue_full"))
         self.assertEqual(r["transactions"][0]["reason"], "aborted_or_dropped_before_rx")
 
+
+def coverage(report, probe):
+    for item in report["coverage"]["probes"]:
+        if item["probe"] == probe:
+            return item
+    raise AssertionError("missing allowlisted coverage probe")
+
+
+class BackendCoverageTests(unittest.TestCase):
+    def test_22_empty_session_does_not_imply_failure(self):
+        r = audit()
+        self.assertEqual(r["summary"]["requests"], 0)
+        self.assertFalse(r["probe_detail_available"])
+        self.assertTrue(r["coverage"]["not_observed_is_not_unsupported"])
+        self.assertEqual(r["coverage"]["attributed_requests"], 0)
+        self.assertEqual(r["coverage"]["unattributed_requests"], 0)
+        self.assertEqual(len(r["coverage"]["probes"]), len(tool.PROBES))
+        self.assertTrue(all(p["status_counts"] == {} for p in r["coverage"]["probes"]))
+
+    def test_23_known_a3_missing_fixture_is_not_b9fb_failure(self):
+        r = audit(evt("tx_received"),
+                  evt("probe_classified", probe="D2_50_A3"),
+                  evt("request_completed", route="CEM", outcome="no_response",
+                      reason="missing_profile"))
+        self.assertEqual(coverage(r, "D2_50_A3")["status_counts"], {"no_fixture": 1})
+        self.assertEqual(coverage(r, "D2_50_B9FB")["observed_requests"], 0)
+        self.assertEqual(coverage(r, "D2_50_B9FB")["status_counts"], {})
+
+    def test_24_p3_11bit_29bit_are_separate_shape_counts(self):
+        r = audit(evt("tx_received", rid=1),
+                  evt("probe_classified", rid=1, probe="P3_726_F114"),
+                  evt("rx_queued", rid=1), evt("rx_dequeued", rid=1),
+                  evt("request_completed", rid=1, outcome="responded"),
+                  evt("tx_received", rid=2),
+                  evt("probe_classified", rid=2, probe="P3_29_F114"),
+                  evt("request_completed", rid=2, reason="unhandled_request",
+                      outcome="no_response"))
+        self.assertEqual(coverage(r, "P3_726_F114")["status_counts"], {"delivered": 1})
+        self.assertEqual(coverage(r, "P3_29_F114")["status_counts"], {"unsupported": 1})
+        self.assertEqual(r["coverage"]["attributed_requests"], 2)
+
+    def test_25_unclassified_tx_does_not_count_as_a_cem_probe(self):
+        r = audit(evt("tx_received"),
+                  evt("request_completed", outcome="no_response",
+                      reason="unhandled_request"))
+        self.assertEqual(r["coverage"]["unattributed_requests"], 1)
+        self.assertFalse(r["probe_detail_available"])
+        self.assertTrue(all(not p["observed_requests"] for p in r["coverage"]["probes"]))
+
+    def test_26_conflicting_labels_do_not_increment_both_counters(self):
+        r = audit(evt("tx_received"),
+                  evt("probe_classified", probe="D2_40_A3"),
+                  evt("probe_classified", probe="D2_50_A6"),
+                  evt("request_completed", outcome="no_response"))
+        self.assertEqual(r["coverage"]["unattributed_requests"], 1)
+        self.assertEqual(coverage(r, "D2_40_A3")["observed_requests"], 0)
+        self.assertEqual(coverage(r, "D2_50_A6")["observed_requests"], 0)
+        self.assertEqual(r["transactions"][0]["status"], "unverified")
+
+    def test_27_invalid_probe_does_not_leak_or_count(self):
+        marker = "YV1CZ0002A0000001"  # Synthetic test-only marker.
+        r = audit(evt("tx_received"),
+                  evt("probe_classified", probe=marker),
+                  evt("request_completed", outcome="no_response"))
+        self.assertEqual(r["summary"]["invalid_lines"], 1)
+        self.assertEqual(r["coverage"]["unattributed_requests"], 1)
+        self.assertNotIn(marker, json.dumps(r))
+
+    def test_28_two_sessions_same_probe_have_distinct_transactions(self):
+        second = "abcdefabcdefabcd"
+        r = audit(evt("tx_received", sid=second, rid=1),
+                  evt("probe_classified", sid=second, rid=1,
+                      probe="D2_40_B9FB"),
+                  evt("request_completed", sid=second, rid=1,
+                      outcome="no_response", reason="missing_profile"),
+                  evt("tx_received", rid=1),
+                  evt("probe_classified", rid=1, probe="D2_40_B9FB"),
+                  evt("request_completed", rid=1, outcome="no_response",
+                      reason="unhandled_request"))
+        self.assertEqual(r["summary"]["sessions"], 2)
+        self.assertEqual(coverage(r, "D2_40_B9FB")["status_counts"],
+                         {"no_fixture": 1, "unsupported": 1})
+        self.assertNotIn(second, json.dumps(r))
+
+    def test_29_late_probe_is_not_accepted_as_an_attributed_request(self):
+        r = audit(evt("tx_received"), evt("rx_queued"),
+                  evt("probe_classified", probe="P3_726_F190"),
+                  evt("rx_dequeued"),
+                  evt("request_completed", outcome="responded"))
+        self.assertEqual(r["coverage"]["unattributed_requests"], 1)
+        self.assertEqual(coverage(r, "P3_726_F190")["observed_requests"], 0)
+        self.assertIsNone(r["transactions"][0]["service"])
+
 if __name__ == "__main__":
     unittest.main()

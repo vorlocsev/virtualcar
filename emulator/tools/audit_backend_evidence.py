@@ -210,12 +210,18 @@ def _classify(r):
     return "unverified", "unconfirmed_transport"
 
 
+def _trusted_probe(r):
+    """Only a uniquely classified, well-ordered TX can enter coverage."""
+    if len(r["probes"]) != 1 or not r["saw_tx"] or r["sequence_conflict"]:
+        return None
+    return next(iter(r["probes"]))
+
+
 def _result(r):
     status, reason = _classify(r)
     c = r["counts"]
-    details = (PROBES[next(iter(r["probes"]))]
-               if len(r["probes"]) == 1 and r["saw_tx"]
-               and not r["sequence_conflict"] else None)
+    probe = _trusted_probe(r)
+    details = PROBES[probe] if probe else None
     duration = None
     if (not r["clock_conflict"] and r["start_tick"] is not None
             and r["end_tick"] is not None and r["end_tick"] >= r["start_tick"]):
@@ -258,15 +264,45 @@ def audit(lines):
                 raise ValueError("request_limit")
             transactions[key] = _new_event(e, sessions[session], len(transactions) + 1)
         _update(transactions[key], e)
-    results = [_result(r) for r in transactions.values()]
+    records = list(transactions.values())
+    results = [_result(r) for r in records]
+    # Coverage is only about what the client actually *asked* the virtual DLL.
+    # No probe is not a failure, no fixture, an ECU response, or a timeout.
+    coverage_counts = {probe: Counter() for probe in PROBES}
+    unattributed = 0
+    for record, result in zip(records, results):
+        probe = _trusted_probe(record)
+        if probe is None:
+            unattributed += 1
+        else:
+            coverage_counts[probe][result["status"]] += 1
+    observed = {
+        probe: counts for probe, counts in coverage_counts.items() if counts
+    }
+    coverage = {
+        "scope": "allowlisted_request_shapes_only",
+        "not_observed_is_not_unsupported": True,
+        "attributed_requests": len(results) - unattributed,
+        "unattributed_requests": unattributed,
+        "probes": [
+            {
+                "probe": probe,
+                "observed_requests": sum(counts.values()),
+                "status_counts": dict(sorted(counts.items())),
+            }
+            for probe, counts in sorted(coverage_counts.items())
+        ],
+    }
     return {
         "format": OUTPUT_FORMAT, "contains_payload_data": False,
         "client_acceptance_verified": False,
         "identity_verified": False,
-        "probe_detail_available": any(bool(r["probes"]) for r in transactions.values()),
+        "probe_detail_available": bool(observed),
+        "coverage": coverage,
         "limitations": [
             "Missing, reordered or incomplete queue/terminal events downgrade delivery to unverified",
             "Only exact allowlisted probe_classified shapes identify a request; legacy logs remain unknown",
+            "Coverage describes observed client TX only; never infer a missing ECU reply from an unobserved probe",
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
         ],
