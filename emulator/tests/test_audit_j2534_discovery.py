@@ -173,5 +173,99 @@ class J2534EvidenceTests(unittest.TestCase):
         self.assertFalse(tool.audit(lines)["contains_payload_data"])
 
 
+class PrefixedD2ProbeTests(unittest.TestCase):
+    """Eight groups; all bytes are synthetic, never vehicle response fixtures."""
+
+    def test_09_a6_targets_and_declared_length(self):
+        for target in (0x40, 0x50):
+            for padded in (False, True):
+                data = bytes((0xCD, target, 0xA6, 0x1A, 0x04, 1))
+                if padded:
+                    data = data.ljust(8, b"\0")
+                with self.subTest(target=target, padded=padded):
+                    self.assertEqual(tool._request(be(0xFFFFE) + data),
+                                     ("D2", "A6", target, 0xFFFFE))
+
+    def test_10_a3_length_prefixes(self):
+        for service in (0xA3, 0xA6):
+            for target in (0x40, 0x50):
+                for prefix in range(0xCA, 0xD0):
+                    data = bytes((prefix, target, service))
+                    data = data.ljust(prefix - 0xC8 + 1, b"\0")
+                    with self.subTest(service=service, target=target, prefix=prefix):
+                        self.assertEqual(tool._request(be(0xFFFFE) + data),
+                                         ("D2", f"{service:02X}", target, 0xFFFFE))
+
+    def test_11_truncated_or_invalid_prefix(self):
+        for prefix in range(0xCA, 0xD0):
+            data = bytes((prefix, 0x40, 0xA6)).ljust(prefix - 0xC8 + 1, b"\0")
+            for size in range(len(data)):
+                with self.subTest(prefix=prefix, size=size):
+                    self.assertIsNone(tool._request(be(0xFFFFE) + data[:size]))
+        for prefix in (0x80, 0x8F, 0xC0, 0xC8, 0xC9, 0xD0, 0xD8):
+            self.assertIsNone(tool._request(be(0xFFFFE) + bytes((prefix, 0x50, 0xA3, 0, 0, 0, 0, 0))))
+
+    def test_12_foreign_route_opcode_and_oversize(self):
+        data = bytes.fromhex("CD 40 A6 1A 04 01 00 00")
+        for can in (0xFFFFD, 0x726, 0x18DA50F1):
+            result = tool._request(be(can) + data)
+            self.assertTrue(result is None or result[0] != "D2")
+        for target in (0, 0x11, 0x51, 0xFF):
+            self.assertIsNone(tool._request(be(0xFFFFE) + bytes((0xCD, target)) + data[2:]))
+        for service in (0xA1, 0xAF, 0xB1, 0xE3, 0xE6):
+            self.assertIsNone(tool._request(be(0xFFFFE) + data[:2] + bytes((service,)) + data[3:]))
+        self.assertIsNone(tool._request(be(0xFFFFE) + data + b"\0"))
+
+    def test_13_legacy_opaque_probe_and_timestamp(self):
+        self.assertEqual(tool._request(be(0xFFFFE) + A3), ("D2", "A3", None, 0xFFFFE))
+        raw = be(0xFFFFE) + bytes.fromhex("CD 50 A6 1A 04 01 00 00")
+        line = "12:00:01,000 PassThruWriteMsgs() msg[0].Data = [" + ", ".join(f"0x{x:02x}" for x in raw) + "]"
+        item = tool.audit([line])["transactions"][0]
+        self.assertEqual((item["service"], item["target"], item["protocol"], item["channel"]),
+                         ("A6", "0x50", "unknown", None))
+        self.assertEqual(item["status"], "unverified")
+
+    def test_14_channels_and_b9_delivery_remain_independent(self):
+        lines = tx(0xFFFFE, D2FB, ch=1, flags=0x100)
+        lines += tx(0xFFFFE, bytes.fromhex("CB 40 A3 00 00 00 00 00"),
+                    ch=2, flags=0x100, baud=125000)
+        lines += frames13(ch=1)
+        states = {x["channel"]: x for x in tool.audit(lines)["transactions"]}
+        self.assertEqual((states[1]["status"], states[1]["rx_frames"]), ("delivered", 13))
+        self.assertEqual((states[2]["service"], states[2]["target"], states[2]["baud_bps"]),
+                         ("A3", "0x40", 125000))
+        self.assertEqual(states[2]["status"], "unverified")
+
+    def test_15_reply_is_not_a_validated_response_or_identity(self):
+        for service, reply in ((0xA3, 0xE3), (0xA6, 0xE6)):
+            lines = tx(0xFFFFE, bytes((0xCB, 0x50, service, 0, 0, 0, 0, 0)), ch=1)
+            lines += rx(0x01200003, bytes((0xCB, 0x50, reply, 0, 0, 0, 0, 0)), ch=1)
+            item = tool.audit(lines)["transactions"][0]
+            self.assertEqual((item["status"], item["rx_frames"], item["off_route_rx"]),
+                             ("unverified", 0, 1))
+            lines += [event("PassThruReadMsgs timeout: channel / wait-ms / consecutive-count (BE)", be(1, 500, 1))]
+            self.assertEqual(tool.audit(lines)["transactions"][0]["status"], "timeout")
+
+    def test_16_cli_metadata_only(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / "private.log", Path(directory) / "audit.json"
+            # Arbitrary parameter bytes are not copied to the report.
+            lines = tx(0xFFFFE, bytes.fromhex("CF 50 A6 59 56 31 41 42"), ch=2)
+            source.write_text("\n".join(lines), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                tool.main([str(source), "--output", str(output)])
+            report = json.loads(output.read_text(encoding="utf-8"))
+            item = report["transactions"][0]
+            self.assertEqual((item["service"], item["target"], item["channel"]), ("A6", "0x50", 2))
+            text = output.read_text(encoding="utf-8")
+            for private in ("DEADBEEF", "DiagnosticClient", "59 56 31", "YV1AB", str(source)):
+                self.assertNotIn(private, text)
+            self.assertFalse(report["contains_payload_data"])
+            self.assertFalse(report["replay_approved"])
+
+
 if __name__ == "__main__":
     unittest.main()

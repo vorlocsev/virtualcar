@@ -54,6 +54,14 @@ def _request(raw):
     if can_id == 0x000FFFFE:
         if len(data) >= 4 and data[0] == 0xCB and data[2] == 0xB9 and data[3] in D2_SERVICES:
             return ("D2", f"B9{data[3]:02X}", data[1], can_id)
+        # D2 CAN requests carry C8 + significant-byte count, target, service.
+        # Attribute only known CEM targets and complete classic-CAN requests;
+        # parameters/padding remain private and no response meaning is inferred.
+        if (3 <= len(data) <= 8 and 0xCA <= data[0] <= 0xCF
+                and len(data) >= data[0] - 0xC8 + 1
+                and data[1] in (0x40, 0x50) and data[2] in (0xA3, 0xA6)):
+            return ("D2", f"{data[2]:02X}", data[1], can_id)
+        # Preserve historical traces which logged the service without a prefix.
         if data[0] in (0xA3, 0xA6):
             return ("D2", f"{data[0]:02X}", None, can_id)
     if can_id in (0x726, 0x18DA50F1):
