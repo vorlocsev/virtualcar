@@ -850,6 +850,33 @@ int main(){
    g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;g_ecu[1].req=0x726;g_ecu[1].resp=0x72E;
    REQUIRE(PassThruDisconnect(lc)==ERR_OK);
   }
+  /* F12: same PID and request serial after a DLL reload still gets a distinct
+     session ID, so appended JSONL records cannot alias old request IDs. */
+  {
+   static const U32 ticks[]={1,2,17,100,1000,60000,0x7FFFFFFFu,0xFFFFFFFFu};
+   U64 seen[8],rid0,rid;U32 z;char *capture;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc2)==ERR_OK);
+   ch=channel(lc2);
+   start=backend_lines+backend_len;
+   g_host_pid=0xAABBCCDDu;
+   for(z=0;z<8;z++){
+    g_backend_session=backend_session_id(g_host_pid,ticks[z],0x123456789ABCDEF0ull);
+    g_backend_serial=0;rid0=next_backend_request();
+    if(z==0)rid=rid0;else REQUIRE(rid0==rid);
+    seen[z]=g_backend_session;
+    backend_event(ch,rid0,"session_probe","UNKNOWN","none","unknown");
+    REQUIRE(strstr(backend_lines,"\"session_id\":\"")!=NULL);
+   }
+   for(z=0;z<8;z++){U32 k;for(k=z+1;k<8;k++)REQUIRE(seen[z]!=seen[k]);}
+   capture=(char*)start;
+   for(z=0;z<8;z++){
+    char marker[48];
+    snprintf(marker,sizeof(marker),"\"session_id\":\"%016llx\"",(unsigned long long)seen[z]);
+    REQUIRE(strstr(capture,marker)!=NULL);
+   }
+   g_backend_session=backend_session_id(g_host_pid,GetTickCount(),0x123456789ABCDEF1ull);
+   REQUIRE(PassThruDisconnect(lc2)==ERR_OK);
+  }
  }
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */

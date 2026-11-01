@@ -120,6 +120,7 @@ static char g_log_path[512];
 static char g_backend_path[512];
 static U32 g_backend_enabled=0;
 static U32 g_backend_serial=0;
+static U64 g_backend_session=0;
 static char g_host_name[48]="unknown.exe";
 static U32 g_host_pid;
 static char g_vin[18]="YV1CZ0002A0000001";
@@ -189,6 +190,18 @@ static U64 now_us(void){
     if(QueryPerformanceFrequency(&freq) && freq>0 && QueryPerformanceCounter(&count) && count>=0)
         return (U64)((double)count*(1000000.0/(double)freq));
     return (U64)GetTickCount()*1000ull;
+}
+static U64 backend_session_id(U32 pid,U32 tick,U64 counter){
+    U64 x=counter^(((U64)pid<<32)|tick)^0x9E3779B97F4A7C15ull;
+    x^=x>>30;x*=0xBF58476D1CE4E5B9ull;x^=x>>27;
+    x*=0x94D049BB133111EBull;x^=x>>31;
+    return x?x:1u;
+}
+static void append_hex64(char *out,U32 cap,U64 value){
+    static const char digits[]="0123456789abcdef";U32 i,n=0;
+    while(n<cap&&out[n])n++;
+    for(i=0;i<16&&n+1<cap;i++){U32 shift=(15u-i)*4u;out[n++]=digits[(value>>shift)&15u];}
+    if(n<cap)out[n]=0;
 }
 static U32 str_len(const char *s) { U32 i=0;if(!s)return 0;while(s[i] && i<4096)i++;return i; }
 static void bytes_copy(void *out,const void *src,U32 n) {U8 *d=(U8*)out;const U8 *s=(const U8*)src;U32 i;for(i=0;i<n;i++)d[i]=s[i];}
@@ -268,6 +281,7 @@ static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *
     if(!QueryPerformanceCounter(&counter)||!QueryPerformanceFrequency(&freq)||freq<=0)return;
     str_copy(line,"{\"format\":\"virtualcar-backend-v1\",\"kind\":\"",sizeof(line));
     str_append(line,kind,sizeof(line));
+    str_append(line,"\",\"session_id\":\"",sizeof(line));append_hex64(line,sizeof(line),g_backend_session);
     str_append(line,"\",\"request_id\":",sizeof(line));append_dec64(line,sizeof(line),rid);
     str_append(line,",\"tick\":",sizeof(line));append_dec64(line,sizeof(line),counter>0?(U64)counter:1u);
     str_append(line,",\"freq\":",sizeof(line));append_dec64(line,sizeof(line),(U64)freq);
@@ -483,6 +497,9 @@ static void load_config(void) {
     /* Include the host executable and PID so GUI self-checks and SectorV
        sessions can be distinguished when they share the same log file. */
     g_host_pid=GetCurrentProcessId();
+    {I64 session_counter=0;QueryPerformanceCounter(&session_counter);
+     g_backend_session=backend_session_id(g_host_pid,GetTickCount(),session_counter>0?(U64)session_counter:0u);
+     g_backend_serial=0;}
     n=GetModuleFileNameA(0,v,sizeof(v));
     if(n>0 && n<sizeof(v)){
         U32 start=0,j;
