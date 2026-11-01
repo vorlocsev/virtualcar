@@ -24,15 +24,15 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
-## Текущее состояние (01.11.2026, после интеграции dev50 F02)
+## Текущее состояние (01.11.2026, после интеграции Issue #4 JSONL-аудита)
 
-- **PR #13** `fix/dev50-f02-rx-backpressure → development` **объединён** squash-коммитом `3503234aaf3da6945007750a2f016a2981c5cdfe`. Flow Control CTS не теряет BS-кредит при заполнении 64-кадровой RX-очереди; продолжение восстанавливается при `PassThruReadMsgs`. Объединение сохраняет STmin, `queue_ready_us`, per-request backend-телеметрию и запрет ложного подтверждения запроса.
-- **CI точного HEAD интеграционного PR #13** `b42efcc8dd9814bb3cf503350d1ad1718c8ca672`: [Windows x86 emulator run 41298502127](https://github.com/vorlocsev/virtualcar/actions/runs/41298502127) **success**: C/J2534 регрессии, READ128, B9FB/F106, BS0/BS2, WAIT/OVERFLOW, межканальная изоляция и 5 ms STmin после заполнения FIFO; PE32 DLL/экспорты, Python, Go, x86 GUI.
-- После merge запущены **development workflows** на `3503234`: [emulator run 41298640989](https://github.com/vorlocsev/virtualcar/actions/runs/41298640989) и [proxy run 41298640998](https://github.com/vorlocsev/virtualcar/actions/runs/41298640998). На момент этого обновления обе были **in_progress**, а не объявлены успешными заранее.
-- **PR #11** (F08-F11 backend RX evidence) ранее слит в development; необязательный `[Diagnostics] BackendTelemetryEnabled=1` записывает обезличенные JSONL метаданные. Отдельный стандартный текстовый журнал может содержать CAN/VIN: не отправлять его в GitHub.
-- **PR #12** (функциональный OBD VIN / physical Flow Control) и **PR #15** (proxy) остаются независимыми черновиками. Не объединять их без проверки совместимости и отдельного CI. **PR #2** `development → main` остаётся draft release gate.
-- **Следующий приоритет Issue #4**: реальная обезличенная read-only backend JSONL из VMware для A3/A6/B9F0/B9FB и 11/29-битных маршрутов; затем корреляционный анализ `no_fixture`, `unsupported`, `timeout`, `partial_rx`, `delivered`, `unverified`. Реальный VIN и неизвестные CEM-положительные ответы не создавать.
-- **Не подтверждено** обнаружение XC90 V8 MY2009 в SectorV/VDASH, полноценная идентификация ECU или проверка физического J2534. Никакой Virtual Car release не опубликован по этому PR.
+- **PR #13** (F02 CTS/backpressure) объединён squash-коммитом `3503234aaf3da6945007750a2f016a2981c5cdfe`; исправление сохраняет STmin, терминальную backend-телеметрию и 64-кадровую очередь. Испытания VMware не проводились.
+- **PR #16** `feature/issue4-backend-jsonl-audit → development` объединён squash-коммитом `6d0048818e66408ebec001ed16fbda44747c181c`. Добавлен `emulator/tools/audit_backend_evidence.py`, восемь офлайн-групп тестов и `emulator/README_BACKEND_JSONL_RU.md`.
+- **CI PR #16 на точном HEAD** `5248ddca3e33a3c3d9d64dd6bb0262b469aa10f7`: [Emulator Windows x86 run 41299480086](https://github.com/vorlocsev/virtualcar/actions/runs/41299480086) **success**: C/J2534, READ128/B9FB, Python, Go/vet, PE32 DLL/экспорты и GUI. Post-merge development CI нужно проверять отдельно по фактическому SHA.
+- **BackendTelemetryEnabled=1** сохраняет только обезличенные JSONL события в `%LOCALAPPDATA%\VirtualCar\dev47-backend.jsonl`. Новый аудит группирует их в `delivered/no_fixture/unsupported/partial_rx/timeout/unverified`; `delivered` означает выдачу J2534, не успешное чтение ECU. Текущий backend не генерирует терминальный `read_timeout` и не хранит CAN ID, A3/A6/B9F0/B9FB, DID или формат 11/29-bit: не выдумывать их.
+- Для frame-level проверки в частной VMware остаётся `emulator/tools/audit_j2534_discovery.py`. Исходный текстовый J2534 лог и приватные INI могут содержать VIN, поэтому в GitHub не добавлять их; использовать только безопасный локальный отчёт.
+- **Следующий шаг в Issue #4**: реальная read-only сессия с актуальной DLL в VMware и локальная корреляция J2534 и backend результатов по A3/A6/B9F0/B9FB, 0x726, 0x18DA50F1, CH/baud/11/29-bit. Установить, что именно отсутствует: подтверждённая фикстура, маршрут, фильтр, транспорт либо клиентский парсер. При отсутствии приватной трассы не создавать выдуманные CEM positive replies.
+- **PR #12** (функциональный OBD VIN / physical FC) и **PR #15** (proxy) остаются отдельными draft; интегрировать только с независимыми проверками. **PR #2** `development → main` остаётся draft. Нет подтверждённого обнаружения XC90 V8 MY2009, тестов физического J2534 или опубликованного релиза Virtual Car.
 
 ## 3. Проверенный снимок состояния (31.10.2026)
 
