@@ -100,6 +100,8 @@ IMPORT U32 WINCALL GetCurrentProcessId(void) ALIAS(GetCurrentProcessId);
 IMPORT U32 WINCALL GetModuleFileNameA(PTR mod, char *out, U32 n) ALIAS(GetModuleFileNameA);
 IMPORT U32 WINCALL GetPrivateProfileStringA(const char *section,const char *key,const char *fallback,char *out,U32 size,const char *path) ALIAS(GetPrivateProfileStringA);
 IMPORT U32 WINCALL GetTempPathA(U32 n, char *out) ALIAS(GetTempPathA);
+IMPORT U32 WINCALL GetEnvironmentVariableA(const char *name, char *out, U32 n) ALIAS(GetEnvironmentVariableA);
+IMPORT int WINCALL CreateDirectoryA(const char *name, PTR sec) ALIAS(CreateDirectoryA);
 IMPORT HANDLE WINCALL CreateFileA(const char *path,U32 access,U32 sharing,PTR security,U32 creation,U32 flags,HANDLE templateFile) ALIAS(CreateFileA);
 IMPORT U32 WINCALL SetFilePointer(HANDLE file,U32 low,PTR high,U32 method) ALIAS(SetFilePointer);
 IMPORT int WINCALL WriteFile(HANDLE file,const void *buf,U32 count,U32 *written,PTR overlap) ALIAS(WriteFile);
@@ -115,6 +117,9 @@ static U32 g_filter_counter=1;
 static U32 g_periodic_counter=1;
 static char g_profile_path[512];
 static char g_log_path[512];
+static char g_backend_path[512];
+static U32 g_backend_enabled=0;
+static U32 g_backend_serial=0;
 static char g_host_name[48]="unknown.exe";
 static U32 g_host_pid;
 static char g_vin[18]="YV1CZ0002A0000001";
@@ -153,6 +158,8 @@ typedef struct {
     U32 d2_spacing_ms,d2_response_id,d2_count,d2_pos,d2_generation,d2_frame_number;
     U8 d2_frame[MAX_D2_FRAMES][8];
     PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U32 r,w,count;
+    /* Diagnostic correlation metadata. Never sent to the J2534 client. */
+    U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace,dropped_trace;
     PERIODIC periodic[MAX_PERIODIC];
     U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn; U32 read_timeout_count;
 } CHANNEL;
@@ -223,6 +230,58 @@ static void logline(const char *message,const U8 *data,U32 len) {
     if(f==INVALID_HANDLE)return;
     SetFilePointer(f,0,0,2);WriteFile(f,line,p,&written,0);CloseHandle(f);
 }
+
+/* dev49: optional, metadata-only backend events for the single Virtual Car UI.
+   Only fixed literals are permitted for kind/route/reason/outcome. No CAN
+   payload, VIN, ECU identifiers or profile paths are written to this stream.
+   Calls occur under g_lock; failures must never change J2534 behavior. */
+static void append_dec64(char *out,U32 cap,U64 value){
+    char reversed[24];U32 n=0,i;
+    do{reversed[n++]=(char)('0'+value%10u);value/=10u;}while(value && n<sizeof(reversed));
+    for(i=0;i<n;i++){char digitstr[2]={reversed[n-1-i],0};str_append(out,digitstr,cap);}
+}
+static U64 next_backend_request(void) {
+    U64 value;
+    if(!g_backend_enabled)return 0;
+    ++g_backend_serial;if(!g_backend_serial)++g_backend_serial;
+    value=((U64)g_host_pid<<32)|g_backend_serial;
+    return value?value:1;
+}
+static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *route,
+                          const char *reason,const char *outcome) {
+    char line[640];HANDLE f;U32 written,len;I64 counter=0,freq=0;
+    if(!g_backend_enabled||!g_backend_path[0]||!rid||!c)return;
+    if(!QueryPerformanceCounter(&counter)||!QueryPerformanceFrequency(&freq)||freq<=0)return;
+    str_copy(line,"{\"format\":\"virtualcar-backend-v1\",\"kind\":\"",sizeof(line));
+    str_append(line,kind,sizeof(line));
+    str_append(line,"\",\"request_id\":",sizeof(line));append_dec64(line,sizeof(line),rid);
+    str_append(line,",\"tick\":",sizeof(line));append_dec64(line,sizeof(line),counter>0?(U64)counter:1u);
+    str_append(line,",\"freq\":",sizeof(line));append_dec64(line,sizeof(line),(U64)freq);
+    str_append(line,",\"channel\":",sizeof(line));append_dec64(line,sizeof(line),c->id);
+    str_append(line,",\"protocol\":",sizeof(line));append_dec64(line,sizeof(line),c->protocol);
+    str_append(line,",\"baud\":",sizeof(line));append_dec64(line,sizeof(line),c->baud);
+    str_append(line,",\"route\":\"",sizeof(line));str_append(line,route,sizeof(line));
+    str_append(line,"\",\"reason\":\"",sizeof(line));str_append(line,reason,sizeof(line));
+    str_append(line,"\",\"outcome\":\"",sizeof(line));str_append(line,outcome,sizeof(line));
+    str_append(line,"\"}\n",sizeof(line));len=str_len(line);
+    if(len>=sizeof(line)-1)return;
+    f=CreateFileA(g_backend_path,4u,3u,0,4u,0x80u,0);
+    if(f==INVALID_HANDLE)return;
+    (void)WriteFile(f,line,len,&written,0);(void)CloseHandle(f);
+}
+static void backend_end_if_drained(CHANNEL *c,U64 rid) {
+    U32 j;
+    if(!rid)return;
+    if((c->d2_count && c->d2_trace==rid) ||
+       (c->pending_len && c->pending_trace==rid))return;
+    for(j=0;j<c->count;j++)
+        if(c->queue_trace[(c->r+j)%MAX_QUEUE]==rid)return;
+    if(c->dropped_trace==rid) {
+        backend_event(c,rid,"request_completed","UNKNOWN","filter_reject","dropped");
+        c->dropped_trace=0;
+    } else backend_event(c,rid,"request_completed","UNKNOWN","none","responded");
+}
+
 /* Validates framing only. No assertion about undocumented FB semantics. */
 static int validate_d2_fixture(const D2_PROFILE *d){
     U32 k;U8 base,seq=1;int final=0;
@@ -298,6 +357,20 @@ static void load_config(void) {
     if(n>=sizeof(g_profile_path)-20)n=0;
     while(n && g_profile_path[n-1]!='\\'&&g_profile_path[n-1]!='/')n--;
     g_profile_path[n]=0;str_append(g_profile_path,"virtualcar.ini",sizeof(g_profile_path));
+    /* Explicit opt-in. The GUI can enable [Diagnostics] BackendTelemetryEnabled=1.
+       The log location is stable across sessions but contains no private bytes. */
+    g_backend_enabled=0;g_backend_path[0]=0;
+    GetPrivateProfileStringA("Diagnostics","BackendTelemetryEnabled","0",v,sizeof(v),g_profile_path);
+    if(parse_num(v,0)==1u){
+        char base[400];U32 bn=GetEnvironmentVariableA("LOCALAPPDATA",base,sizeof(base));
+        if(bn>0 && bn<sizeof(base) && bn+32<sizeof(g_backend_path)){
+            str_copy(g_backend_path,base,sizeof(g_backend_path));
+            str_append(g_backend_path,"\\VirtualCar",sizeof(g_backend_path));
+            (void)CreateDirectoryA(g_backend_path,0);
+            str_append(g_backend_path,"\\dev47-backend.jsonl",sizeof(g_backend_path));
+            g_backend_enabled=1;
+        }
+    }
     GetPrivateProfileStringA("Vehicle","VIN","YV1CZ0002A0000001",v,sizeof(v),g_profile_path);
     if(str_len(v)==17)str_copy(g_vin,v,sizeof(g_vin));
     GetPrivateProfileStringA("Vehicle","BatteryMv","12500",v,sizeof(v),g_profile_path);
