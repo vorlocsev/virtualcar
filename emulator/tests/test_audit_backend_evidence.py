@@ -131,7 +131,7 @@ class BackendEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "private.jsonl"
             dest = Path(directory) / "report.json"
-            original = evt("tx_received") + evt("rx_dequeued") + evt(
+            original = evt("tx_received") + evt("rx_queued") + evt("rx_dequeued") + evt(
                 "request_completed", outcome="responded")
             source.write_text(original, encoding="utf-8")
             self.assertEqual(tool.main([str(source), "--output", str(dest)]), 0)
@@ -161,6 +161,7 @@ class BackendEvidenceTests(unittest.TestCase):
     def test_10_p3_11_29bit_and_iso15765(self):
         r = audit(evt("tx_received", rid=1, protocol=5),
                   evt("probe_classified", rid=1, probe="P3_726_F114", protocol=5),
+                  evt("rx_queued", rid=1, protocol=5),
                   evt("rx_dequeued", rid=1, protocol=5),
                   evt("request_completed", rid=1, protocol=5, outcome="responded"),
                   evt("tx_received", rid=2, protocol=6),
@@ -207,6 +208,62 @@ class BackendEvidenceTests(unittest.TestCase):
         self.assertIsNone(r["transactions"][0]["service"])
         self.assertEqual(r["transactions"][0]["id_format"], "unknown")
 
+
+    def test_14_orphan_dequeue_cannot_prove_delivery(self):
+        r = audit(evt("tx_received"), evt("rx_dequeued"),
+                  evt("request_completed", outcome="responded"))
+        self.assertEqual((r["transactions"][0]["status"], r["transactions"][0]["reason"]),
+                         ("unverified", "dequeue_without_queue"))
+
+    def test_15_queued_frame_not_delivered_cannot_prove_delivery(self):
+        r = audit(evt("tx_received"), evt("rx_queued"),
+                  evt("rx_queued"), evt("rx_dequeued"),
+                  evt("request_completed", outcome="responded"))
+        self.assertEqual(r["transactions"][0]["status"], "unverified")
+        self.assertEqual(r["transactions"][0]["reason"], "terminal_without_clean_rx")
+
+    def test_16_duplicate_tx_is_not_two_successful_requests(self):
+        r = audit(evt("tx_received"), evt("tx_received"),
+                  evt("rx_queued"), evt("rx_dequeued"),
+                  evt("request_completed", outcome="responded"))
+        self.assertEqual(r["summary"]["requests"], 1)
+        self.assertEqual(r["transactions"][0]["reason"], "inconsistent_event_lifecycle")
+
+    def test_17_reverse_clock_cannot_prove_delivery_or_duration(self):
+        r = audit(evt("tx_received", tick=2000),
+                  evt("rx_queued", tick=1000),
+                  evt("rx_dequeued", tick=3000),
+                  evt("request_completed", tick=4000, outcome="responded"))
+        self.assertEqual(r["transactions"][0]["reason"], "inconsistent_clock")
+        self.assertIsNone(r["transactions"][0]["elapsed_ms"])
+
+    def test_18_changed_counter_frequency_fails_closed(self):
+        changed = json.loads(evt("rx_queued"))
+        changed["freq"] = 2000000
+        r = audit(evt("tx_received"), json.dumps(changed),
+                  evt("rx_dequeued"), evt("request_completed", outcome="responded"))
+        self.assertEqual(r["transactions"][0]["reason"], "inconsistent_clock")
+
+    def test_19_probe_after_rx_is_not_attributed(self):
+        r = audit(evt("tx_received"), evt("rx_queued"),
+                  evt("probe_classified", probe="D2_40_B9FB"),
+                  evt("rx_dequeued"), evt("request_completed", outcome="responded"))
+        one = r["transactions"][0]
+        self.assertEqual(one["reason"], "inconsistent_event_lifecycle")
+        self.assertIsNone(one["service"])
+        self.assertEqual(one["id_format"], "unknown")
+
+    def test_20_explicit_missing_fixture_with_rx_is_inconsistent(self):
+        r = audit(evt("tx_received"), evt("probe_classified", probe="D2_50_B9F0"),
+                  evt("rx_queued"),
+                  evt("request_completed", outcome="no_response", reason="missing_profile"))
+        self.assertEqual(r["transactions"][0]["reason"], "rx_evidence_with_no_response")
+        self.assertEqual(r["transactions"][0]["status"], "unverified")
+
+    def test_21_drop_during_enqueue_is_not_a_queue_dequeue(self):
+        r = audit(evt("tx_received"), evt("rx_dropped", reason="queue_full"),
+                  evt("request_completed", outcome="dropped", reason="queue_full"))
+        self.assertEqual(r["transactions"][0]["reason"], "aborted_or_dropped_before_rx")
 
 if __name__ == "__main__":
     unittest.main()
