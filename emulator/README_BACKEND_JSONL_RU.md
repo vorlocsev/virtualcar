@@ -54,3 +54,13 @@ python emulator\tools\audit_backend_evidence.py "C:\private\backend.jsonl" --out
 Начиная с этого этапа эмулятор различает известные формы D2 CEM `0x000FFFFE`, target `0x40/0x50`, команды `A3/A6` (префиксы `CB/CF/CA`) и посторонние сообщения. Реальный TX маркируется `route=CEM` и завершением `reason=unimplemented_probe`, `outcome=no_response`; аудитор классифицирует как `unsupported`. Это **отсутствие реализации ответа в виртуальном ECU**, а не утверждение, что реальный Volvo CEM не поддерживает A3/A6. Никаких ответов `E3/E6`, сигналов зажигания, VIN или идентификаторов модулей не создаётся. Прочие неизвестные CAN ID остаются `UNHANDLED/unhandled_request`; B9F0/B9FB/B9FC по-прежнему имеют отдельные read-only фикстуры и статус `no_fixture` при их отсутствии.
 
 Офлайн-проверка: девять C-сценариев маршрутизации и семь Python-сценариев статусов, противоречий и приватности. Реальные проверки SectorV/VDASH в VMware, штатного CEM MY2009 и физического J2534 не выполнены.
+
+# Уточнение конфликтов маршрутов после VMware (Issue #4)
+
+В транзакциях audit v1 дополнительно доступны `observed_routes` и
+`evidence_conflicts` (`route`, `channel`, `protocol`, `baud`). Прежние
+конфликты сохраняют `unverified/inconsistent_route_or_channel`.
+Для получения деталей нужен повторный аудит исходного приватного JSONL;
+старый audit.json не содержит этих событий. Подробности исправления
+и восемь групп проверок: [VMware audit fix](README_VMWARE_AUDIT_FIX_RU.md).
+

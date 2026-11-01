@@ -16,6 +16,8 @@ jobs:
   build:
     timeout-minutes: 25
     runs-on: ubuntu-latest
+    env:
+      VIRTUALCAR_ROUTE_EVIDENCE: /tmp/virtualcar-route-evidence.jsonl
     defaults:
       run:
         working-directory: emulator
@@ -51,3 +53,4 @@ jobs:
             emulator/virtualcar-default.ini
             emulator/virtualcar-p2.ini
             emulator/README_DEV28.md
+

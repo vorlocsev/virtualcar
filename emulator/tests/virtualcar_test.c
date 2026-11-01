@@ -117,6 +117,95 @@ static void fill_untraced_rx(CHANNEL *ch,U32 target){
 static PASSTHRU_MSG frame(U32 proto,U32 id,const U8 *data,U32 len){PASSTHRU_MSG m={0};m.ProtocolID=proto;m.DataSize=len+4;m.Data[0]=(U8)(id>>24);m.Data[1]=(U8)(id>>16);m.Data[2]=(U8)(id>>8);m.Data[3]=(U8)id;if(len)memcpy(m.Data+4,data,len);return m;}
 static PASSTHRU_MSG readmsg(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_OK);REQUIRE(n==1);return m;}
 static void send(U32 cid,PASSTHRU_MSG *m){U32 n=1;REQUIRE(PassThruWriteMsgs(cid,m,&n,10)==ERR_OK);REQUIRE(n==1);}
+/* Synthetic VMware audit regressions: compare actual emitted events, not
+   guesses about the unidentified requests in a redacted user report. */
+static void require_route(const char *start,const char *route,U32 selected){
+ char field[64];const char *line=start;
+ snprintf(field,sizeof(field),"\"route\":\"%s\"",route);
+ REQUIRE(event_count_since(start,"\"kind\":\"route_selected\"")==selected);
+ REQUIRE(event_count_since(start,"\"kind\":\"request_completed\"")==1);
+ while(*line){const char *end=strchr(line,'\n');if(!end)break;
+  if(!field_within_line(line,end,"\"route\":\"UNKNOWN\""))
+   REQUIRE(field_within_line(line,end,field));
+  line=end+1;
+ }
+}
+static void test_vmware_route_evidence(U32 dev){
+ ECU saved_ecu[MAX_ECUS];D2_PROFILE saved_d2[MAX_D2_FIXTURES];
+ U32 saved_count=g_ecu_count,saved_strict=g_p2_strict_routing;
+ U32 hs=0,ls=0,iso=0,k,j;PASSTHRU_MSG m,rx;const char *start;
+ const U8 suppressed[]={0x3E,0x80},sf_suppressed[]={2,0x3E,0x80};
+ const U8 d2[]={0xCB,0x60,0xB9,0xFB,0,0,0,0};
+ const char *fixture_start=backend_lines+backend_len;
+ memcpy(saved_ecu,g_ecu,sizeof(saved_ecu));memcpy(saved_d2,g_d2,sizeof(saved_d2));
+ g_ecu_count=3;g_ecu[2]=g_ecu[0];g_ecu[2].req=0x740;g_ecu[2].resp=0x748;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0x800,500000,&hs)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0x800,125000,&ls)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&iso)==ERR_OK);
+ /* 1: physical suppressed TesterPresent, ECM/CEM/other, both protocols
+    and simultaneous HS/LS channels: one consistent terminal and no RX. */
+ for(k=0;k<3;k++)for(j=0;j<3;j++){
+  U32 cid=j==0?hs:(j==1?ls:iso);U32 count=1;
+  m=frame(j==2?PROTO_ISO15765:PROTO_CAN,g_ecu[k].req,
+          j==2?suppressed:sf_suppressed,j==2?2:3);
+  start=backend_lines+backend_len;send(cid,&m);
+  require_route(start,k==0?"ECM":(k==1?"CEM":"ECU_OTHER"),1);
+  REQUIRE(terminal_for(start,last_tx_request(start),"no_response","no_response")==1);
+  REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+ }
+ /* 2: optional non-CEM D2 target with no configured fixture. */
+ m=frame(PROTO_CAN,0x000FFFFE,d2,8);start=backend_lines+backend_len;send(hs,&m);
+ require_route(start,"ECU_OTHER",1);
+ REQUIRE(terminal_for(start,last_tx_request(start),"missing_profile","no_response")==1);
+ /* 3: optional non-CEM fixture exists on a different bus. */
+ bytes_zero(&g_d2[6],sizeof(g_d2[6]));g_d2[6].target=0x60;g_d2[6].subcommand=0xFB;
+ g_d2[6].baud=500000;start=backend_lines+backend_len;send(ls,&m);
+ require_route(start,"ECU_OTHER",1);
+ REQUIRE(terminal_for(start,last_tx_request(start),"unsupported_bus","no_response")==1);
+ /* 4: exact synthetic non-CEM fixture, including terminal after dequeue. */
+ g_d2[6].frame_count=1;g_d2[6].response_id=0x01000003;
+ {const U8 marker[8]={0xCC,0x60,0x7F,0xB9,0x31,0,0,0};
+  memcpy(g_d2[6].frame[0],marker,8);start=backend_lines+backend_len;send(hs,&m);
+  rx=readmsg(hs);REQUIRE(rx.DataSize==12&&memcmp(rx.Data+4,marker,8)==0);}
+ require_route(start,"ECU_OTHER",1);
+ REQUIRE(terminal_for(start,last_tx_request(start),"none","responded")==1);
+ /* 5: functional suppression/protected services keep one aggregate route. */
+ for(k=0;k<2;k++){
+  const U8 protected_req[2]={0x11,0x81};U32 count=1;
+  m=frame(PROTO_ISO15765,0x7DF,k?protected_req:suppressed,2);
+  start=backend_lines+backend_len;send(iso,&m);require_route(start,"ECU_OTHER",1);
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+ }
+ /* 6: functional short replies still fan out without conflicting routes. */
+ {const U8 tester[2]={0x3E,0};
+  m=frame(PROTO_ISO15765,0x7DF,tester,2);start=backend_lines+backend_len;send(iso,&m);
+  for(k=0;k<g_ecu_count;k++){rx=readmsg(iso);REQUIRE(rx.Data[4]==0x7E&&rx.Data[5]==0);}
+  require_route(start,"ECU_OTHER",1);}
+ /* 7: VMware no_fixture/unsupported outcomes stay silent, with no new CEM. */
+ g_ecu_count=1;g_p2_strict_routing=1;g_d2[0].frame_count=0;g_d2[2].frame_count=0;
+ for(k=0;k<3;k++){
+  U8 probe[8]={0xCB,k==0?0x40:0x50,0xB9,0xFB,0,0,0,0};
+  U32 cid=k==0?ls:hs,count=1;
+  if(k==2){const U8 p3[3]={0x22,0xF1,0x14};m=frame(PROTO_ISO15765,0x726,p3,3);cid=iso;}
+  else m=frame(PROTO_CAN,0x000FFFFE,probe,8);
+  start=backend_lines+backend_len;send(cid,&m);require_route(start,k==2?"UNHANDLED":"CEM",1);
+  REQUIRE(terminal_for(start,last_tx_request(start),k==2?"unhandled_request":"missing_profile","no_response")==1);
+  REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+ }
+ /* 8: opt-out changes neither suppression nor transport behavior. */
+ {U32 before=backend_len,count=1;g_backend_enabled=0;
+  m=frame(PROTO_CAN,0x7E0,sf_suppressed,3);send(hs,&m);
+  REQUIRE(PassThruReadMsgs(hs,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+  REQUIRE(backend_len==before);g_backend_enabled=1;}
+ {const char *path=getenv("VIRTUALCAR_ROUTE_EVIDENCE");
+  if(path){FILE *f=fopen(path,"wb");REQUIRE(f!=0);
+   REQUIRE(fwrite(fixture_start,1,strlen(fixture_start),f)==strlen(fixture_start));REQUIRE(fclose(f)==0);}}
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);REQUIRE(PassThruDisconnect(ls)==ERR_OK);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ memcpy(g_ecu,saved_ecu,sizeof(saved_ecu));memcpy(g_d2,saved_d2,sizeof(saved_d2));
+ g_ecu_count=saved_count;g_p2_strict_routing=saved_strict;
+ puts("PASS: eight VMware route evidence groups (synthetic, no new ECU replies)");
+}
 /* Synthetic RX occupancy for testing ISO-TP backpressure without real CAN. */
 static void fill_lab_rx(CHANNEL *c,U32 amount){
  static const U8 marker[8]={0x46,0x49,0x4C,0x4C,0x54,0x45,0x53,0x54};
@@ -132,6 +221,7 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_vmware_route_evidence(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
@@ -1269,4 +1359,5 @@ int main(){
  REQUIRE(strstr(backend_lines,"\"can_id\"")==NULL);
  puts("PASS: 0.3.6.6 142-byte F106, ECU nodes, recorded bus fixtures, FC140, P3/VDASH, read-only");return 0;
 }
+
 

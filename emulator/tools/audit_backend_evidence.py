@@ -103,7 +103,7 @@ def _new_event(e, session_number, ordinal):
         "baud": e["baud"], "route": "UNKNOWN", "routes": set(),
         "counts": Counter(), "start_tick": None, "end_tick": None,
         "freq": e["freq"], "clock_conflict": False,
-        "context_conflict": False, "terminal": None,
+        "context_conflict": False, "context_fields": set(), "terminal": None,
         "duplicate_terminal": False, "late_events": False,
         "saw_tx": False, "probes": set(),
         "last_tick": None, "sequence_conflict": False,
@@ -138,9 +138,10 @@ def _update(r, e):
     r["counts"][kind] += 1
     if kind == "probe_classified":
         r["probes"].add(e["probe"])
-    if (r["channel"], r["protocol"], r["baud"]) != (
-            e["channel"], e["protocol"], e["baud"]):
-        r["context_conflict"] = True
+    for field in ("channel", "protocol", "baud"):
+        if r[field] != e[field]:
+            r["context_conflict"] = True
+            r["context_fields"].add(field)
     if e["freq"] != r["freq"]:
         r["clock_conflict"] = True
     if kind == "tx_received":
@@ -229,6 +230,10 @@ def _result(r):
     return {
         "session": r["session"], "request": r["ordinal"],
         "route": r["route"] if len(r["routes"]) == 1 else "UNKNOWN",
+        # Allowlisted metadata only; never repair conflicting legacy evidence.
+        "observed_routes": sorted(r["routes"]),
+        "evidence_conflicts": sorted(r["context_fields"] | (
+            {"route"} if len(r["routes"]) > 1 else set())),
         "channel": r["channel"],
         "protocol": {5: "CAN", 6: "ISO15765"}.get(r["protocol"], "other"),
         "baud_bps": r["baud"],
@@ -338,3 +343,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+
