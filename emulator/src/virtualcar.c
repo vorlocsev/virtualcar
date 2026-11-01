@@ -278,8 +278,8 @@ static U64 next_backend_request(void) {
     value=((U64)g_host_pid<<32)|g_backend_serial;
     return value?value:1;
 }
-static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *route,
-                          const char *reason,const char *outcome) {
+static void backend_event_with_probe(const CHANNEL *c,U64 rid,const char *kind,const char *route,
+                          const char *reason,const char *outcome,const char *probe) {
     char line[640];HANDLE f;U32 written,len;I64 counter=0,freq=0;
     if(!g_backend_enabled||!g_backend_path[0]||!rid||!c)return;
     if(!QueryPerformanceCounter(&counter)||!QueryPerformanceFrequency(&freq)||freq<=0)return;
@@ -295,11 +295,69 @@ static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *
     str_append(line,",\"route\":\"",sizeof(line));str_append(line,route,sizeof(line));
     str_append(line,"\",\"reason\":\"",sizeof(line));str_append(line,reason,sizeof(line));
     str_append(line,"\",\"outcome\":\"",sizeof(line));str_append(line,outcome,sizeof(line));
+    if(probe){
+        str_append(line,"\",\"probe\":\"",sizeof(line));
+        str_append(line,probe,sizeof(line));
+    }
     str_append(line,"\"}\n",sizeof(line));len=str_len(line);
     if(len>=sizeof(line)-1)return;
     f=CreateFileA(g_backend_path,4u,3u,0,4u,0x80u,0);
     if(f==INVALID_HANDLE)return;
     (void)WriteFile(f,line,len,&written,0);(void)CloseHandle(f);
+}
+static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *route,
+                          const char *reason,const char *outcome) {
+    backend_event_with_probe(c,rid,kind,route,reason,outcome,0);
+}
+/* The classifier outputs ONLY literals from this allowlist. These tokens are
+   diagnostic request shapes, not evidence of actual ECU capabilities. */
+static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
+    U32 id,n;const U8 *p;
+    static const char *const d2_labels[2][5]={
+        {"D2_40_A3","D2_40_A6","D2_40_B9F0","D2_40_B9FB","D2_40_B9FC"},
+        {"D2_50_A3","D2_50_A6","D2_50_B9F0","D2_50_B9FB","D2_50_B9FC"}};
+    static const char *const p3_labels[2][5]={
+        {"P3_726_F114","P3_726_F1B0","P3_726_F1A3","P3_726_F106","P3_726_F190"},
+        {"P3_29_F114","P3_29_F1B0","P3_29_F1A3","P3_29_F106","P3_29_F190"}};
+    U32 target,which,index;const U8 *uds;U32 size;
+    if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
+    id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
+    p=m->Data+4;n=m->DataSize-4;
+    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && n>=3 &&
+       (p[0]==0xCBu||p[0]==0xCFu||p[0]==0xCAu) &&
+       (p[1]==0x40u||p[1]==0x50u)){
+        target=p[1]==0x40u?0u:1u;
+        if(p[2]==0xA3u)return d2_labels[target][0];
+        if(p[2]==0xA6u)return d2_labels[target][1];
+        if(p[2]!=0xB9u||n<4)return 0;
+        if(p[3]==0xF0u)return d2_labels[target][2];
+        if(p[3]==0xFBu)return d2_labels[target][3];
+        if(p[3]==0xFCu)return d2_labels[target][4];
+        return 0;
+    }
+    if(id!=0x726u && id!=0x18DA50F1u)return 0;
+    if(c->protocol==PROTO_ISO15765){uds=p;size=n;}
+    else if(c->protocol==PROTO_CAN){
+        /* Only a complete single-frame ReadDataByIdentifier request can be
+           classified. Multi-frame TX and Flow Control remain unclassified. */
+        if(n<4 || (p[0]&0xF0u)!=0 || (p[0]&0x0Fu)!=3u)return 0;
+        uds=p+1;size=3;
+    }else return 0;
+    if(size<3 || uds[0]!=0x22u || uds[1]!=0xF1u)return 0;
+    which=id==0x726u?0u:1u;
+    if(uds[2]==0x14u)index=0;
+    else if(uds[2]==0xB0u)index=1;
+    else if(uds[2]==0xA3u)index=2;
+    else if(uds[2]==0x06u)index=3;
+    else if(uds[2]==0x90u)index=4;
+    else return 0;
+    return p3_labels[which][index];
+}
+static void backend_probe_event(const CHANNEL *c,U64 rid,const PASSTHRU_MSG *m){
+    const char *probe;
+    if(!rid || !g_backend_enabled)return;
+    probe=backend_probe_name(c,m);
+    if(probe)backend_event_with_probe(c,rid,"probe_classified","UNKNOWN","none","unknown",probe);
 }
 static const char *backend_abort_cause(U32 cause) {
     if(cause==BACKEND_ABORT_FC_OVERFLOW)return "flow_overflow";
@@ -1173,6 +1231,7 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
              (msgs[i].Data[4]&0xF0u)==0x30u)){
             c->active_trace=next_backend_request();
             backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
+            backend_probe_event(c,c->active_trace,&msgs[i]);
         } else c->active_trace=0;
         process_request(c,&msgs[i]);
         c->active_trace=0;
