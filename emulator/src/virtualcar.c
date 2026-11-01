@@ -149,6 +149,11 @@ static D2_PROFILE g_d2[MAX_D2_FIXTURES];
 
 typedef struct { U32 id,interval_ms; U64 next_us; PASSTHRU_MSG msg; int used; } PERIODIC;
 typedef struct { U32 id,type; U8 mask[4],pattern[4]; } FILTER;
+/* A recorded abort has to survive queued First/Consecutive Frames.
+   At most MAX_QUEUE different aborted requests can have queued frames. */
+#define BACKEND_ABORT_FC_OVERFLOW 1u
+#define BACKEND_ABORT_SUPERSEDED 2u
+typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
     FILTER filters[MAX_FILTERS]; U32 filters_count;
@@ -160,6 +165,7 @@ typedef struct {
     PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U32 r,w,count;
     /* Diagnostic correlation metadata. Never sent to the J2534 client. */
     U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace,dropped_trace;
+    BACKEND_ABORT aborted[MAX_QUEUE];
     PERIODIC periodic[MAX_PERIODIC];
     U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn; U32 read_timeout_count;
 } CHANNEL;
@@ -269,6 +275,11 @@ static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *
     if(f==INVALID_HANDLE)return;
     (void)WriteFile(f,line,len,&written,0);(void)CloseHandle(f);
 }
+static const char *backend_abort_cause(U32 cause) {
+    if(cause==BACKEND_ABORT_FC_OVERFLOW)return "flow_overflow";
+    if(cause==BACKEND_ABORT_SUPERSEDED)return "superseded";
+    return "unknown";
+}
 static void backend_end_if_drained(CHANNEL *c,U64 rid) {
     U32 j;
     if(!rid)return;
@@ -276,10 +287,41 @@ static void backend_end_if_drained(CHANNEL *c,U64 rid) {
        (c->pending_len && c->pending_trace==rid))return;
     for(j=0;j<c->count;j++)
         if(c->queue_trace[(c->r+j)%MAX_QUEUE]==rid)return;
+    /* A delivered FF is not a completed ISO-TP response when CFs were
+       discarded by OVERFLOW or replaced by a newer response. */
+    for(j=0;j<MAX_QUEUE;j++)if(c->aborted[j].rid==rid) {
+        backend_event(c,rid,"request_completed","UNKNOWN",
+                      backend_abort_cause(c->aborted[j].cause),"aborted");
+        c->aborted[j].rid=0;c->aborted[j].cause=0;
+        if(c->dropped_trace==rid)c->dropped_trace=0;
+        return;
+    }
     if(c->dropped_trace==rid) {
         backend_event(c,rid,"request_completed","UNKNOWN","filter_reject","dropped");
         c->dropped_trace=0;
     } else backend_event(c,rid,"request_completed","UNKNOWN","none","responded");
+}
+static void backend_abort_pending(CHANNEL *c,U64 rid,U32 cause) {
+    U32 i;
+    if(!rid)return; /* Opt-out: no telemetry state or file I/O. */
+    backend_event(c,rid,"response_aborted","UNKNOWN",
+                  backend_abort_cause(cause),"unknown");
+    for(i=0;i<MAX_QUEUE;i++)if(c->aborted[i].rid==rid) {
+        backend_end_if_drained(c,rid);return;
+    }
+    for(i=0;i<MAX_QUEUE;i++)if(!c->aborted[i].rid) {
+        c->aborted[i].rid=rid;c->aborted[i].cause=cause;
+        backend_end_if_drained(c,rid);return;
+    }
+    /* Defensive path: never report responded when our evidence table is full.
+       Keep actual J2534 frames unchanged, drop only their attribution. */
+    for(i=0;i<c->count;i++) {
+        U32 slot=(c->r+i)%MAX_QUEUE;
+        if(c->queue_trace[slot]==rid)c->queue_trace[slot]=0;
+    }
+    if(c->dropped_trace==rid)c->dropped_trace=0;
+    backend_event(c,rid,"request_completed","UNKNOWN",
+                  "tracking_limit","unverified");
 }
 
 /* Validates framing only. No assertion about undocumented FB semantics. */
@@ -676,8 +718,10 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
     /* This compact simulator has only one outstanding segmented response per
        channel. Never release stale CFs from an earlier ECU request. */
     if(c->pending_len){
+        U64 previous=c->pending_trace;
         logline("ISO-TP pending transfer superseded by a new ECU response",0,0);
         c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;
+        backend_abort_pending(c,previous,BACKEND_ABORT_SUPERSEDED);
     }
     if(c->protocol==PROTO_ISO15765){
         if(g_iso_rx_start && len>7 && c->count+2<=MAX_QUEUE)
@@ -851,8 +895,11 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                 }
                 if((data[0]&15)==1){logline("ISO-TP FC WAIT received",msg->Data,msg->DataSize);return;}
                 if((data[0]&15)==2){
+                    U64 previous=c->pending_trace;
                     logline("ISO-TP FC OVERFLOW received; pending response discarded",msg->Data,msg->DataSize);
-                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;return;
+                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;
+                    backend_abort_pending(c,previous,BACKEND_ABORT_FC_OVERFLOW);
+                    return;
                 }
                 if((data[0]&15)!=0){logline("ISO-TP FC invalid status",msg->Data,msg->DataSize);return;}
                 logline("ISO-TP FC CTS received; sending bounded CFs",msg->Data,msg->DataSize);
