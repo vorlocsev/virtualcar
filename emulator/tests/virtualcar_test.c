@@ -381,11 +381,78 @@ int main(){
   REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
   free(batch);
  }
+ /* Issue #4: deterministic allowlisted metadata, not synthetic ECU
+    capability. These groups never expose a VIN or raw data in JSONL. */
+ {
+  const U8 p40[]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
+  const U8 p50[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
+  const U8 pfc[]={0xCB,0x40,0xB9,0xFC,0,0,0,0};
+  const U8 pa3[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0};
+  const U8 pa6[]={0xCF,0x50,0xA6,0x1A,0x04,0x01,0,0};
+  const U8 p3sf[]={0x03,0x22,0xF1,0x14,0,0,0,0};
+  const U8 p3iso[]={0x22,0xF1,0xB0};
+  const U8 fcframe[]={0x30,0,0,0,0,0,0,0};
+  const U8 uunknown[]={0x03,0x22,0xF1,0x23,0,0,0,0};
+  const char *label;
+  /* 1: two D2 routes with different vehicle/module-info opcodes. */
+  m=frame(PROTO_CAN,0xFFFFE,p40,8);
+  label=backend_probe_name(channel(cid),&m);
+  REQUIRE(label && strcmp(label,"D2_40_B9FB")==0);
+  m=frame(PROTO_CAN,0xFFFFE,p50,8);
+  label=backend_probe_name(channel(cid),&m);
+  REQUIRE(label && strcmp(label,"D2_50_B9F0")==0);
+  /* 2: B9FC must remain distinct from B9FB. */
+  m=frame(PROTO_CAN,0xFFFFE,pfc,8);
+  label=backend_probe_name(channel(cid),&m);
+  REQUIRE(label && strcmp(label,"D2_40_B9FC")==0);
+  /* 3: A3 and A6 are observed request shapes, never positive replies. */
+  m=frame(PROTO_CAN,0xFFFFE,pa3,8);
+  label=backend_probe_name(channel(cid),&m);
+  REQUIRE(label && strcmp(label,"D2_50_A3")==0);
+  m=frame(PROTO_CAN,0xFFFFE,pa6,8);
+  label=backend_probe_name(channel(cid),&m);
+  REQUIRE(label && strcmp(label,"D2_50_A6")==0);
+  /* 4: both P3 addressing types are independently categorized. */
+  m=frame(PROTO_CAN,0x726,p3sf,8);
+  label=backend_probe_name(channel(cid),&m);
+  REQUIRE(label && strcmp(label,"P3_726_F114")==0);
+  m=frame(PROTO_CAN,0x18DA50F1,p3sf,8);
+  label=backend_probe_name(channel(cid),&m);
+  REQUIRE(label && strcmp(label,"P3_29_F114")==0);
+  /* 5: ISO15765 provides UDS without CAN Single Frame PCI. */
+  {
+   U32 iso=0;
+   REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&iso)==ERR_OK);
+   m=frame(PROTO_ISO15765,0x726,p3iso,3);
+   label=backend_probe_name(channel(iso),&m);
+   REQUIRE(label && strcmp(label,"P3_726_F1B0")==0);
+   REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+  }
+  /* 6: flow control, unsupported DID and arbitrary CAN are never tagged. */
+  m=frame(PROTO_CAN,0x726,fcframe,8);
+  REQUIRE(backend_probe_name(channel(cid),&m)==0);
+  m=frame(PROTO_CAN,0x726,uunknown,8);
+  REQUIRE(backend_probe_name(channel(cid),&m)==0);
+  m=frame(PROTO_CAN,0x555,pa3,8);
+  REQUIRE(backend_probe_name(channel(cid),&m)==0);
+  /* 7: malformed short P3/ D2 shapes cannot earn a known service tag. */
+  m=frame(PROTO_CAN,0x726,p3sf,2);
+  REQUIRE(backend_probe_name(channel(cid),&m)==0);
+  m=frame(PROTO_CAN,0xFFFFE,p40,2);
+  REQUIRE(backend_probe_name(channel(cid),&m)==0);
+  /* 8: real request produces one metadata-only probe event, no ECU reply. */
+  const char *begin=backend_lines+backend_len;
+  m=frame(PROTO_CAN,0xFFFFE,pa3,8);send(cid,&m);
+  REQUIRE(event_count_since(begin,"\"kind\":\"probe_classified\"")==1);
+  REQUIRE(strstr(begin,"\"probe\":\"D2_50_A3\"")!=NULL);
+  REQUIRE(strstr(begin,"\"data\"")==NULL);
+  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ }
  /* Observer classifies A3, but never fabricates a positive E3 reply. */
  const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
  m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
  REQUIRE(g_vehicle_bridge.inspected_tx>0);
- REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==1);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  /* P2/P1 29-bit D2 B9 FB read-only replay fixture. */
  REQUIRE(g_d2[0].frame_count==1);
@@ -398,7 +465,7 @@ int main(){
  /* Published D2 B9 F0 example uses response ID 0x01000003, three frames.
     Frames are paced; they must NOT arrive all at once. */
  REQUIRE(g_d2[3].frame_count==3);
- REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==1);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
  REQUIRE(g_vehicle_bridge.vehicle.b9fb_seen>=1);
  const U8 d2f0[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
  m=frame(PROTO_CAN,0x000FFFFE,d2f0,8);send(cid,&m);r=readmsg(cid);

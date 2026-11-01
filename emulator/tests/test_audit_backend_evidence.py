@@ -142,6 +142,71 @@ class BackendEvidenceTests(unittest.TestCase):
             self.assertEqual(tool.main([str(source), "--output", str(source)]), 2)
             self.assertEqual(source.read_text(encoding="utf-8"), original)
 
+    def test_09_known_d2_probes_are_specific_and_privacy_safe(self):
+        r = audit(evt("tx_received", rid=1),
+                  evt("probe_classified", rid=1, probe="D2_40_B9FB"),
+                  evt("request_completed", rid=1, route="CEM", reason="missing_profile",
+                      outcome="no_response"),
+                  evt("tx_received", rid=2),
+                  evt("probe_classified", rid=2, probe="D2_50_B9F0"),
+                  evt("request_completed", rid=2, route="CEM", reason="missing_profile",
+                      outcome="no_response"))
+        a, b = r["transactions"]
+        self.assertTrue(r["probe_detail_available"])
+        self.assertEqual((a["service"], a["target"], a["can_id"], a["id_format"]),
+                         ("B9FB", "0x40", "0x000FFFFE", "29bit"))
+        self.assertEqual((b["service"], b["target"]), ("B9F0", "0x50"))
+        self.assertEqual((a["status"], b["status"]), ("no_fixture", "no_fixture"))
+
+    def test_10_p3_11_29bit_and_iso15765(self):
+        r = audit(evt("tx_received", rid=1, protocol=5),
+                  evt("probe_classified", rid=1, probe="P3_726_F114", protocol=5),
+                  evt("rx_dequeued", rid=1, protocol=5),
+                  evt("request_completed", rid=1, protocol=5, outcome="responded"),
+                  evt("tx_received", rid=2, protocol=6),
+                  evt("probe_classified", rid=2, probe="P3_29_F1B0", protocol=6),
+                  evt("request_completed", rid=2, protocol=6, outcome="no_response",
+                      reason="unhandled_request"))
+        a, b = r["transactions"]
+        self.assertEqual((a["service"], a["can_id"], a["id_format"]),
+                         ("22F114", "0x726", "11bit"))
+        self.assertEqual((b["service"], b["can_id"], b["id_format"], b["protocol"]),
+                         ("22F1B0", "0x18DA50F1", "29bit", "ISO15765"))
+        self.assertEqual((a["status"], b["status"]), ("delivered", "unsupported"))
+
+    def test_11_conflicting_probe_tags_fail_closed(self):
+        r = audit(evt("tx_received"),
+                  evt("probe_classified", probe="D2_40_B9FB"),
+                  evt("probe_classified", probe="D2_50_B9F0"),
+                  evt("rx_dequeued"),
+                  evt("request_completed", outcome="responded"))
+        one = r["transactions"][0]
+        self.assertEqual((one["status"], one["reason"]),
+                         ("unverified", "conflicting_probe_evidence"))
+        self.assertEqual((one["service"], one["can_id"], one["id_format"]),
+                         (None, None, "unknown"))
+
+    def test_12_invalid_probe_and_raw_identifiers_never_leak(self):
+        fake_vin = "YV1CZ0002A0000001"
+        r = audit(evt("tx_received", private_vin=fake_vin),
+                  evt("probe_classified", probe=fake_vin),
+                  evt("probe_classified", probe={"private": fake_vin}),
+                  evt("probe_classified", probe="D2_50_A6", payload=fake_vin),
+                  evt("request_completed", outcome="no_response", reason="unhandled_request"))
+        raw = json.dumps(r)
+        self.assertNotIn(fake_vin, raw)
+        self.assertEqual(r["summary"]["invalid_lines"], 2)
+        self.assertEqual(r["transactions"][0]["service"], "A6")
+
+    def test_13_legacy_jsonl_does_not_acquire_invented_probe(self):
+        r = audit(evt("tx_received"),
+                  evt("route_selected", route="CEM"),
+                  evt("rx_dequeued"),
+                  evt("request_completed", outcome="responded"))
+        self.assertFalse(r["probe_detail_available"])
+        self.assertIsNone(r["transactions"][0]["service"])
+        self.assertEqual(r["transactions"][0]["id_format"], "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

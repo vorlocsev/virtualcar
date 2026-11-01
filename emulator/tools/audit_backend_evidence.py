@@ -18,7 +18,7 @@ MAX_LINE = 4096
 MAX_EVENTS = 200000
 MAX_REQUESTS = 20000
 KINDS = frozenset((
-    "tx_received", "route_selected", "response_generated", "filter_pass",
+    "tx_received", "probe_classified", "route_selected", "response_generated", "filter_pass",
     "filter_drop", "rx_queued", "rx_dequeued", "rx_dropped",
     "response_aborted", "tracking_overflow", "request_completed",
 ))
@@ -32,6 +32,21 @@ REASONS = frozenset((
     "channel_disconnect", "device_close", "d2_superseded", "read_timeout",
 ))
 SESSION = re.compile(r"[0-9a-fA-F]{16}\Z")
+# Only compile-time identifiers from the DLL are accepted. They reveal request
+# shape, not VIN, payload content or the presence of a physical ECU.
+PROBES = {}
+for _target in ("40", "50"):
+    for _op in ("A3", "A6", "B9F0", "B9FB", "B9FC"):
+        PROBES[f"D2_{_target}_{_op}"] = {
+            "service": _op, "can_id": "0x000FFFFE",
+            "id_format": "29bit", "target": f"0x{_target}"}
+for _kind, _id, _bits in (("726", "0x726", "11bit"),
+                         ("29", "0x18DA50F1", "29bit")):
+    for _did in ("F114", "F1B0", "F1A3", "F106", "F190"):
+        PROBES[f"P3_{_kind}_{_did}"] = {
+            "service": f"22{_did}", "can_id": _id,
+            "id_format": _bits, "target": None}
+
 
 
 def _uint(value, maximum):
@@ -69,10 +84,16 @@ def _decode(line):
         return None
     if not _uint(e.get("freq"), 1000000000000):
         return None
+    if e["kind"] == "probe_classified":
+        if type(e.get("probe")) is not str or e["probe"] not in PROBES:
+            return None
     # Explicit allowlist. Unknown keys, including raw CAN or VIN, are discarded.
-    return {k: e[k] for k in ("session_id", "request_id", "kind", "route",
+    out = {k: e[k] for k in ("session_id", "request_id", "kind", "route",
                               "reason", "outcome", "channel", "protocol",
                               "baud", "tick", "freq")}
+    if e["kind"] == "probe_classified":
+        out["probe"] = e["probe"]
+    return out
 
 
 def _new_event(e, session_number, ordinal):
@@ -84,13 +105,15 @@ def _new_event(e, session_number, ordinal):
         "freq": e["freq"], "clock_conflict": False,
         "context_conflict": False, "terminal": None,
         "duplicate_terminal": False, "late_events": False,
-        "saw_tx": False,
+        "saw_tx": False, "probes": set(),
     }
 
 
 def _update(r, e):
     kind = e["kind"]
     r["counts"][kind] += 1
+    if kind == "probe_classified":
+        r["probes"].add(e["probe"])
     if (r["channel"], r["protocol"], r["baud"]) != (
             e["channel"], e["protocol"], e["baud"]):
         r["context_conflict"] = True
@@ -119,6 +142,8 @@ def _classify(r):
     queued = c["rx_queued"]
     lost = c["rx_dropped"] + c["filter_drop"]
     terminal = r["terminal"]
+    if len(r["probes"]) > 1:
+        return "unverified", "conflicting_probe_evidence"
     if r["context_conflict"] or len(r["routes"]) > 1:
         return "unverified", "inconsistent_route_or_channel"
     if r["duplicate_terminal"] or r["late_events"]:
@@ -158,6 +183,7 @@ def _classify(r):
 def _result(r):
     status, reason = _classify(r)
     c = r["counts"]
+    details = PROBES[next(iter(r["probes"]))] if len(r["probes"]) == 1 else None
     duration = None
     if (not r["clock_conflict"] and r["start_tick"] is not None
             and r["end_tick"] is not None and r["end_tick"] >= r["start_tick"]):
@@ -167,8 +193,12 @@ def _result(r):
         "route": r["route"] if len(r["routes"]) == 1 else "UNKNOWN",
         "channel": r["channel"],
         "protocol": {5: "CAN", 6: "ISO15765"}.get(r["protocol"], "other"),
-        "baud_bps": r["baud"], "can_id": None, "service": None,
-        "id_format": "unknown", "elapsed_ms": duration,
+        "baud_bps": r["baud"],
+        "can_id": details["can_id"] if details else None,
+        "service": details["service"] if details else None,
+        "target": details["target"] if details else None,
+        "id_format": details["id_format"] if details else "unknown",
+        "elapsed_ms": duration,
         "rx_queued": c["rx_queued"], "rx_dequeued": c["rx_dequeued"],
         "rx_dropped": c["rx_dropped"], "filter_dropped": c["filter_drop"],
         "terminal_seen": r["terminal"] is not None,
@@ -201,9 +231,9 @@ def audit(lines):
         "format": OUTPUT_FORMAT, "contains_payload_data": False,
         "client_acceptance_verified": False,
         "identity_verified": False,
-        "probe_detail_available": False,
+        "probe_detail_available": any(bool(r["probes"]) for r in transactions.values()),
         "limitations": [
-            "Metadata-only backend events do not identify A3/A6/B9F0/B9FB, CAN ID or 11/29-bit format",
+            "Only exact allowlisted probe_classified shapes identify a request; legacy logs remain unknown",
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
         ],
