@@ -1,0 +1,61 @@
+{
+  "reviewed_date": "2026-11-01",
+  "scope": "downloaded_public_sources_only",
+  "raw_sources_committed": false,
+  "files": [
+    {
+      "name": "gauge_readme",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/README.md",
+      "bytes": 5160,
+      "sha256": "b500bec7fff2c25bc5cbfe74c367e68696de9115013f66b6e9b0191663bc6c8c"
+    },
+    {
+      "name": "gauge_ignition",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/Sniffing/Logs/High-Low%20Speed%20Ignition%20Off%20On%20Off.csv",
+      "bytes": 5427524,
+      "sha256": "7efd045a5e78a5304a0c0ebb5e319ab5c5890d5e1ac16b3775228a81cc81b77c"
+    },
+    {
+      "name": "gauge_startup",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/Sniffing/Logs/Low%20Speed%20Startup%20and%20Idle.csv",
+      "bytes": 4266251,
+      "sha256": "62a9f9a107bb6629393855b32eb99e8e13993600db1a696f1e4bfc0ffc214b4b"
+    },
+    {
+      "name": "gauge_test",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/Sniffing/Logs/Test%20log.csv",
+      "bytes": 19323,
+      "sha256": "afb8e042520247915bb91e5fe7ec14eb7aa6fc8d62e7e83d825eb90ce3aa1102"
+    },
+    {
+      "name": "sardine_readme",
+      "url": "https://raw.githubusercontent.com/hackingvolvo/SardineCAN-Win32/b87e3974f8b93f0b8268b50c0af15c558dcc9b73/README.txt",
+      "bytes": 891,
+      "sha256": "c3a8ecf553a4250bf35089daf5963c0397e6170bebe403b20791cd3c8cdbe386"
+    },
+    {
+      "name": "success_blog",
+      "url": "https://hackingvolvo.blogspot.com/2012/12/success.html",
+      "bytes": 92666,
+      "sha256": "4618e87b8625bd52491ab62f9500636ffd5eebcb7c3dab210f418fe83299dca7"
+    },
+    {
+      "name": "sardine_blog",
+      "url": "https://hackingvolvo.blogspot.com/2012/12/sardine-can-version-02-alpha-now.html",
+      "bytes": 70120,
+      "sha256": "c228b2a2e6934ae66f7de3c5591977385c0881c1f93724308bc539ba99dcaf76"
+    },
+    {
+      "name": "s60_ignition",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/09-06-2025/09-06-2025%2019-38%20---%20Key%20in%2C%20ignition%20cycle%2C%20car%20in%20standby%20%28not%20until%20shutdown%29.csv",
+      "bytes": 1047919,
+      "sha256": "49c51240690a89c3024d1809a1aae3b1151b9f7b6c3254fb07dcbb8a473f4a78"
+    },
+    {
+      "name": "v70_ignition",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2003%20Volvo%20V70%20II%20D5244T%20M56/HSCAN_accthenignthenoff.csv",
+      "bytes": 1893612,
+      "sha256": "2ed34d81a8966079738637eec47d29a8b6a8a33dc7220a0a2841756bbb2904e1"
+    }
+  ]
+}
