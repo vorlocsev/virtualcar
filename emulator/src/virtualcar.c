@@ -154,7 +154,11 @@ typedef struct {
     U8 d2_frame[MAX_D2_FRAMES][8];
     PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U32 r,w,count;
     PERIODIC periodic[MAX_PERIODIC];
-    U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn; U32 read_timeout_count;
+    U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn;
+    /* CTS grant is per-channel and survives RX FIFO backpressure.
+       pending_cf_credit == 0 means unlimited only when pending_cf_active. */
+    U32 pending_cf_active,pending_cf_credit;
+    U32 read_timeout_count;
 } CHANNEL;
 static CHANNEL g_ch[MAX_CHANNELS];
 /* Read-only vehicle-state observer, serialized by g_lock. */
@@ -568,19 +572,33 @@ static void maybe_passive_frame(CHANNEL *c){
     enqueue(c,g_passive_id,g_passive_payload,8);
     logline("Passive CAN lab traffic tick (synthetic VCARLAB, not vehicle ignition)",0,0);
 }
-/* An FC applies only to the ECU that started the transfer.
-   Block Size 0 means all remaining CFs; nonzero BS limits this burst.
-   This lab implementation still does not model STmin delays. */
-static void send_can_cf(CHANNEL *c,U32 block_size) {
-    U8 f[8];U32 i,sz,frames=0;
-    while(c->pending_pos<c->pending_len && (block_size==0 || frames<block_size)){
-        if(c->count>=MAX_QUEUE)break; /* Preserve pending bytes until queue has space. */
+/* A Flow Control CTS grants a bounded burst. A full J2534 RX FIFO must
+   NOT consume the remaining grant: resume the same grant as the application
+   dequeues frames. BS=0 grants all remaining CFs, BS>0 requires another FC
+   after exactly BS frames. STmin timing remains outside this lab model. */
+static void pump_can_cf(CHANNEL *c) {
+    U8 f[8];U32 i,sz;
+    if(c->protocol!=PROTO_CAN || !c->pending_cf_active || !c->pending_len)return;
+    while(c->pending_cf_active && c->pending_pos<c->pending_len && c->count<MAX_QUEUE){
         sz=c->pending_len-c->pending_pos;if(sz>7)sz=7;
         bytes_zero(f,8);f[0]=(U8)(0x20 | (c->pending_sn&15));
         for(i=0;i<sz;i++)f[i+1]=c->pending[c->pending_pos+i];
-        enqueue(c,c->pending_id,f,8);c->pending_pos+=sz;c->pending_sn++;frames++;
+        enqueue(c,c->pending_id,f,8);
+        c->pending_pos+=sz;c->pending_sn++;
+        if(c->pending_cf_credit){
+            --c->pending_cf_credit;
+            if(!c->pending_cf_credit)c->pending_cf_active=0;
+        }
     }
-    if(c->pending_pos==c->pending_len){c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;}
+    if(c->pending_pos==c->pending_len){
+        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;
+        c->pending_cf_active=0;c->pending_cf_credit=0;
+    }
+}
+static void send_can_cf(CHANNEL *c,U32 block_size) {
+    c->pending_cf_active=1;
+    c->pending_cf_credit=block_size;
+    pump_can_cf(c);
 }
 static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
     U8 f[8];U32 i;
@@ -589,6 +607,7 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
     if(c->pending_len){
         logline("ISO-TP pending transfer superseded by a new ECU response",0,0);
         c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;
+        c->pending_cf_active=0;c->pending_cf_credit=0;
     }
     if(c->protocol==PROTO_ISO15765){
         if(g_iso_rx_start && len>7 && c->count+2<=MAX_QUEUE)
@@ -741,7 +760,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                 if((data[0]&15)==1){logline("ISO-TP FC WAIT received",msg->Data,msg->DataSize);return;}
                 if((data[0]&15)==2){
                     logline("ISO-TP FC OVERFLOW received; pending response discarded",msg->Data,msg->DataSize);
-                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;return;
+                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;
+                    c->pending_cf_active=0;c->pending_cf_credit=0;return;
                 }
                 if((data[0]&15)!=0){logline("ISO-TP FC invalid status",msg->Data,msg->DataSize);return;}
                 logline("ISO-TP FC CTS received; sending bounded CFs",msg->Data,msg->DataSize);
@@ -852,6 +872,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         pump_recorded_trace(c);
         pump_periodic(c);
         pump_d2(c);
+        pump_can_cf(c);
         while(c->count&&actual<want){
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
             {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
@@ -878,6 +899,9 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
                 logline("PassThruReadMsgs ISO15765 protocol/status/size/extra-index/timestamp-us (BE)",meta,20);
             }
             c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
+            /* The dequeued frame frees one slot: resume an already granted
+               CF burst, never manufacture a new Flow Control grant. */
+            pump_can_cf(c);
         }
         unlock_state();
         if(actual){
