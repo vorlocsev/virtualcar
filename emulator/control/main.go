@@ -1036,6 +1036,9 @@ func updateStatus() {
 	label := "Профиль: отсутствует"
 	if data, err := os.ReadFile(filepath.Join(baseDir, "virtualcar.ini")); err == nil {
 		label = "Профиль: " + simple.ProfileLabel(data)
+        if enabled, err := backendTelemetrySetting(data); err == nil && enabled {
+            label += " · ECU telemetry ON"
+        }
 	}
 	if profileWnd != 0 {
 		setText.Call(profileWnd, uintptr(unsafe.Pointer(ptr(label))))
@@ -1077,7 +1080,7 @@ func toggleAdvanced() {
 	windowHeight := uintptr(457)
 	if advancedOpen {
 		visibility = SW_SHOW
-		windowHeight = 640
+		windowHeight = 675
 	}
 	for _, h := range advancedButtons {
 		showWindow.Call(h, visibility)
@@ -1145,11 +1148,13 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			mk("BUTTON", "Открыть журнал", 307, 490, 267, 35, 104),
 			mk("BUTTON", "Редактировать INI", 22, 532, 267, 35, 103),
 			mk("BUTTON", "Удалить адаптер", 307, 532, 267, 35, 105),
+            mk("BUTTON", "Вкл/выкл телеметрию ECU", 22, 574, 267, 35, 121),
+            mk("BUTTON", "Журнал ECU (JSONL)", 307, 574, 267, 35, 122),
 		}
 		for _, h := range advancedButtons {
 			showWindow.Call(h, SW_HIDE)
 		}
-		actionButtons = append(actionButtons, advancedButtons[0], advancedButtons[1], advancedButtons[2], advancedButtons[3], advancedButtons[4], advancedButtons[7])
+		actionButtons = append(actionButtons, advancedButtons[0], advancedButtons[1], advancedButtons[2], advancedButtons[3], advancedButtons[4], advancedButtons[7], advancedButtons[8], advancedButtons[9])
 		updateStatus()
 		return 0
 	case WM_COMMAND:
@@ -1169,8 +1174,33 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			if err := execNotepad(filepath.Join(baseDir, "virtualcar.ini")); err != nil {
 				alert("Ошибка", err.Error())
 			}
-		case 104:
-			logFile := filepath.Join(os.TempDir(), "SectorVVirtualCar.log")
+		case 121:
+            if activeAction != 0 { break }
+            enabled, err := toggleBackendTelemetry(filepath.Join(baseDir, "virtualcar.ini"))
+            if err != nil {
+                alert("Настройки телеметрии", err.Error())
+            } else {
+                updateStatus()
+                if enabled {
+                    alert("Телеметрия ECU включена", "Обезличенный журнал будет записан по адресу %LOCALAPPDATA%\\VirtualCar\\dev47-backend.jsonl после полного перезапуска диагностического клиента. Ответы ECU и реестр J2534 не изменены.")
+                } else {
+                    alert("Телеметрия ECU выключена", "Запись внутренних событий отключена. Перезапустите диагностический клиент, чтобы DLL перечитала INI.")
+                }
+            }
+        case 122:
+            if activeAction != 0 { break }
+            base := os.Getenv("LOCALAPPDATA")
+            if base == "" { alert("Журнал ECU", "LOCALAPPDATA не задана"); break }
+            name := filepath.Join(base, "VirtualCar", "dev47-backend.jsonl")
+            if _, err := os.Stat(name); os.IsNotExist(err) {
+                alert("Журнал ECU", "Пока нет backend-событий. Включите телеметрию и заново запустите диагностическую сессию.")
+            } else if err != nil {
+                alert("Ошибка", err.Error())
+            } else if err := execNotepad(name); err != nil {
+                alert("Ошибка", err.Error())
+            }
+        case 104:
+            logFile := filepath.Join(os.TempDir(), "SectorVVirtualCar.log")
 			if _, err := os.Stat(logFile); os.IsNotExist(err) {
 				alert("Журнал", "Журнал пока не создан. Сначала начните тест и откройте SectorV.")
 			} else if err != nil {
