@@ -4,16 +4,64 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static U32 tick=0;
+static U32 tick=0;static I64 qpc_offset_us=0;
+static char backend_lines[800000];static U32 backend_len=0;
+static U32 event_count_since(const char *start,const char *pattern){
+ U32 count=0;const char *p=start;
+ while((p=strstr(p,pattern))!=0){++count;p+=strlen(pattern);}
+ return count;
+}
+static U32 event_count(const char *pattern){return event_count_since(backend_lines,pattern);}
+static int field_within_line(const char *line,const char *end,const char *field){
+ const char *p=strstr(line,field);return p && p<end;
+}
+static U32 terminal_for(const char *start,U64 rid,const char *cause,const char *outcome){
+ char request[80],reason[96],result[96];U32 count=0;
+ const char *line=start;
+ snprintf(request,sizeof(request),"\"request_id\":%llu,",(unsigned long long)rid);
+ snprintf(reason,sizeof(reason),"\"reason\":\"%s\"",cause);
+ snprintf(result,sizeof(result),"\"outcome\":\"%s\"",outcome);
+ while(*line){
+  const char *end=strchr(line,'\n');
+  if(!end)break;
+  if(field_within_line(line,end,"\"kind\":\"request_completed\"") &&
+     field_within_line(line,end,request) &&
+     field_within_line(line,end,reason) &&
+     field_within_line(line,end,result))++count;
+  line=end+1;
+ }
+ return count;
+}
+static U32 terminal_count_for(const char *start,U64 rid){
+ char request[80];U32 count=0;const char *line=start;
+ snprintf(request,sizeof(request),"\"request_id\":%llu,",(unsigned long long)rid);
+ while(*line){const char *end=strchr(line,'\n');if(!end)break;
+  if(field_within_line(line,end,"\"kind\":\"request_completed\"")&&field_within_line(line,end,request))count++;
+  line=end+1;
+ }
+ return count;
+}
+static U64 last_tx_request(const char *start){
+ const char *line=start,*found=0;
+ while(*line){const char *end=strchr(line,'\n');if(!end)break;
+  if(field_within_line(line,end,"\"kind\":\"tx_received\""))found=line;
+  line=end+1;
+ }
+ if(found){const char *p=strstr(found,"\"request_id\":");if(p){U64 value=0;p+=13;while(*p>='0'&&*p<='9'){value=value*10u+(U64)(*p-'0');p++;}return value;}}
+ return 0;
+}
+
 void Sleep(U32 ms){tick+=ms;}
 U32 GetTickCount(void){return tick;}
 int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
-int QueryPerformanceCounter(I64 *v){*v=(I64)tick*1000;return 1;}
+int QueryPerformanceCounter(I64 *v){*v=(I64)tick*1000+qpc_offset_us;return 1;}
+static void advance_test_us(U32 us){tick+=us/1000u;qpc_offset_us+=(I64)(us%1000u);if(qpc_offset_us>=1000){tick+=(U32)(qpc_offset_us/1000);qpc_offset_us%=1000;}}
 U32 GetCurrentProcessId(void){return 0xAABBCCDD;}
 U32 GetModuleFileNameA(PTR mod,char*out,U32 n){(void)mod;strncpy(out,"C:\\SectorV\\VirtualCarJ2534.dll",n);return (U32)strlen(out);}
 U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32 n,const char*path){
  (void)path;
  /* Only host-test fixture: the distributed INI keeps count=0 by default. */
+ if(strcmp(s,"Diagnostics")==0 && strcmp(k,"BackendTelemetryEnabled")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrame0")==0)d="CC 40 7F B9 31 00 00 00";
  if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"FrameCount")==0)d="3";
@@ -34,13 +82,38 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
  snprintf(out,n,"%s",d);return (U32)strlen(out);
 }
 U32 GetTempPathA(U32 n,char*out){snprintf(out,n,"/tmp/");return 5;}
-HANDLE CreateFileA(const char *p,U32 a,U32 sh,PTR sec,U32 creation,U32 flags,HANDLE template){(void)p;(void)a;(void)sh;(void)sec;(void)creation;(void)flags;(void)template;return INVALID_HANDLE;}
+U32 GetEnvironmentVariableA(const char *name,char*out,U32 n){
+ if(strcmp(name,"LOCALAPPDATA")!=0)return 0;
+ snprintf(out,n,"/tmp");return 4;
+}
+int CreateDirectoryA(const char *p,PTR sec){(void)p;(void)sec;return 1;}
+HANDLE CreateFileA(const char *p,U32 a,U32 sh,PTR sec,U32 creation,U32 flags,HANDLE template){
+ (void)a;(void)sh;(void)sec;(void)creation;(void)flags;(void)template;
+ return strstr(p,"dev47-backend.jsonl")?(HANDLE)1:INVALID_HANDLE;
+}
 U32 SetFilePointer(HANDLE file,U32 low,PTR high,U32 method){(void)file;(void)low;(void)high;(void)method;return 0;}
-int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){(void)f;(void)b;(void)n;(void)w;(void)o;return 1;}
+int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){
+ (void)o;
+ if(f!=(HANDLE)1 || n+backend_len>=sizeof(backend_lines))return 0;
+ memcpy(backend_lines+backend_len,b,n);backend_len+=n;
+ backend_lines[backend_len]=0;
+ if(w)*w=n;
+ return 1;
+}
 int CloseHandle(HANDLE file){(void)file;return 1;}
 long InterlockedCompareExchange(volatile long*dst,long exchange,long compare){long v=*dst;if(v==compare)*dst=exchange;return v;}
 long InterlockedExchange(volatile long*dst,long val){long v=*dst;*dst=val;return v;}
 #define REQUIRE(expr) do{if(!(expr)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#expr);exit(1);}}while(0)
+static void fill_untraced_rx(CHANNEL *ch,U32 target){
+ static const U8 fake_frame[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0};
+ U64 prior=ch->active_trace;
+ ch->active_trace=0;
+ while(ch->count<target){
+  REQUIRE(ch->count<MAX_QUEUE);
+  enqueue(ch,0x555,fake_frame,8);
+ }
+ ch->active_trace=prior;
+}
 static PASSTHRU_MSG frame(U32 proto,U32 id,const U8 *data,U32 len){PASSTHRU_MSG m={0};m.ProtocolID=proto;m.DataSize=len+4;m.Data[0]=(U8)(id>>24);m.Data[1]=(U8)(id>>16);m.Data[2]=(U8)(id>>8);m.Data[3]=(U8)id;if(len)memcpy(m.Data+4,data,len);return m;}
 static PASSTHRU_MSG readmsg(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_OK);REQUIRE(n==1);return m;}
 static void send(U32 cid,PASSTHRU_MSG *m){U32 n=1;REQUIRE(PassThruWriteMsgs(cid,m,&n,10)==ERR_OK);REQUIRE(n==1);}
@@ -211,12 +284,16 @@ int main(){
  };
  g_d2[2].frame_count=13;
  for(U32 z=0;z<13;z++)memcpy(g_d2[2].frame[z],lab_b9fb[z],8);
+ U32 completed_before_fb=event_count("\"kind\":\"request_completed\"");
  m=frame(PROTO_CAN,0x000FFFFE,d2fb,8);send(cid,&m);
+ REQUIRE(event_count("\"kind\":\"request_completed\"")==completed_before_fb);
  for(U32 z=0;z<13;z++){
    n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,35)==ERR_OK);REQUIRE(n==1);
    REQUIRE(r.DataSize==12 && r.ProtocolID==PROTO_CAN);
    REQUIRE(memcmp(r.Data+4,lab_b9fb[z],8)==0);
+   if(z<12) REQUIRE(event_count("\"kind\":\"request_completed\"")==completed_before_fb);
  }
+ REQUIRE(event_count("\"kind\":\"request_completed\"")==completed_before_fb+1);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  /* Regression 0.3.5: switching to strict 125/500 CEM routes. */
  g_p2_strict_routing=1;
@@ -399,8 +476,516 @@ int main(){
  REQUIRE(memcmp(r.Data+7,"YV1CZ0002A0000001",17)==0);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  g_iso_rx_start=0;
+ /* An unsupported 29-bit P3 route must remain unanswered. */
+ const U8 missing_p3[]={0x22,0xF1,0x14};
+ m=frame(PROTO_ISO15765,0x18DA50F1,missing_p3,3);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ REQUIRE(strstr(backend_lines,"\"route\":\"UNHANDLED\"")!=NULL);
+ REQUIRE(strstr(backend_lines,"\"reason\":\"unhandled_request\"")!=NULL);
+ /* J2534 BLOCK filter must be distinguishable from missing ECU fixture. */
+ U32 blocked_filter=0;
+ REQUIRE(PassThruStartMsgFilter(cid,2,&mask,&pat,0,&blocked_filter)==ERR_OK);
+ m=frame(PROTO_ISO15765,0x7E0,vin_req,3);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ REQUIRE(strstr(backend_lines,"\"kind\":\"filter_drop\"")!=NULL);
+ REQUIRE(strstr(backend_lines,"\"outcome\":\"dropped\"")!=NULL);
+ REQUIRE(PassThruStopMsgFilter(cid,blocked_filter)==ERR_OK);
  REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+ /* dev49 F08: ISO-TP telemetry must not report complete when FF is
+    delivered but pending Consecutive Frames were aborted. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&cid)==ERR_OK);
+ const U8 iso_vin_sf[]={0x03,0x22,0xF1,0x90,0,0,0,0};
+ const U8 iso_fc_over[]={0x32,0,0,0,0,0,0,0};
+ const U8 iso_fc_cts[]={0x30,0,0,0,0,0,0,0};
+ const U8 tester_present[]={0x02,0x3E,0x00,0,0,0,0,0};
+ const char *case_log;
+ /* Group A: OVERFLOW before the client dequeues the First Frame.
+    Terminal cannot be emitted until the still-queued FF is read. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ REQUIRE(channel(cid)->pending_len==20);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_over,8);send(cid,&m);
+ REQUIRE(channel(cid)->pending_len==0);
+ REQUIRE(strstr(case_log,"\"kind\":\"response_aborted\"")!=NULL);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(strstr(case_log,"\"reason\":\"flow_overflow\",\"outcome\":\"aborted\"")!=NULL);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
+ REQUIRE(strstr(case_log,"\"outcome\":\"responded\"")==NULL);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Group B: if FF was already read, OVERFLOW completes the abort now. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_over,8);send(cid,&m);
+ REQUIRE(strstr(case_log,"\"reason\":\"flow_overflow\",\"outcome\":\"aborted\"")!=NULL);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
+ REQUIRE(strstr(case_log,"\"outcome\":\"responded\"")==NULL);
+ /* Group C: a new SF response supersedes a pending FF still in RX FIFO.
+    The old request is aborted; the new complete response may succeed. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ m=frame(PROTO_CAN,0x7E0,tester_present,8);send(cid,&m);
+ REQUIRE(channel(cid)->pending_len==0);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(strstr(case_log,"\"reason\":\"superseded\",\"outcome\":\"aborted\"")!=NULL);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==2);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"aborted\"")==1);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
+ /* Group D: supersede after FF dequeue must immediately abort old RID. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ m=frame(PROTO_CAN,0x7E0,tester_present,8);send(cid,&m);
+ REQUIRE(strstr(case_log,"\"reason\":\"superseded\",\"outcome\":\"aborted\"")!=NULL);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==2);
+ /* Group E: ordinary FF+CTS+2 CF still yields one successful terminal. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x21);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"aborted\"")==0);
+ /* Group F: wrong-channel-address Flow Control cannot finish a transfer. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ m=frame(PROTO_CAN,0x726,iso_fc_cts,8);send(cid,&m);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x21);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
+ /* Group G: telemetry is disabled by default in production and explicit
+    opt-out cannot change PassThru responses or generate a journal record. */
+ g_backend_enabled=0;
+ U32 log_before_opt_out=backend_len;
+ m=frame(PROTO_CAN,0x7E0,tester_present,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+ REQUIRE(backend_len==log_before_opt_out);
+ g_backend_enabled=1;
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+
+ /* dev49 F09: real CHANNEL RX-loss evidence must retain per-request
+    causes, not a single dropped_trace shared across transactions.
+    All frames below are synthetic; no ECU addresses are asserted as OEM. */
+ {
+  U32 loss_channel=0,loss_filter=0;
+  CHANNEL *loss;
+  PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(128,sizeof(*batch));
+  const U8 lab_bytes[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0};
+  PASSTHRU_MSG loss_mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0),loss_pat=frame(PROTO_CAN,0x7E8,0,0);
+  U64 ridA,ridB,ridC,ridD,ridE,ridF;
+  REQUIRE(batch!=0);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&loss_channel)==ERR_OK);
+  loss=channel(loss_channel);
+  loss_mask.DataSize=4;loss_pat.DataSize=4;
+  /* 1: an entirely full RX FIFO produces queue_full, not filter_reject. */
+  fill_untraced_rx(loss,MAX_QUEUE);
+  case_log=backend_lines+backend_len;
+  ridA=next_backend_request();loss->active_trace=ridA;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridA);
+  REQUIRE(terminal_for(case_log,ridA,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridA,"filter_reject","dropped")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(loss->count==0);
+  /* 2: BLOCK filter without pressure is reported as filter_reject. */
+  REQUIRE(PassThruStartMsgFilter(loss_channel,2,&loss_mask,&loss_pat,0,&loss_filter)==ERR_OK);
+  case_log=backend_lines+backend_len;
+  ridB=next_backend_request();loss->active_trace=ridB;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridB);
+  REQUIRE(terminal_for(case_log,ridB,"filter_reject","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridB,"queue_full","dropped")==0);
+  REQUIRE(PassThruStopMsgFilter(loss_channel,loss_filter)==ERR_OK);
+  /* 3: two RIDs can fail while one is already queued; their terminals
+     must not overwrite each other's reason or arrive before dequeue. */
+  case_log=backend_lines+backend_len;
+  ridA=next_backend_request();loss->active_trace=ridA;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  fill_untraced_rx(loss,MAX_QUEUE);
+  ridB=next_backend_request();loss->active_trace=ridB;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridB);
+  loss->active_trace=ridA;enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridA);
+  REQUIRE(terminal_for(case_log,ridB,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridA,"queue_full","dropped")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(batch[0].Data[2]==0x07&&batch[0].Data[3]==0xE8);
+  REQUIRE(terminal_for(case_log,ridA,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridB,"queue_full","dropped")==1);
+  /* 4: filter rejection followed by queue_full for the same RID
+     yields a single terminal, prioritising loss caused by FIFO pressure. */
+  REQUIRE(PassThruStartMsgFilter(loss_channel,2,&loss_mask,&loss_pat,0,&loss_filter)==ERR_OK);
+  case_log=backend_lines+backend_len;
+  ridC=next_backend_request();loss->active_trace=ridC;
+  enqueue(loss,0x7E8,lab_bytes,8);
+  REQUIRE(PassThruStopMsgFilter(loss_channel,loss_filter)==ERR_OK);
+  fill_untraced_rx(loss,MAX_QUEUE);
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridC);
+  REQUIRE(terminal_for(case_log,ridC,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridC,"filter_reject","dropped")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  /* 5: queue_full followed by filter rejection retains the same
+     priority, independent of the order of observed failures. */
+  fill_untraced_rx(loss,MAX_QUEUE);
+  case_log=backend_lines+backend_len;
+  ridD=next_backend_request();loss->active_trace=ridD;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(PassThruStartMsgFilter(loss_channel,2,&loss_mask,&loss_pat,0,&loss_filter)==ERR_OK);
+  loss->active_trace=ridD;enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridD);
+  REQUIRE(terminal_for(case_log,ridD,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridD,"filter_reject","dropped")==0);
+  REQUIRE(PassThruStopMsgFilter(loss_channel,loss_filter)==ERR_OK);
+  /* 6: F08 aborted lifecycle always wins over an earlier queue drop;
+     stale per-RID drop metadata must be released after terminal. */
+  case_log=backend_lines+backend_len;
+  ridE=next_backend_request();loss->active_trace=ridE;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  fill_untraced_rx(loss,MAX_QUEUE);
+  loss->active_trace=ridE;enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_abort_pending(loss,ridE,BACKEND_ABORT_SUPERSEDED);
+  REQUIRE(terminal_for(case_log,ridE,"superseded","aborted")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(terminal_for(case_log,ridE,"superseded","aborted")==1);
+  REQUIRE(terminal_for(case_log,ridE,"queue_full","dropped")==0);
+  for(U32 j=0;j<BACKEND_DROP_SLOTS;j++)REQUIRE(loss->drops[j].rid!=ridE);
+  /* 7: ordinary queued delivery still completes exactly once as
+     responded, with no false queue_full or filter_reject attribution. */
+  case_log=backend_lines+backend_len;
+  ridF=next_backend_request();loss->active_trace=ridF;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridF);
+  REQUIRE(terminal_for(case_log,ridF,"none","responded")==0);
+  n=1;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==1);
+  REQUIRE(terminal_for(case_log,ridF,"none","responded")==1);
+  REQUIRE(terminal_for(case_log,ridF,"queue_full","dropped")==0);
+  /* 8: with telemetry explicitly disabled, the same RX queue still
+     delivers frames but writes no new JSONL entries. */
+  {
+   U32 journal_before=backend_len;
+   g_backend_enabled=0;
+   loss->active_trace=next_backend_request();
+   REQUIRE(loss->active_trace==0);
+   enqueue(loss,0x7E8,lab_bytes,8);
+   n=1;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==1);
+   REQUIRE(backend_len==journal_before);
+   g_backend_enabled=1;
+   loss->active_trace=0;
+  }
+  REQUIRE(PassThruDisconnect(loss_channel)==ERR_OK);
+  free(batch);
+ }
+ /* dev49 F11: lifecycle records must survive queue resets and be emitted
+    at most once per request_id. These are synthetic lab fixture tests. */
+ {
+  U32 lc=0,lc2=0;U64 first,second;
+  CHANNEL *ch;
+  const char *start;
+  PASSTHRU_MSG tmp;
+  const U8 lc_req[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
+  const U8 sf_tester[]={0x02,0x3E,0x00,0,0,0,0,0};
+  const U8 fc_over[]={0x32,0,0,0,0,0,0,0};
+  REQUIRE(g_d2[3].frame_count==3);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+  ch=channel(lc);
+  /* 1: queued, never-dequeued single frame cancelled by CLEAR_RX. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+  REQUIRE(ch->count==1);
+  first=ch->queue_trace[ch->r];REQUIRE(first!=0);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  REQUIRE(event_count_since(start,"\"kind\":\"rx_dropped\"")==1);
+  REQUIRE(strstr(start,"\"kind\":\"rx_dropped\"")<strstr(start,"\"kind\":\"request_completed\""));
+  REQUIRE(terminal_for(start,first,"none","responded")==0);
+  n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+  /* 2: CLEAR_RX cancels both queued first D2 frame and staged tail.
+     No stale frame may emerge from a later ReadMsgs. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc,&tmp);
+  first=ch->d2_trace;REQUIRE(first && ch->d2_count==3 && ch->count==1);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  REQUIRE(ch->d2_trace==0 && ch->d2_count==0 && ch->count==0);
+  tick+=100;n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+  /* 3: clearing an already-queued FF invalidates its delivery evidence.
+     Historical pending ISO-TP transport behavior remains unchanged. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+  first=ch->pending_trace;REQUIRE(first && ch->pending_len==20);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(ch->pending_len==20 && ch->pending_trace==0);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  tmp=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(lc,&tmp);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x21);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x22);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  REQUIRE(terminal_for(start,first,"none","responded")==0);
+  /* 4: new D2 attempt supersedes staged and queued old D2 bytes. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc,&tmp);
+  first=ch->d2_trace;REQUIRE(first && ch->count==1);
+  send(lc,&tmp);second=ch->d2_trace;
+  REQUIRE(second && second!=first);
+  REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+  REQUIRE(event_count_since(start,"\"kind\":\"rx_dropped\"")==1);
+  REQUIRE(strstr(start,"\"kind\":\"rx_dropped\"")<strstr(start,"\"kind\":\"request_completed\""));
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x8F);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x09);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x4C);
+  REQUIRE(terminal_for(start,second,"none","responded")==1);
+  REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+  /* 5: D2 retry drops only its old frames, preserving unrelated FIFO. */
+  start=backend_lines+backend_len;
+  fill_untraced_rx(ch,1);
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc,&tmp);
+  first=ch->d2_trace;
+  send(lc,&tmp);second=ch->d2_trace;
+  REQUIRE(first && second && second!=first);
+  REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+  r=readmsg(lc);REQUIRE(r.Data[2]==0x05 && r.Data[3]==0x55);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x8F);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x09);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x4C);
+  REQUIRE(terminal_for(start,second,"none","responded")==1);
+  /* 6: Disconnect aborts queued SF once. Reusing ChannelID gets fresh
+     transaction ID, not an old terminal record. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+  first=ch->queue_trace[ch->r];REQUIRE(first);
+  REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"channel_disconnect","aborted")==1);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+  ch=channel(lc);
+  tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+  second=ch->queue_trace[ch->r];REQUIRE(second && second!=first);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+  REQUIRE(terminal_for(start,second,"none","responded")==1);
+  REQUIRE(terminal_for(start,first,"channel_disconnect","aborted")==1);
+  /* 7: one device Close cancels active transactions on *both* channels,
+     including FF/pending and staged D2; no channel is silently discarded. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc2)==ERR_OK);
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+  first=channel(lc)->pending_trace;
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc2,&tmp);
+  second=channel(lc2)->d2_trace;
+  REQUIRE(first && second && first!=second);
+  REQUIRE(PassThruClose(dev)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"device_close","aborted")==1);
+  REQUIRE(terminal_for(start,second,"device_close","aborted")==1);
+  REQUIRE(terminal_for(start,first,"none","responded")==0);
+  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);
+  /* 8: F08 abort precedence survives CLEAR_RX, and telemetry opt-out
+     remains completely inert while the J2534 transport still operates. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+  ch=channel(lc);start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+  first=ch->pending_trace;REQUIRE(first);
+  tmp=frame(PROTO_CAN,0x7E0,fc_over,8);send(lc,&tmp);
+  REQUIRE(terminal_for(start,first,"flow_overflow","aborted")==0);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"flow_overflow","aborted")==1);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==0);
+  {
+   U32 before=backend_len;
+   g_backend_enabled=0;
+   tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+   REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+   REQUIRE(backend_len==before);
+   g_backend_enabled=1;
+  }
+  /* F13: one functional request fans out to both configured ECUs, but gets
+     exactly one terminal event after every response/filter decision. */
+  {
+   static const struct {const char *name;U32 block_mask;int reverse;U8 service;} f13[]={
+    {"both blocked",3,0,0x02},{"ECM blocked",1,0,0x02},{"CEM response blocked",2,0,0x02},
+    {"both pass",0,0,0x02},{"reverse ECU order",1,1,0x02},{"duplicate ECM block",5,0,0x02},
+    {"short functional reply",1,0,0x0C},{"unsupported service fanout",3,0,0x55}
+   };
+   U32 case_no;
+   REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0x800,500000,&lc)==ERR_OK);
+   ch=channel(lc);
+   for(case_no=0;case_no<sizeof(f13)/sizeof(f13[0]);case_no++){
+    U32 f1=0,f2=0,f3=0,k;U64 rid;
+    PASSTHRU_MSG fm=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0),fp;
+    PASSTHRU_MSG request;
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+    g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;g_ecu[1].req=0x726;g_ecu[1].resp=0x72E;
+    if(f13[case_no].reverse){ECU swap=g_ecu[0];g_ecu[0]=g_ecu[1];g_ecu[1]=swap;}
+    if(f13[case_no].block_mask&1){fp=frame(PROTO_ISO15765,0x7E8,0,0);REQUIRE(PassThruStartMsgFilter(lc,2,&fm,&fp,0,&f1)==ERR_OK);}
+    if(f13[case_no].block_mask&2){fp=frame(PROTO_ISO15765,0x72E,0,0);REQUIRE(PassThruStartMsgFilter(lc,2,&fm,&fp,0,&f2)==ERR_OK);}
+    if(f13[case_no].block_mask&4){fp=frame(PROTO_ISO15765,0x7E8,0,0);REQUIRE(PassThruStartMsgFilter(lc,2,&fm,&fp,0,&f3)==ERR_OK);}
+    {U8 service_req[2]={0x09,f13[case_no].service};request=frame(PROTO_ISO15765,0x7DF,service_req,2);}
+    start=backend_lines+backend_len;send(lc,&request);rid=last_tx_request(start);REQUIRE(rid);
+    for(k=0;k<4;k++){
+     n=1;
+     if(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY)break;
+     REQUIRE(n==1);
+    }
+    n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY);
+    REQUIRE(terminal_count_for(start,rid)==1);
+    if(f13[case_no].block_mask==3)REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1);
+    if(f1)REQUIRE(PassThruStopMsgFilter(lc,f1)==ERR_OK);
+    if(f2)REQUIRE(PassThruStopMsgFilter(lc,f2)==ERR_OK);
+    if(f3)REQUIRE(PassThruStopMsgFilter(lc,f3)==ERR_OK);
+   }
+   g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;g_ecu[1].req=0x726;g_ecu[1].resp=0x72E;
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  }
+  /* F12: same PID and request serial after a DLL reload still gets a distinct
+     session ID, so appended JSONL records cannot alias old request IDs. */
+  {
+   static const U32 ticks[]={1,2,17,100,1000,60000,0x7FFFFFFFu,0xFFFFFFFFu};
+   U64 seen[8],rid0,rid;U32 z;char *capture;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc2)==ERR_OK);
+   ch=channel(lc2);
+   start=backend_lines+backend_len;
+   g_host_pid=0xAABBCCDDu;
+   for(z=0;z<8;z++){
+    g_backend_session=backend_session_id(g_host_pid,ticks[z],0x123456789ABCDEF0ull);
+    g_backend_serial=0;rid0=next_backend_request();
+    if(z==0)rid=rid0;else REQUIRE(rid0==rid);
+    seen[z]=g_backend_session;
+    backend_event(ch,rid0,"session_probe","UNKNOWN","none","unknown");
+    REQUIRE(strstr(backend_lines,"\"session_id\":\"")!=NULL);
+   }
+   for(z=0;z<8;z++){U32 k;for(k=z+1;k<8;k++)REQUIRE(seen[z]!=seen[k]);}
+   capture=(char*)start;
+   for(z=0;z<8;z++){
+    char marker[48];
+    snprintf(marker,sizeof(marker),"\"session_id\":\"%016llx\"",(unsigned long long)seen[z]);
+    REQUIRE(strstr(capture,marker)!=NULL);
+   }
+   g_backend_session=backend_session_id(g_host_pid,GetTickCount(),0x123456789ABCDEF1ull);
+   REQUIRE(PassThruDisconnect(lc2)==ERR_OK);
+  }
+
+  /* F03: an FC needs FS, BS and STmin; rejected short frames leave the
+     pending response intact until a complete CTS arrives. */
+  {
+   static const struct {const char *name;U32 id;U8 bytes[3];U32 len;int valid;} cases[]={
+    {"PCI only",0x7E0,{0x30,0,0},1,0},{"missing STmin BS0",0x7E0,{0x30,0,0},2,0},
+    {"missing STmin BS1",0x7E0,{0x30,1,0},2,0},{"wrong physical ID",0x7E1,{0x30,0,0},3,0},
+    {"WAIT",0x7E0,{0x31,0,0},3,0},{"reserved status",0x7E0,{0x33,0,0},3,0},
+    {"OVERFLOW",0x7E0,{0x32,0,0},3,0},{"complete CTS",0x7E0,{0x30,0,0},3,1}
+   };
+   U32 z;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+   for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+    U32 before_pos,before_count;PASSTHRU_MSG flow;
+    ch=channel(lc);
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+    tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+    tmp=readmsg(lc);REQUIRE(tmp.Data[4]==0x10);
+    REQUIRE(ch->pending_len==20&&ch->pending_pos==6&&ch->count==0);
+    before_pos=ch->pending_pos;before_count=ch->count;
+    flow=frame(PROTO_CAN,cases[z].id,cases[z].bytes,cases[z].len);send(lc,&flow);
+    if(cases[z].valid){
+     REQUIRE(ch->pending_len==0&&ch->count>before_count);
+    }else if(cases[z].bytes[0]==0x32){
+     REQUIRE(ch->pending_len==0&&ch->pending_pos==0);
+    }else{
+     REQUIRE(ch->pending_len==20&&ch->pending_pos==before_pos&&ch->count==before_count);
+    }
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+   }
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+
+  /* F04: reserved STmin values cannot release pending Consecutive Frames;
+     valid millisecond and sub-millisecond ranges still work. */
+  {
+   static const struct {const char *name;U8 stmin;int valid;} cases[]={
+    {"zero milliseconds",0x00,1},{"127 milliseconds",0x7F,1},
+    {"reserved low boundary",0x80,0},{"reserved high boundary",0xF0,0},
+    {"100 microseconds",0xF1,1},{"900 microseconds",0xF9,1},
+    {"reserved microsecond boundary",0xFA,0},{"reserved maximum",0xFF,0}
+   };
+   U32 z;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+   ch=channel(lc);
+   for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+    U8 fc_bytes[3]={0x30,0,cases[z].stmin};
+    PASSTHRU_MSG fc;
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+    tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+    tmp=readmsg(lc);REQUIRE(tmp.Data[4]==0x10);
+    REQUIRE(ch->pending_len==20&&ch->pending_pos==6&&ch->count==0);
+    fc=frame(PROTO_CAN,0x7E0,fc_bytes,3);send(lc,&fc);
+    if(cases[z].valid){
+     REQUIRE(ch->pending_len==0&&ch->count==2);
+    }else{
+     REQUIRE(ch->pending_len==20&&ch->pending_pos==6&&ch->count==0);
+     fc=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(lc,&fc);
+     REQUIRE(ch->pending_len==0&&ch->count==2);
+    }
+   }
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  }
+  }
+
+  /* F05: valid STmin gates CF delivery and timestamps at millisecond and
+     sub-millisecond precision. Polling before the due time returns empty. */
+  {
+   static const struct {const char *name;U8 stmin;U32 delay_us;} cases[]={
+    {"no separation",0x00,0},{"one millisecond",0x01,1000},
+    {"127 milliseconds",0x7F,127000},{"100 microseconds",0xF1,100},
+    {"500 microseconds",0xF5,500},{"900 microseconds",0xF9,900}
+   };
+   U32 z;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+   ch=channel(lc);qpc_offset_us=0;
+   for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+    U8 fc_bytes[3]={0x30,0,cases[z].stmin};
+    PASSTHRU_MSG fc,rx;U32 count=1;
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+    tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+    tmp=readmsg(lc);REQUIRE(tmp.Data[4]==0x10);
+    fc=frame(PROTO_CAN,0x7E0,fc_bytes,3);send(lc,&fc);
+    REQUIRE(ch->pending_len==0&&ch->count==2);
+    REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_OK&&count==1&&rx.Data[4]==0x21);
+    if(cases[z].delay_us){
+     count=1;REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+     advance_test_us(cases[z].delay_us-1);
+     count=1;REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+     advance_test_us(1);
+    }
+    count=1;REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_OK&&count==1&&rx.Data[4]==0x22);
+    REQUIRE((U32)(rx.Timestamp-tmp.Timestamp)>=cases[z].delay_us);
+   }
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  }
+ }
  REQUIRE(PassThruClose(dev)==ERR_OK);
+ /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
+ REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
+ REQUIRE(event_count("\"kind\":\"tx_received\"")>0);
+ REQUIRE(event_count("\"kind\":\"route_selected\"")>0);
+ REQUIRE(strstr(backend_lines,"\"reason\":\"missing_profile\"")!=NULL);
+ REQUIRE(event_count("\"kind\":\"rx_queued\"")>0);
+ REQUIRE(event_count("\"kind\":\"rx_dequeued\"")>0);
+ REQUIRE(event_count("\"outcome\":\"responded\"")>0);
+ REQUIRE(strstr(backend_lines,"YV1CZ0002A0000001")==NULL);
+ REQUIRE(strstr(backend_lines,"SIM-CEM")==NULL);
+ REQUIRE(strstr(backend_lines,"\"can_id\"")==NULL);
  puts("PASS: 0.3.6.6 142-byte F106, ECU nodes, recorded bus fixtures, FC140, P3/VDASH, read-only");return 0;
 }
+
