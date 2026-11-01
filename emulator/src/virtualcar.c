@@ -368,6 +368,53 @@ static void backend_abort_pending(CHANNEL *c,U64 rid,U32 cause) {
                   "tracking_limit","unverified");
 }
 
+/* F11: terminal evidence for frames discarded by an existing lifecycle
+   action. Read-side/J2534 behavior is unchanged. All IDs are collected
+   before queue compaction or channel reset, so each RID completes once. */
+static void backend_collect_rid(U64 *rids,U32 *n,U64 rid) {
+    U32 j;
+    if(!rid)return;
+    for(j=0;j<*n;j++)if(rids[j]==rid)return;
+    if(*n<MAX_QUEUE+2u)rids[(*n)++]=rid;
+}
+static void backend_cancel_channel(CHANNEL *c,const char *reason,int d2_only) {
+    U64 rids[MAX_QUEUE+2u];U32 n=0,i,j;
+    for(i=0;i<c->count;i++){
+        U32 slot=(c->r+i)%MAX_QUEUE;
+        if(!d2_only || c->queue_d2_gen[slot])
+            backend_collect_rid(rids,&n,c->queue_trace[slot]);
+    }
+    if(c->d2_trace && c->d2_count)
+        backend_collect_rid(rids,&n,c->d2_trace);
+    if(!d2_only && c->pending_trace && c->pending_len)
+        backend_collect_rid(rids,&n,c->pending_trace);
+    for(i=0;i<n;i++){
+        U64 rid=rids[i];
+        const char *resolved=reason;
+        int abort_logged=0;
+        /* F08 already recorded the precise transport failure: keep that
+           cause instead of mislabeling it as a subsequent buffer reset. */
+        for(j=0;j<MAX_QUEUE;j++)if(c->aborted[j].rid==rid){
+            resolved=backend_abort_cause(c->aborted[j].cause);
+            abort_logged=1;
+            c->aborted[j].rid=0;c->aborted[j].cause=0;
+        }
+        if(!abort_logged)
+            backend_event(c,rid,"response_aborted","UNKNOWN",resolved,"unknown");
+        backend_event(c,rid,"request_completed","UNKNOWN",resolved,"aborted");
+        backend_forget_drop(c,rid);
+        /* A CLEAR_RX_BUFFER resets the actual queue, not ISO-TP state.
+           Keep its legacy transport behavior while detaching stale evidence:
+           later CFs after CLEAR must not claim a complete old response. */
+        if(!d2_only && c->pending_trace==rid)c->pending_trace=0;
+        if(c->d2_trace==rid)c->d2_trace=0;
+        if(!d2_only)for(j=0;j<c->count;j++){
+            U32 slot=(c->r+j)%MAX_QUEUE;
+            if(c->queue_trace[slot]==rid)c->queue_trace[slot]=0;
+        }
+    }
+}
+
 /* Validates framing only. No assertion about undocumented FB semantics. */
 static int validate_d2_fixture(const D2_PROFILE *d){
     U32 k;U8 base,seq=1;int final=0;
@@ -886,7 +933,8 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     for(i=0;i<MAX_D2_FIXTURES;i++){
         U32 j,discarded;
         d=&g_d2[i];if(data[1]!=d->target||data[3]!=d->subcommand)continue;
-        c->d2_count=0;c->d2_pos=0;
+        backend_cancel_channel(c,"d2_superseded",1);
+        c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
         discarded=drop_queued_d2(c);
         if(discarded){U8 count_be[4];u32_be(count_be,discarded);
             logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
@@ -1008,8 +1056,13 @@ EXPORT U32 WINCALL PassThruOpen(PTR name,U32 *device) {
     logline("PassThruOpen -> device 1",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruClose(U32 device) {
+    U32 i;
     if(device!=1||!g_open)return error(ERR_INVALID_DEVICE_ID);
-    lock_state();g_open=0;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);logline("PassThruClose",0,0);unlock_state();return error(ERR_OK);
+    lock_state();
+    for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used)
+        backend_cancel_channel(&g_ch[i],"device_close",0);
+    g_open=0;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);
+    logline("PassThruClose",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U32 *channel_id){
     U32 i;if(!channel_id)return error(ERR_NULL_PARAMETER);
@@ -1032,6 +1085,7 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
     CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     {U8 channel_be[4];u32_be(channel_be,id);
      logline("PassThruDisconnect channel (BE)",channel_be,4);}
+    backend_cancel_channel(c,"channel_disconnect",0);
     p2_bridge_disconnect(&g_vehicle_bridge,id);bytes_zero(c,sizeof(*c));logline("PassThruDisconnect",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
@@ -1203,7 +1257,8 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_READ_PROG_VOLTAGE){if(!output)return error(ERR_NULL_PARAMETER);*(U32*)output=0;return error(ERR_OK);}
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(ioctl==IO_CLEAR_RX_BUFFER){
-        c->r=c->w=c->count=0;c->d2_count=0;c->d2_pos=0;
+        backend_cancel_channel(c,"clear_rx_buffer",0);
+        c->r=c->w=c->count=0;c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
         bytes_zero(c->queue_d2_gen,sizeof(c->queue_d2_gen));
         {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
          u32_be(meta+8,c->flags);u32_be(meta+12,c->baud);
