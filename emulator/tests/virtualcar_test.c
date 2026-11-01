@@ -6,11 +6,12 @@
 #include <string.h>
 static U32 tick=0;
 static char backend_lines[180000];static U32 backend_len=0;
-static U32 event_count(const char *pattern){
- U32 count=0;const char *p=backend_lines;
+static U32 event_count_since(const char *start,const char *pattern){
+ U32 count=0;const char *p=start;
  while((p=strstr(p,pattern))!=0){++count;p+=strlen(pattern);}
  return count;
 }
+static U32 event_count(const char *pattern){return event_count_since(backend_lines,pattern);}
 void Sleep(U32 ms){tick+=ms;}
 U32 GetTickCount(void){return tick;}
 int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
@@ -441,8 +442,92 @@ int main(){
  REQUIRE(PassThruStopMsgFilter(cid,blocked_filter)==ERR_OK);
  REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+ /* dev49 F08: ISO-TP telemetry must not report complete when FF is
+    delivered but pending Consecutive Frames were aborted. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&cid)==ERR_OK);
+ const U8 iso_vin_sf[]={0x03,0x22,0xF1,0x90,0,0,0,0};
+ const U8 iso_fc_over[]={0x32,0,0,0,0,0,0,0};
+ const U8 iso_fc_cts[]={0x30,0,0,0,0,0,0,0};
+ const U8 tester_present[]={0x02,0x3E,0x00,0,0,0,0,0};
+ const char *case_log;
+ /* Group A: OVERFLOW before the client dequeues the First Frame.
+    Terminal cannot be emitted until the still-queued FF is read. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ REQUIRE(channel(cid)->pending_len==20);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_over,8);send(cid,&m);
+ REQUIRE(channel(cid)->pending_len==0);
+ REQUIRE(strstr(case_log,"\"kind\":\"response_aborted\"")!=NULL);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(strstr(case_log,"\"reason\":\"flow_overflow\",\"outcome\":\"aborted\"")!=NULL);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
+ REQUIRE(strstr(case_log,"\"outcome\":\"responded\"")==NULL);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Group B: if FF was already read, OVERFLOW completes the abort now. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_over,8);send(cid,&m);
+ REQUIRE(strstr(case_log,"\"reason\":\"flow_overflow\",\"outcome\":\"aborted\"")!=NULL);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
+ REQUIRE(strstr(case_log,"\"outcome\":\"responded\"")==NULL);
+ /* Group C: a new SF response supersedes a pending FF still in RX FIFO.
+    The old request is aborted; the new complete response may succeed. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ m=frame(PROTO_CAN,0x7E0,tester_present,8);send(cid,&m);
+ REQUIRE(channel(cid)->pending_len==0);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(strstr(case_log,"\"reason\":\"superseded\",\"outcome\":\"aborted\"")!=NULL);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==2);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"aborted\"")==1);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
+ /* Group D: supersede after FF dequeue must immediately abort old RID. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ m=frame(PROTO_CAN,0x7E0,tester_present,8);send(cid,&m);
+ REQUIRE(strstr(case_log,"\"reason\":\"superseded\",\"outcome\":\"aborted\"")!=NULL);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==2);
+ /* Group E: ordinary FF+CTS+2 CF still yields one successful terminal. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x21);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"aborted\"")==0);
+ /* Group F: wrong-channel-address Flow Control cannot finish a transfer. */
+ case_log=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ m=frame(PROTO_CAN,0x726,iso_fc_cts,8);send(cid,&m);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ m=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x21);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
+ REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
+ /* Group G: telemetry is disabled by default in production and explicit
+    opt-out cannot change PassThru responses or generate a journal record. */
+ g_backend_enabled=0;
+ U32 log_before_opt_out=backend_len;
+ m=frame(PROTO_CAN,0x7E0,tester_present,8);send(cid,&m);
+ r=readmsg(cid);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+ REQUIRE(backend_len==log_before_opt_out);
+ g_backend_enabled=1;
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
  REQUIRE(PassThruClose(dev)==ERR_OK);
- /* 8 telemetry checks, plus existing D2/ISO15765/READ128 regressions. */
+ /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
  REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
  REQUIRE(event_count("\"kind\":\"tx_received\"")>0);
  REQUIRE(event_count("\"kind\":\"route_selected\"")>0);
