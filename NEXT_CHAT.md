@@ -2,6 +2,14 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
+## Актуальный checkpoint: PR #25 и MY2005 read-only run (01.11.2026)
+
+- **PR #25** `fix/p3-f114-missing-cem-evidence` объединён squash в `development`: merge SHA `c7660645e8f1a666201c2fb27f0c9fcc6148fa40`. Exact-HEAD PR checks и post-merge checks успешны: Emulator Windows x86 #41323997651/#41324993934 (включая настоящий x86 DLL verifier), VMware package #41323997656, cross-build #41324993954. PR workflow publication step **skipped**; опубликованный VMware prerelease не менялся.
+- При точном ISO15765 запросе `22 F1 14` к P3 IDs `0x726` или `0x18DA50F1`, если текущий профиль не содержит соответствующего ECU, backend фиксирует маршрут CEM и `unimplemented_probe/no_response`; RX не генерируется. Настроенный ECU и произвольные/искажённые запросы сохраняют прежнюю обработку. Это profile-specific evidence, не вывод о MY2009 CEM.
+- Сверена обезличенная MY2005 SectorV 1.1.0 сессия, выполненная до PR #25: 11 запросов / 7 сессий / invalid=0; B9FB target 0x40: 5 `no_fixture`, target 0x50: 2 `delivered`; A3: 2 `unimplemented_probe`; P3 F114: 2 прежних `unhandled_request`; конфликтов=0, RX dequeued=26. Клиент не подтвердил normal mode, reachable ECU=0, ECU identity не подтверждена. `delivered` означает только J2534 transport.
+- Локально подготовлен отдельный артефакт из CI run #41324993934, commit `c766064`, SHA-256 `f24fca7144bf8415b16e3ed2ccb9a86cabf539b72622b7dc8a0ae12322c6c2aa`. Тестовый MY2005 профиль остаётся только локально: 13 кадров сохранены для target 0x50 B9FB, target 0x40 пуст, остальные P2 response fixtures выключены, passive traces/CAN выключены, telemetry включена. Приватный профиль, VIN, кадры и JSONL в GitHub не копировать.
+- **Следующая точная задача Issue #4:** после отдельного action-time разрешения пользователя выполнить read-only SectorV проверку артефакта `c766064` с этим локальным MY2005 профилем; сверить новый CEM/unimplemented/no-RX для P3 F114 и отсутствие RX при A3/пустом B9FB. Не включать reset/programming, не делать выводов для MY2009 и не подменять опубликованный prerelease. При отсутствии разрешения оставить только CI-verified результат и ждать подлинного совместимого MY2009 capture.
+
 ## 1. Задача и границы
 
 - Проект: **Virtual Car**, автономный Windows **x86** эмулятор Volvo P2 через J2534 PassThru DLL + Go-приложение управления. Цель: обнаружение виртуального **XC90 V8 MY2009** и чтение VIN/идентификаций ECU через диагностический клиент в VMware.
