@@ -24,6 +24,13 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
+## Следующий этап: native x86 route regression (01.11.2026)
+
+- Новый локальный backend audit: 13 запросов / 6 сеансов / invalid=0, B9FB no_fixture=10, P3 F114 unsupported=2, strict wrong-baud unsupported=1; conflicts=0, unattributed=0. Старые шесть silent ECM запросов не наблюдались: это не полная VMware-проверка исправления PR #22.
+- Добавлены `emulator/tools/verify_native_routes.ps1` и `verify_native_routes.py`: восемь групп на настоящей x86 DLL через LoadLibrary/stdcall, отдельный synthetic профиль и отдельные журналы, без регистрации адаптера. Native Windows CI запускается после cross-build; статус финального PR/HEAD проверять в GitHub.
+- Локально DLL PR #22 проходит; опубликованная исходная DLL отклоняется по старому route conflict в negative control. В отчёте identity/client acceptance остаются false. Подробности и команды: `emulator/README_NATIVE_ROUTE_CHECK_RU.md`.
+- Следующая практическая задача Issue #4: выполнить обе команды native regression в гостевой Windows, затем отдельно проверить диагностический клиент. Для продвижения по B9FB всё ещё нужны подлинные совместимые фикстуры; не добавлять положительные CEM ответы.
+
 ## VMware backend audit: PR #22 (01.11.2026)
 
 - Проверенный код: [PR #22](https://github.com/vorlocsev/virtualcar/pull/22), code HEAD `d4cd882263565fd7fb40e3e89a9d6e20acc7f3c9`, база `ad333635d37fffea651733745af5f1ce3f35d2ba`. Состояние интеграции и финальный SHA документационного обновления сверять по GitHub. На code HEAD [Emulator CI #41309278841](https://github.com/vorlocsev/virtualcar/actions/runs/41309278841) и [VMware packager #41309278839](https://github.com/vorlocsev/virtualcar/actions/runs/41309278839) **success**; публикация prerelease **skipped**. CI финального HEAD проверять отдельно.
