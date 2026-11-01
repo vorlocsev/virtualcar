@@ -194,8 +194,8 @@ static void test_vmware_route_evidence(U32 dev){
   U32 cid=k==0?ls:hs,count=1;
   if(k==2){const U8 p3[3]={0x22,0xF1,0x14};m=frame(PROTO_ISO15765,0x726,p3,3);cid=iso;}
   else m=frame(PROTO_CAN,0x000FFFFE,probe,8);
-  start=backend_lines+backend_len;send(cid,&m);require_route(start,k==2?"UNHANDLED":"CEM",1);
-  REQUIRE(terminal_for(start,last_tx_request(start),k==2?"unhandled_request":"missing_profile","no_response")==1);
+  start=backend_lines+backend_len;send(cid,&m);require_route(start,"CEM",1);
+  REQUIRE(terminal_for(start,last_tx_request(start),k==2?"unimplemented_probe":"missing_profile","no_response")==1);
   REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
  }
  /* 8: opt-out changes neither suppression nor transport behavior. */
