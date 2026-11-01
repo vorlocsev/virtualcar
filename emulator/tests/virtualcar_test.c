@@ -858,7 +858,9 @@ int main(){
     nearby or malformed requests remain UNHANDLED. All bytes are synthetic. */
  {
   U32 saved_count=g_ecu_count,p3cid=0,canid=0,k;
+  ECU saved_ecus[MAX_ECUS];
   const char *p3_log;
+  memcpy(saved_ecus,g_ecu,sizeof(saved_ecus));
   const U8 f114[]={0x22,0xF1,0x14};
   const U8 f190[]={0x22,0xF1,0x90};
   const U8 trailing[]={0x22,0xF1,0x14,0x00};
@@ -874,6 +876,7 @@ int main(){
    /* 7 */ {PROTO_CAN,0x726,can_sf,8,"UNHANDLED","unhandled_request"}
   };
   g_ecu_count=1; /* MY2005 donor profile has ECM only; no CEM fixture. */
+  g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;
   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&canid)==ERR_OK);
   for(k=0;k<sizeof(cases)/sizeof(cases[0]);k++){
    p3_log=backend_lines+backend_len;
@@ -887,7 +890,7 @@ int main(){
   REQUIRE(PassThruDisconnect(canid)==ERR_OK);
   /* 8: the pre-existing configured CEM F114 lab handler still answers;
      this is a regression guard, not a claim about OEM response bytes. */
-  g_ecu_count=saved_count;
+  g_ecu_count=1;g_ecu[0].req=0x726;g_ecu[0].resp=0x72E;
   REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&p3cid)==ERR_OK);
   p3_log=backend_lines+backend_len;
   m=frame(PROTO_ISO15765,0x726,f114,3);send(p3cid,&m);
@@ -897,6 +900,7 @@ int main(){
   require_route(p3_log,"CEM",1);
   REQUIRE(terminal_for(p3_log,last_tx_request(p3_log),"none","responded")==1);
   REQUIRE(PassThruDisconnect(p3cid)==ERR_OK);
+  memcpy(g_ecu,saved_ecus,sizeof(saved_ecus));g_ecu_count=saved_count;
  }
  /* J2534 BLOCK filter must be distinguishable from missing ECU fixture. */
  U32 blocked_filter=0;
