@@ -673,6 +673,125 @@ int main(){
   REQUIRE(PassThruDisconnect(loss_channel)==ERR_OK);
   free(batch);
  }
+ /* dev49 F11: lifecycle records must survive queue resets and be emitted
+    at most once per request_id. These are synthetic lab fixture tests. */
+ {
+  U32 lc=0,lc2=0,k;U64 first,second,third;
+  CHANNEL *ch;
+  const char *start;
+  PASSTHRU_MSG tmp;
+  const U8 lc_req[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
+  const U8 sf_tester[]={0x02,0x3E,0x00,0,0,0,0,0};
+  const U8 fc_over[]={0x32,0,0,0,0,0,0,0};
+  REQUIRE(g_d2[3].frame_count==3);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+  ch=channel(lc);
+  /* 1: queued, never-dequeued single frame cancelled by CLEAR_RX. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+  REQUIRE(ch->count==1);
+  first=ch->queue_trace[ch->r];REQUIRE(first!=0);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  REQUIRE(terminal_for(start,first,"none","responded")==0);
+  n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+  /* 2: CLEAR_RX cancels both queued first D2 frame and staged tail.
+     No stale frame may emerge from a later ReadMsgs. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc,&tmp);
+  first=ch->d2_trace;REQUIRE(first && ch->d2_count==3 && ch->count==1);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  REQUIRE(ch->d2_trace==0 && ch->d2_count==0 && ch->count==0);
+  tick+=100;n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+  /* 3: clearing an already-queued FF invalidates its delivery evidence.
+     Historical pending ISO-TP transport behavior remains unchanged. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+  first=ch->pending_trace;REQUIRE(first && ch->pending_len==20);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(ch->pending_len==20 && ch->pending_trace==0);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  tmp=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(lc,&tmp);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x21);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x22);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
+  REQUIRE(terminal_for(start,first,"none","responded")==0);
+  /* 4: new D2 attempt supersedes staged and queued old D2 bytes. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc,&tmp);
+  first=ch->d2_trace;REQUIRE(first && ch->count==1);
+  send(lc,&tmp);second=ch->d2_trace;
+  REQUIRE(second && second!=first);
+  REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x8F);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x09);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x4C);
+  REQUIRE(terminal_for(start,second,"none","responded")==1);
+  REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+  /* 5: D2 retry drops only its old frames, preserving unrelated FIFO. */
+  start=backend_lines+backend_len;
+  fill_untraced_rx(ch,1);
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc,&tmp);
+  first=ch->d2_trace;
+  send(lc,&tmp);second=ch->d2_trace;
+  REQUIRE(first && second && second!=first);
+  REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+  r=readmsg(lc);REQUIRE(r.Data[2]==0x05 && r.Data[3]==0x55);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x8F);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x09);
+  tick+=40;r=readmsg(lc);REQUIRE(r.Data[4]==0x4C);
+  REQUIRE(terminal_for(start,second,"none","responded")==1);
+  /* 6: Disconnect aborts queued SF once. Reusing ChannelID gets fresh
+     transaction ID, not an old terminal record. */
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+  first=ch->queue_trace[ch->r];REQUIRE(first);
+  REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"channel_disconnect","aborted")==1);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+  ch=channel(lc);
+  tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+  second=ch->queue_trace[ch->r];REQUIRE(second && second!=first);
+  r=readmsg(lc);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
+  REQUIRE(terminal_for(start,second,"none","responded")==1);
+  REQUIRE(terminal_for(start,first,"channel_disconnect","aborted")==1);
+  /* 7: one device Close cancels active transactions on *both* channels,
+     including FF/pending and staged D2; no channel is silently discarded. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc2)==ERR_OK);
+  start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+  first=channel(lc)->pending_trace;
+  tmp=frame(PROTO_CAN,0x000FFFFE,lc_req,8);send(lc2,&tmp);
+  second=channel(lc2)->d2_trace;
+  REQUIRE(first && second && first!=second);
+  REQUIRE(PassThruClose(dev)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"device_close","aborted")==1);
+  REQUIRE(terminal_for(start,second,"device_close","aborted")==1);
+  REQUIRE(terminal_for(start,first,"none","responded")==0);
+  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);
+  /* 8: F08 abort precedence survives CLEAR_RX, and telemetry opt-out
+     remains completely inert while the J2534 transport still operates. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+  ch=channel(lc);start=backend_lines+backend_len;
+  tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+  first=ch->pending_trace;REQUIRE(first);
+  tmp=frame(PROTO_CAN,0x7E0,fc_over,8);send(lc,&tmp);
+  REQUIRE(terminal_for(start,first,"flow_overflow","aborted")==0);
+  REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  REQUIRE(terminal_for(start,first,"flow_overflow","aborted")==1);
+  REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==0);
+  {
+   U32 before=backend_len;
+   g_backend_enabled=0;
+   tmp=frame(PROTO_CAN,0x7E0,sf_tester,8);send(lc,&tmp);
+   REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+   REQUIRE(backend_len==before);
+   g_backend_enabled=1;
+  }
+  k=0;REQUIRE(k==0);
+ }
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
  REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
