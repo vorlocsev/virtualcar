@@ -24,13 +24,15 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
-## Текущее состояние (01.11.2026, после интеграции dev49)
+## Текущее состояние (01.11.2026, после интеграции dev50 F02)
 
-- **PR #11** `feature/dev49-backend-evidence → development` **объединён** squash-коммитом `bb7cbf0d6d87ceaf3cc49ab4a6c33f878d5a5221`. Это реальное исходное J2534 backend-наблюдение, а не внешний proxy.
-- До слияния CI на точном HEAD PR #11 `755dce222ffd400c717b6f71351c258a47594570`: [Windows x86 emulator run 41269758124](https://github.com/vorlocsev/virtualcar/actions/runs/41269758124) **success**: C/J2534 regression, READ128, PE32 DLL/14 exports, Python, Go tests/vet, x86 GUI.
-- Опциональная локальная телеметрия `[Diagnostics] BackendTelemetryEnabled=1` сообщает жизненный цикл запроса и доставки RX без копирования VIN/сырых CAN-пакетов в **JSONL телеметрию**. Она не подтверждает принятие кадра SectorV и не заменяет проверку приватности старого текстового диагностического журнала.
-- **PR #13** (ISO-TP FC / FIFO backpressure) после этого слияния отличается от `development` на два коммита впереди и один позади; нужен осмысленный перенос с проверкой регрессий, а не автоматическое слияние устаревшей ветки. PR #12 и #15 остаются отдельными задачами.
-- **PR #2** `development → main` остаётся черновым gate. Windows/VMware SectorV/VDASH и физический J2534 на новой DLL не проверены; релиз не опубликован.
+- **PR #13** `fix/dev50-f02-rx-backpressure → development` **объединён** squash-коммитом `3503234aaf3da6945007750a2f016a2981c5cdfe`. Flow Control CTS не теряет BS-кредит при заполнении 64-кадровой RX-очереди; продолжение восстанавливается при `PassThruReadMsgs`. Объединение сохраняет STmin, `queue_ready_us`, per-request backend-телеметрию и запрет ложного подтверждения запроса.
+- **CI точного HEAD интеграционного PR #13** `b42efcc8dd9814bb3cf503350d1ad1718c8ca672`: [Windows x86 emulator run 41298502127](https://github.com/vorlocsev/virtualcar/actions/runs/41298502127) **success**: C/J2534 регрессии, READ128, B9FB/F106, BS0/BS2, WAIT/OVERFLOW, межканальная изоляция и 5 ms STmin после заполнения FIFO; PE32 DLL/экспорты, Python, Go, x86 GUI.
+- После merge запущены **development workflows** на `3503234`: [emulator run 41298640989](https://github.com/vorlocsev/virtualcar/actions/runs/41298640989) и [proxy run 41298640998](https://github.com/vorlocsev/virtualcar/actions/runs/41298640998). На момент этого обновления обе были **in_progress**, а не объявлены успешными заранее.
+- **PR #11** (F08-F11 backend RX evidence) ранее слит в development; необязательный `[Diagnostics] BackendTelemetryEnabled=1` записывает обезличенные JSONL метаданные. Отдельный стандартный текстовый журнал может содержать CAN/VIN: не отправлять его в GitHub.
+- **PR #12** (функциональный OBD VIN / physical Flow Control) и **PR #15** (proxy) остаются независимыми черновиками. Не объединять их без проверки совместимости и отдельного CI. **PR #2** `development → main` остаётся draft release gate.
+- **Следующий приоритет Issue #4**: реальная обезличенная read-only backend JSONL из VMware для A3/A6/B9F0/B9FB и 11/29-битных маршрутов; затем корреляционный анализ `no_fixture`, `unsupported`, `timeout`, `partial_rx`, `delivered`, `unverified`. Реальный VIN и неизвестные CEM-положительные ответы не создавать.
+- **Не подтверждено** обнаружение XC90 V8 MY2009 в SectorV/VDASH, полноценная идентификация ECU или проверка физического J2534. Никакой Virtual Car release не опубликован по этому PR.
 
 ## 3. Проверенный снимок состояния (31.10.2026)
 
@@ -63,7 +65,7 @@
 
 ## 5. Что делать в новом чате первым
 
-**Активный блокер: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** PR #11 (backend RX evidence) уже слит в development. Следующие шаги: интеграция совместимого исправления из PR #13, затем сбор обезличенного backend JSONL в VMware для A3/A6/B9F0/B9FB и 125 kbit/s. Открыть HEAD `development`, PR #10 (dev33), PR #2 и Actions **на точном SHA**. После интеграции dev32 следующий результат должен опираться на реальный обезличенный read-only лог из VMware, а не на дополнительную синтетическую идентификацию CEM.
+**Активный блокер: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** Backend telemetry (PR #11) и ISO-TP backpressure с сохранением STmin (PR #13) интегрированы в development. Приоритет теперь за VMware read-only трассой и классификацией фактических CEM-запросов. Не вводить положительные ответы A3/A6/B9F0 без подлинного подтверждённого capture. Проверить незавершённый PR #12 отдельно, но не использовать его как доказательство идентификации. Проверять GitHub Actions на текущем SHA, а не только на HEAD PR #13.
 
 1. Сверить `PassThruWriteMsgs/ReadMsgs` с временными метками, ChannelID, baud, protocol и 11/29-bit форматами; отдельно сравнить D2 и P3 маршруты.
 2. Проверить `A3/A6/B9F0/B9FB` и `0x726/0x18DA50F1` без предположений о положительных ответах.
