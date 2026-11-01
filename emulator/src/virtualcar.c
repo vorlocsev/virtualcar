@@ -595,8 +595,14 @@ static int filter_allows(const CHANNEL *c,U32 response_id) {
 }
 static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,U32 status) {
     PASSTHRU_MSG *msg;U32 i;
-    if(c->count>=MAX_QUEUE||len>MAX_DATA-4)return;
+    if(c->count>=MAX_QUEUE||len>MAX_DATA-4){
+        backend_event(c,c->active_trace,"rx_dropped","UNKNOWN","queue_full","unknown");
+        c->dropped_trace=c->active_trace;
+        return;
+    }
     if(!filter_allows(c,response_id)){
+        backend_event(c,c->active_trace,"filter_drop","UNKNOWN","filter_reject","unknown");
+        c->dropped_trace=c->active_trace;
         U8 idbytes[4];u32_be(idbytes,response_id);
         logline("RX discarded by installed J2534 filter",idbytes,4);
         return;
@@ -614,7 +620,10 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
     msg->Data[2]=(U8)(response_id>>8);msg->Data[3]=(U8)response_id;
     for(i=0;i<len;i++)msg->Data[4+i]=payload[i];
     c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;
+    c->queue_trace[c->w]=c->active_trace;
     c->w=(c->w+1)%MAX_QUEUE;c->count++;
+    backend_event(c,c->active_trace,"filter_pass","UNKNOWN","none","unknown");
+    backend_event(c,c->active_trace,"rx_queued","UNKNOWN","none","unknown");
     logline(status==START_OF_MESSAGE?"RX START_OF_MESSAGE (ISO15765)":"RX (simulated)",msg->Data,msg->DataSize);
 }
 static void enqueue(CHANNEL *c,U32 response_id,const U8 *payload,U32 len){enqueue_status(c,response_id,payload,len,0);}
@@ -651,17 +660,24 @@ static void send_can_cf(CHANNEL *c,U32 block_size) {
         sz=c->pending_len-c->pending_pos;if(sz>7)sz=7;
         bytes_zero(f,8);f[0]=(U8)(0x20 | (c->pending_sn&15));
         for(i=0;i<sz;i++)f[i+1]=c->pending[c->pending_pos+i];
-        enqueue(c,c->pending_id,f,8);c->pending_pos+=sz;c->pending_sn++;frames++;
+        {U64 previous=c->active_trace;c->active_trace=c->pending_trace;
+         enqueue(c,c->pending_id,f,8);c->active_trace=previous;}
+        c->pending_pos+=sz;c->pending_sn++;frames++;
     }
-    if(c->pending_pos==c->pending_len){c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;}
+    if(c->pending_pos==c->pending_len){
+        U64 previous=c->pending_trace;
+        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;
+        backend_end_if_drained(c,previous);
+    }
 }
 static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
     U8 f[8];U32 i;
+    backend_event(c,c->active_trace,"response_generated","UNKNOWN","none","unknown");
     /* This compact simulator has only one outstanding segmented response per
        channel. Never release stale CFs from an earlier ECU request. */
     if(c->pending_len){
         logline("ISO-TP pending transfer superseded by a new ECU response",0,0);
-        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;
+        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;
     }
     if(c->protocol==PROTO_ISO15765){
         if(g_iso_rx_start && len>7 && c->count+2<=MAX_QUEUE)
@@ -674,7 +690,7 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
     for(i=0;i<6;i++)f[i+2]=payload[i];
     enqueue(c,response_id,f,8);
     bytes_copy(c->pending,payload,len);c->pending_len=len;c->pending_pos=6;
-    c->pending_id=response_id;c->pending_sn=1;
+    c->pending_id=response_id;c->pending_sn=1;c->pending_trace=c->active_trace;
 }
 static U32 answer_uds(const ECU *ecu,const U8 *req,U32 len,U8 *res) {
     U32 i,n;U8 service;
@@ -731,9 +747,13 @@ static U32 drop_queued_d2(CHANNEL *c){
     U32 read,keep=0,dropped=0,original=c->count;
     for(read=0;read<original;read++){
         U32 from=(c->r+read)%MAX_QUEUE,to=(c->r+keep)%MAX_QUEUE;
-        if(c->queue_d2_gen[from]){dropped++;continue;}
+        if(c->queue_d2_gen[from]){
+            backend_event(c,c->queue_trace[from],"rx_dropped","UNKNOWN","other","unknown");
+            dropped++;continue;
+        }
         if(to!=from){bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
-            c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;}
+            c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;
+            c->queue_trace[to]=c->queue_trace[from];}
         keep++;
     }
     c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
@@ -747,20 +767,28 @@ static void pump_d2(CHANNEL *c){
     now=now_us();
     if(now<c->d2_next_us)return;
     slot=c->w;
-    enqueue(c,c->d2_response_id,c->d2_frame[c->d2_pos],8);
+    {U64 previous=c->active_trace;c->active_trace=c->d2_trace;
+     enqueue(c,c->d2_response_id,c->d2_frame[c->d2_pos],8);
+     c->active_trace=previous;}
     /* Filters can discard a frame; never mark an older queue slot as new. */
     if(c->w!=slot){
         c->queue_d2_gen[slot]=c->d2_generation;
         c->queue_d2_frame[slot]=c->d2_pos+1;
     }
     c->d2_pos++;
-    if(c->d2_pos>=c->d2_count){c->d2_count=0;c->d2_pos=0;}
+    if(c->d2_pos>=c->d2_count){
+        U64 finished=c->d2_trace;
+        c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
+        backend_end_if_drained(c,finished);
+    }
     else c->d2_next_us+=(U64)c->d2_spacing_ms*1000ull;
 }
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     U32 i;D2_PROFILE *d;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN || len<4)return 0;
     if(data[0]!=0xCB || data[2]!=0xB9 || (data[3]!=0xFB&&data[3]!=0xF0&&data[3]!=0xFC))return 0;
+    backend_event(c,c->active_trace,"route_selected",
+                  (data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER","none","unknown");
     {U8 detail[16];
      u32_be(detail,data[1]);u32_be(detail+4,data[3]);
      u32_be(detail+8,c->baud);u32_be(detail+12,c->flags);
@@ -774,9 +802,12 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
             logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
         if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
             logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
+            backend_event(c,c->active_trace,"request_completed","CEM","unsupported_bus","no_response");
             return 1;
         }
         if(d->frame_count){
+            c->d2_trace=c->active_trace;
+            backend_event(c,c->active_trace,"response_generated","CEM","none","unknown");
             c->d2_generation++;
             if(!c->d2_generation)c->d2_generation=1;
             c->d2_response_id=d->response_id;c->d2_count=d->frame_count;
@@ -784,10 +815,15 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
             for(j=0;j<d->frame_count;j++)bytes_copy(c->d2_frame[j],d->frame[j],8);
             logline("P2 D2 read-only recorded frames staged",data,4);
             pump_d2(c);
-        }else logline("P2 D2 read command: no validated response fixture",data,4);
+        }else {
+            logline("P2 D2 read command: no validated response fixture",data,4);
+            backend_event(c,c->active_trace,"request_completed","CEM","missing_profile","no_response");
+        }
         return 1;
     }
-    logline("P2 D2 command: no recorded ECU fixture for target",data,4);return 1;
+    logline("P2 D2 command: no recorded ECU fixture for target",data,4);
+    backend_event(c,c->active_trace,"request_completed","CEM","missing_profile","no_response");
+    return 1;
 }
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     U32 id,i,n,sz;U8 payload[256],answer[256];const ECU *ecu;
@@ -800,6 +836,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
        We do not emulate a physical reset or fabricate an acknowledgment. */
     if(id==0x000FFFFEu && msg->DataSize>=6 && msg->Data[4]==0xFF && msg->Data[5]==0xC8){
         logline("P2 FF C8 broadcast reset: no physical ECU; intentionally silent",msg->Data,msg->DataSize);
+        backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
+        backend_event(c,c->active_trace,"request_completed","CEM","no_response","no_response");
         return;
     }
     for(i=0;i<g_ecu_count;i++){
@@ -826,6 +864,9 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         }else if(n<=sizeof(payload)){bytes_copy(payload,data,n);}
         else continue;
         matched=1;
+        backend_event(c,c->active_trace,"route_selected",
+                      ecu->req==0x726u?"CEM":(ecu->req==0x7E0u?"ECM":"ECU_OTHER"),
+                      "none","unknown");
         /* Never synthesize acknowledgments for protected functional requests:
            functional diagnostic resets and protected services are not supported.
            This also prevents the prior contradictory 'Unmatched' log line. */
@@ -835,13 +876,19 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             if(n>=2 && payload[0]==0x11 && payload[1]==0x81)
                 logline("Functional ECUReset 11 81: silent, no physical ECU to reset",msg->Data,msg->DataSize);
             else logline("Functional protected request ignored by lab emulator",msg->Data,msg->DataSize);
+            backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
             return;
         }
         sz=answer_uds(ecu,payload,n,answer);
         if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;}
+        else backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
         if(id!=0x7DF)return;
     }
-    if(!matched)logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
+    if(!matched) {
+        logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
+        backend_event(c,c->active_trace,"route_selected","UNHANDLED","none","unknown");
+        backend_event(c,c->active_trace,"request_completed","UNHANDLED","unhandled_request","no_response");
+    }
 }
 
 /* No physical bus: periodic requests are replayed only while the client
@@ -909,7 +956,15 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
                 observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
                 logline(observed.label,0,0);
         }
+        /* Flow-control frames continue a previous response, not a new ECU
+           diagnostic request. They are intentionally not assigned a new ID. */
+        if(!(c->protocol==PROTO_CAN && msgs[i].DataSize>=5 &&
+             (msgs[i].Data[4]&0xF0u)==0x30u)){
+            c->active_trace=next_backend_request();
+            backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
+        } else c->active_trace=0;
         process_request(c,&msgs[i]);
+        c->active_trace=0;
     }
     *count=n;unlock_state();return error(ERR_OK);
 }
@@ -950,7 +1005,12 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
                 u32_be(meta+16,msgs[actual].Timestamp);
                 logline("PassThruReadMsgs ISO15765 protocol/status/size/extra-index/timestamp-us (BE)",meta,20);
             }
-            c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
+            {U64 rid=c->queue_trace[c->r];
+             backend_event(c,rid,"rx_dequeued","UNKNOWN","none","unknown");
+             c->queue_trace[c->r]=0;
+             c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
+             backend_end_if_drained(c,rid);
+            }
         }
         unlock_state();
         if(actual){
