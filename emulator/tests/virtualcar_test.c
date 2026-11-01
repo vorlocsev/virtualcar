@@ -852,6 +852,7 @@ int main(){
     nearby or malformed requests remain UNHANDLED. All bytes are synthetic. */
  {
   U32 saved_count=g_ecu_count,p3cid=0,canid=0,k;
+  const char *p3_log;
   const U8 f114[]={0x22,0xF1,0x14};
   const U8 f190[]={0x22,0xF1,0x90};
   const U8 trailing[]={0x22,0xF1,0x14,0x00};
@@ -869,14 +870,11 @@ int main(){
   g_ecu_count=1; /* MY2005 donor profile has ECM only; no CEM fixture. */
   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&canid)==ERR_OK);
   for(k=0;k<sizeof(cases)/sizeof(cases[0]);k++){
-   U32 route_count=1;
-   PASSTHRU_MSG *target=cases[k].proto==PROTO_CAN?&m:&m;
-   (void)target;
-   case_log=backend_lines+backend_len;
+   p3_log=backend_lines+backend_len;
    m=frame(cases[k].proto,cases[k].id,cases[k].data,cases[k].len);
    send(cases[k].proto==PROTO_CAN?canid:cid,&m);
-   require_route(case_log,cases[k].route,1);
-   REQUIRE(terminal_for(case_log,last_tx_request(case_log),cases[k].reason,"no_response")==1);
+   require_route(p3_log,cases[k].route,1);
+   REQUIRE(terminal_for(p3_log,last_tx_request(p3_log),cases[k].reason,"no_response")==1);
    n=1;REQUIRE(PassThruReadMsgs(cases[k].proto==PROTO_CAN?canid:cid,&r,&n,0)==ERR_BUFFER_EMPTY);
    REQUIRE(n==0);
   }
@@ -885,13 +883,13 @@ int main(){
      this is a regression guard, not a claim about OEM response bytes. */
   g_ecu_count=saved_count;
   REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&p3cid)==ERR_OK);
-  case_log=backend_lines+backend_len;
+  p3_log=backend_lines+backend_len;
   m=frame(PROTO_ISO15765,0x726,f114,3);send(p3cid,&m);
   r=readmsg(p3cid);
   REQUIRE(r.Data[0]==0&&r.Data[1]==0&&r.Data[2]==0x07&&r.Data[3]==0x2E);
   REQUIRE(r.DataSize==24&&r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x14);
-  require_route(case_log,"CEM",1);
-  REQUIRE(terminal_for(case_log,last_tx_request(case_log),"none","responded")==1);
+  require_route(p3_log,"CEM",1);
+  REQUIRE(terminal_for(p3_log,last_tx_request(p3_log),"none","responded")==1);
   REQUIRE(PassThruDisconnect(p3cid)==ERR_OK);
  }
  /* J2534 BLOCK filter must be distinguishable from missing ECU fixture. */
