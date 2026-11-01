@@ -12,23 +12,25 @@ import (
 // dev49: read-only ECU telemetry is opt-in. This editor preserves unrelated
 // INI values, including private vehicle data, and keeps a local backup.
 func backendTelemetrySetting(data []byte) (bool, error) {
-	_, _, value, err := locateBackendSetting(data)
+	_, _, _, value, err := locateBackendSetting(data)
 	return value == "1", err
 }
 
-func locateBackendSetting(data []byte) ([]string, int, string, error) {
-	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+func locateBackendSetting(data []byte) ([]string, int, int, string, error) {
+	// A UTF-8 BOM belongs to the file prefix, not to every INI line.
+	text := strings.TrimPrefix(string(data), "\ufeff")
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	section := ""
 	header := -1
 	keyline := -1
 	value := ""
 	for i, raw := range lines {
-		line := strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
+		line := strings.TrimSpace(raw)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section = strings.TrimSpace(line[1 : len(line)-1])
 			if strings.EqualFold(section, "Diagnostics") {
 				if header >= 0 {
-					return nil, 0, "", errors.New("несколько секций [Diagnostics]; настройки не изменены")
+					return nil, -1, -1, "", errors.New("несколько секций [Diagnostics]; настройки не изменены")
 				}
 				header = i
 			}
@@ -42,16 +44,16 @@ func locateBackendSetting(data []byte) ([]string, int, string, error) {
 			continue
 		}
 		if keyline >= 0 {
-			return nil, 0, "", errors.New("дублируется BackendTelemetryEnabled; настройки не изменены")
+			return nil, -1, -1, "", errors.New("дублируется BackendTelemetryEnabled; настройки не изменены")
 		}
 		keyline = i
 		value = strings.TrimSpace(strings.SplitN(v, ";", 2)[0])
 	}
-	return lines, keyline, value, nil
+	return lines, header, keyline, value, nil
 }
 
 func rewriteBackendTelemetry(data []byte, enabled bool) ([]byte, error) {
-	lines, keyline, _, err := locateBackendSetting(data)
+	lines, header, keyline, _, err := locateBackendSetting(data)
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +64,7 @@ func rewriteBackendTelemetry(data []byte, enabled bool) ([]byte, error) {
 	if keyline >= 0 {
 		lines[keyline] = "BackendTelemetryEnabled=" + value
 	} else {
-		header := -1
-		for i, raw := range lines {
-			if strings.EqualFold(strings.TrimSpace(raw), "[Diagnostics]") {
-				header = i
-				break
-			}
-		}
+		// Use the validated header from the reader, including case/space rules.
 		if header >= 0 {
 			lines = append(lines[:header+1], append([]string{"BackendTelemetryEnabled=" + value}, lines[header+1:]...)...)
 		} else {
@@ -85,6 +81,9 @@ func rewriteBackendTelemetry(data []byte, enabled bool) ([]byte, error) {
 	result := strings.Join(lines, separator)
 	if !strings.HasSuffix(result, separator) {
 		result += separator
+	}
+	if strings.HasPrefix(string(data), "\ufeff") {
+		result = "\ufeff" + result
 	}
 	return []byte(result), nil
 }
