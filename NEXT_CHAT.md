@@ -2,7 +2,14 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
-## Актуальный checkpoint: offline A6/E6 validator (02.11.2026)
+## Актуальный checkpoint: дополнительный поиск публичных P2 captures (02.11.2026)
+
+- Кодовая база — development `625b09a366a6ae2a5d39fb854f4e69f5b9384008`, PR #31 merged. CI [Emulator/native x86 #41359332645](https://github.com/vorlocsev/virtualcar/actions/runs/41359332645) и [cross-build #41359332653](https://github.com/vorlocsev/virtualcar/actions/runs/41359332653) success. Этот следующий этап меняет только research docs и handoff; актуальный docs HEAD/CI сверять по GitHub.
+- По уточнению пользователя продолжать именно поиск опубликованных данных. Исходник/успешный сеанс у пользователя повторно не запрашивать без новой причины. Проверены новые public candidates, добавлены 20 SHA-256 (36 всего); см. `docs/research/p2-public-capture-followup.md`. Блог XC90 MY2009 содержит адреса/пассивные выдержки, не полный scan. CANLogger big.logdata: 41 761 корректный SLCAN-подобный record, 27 IDs, проверяемых D2/P3 diagnostic IDs=0; baud/direction/timestamps не угаданы. Нового подтверждённого CEM response нет.
+- В уже существующем приватном main client log PR30 подтверждено: один VIN read target50 получил matched=13/observed=13/ignored=0. Затем Hardware-session target50/500k и target40/125k: observed=0, elapsed=5000/5001 ms, Hardware TimeoutException. A3 TX 7/8 согласуются по порядку/маршрутам; A3 TX13 повторяет operands, но его точный accepted-response predicate не известен. Не считать ранний Hardware exception доказательством причины отдельного UI normal-mode warning. Client wall clock и backend QPC не склеивались; PIN-операции не используются как эталон.
+- Следующая задача Issue #4: подходящий опубликованный успешный read-only P2 scan с route/connect metadata и наблюдаемым переходом клиента через Hardware/normal-mode preparation. Кодовые изменения допустимы при конкретном дефекте либо подтверждённой совместимой записи; не добавлять предполагаемый E3/E6 и не повторять прежний VMware scan без нового evidence. Raw files/VIN/приватные operands остаются вне Git. Main/Dvinholm/prerelease не меняются.
+
+## Предыдущий checkpoint: offline A6/E6 validator (02.11.2026)
 
 - База этого этапа — development `c993844cafb24fa73d07a9da5fd3dbd036d08f46`; итоговые PR/merge SHA и CI сверять по GitHub. Ветка этапа: `fix/audit-d2-a6-single-frame`. Новый код меняет только Python evidence audit; исходник DLL, ECU responses и профили остаются прежними.
 - Полный single-frame E6 теперь сопоставляется с формой `CD target A6 identifier 01`: известный CEM CAN ID candidate, target/identifier echo, declared length, data-record byte и предоставленный channel/protocol/baud context. В JSON не выводятся identifier/value. Значения ignition/identity/normal-mode не интерпретируются; delivered означает только transport. Другие requests, E3 и multipart/negative A6 не становятся delivered. См. ограничения в `emulator/README_DEV31_EVIDENCE_RU.md`.

@@ -120,6 +120,200 @@
       "classification": "documentation_or_code_not_continuous_capture",
       "commit": "e725176a936177f288234a77507781e0cd5ba2a7",
       "commit_date_utc": "2026-10-20T06:10:34Z"
+    },
+    {
+      "name": "r2_toolkit_readme",
+      "url": "https://raw.githubusercontent.com/MarvinParanoid/VolvoDiagToolkit/9a5884cc45998702d35faaa95df32784b2d349d7/README.md",
+      "commit": "9a5884cc45998702d35faaa95df32784b2d349d7",
+      "commit_date_utc": "2026-08-05T07:35:19Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 7276,
+      "sha256": "3d75988d589e298bfd583c66650f7fb23ac1ec43f57ff0296e947797b3261243",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_p2shell_readme",
+      "url": "https://raw.githubusercontent.com/h3llo0p3rator/volvo-p2-diagnostics/77bb3c18e6518ca62d93f7e6fdba84a786162aa4/README.md",
+      "commit": "77bb3c18e6518ca62d93f7e6fdba84a786162aa4",
+      "commit_date_utc": "2026-10-18T23:18:53Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 2981,
+      "sha256": "f0c3344d0a1d8cd573b25f38a12765fc4135a1000dbfa1a3964b37b3524b1637",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_trent_readme",
+      "url": "https://raw.githubusercontent.com/Trent175/P2DiCETools/25b2902c1df18352f91546634edc2057a859cd77/README.md",
+      "commit": "25b2902c1df18352f91546634edc2057a859cd77",
+      "commit_date_utc": "2026-09-01T15:43:36Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 136,
+      "sha256": "7c2324936a57724d02707fe9e8ed3e59d5217f05d7e29f29faab72b14679184b",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_waal_readme",
+      "url": "https://raw.githubusercontent.com/waal70/VolvoCANBUS/5b7c9a60c65ecf2d5cfa78cf18beabf8e5c7ae14/README.md",
+      "commit": "5b7c9a60c65ecf2d5cfa78cf18beabf8e5c7ae14",
+      "commit_date_utc": "2026-01-14T11:04:30Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 4608,
+      "sha256": "5d4b0e963d21d498904d7540ef2be9e2bfc0818486a27304efd1de711d9ff7b6",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_vlink_readme",
+      "url": "https://raw.githubusercontent.com/BoostedMoose/v-link/6e5d225e3c8ff87aab01cc83a6b422da1d07d217/README.md",
+      "commit": "6e5d225e3c8ff87aab01cc83a6b422da1d07d217",
+      "commit_date_utc": "2025-09-09T13:17:33Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 3778,
+      "sha256": "5534291dff19ae8f43d697b432e094c5cff7f762a40f4bdf2d9557e119fc2fbb",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_esp32_readme",
+      "url": "https://raw.githubusercontent.com/cozadizzle/esp32-car-tool/7eaee2d07bbdac706f496eb4ae5c653d489b7878/README.md",
+      "commit": "7eaee2d07bbdac706f496eb4ae5c653d489b7878",
+      "commit_date_utc": "2026-06-12T03:25:25Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 16017,
+      "sha256": "05f944e2cbe2bb45fdb6396f47f25763ce5484ed047e33dbdf83a747df3684fc",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_informer_readme",
+      "url": "https://raw.githubusercontent.com/drpioneer/Volvo-P2-informer/9cd3a6f603915e074ac28c73eccec6b7473e8297/README.md",
+      "commit": "9cd3a6f603915e074ac28c73eccec6b7473e8297",
+      "commit_date_utc": "2026-05-26T08:26:09Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 5088,
+      "sha256": "84c1fb0fbf37755cda27b82264cc976ca019281e92d4007c32c1b575ca748144",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_ddfe_readme",
+      "url": "https://raw.githubusercontent.com/Vaizer/DDFE/4749c5f1223ff8d8a4848b41a409229b6c5c561f/README.md",
+      "commit": "4749c5f1223ff8d8a4848b41a409229b6c5c561f",
+      "commit_date_utc": "2025-12-24T06:51:33Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 2477,
+      "sha256": "f40903ca81c27c6903d4fc47af35d87382673c18ba673091d34d912688ae0646",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_demtool_readme",
+      "url": "https://raw.githubusercontent.com/Theralley/volvodiag/ac904bf88092b3545fc7881a11ce88e406e397b4/README.md",
+      "commit": "ac904bf88092b3545fc7881a11ce88e406e397b4",
+      "commit_date_utc": "2026-11-01T16:25:59Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 9097,
+      "sha256": "b11bb0a06a82474065a389c3b7377301c3a51da0fd395cbf8fa700cfb95f854c",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_canlogger_readme",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/README.md",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 976,
+      "sha256": "110913efdb28f7933c416abbf566ecc3b8fab486ae3ee465c0a4edbfd7deaf8e",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_moosesnif_readme",
+      "url": "https://raw.githubusercontent.com/najnesnaj/moosesnif/bdedb6ec472dc86035a370942c8c4339ca2f9372/README.md",
+      "commit": "bdedb6ec472dc86035a370942c8c4339ca2f9372",
+      "commit_date_utc": "2024-10-16T12:01:01Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 1602,
+      "sha256": "968a5dd4cc9dad04d10d2ab747c8a60859392855dc01da166a2367ffbea23c47",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_p2shell_hardware",
+      "url": "https://raw.githubusercontent.com/h3llo0p3rator/volvo-p2-diagnostics/77bb3c18e6518ca62d93f7e6fdba84a786162aa4/docs/HARDWARE_TEST_RESULTS.md",
+      "commit": "77bb3c18e6518ca62d93f7e6fdba84a786162aa4",
+      "commit_date_utc": "2026-10-18T23:18:53Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 783,
+      "sha256": "d08e509c3da729e10adc075044fb70ebf05f7c4b5a77aed5d88de5ef37717990",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_vlink_lin_test",
+      "url": "https://raw.githubusercontent.com/BoostedMoose/v-link/6e5d225e3c8ff87aab01cc83a6b422da1d07d217/backend/dev/lin_test.txt",
+      "commit": "6e5d225e3c8ff87aab01cc83a6b422da1d07d217",
+      "commit_date_utc": "2025-09-09T13:17:33Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 65104,
+      "sha256": "22c36f0fe9f7023c89c8fd2d9344ce5e377e04835e34caeda5316990c7c72136",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_demtool_captures",
+      "url": "https://raw.githubusercontent.com/Theralley/volvodiag/ac904bf88092b3545fc7881a11ce88e406e397b4/captures/README.md",
+      "commit": "ac904bf88092b3545fc7881a11ce88e406e397b4",
+      "commit_date_utc": "2026-11-01T16:25:59Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 285,
+      "sha256": "cbcbff2e129446d6eecec519e13d3b8b83cdc4d82aeeb1a54bb4b228e8abc9d6",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_canlogger_filelogger",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/CanLogger/VolvoCanLogger/FileLogger.cs",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 1843,
+      "sha256": "57cca98e952f1be91957ea16bbca975b3091412820afca5b7c3d11526643722c",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_canlogger_format_errors",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/Samples/error.logdata",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 99,
+      "sha256": "c58ff37757baf9204e576874fab6324b723bd0dc9abb3a682665cf6efccaf43d",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "canlogger_big",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/Samples/big.logdata",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "unattributed_slcan_sample_no_selected_diagnostic_ids",
+      "bytes": 1294591,
+      "sha256": "c3a4d35c082719ebfe2bed49986b0babc37510cc247ea23d9fdb35f40450643a",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_xc90_ids",
+      "url": "https://hackingvolvoxc90.blogspot.com/2018/01/identify-yourself.html",
+      "classification": "author_report_or_passive_excerpt_not_continuous_discovery",
+      "bytes": 47114,
+      "sha256": "f1dde597fffbe4c836c4391b3d0df92eb1cd1f2b7c2157c2187c6e9e962e82fc",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_xc90_hardware",
+      "url": "https://hackingvolvoxc90.blogspot.com/2018/01/the-hardware.html",
+      "classification": "author_report_or_passive_excerpt_not_continuous_discovery",
+      "bytes": 69129,
+      "sha256": "2b12e6b1e8a53b86694d6f11fb8cbd11474a8a016728ae50acb75865513ff19a",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_xc90_day0",
+      "url": "https://hackingvolvoxc90.blogspot.com/2018/01/day-0-beginning.html",
+      "classification": "author_report_or_passive_excerpt_not_continuous_discovery",
+      "bytes": 44127,
+      "sha256": "8ec46f99d4f334077e202ec2b8c50d2f2414ae8ed6dc5b3261225ae9bc05954a",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
     }
   ],
   "initial_review_date": "2026-11-01"
