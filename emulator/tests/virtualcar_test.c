@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static U32 tick=0;
+static U32 tick=0;static I64 qpc_offset_us=0;
 static char backend_lines[3000000];static U32 backend_len=0;
 static U32 event_count_since(const char *start,const char *pattern){
  U32 count=0;const char *p=start;
@@ -36,7 +36,8 @@ static U32 terminal_for(const char *start,U64 rid,const char *cause,const char *
 void Sleep(U32 ms){tick+=ms;}
 U32 GetTickCount(void){return tick;}
 int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
-int QueryPerformanceCounter(I64 *v){*v=(I64)tick*1000;return 1;}
+int QueryPerformanceCounter(I64 *v){*v=(I64)tick*1000+qpc_offset_us;return 1;}
+static void advance_test_us(U32 us){tick+=us/1000u;qpc_offset_us+=(I64)(us%1000u);if(qpc_offset_us>=1000){tick+=(U32)(qpc_offset_us/1000);qpc_offset_us%=1000;}}
 U32 GetCurrentProcessId(void){return 0xAABBCCDD;}
 U32 GetModuleFileNameA(PTR mod,char*out,U32 n){(void)mod;strncpy(out,"C:\\SectorV\\VirtualCarJ2534.dll",n);return (U32)strlen(out);}
 U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32 n,const char*path){
@@ -1053,6 +1054,37 @@ int main(){
      fc=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(lc,&fc);
      REQUIRE(ch->pending_len==0&&ch->count==2);
     }
+   }
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  }
+  /* F05: valid STmin gates CF delivery and timestamps at millisecond and
+     sub-millisecond precision. Polling before the due time returns empty. */
+  {
+   static const struct {const char *name;U8 stmin;U32 delay_us;} cases[]={
+    {"no separation",0x00,0},{"one millisecond",0x01,1000},
+    {"127 milliseconds",0x7F,127000},{"100 microseconds",0xF1,100},
+    {"500 microseconds",0xF5,500},{"900 microseconds",0xF9,900}
+   };
+   U32 z;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+   ch=channel(lc);qpc_offset_us=0;
+   for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+    U8 fc_bytes[3]={0x30,0,cases[z].stmin};
+    PASSTHRU_MSG fc,rx;U32 count=1;
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+    tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+    tmp=readmsg(lc);REQUIRE(tmp.Data[4]==0x10);
+    fc=frame(PROTO_CAN,0x7E0,fc_bytes,3);send(lc,&fc);
+    REQUIRE(ch->pending_len==0&&ch->count==2);
+    REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_OK&&count==1&&rx.Data[4]==0x21);
+    if(cases[z].delay_us){
+     count=1;REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+     advance_test_us(cases[z].delay_us-1);
+     count=1;REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+     advance_test_us(1);
+    }
+    count=1;REQUIRE(PassThruReadMsgs(lc,&rx,&count,0)==ERR_OK&&count==1&&rx.Data[4]==0x22);
+    REQUIRE((U32)(rx.Timestamp-tmp.Timestamp)>=cases[z].delay_us);
    }
    REQUIRE(PassThruDisconnect(lc)==ERR_OK);
   }
