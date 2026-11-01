@@ -926,8 +926,12 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
             return;
         }
+        /* PR #12 F01: functional 09/02 has an ECM responder only. */
+        if(id==0x7DF && n>=2 && payload[0]==0x09 && payload[1]==0x02 && ecu->req!=0x7E0u)
+            continue;
         sz=answer_uds(ecu,payload,n,answer);
-        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;
+        /* PR #12 F01: FC must use the responder's physical CAN ID. */
+        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=ecu->req;
             /* A filtered single-frame reply may never enter RX; close its
                telemetry now without altering ECU/transport state. */
             backend_end_if_drained(c,c->active_trace);
