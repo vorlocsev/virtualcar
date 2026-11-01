@@ -112,8 +112,14 @@ def validate_response(frames, target, opcode):
                 raise ValueError(f'Invalid D2 sequence at frame {i}')
             counter=(counter+1)&7
         raise ValueError('Missing final D2 frame')
-    elif first[0]&0xF8 != 0xC8 or first[1]!=target:
-        raise ValueError('Invalid D2 single-frame response')
+    else:
+        if first[0]&0xF8 != 0xC8 or first[1]!=target:
+            raise ValueError('Invalid D2 single-frame response')
+        # Match the DLL fixture gate: target alone does not pair a reply.
+        # Keep a recorded B9 negative reply intact; never turn it positive.
+        if not ((first[2]==0xF9 and first[3]==opcode) or
+                (first[2]==0x7F and first[3]==0xB9)):
+            raise ValueError('Wrong D2 single-frame service/opcode echo')
 
 
 def set_lab_vin(frames, vin):
@@ -136,10 +142,12 @@ def main():
     a.add_argument('--target',choices=['40','50'],default='50')
     a.add_argument('--opcode',choices=['F0','FB','FC'],default='FB')
     a.add_argument('--profile',type=Path,default=Path(__file__).resolve().parent.parent/'virtualcar-p2.ini')
-    a.add_argument('--output',type=Path,required=True)
+    a.add_argument('--output',type=Path,required=True,help='New local INI; existing files are never overwritten')
     a.add_argument('--keep-identifiers',action='store_true',help='Retain VIN/personal vehicle identifiers in PRIVATE local output (use only for your own captures)')
     a.add_argument('--lab-vin',help='Replace exactly one masked VIN with a synthetic 17-character test VIN; diagnostic lab only')
     args=a.parse_args()
+    if args.output.resolve() in (args.log.resolve(), args.profile.resolve()):
+        a.error('Output must be a new file, not the source log or profile')
     target,opcode=int(args.target,16),int(args.opcode,16)
     groups=sessions(args.log.read_text(encoding='utf-8',errors='replace').splitlines(),target,opcode)
     if not groups:
@@ -180,9 +188,14 @@ def main():
     for i,(_id,data) in enumerate(frames):
         key=('B9FBFrame' if opcode==0xFB else 'Frame')+f'{i:X}'
         cfg.set(section,key,' '.join(f'{b:02X}' for b in data))
-    if args.output.resolve()==args.profile.resolve():a.error('Output must be a new file; do not overwrite source profile')
-    with args.output.open('w',encoding='utf-8') as f: cfg.write(f)
+    try:
+        # Exclusive creation also protects existing hardlink/symlink aliases
+        # and a destination created after the earlier source-path check.
+        with args.output.open('x',encoding='utf-8') as f: cfg.write(f)
+    except OSError:
+        a.error('Unable to create new output; existing files are never overwritten')
     print(f'Imported: CEM 0x{target:02X} B9{opcode:02X}, {len(frames)} frames, RX CAN ID 0x{can_id:08X}')
     print(f'Wrote local P2 profile to {args.output}')
 
 if __name__=='__main__':main()
+
