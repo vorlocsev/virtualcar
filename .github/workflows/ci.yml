@@ -46,3 +46,39 @@ jobs:
           file SectorV-Trace-OneClick-v0.3.6.7-dev26.exe cmd/oneclick/assets/VirtualCarTrace32.dll
           objdump -p cmd/oneclick/assets/VirtualCarTrace32.dll | grep -E 'DLL Name:|PassThru' | head -50
           test "$(objdump -p cmd/oneclick/assets/VirtualCarTrace32.dll | grep -c 'PassThru')" -eq 14
+      - name: Test laboratory packaging
+        run: python3 tests/test_package_proxy_lab.py
+      - name: Package allowlisted laboratory files
+        env:
+          VC_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/package_proxy_lab.py --commit "$VC_BUILD_COMMIT"
+      - name: Transfer cross-built candidate to Windows tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-cross-build-input
+          path: _build/dev46-lab/
+          if-no-files-found: error
+          retention-days: 3
+  native-windows:
+    needs: cross-build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: proxy-cross-build-input
+          path: _build/cross
+      - name: Native x86 DLL integration, MSVC and cross-built Clang DLL
+        shell: cmd
+        run: tests\run_proxy_windows.cmd _build\cross\VirtualCarTrace32.dll
+      - name: Save verified laboratory build without publishing a release
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-dev46-lab-x86
+          path: _build/cross/
+          if-no-files-found: error
+          retention-days: 14
