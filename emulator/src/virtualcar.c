@@ -1167,6 +1167,19 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         else backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
     }
     if(!matched) {
+        /* A missing P3 CEM profile is distinguishable from an arbitrary ID.
+           Classify only the exact read-only F114 request on the two known
+           P3 CEM addressing forms. This adds evidence, never an ECU reply. */
+        if(c->protocol==PROTO_ISO15765 &&
+           (id==0x726u || id==0x18DA50F1u) &&
+           msg->DataSize==7u && msg->Data[4]==0x22u &&
+           msg->Data[5]==0xF1u && msg->Data[6]==0x14u) {
+            backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
+            logline("P3 CEM F114 probe: no configured CEM fixture; no response",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unimplemented_probe","no_response");
+            return;
+        }
         logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
         backend_event(c,c->active_trace,"route_selected","UNHANDLED","none","unknown");
         backend_event(c,c->active_trace,"request_completed","UNHANDLED","unhandled_request","no_response");

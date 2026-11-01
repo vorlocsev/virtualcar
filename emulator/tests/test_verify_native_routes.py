@@ -25,7 +25,7 @@ def synthetic_events():
              (5, 500000, 1, 'CEM', 'D2_50_B9FB', 'missing_profile'),
              (5, 250000, 4, 'CEM', 'D2_50_B9FB', 'unsupported_bus'),
              (5, 500000, 1, 'UNHANDLED', 'P3_726_F114', 'unhandled_request'),
-             (6, 500000, 3, 'UNHANDLED', 'P3_726_F114', 'unhandled_request'),
+             (6, 500000, 3, 'CEM', 'P3_726_F114', 'unimplemented_probe'),
              (6, 500000, 3, 'ECU_OTHER', None, 'no_response')]
     events = []
     for rid, (protocol, baud, channel, route, probe, reason) in enumerate(rows, 1):
