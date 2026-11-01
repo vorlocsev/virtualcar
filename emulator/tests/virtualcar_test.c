@@ -32,16 +32,7 @@ static U32 terminal_for(const char *start,U64 rid,const char *cause,const char *
  }
  return count;
 }
-static void fill_untraced_rx(CHANNEL *ch,U32 target){
- static const U8 fake_frame[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0};
- U64 prior=ch->active_trace;
- ch->active_trace=0;
- while(ch->count<target){
-  REQUIRE(ch->count<MAX_QUEUE);
-  enqueue(ch,0x555,fake_frame,8);
- }
- ch->active_trace=prior;
-}
+
 void Sleep(U32 ms){tick+=ms;}
 U32 GetTickCount(void){return tick;}
 int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
@@ -94,6 +85,16 @@ int CloseHandle(HANDLE file){(void)file;return 1;}
 long InterlockedCompareExchange(volatile long*dst,long exchange,long compare){long v=*dst;if(v==compare)*dst=exchange;return v;}
 long InterlockedExchange(volatile long*dst,long val){long v=*dst;*dst=val;return v;}
 #define REQUIRE(expr) do{if(!(expr)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#expr);exit(1);}}while(0)
+static void fill_untraced_rx(CHANNEL *ch,U32 target){
+ static const U8 fake_frame[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0};
+ U64 prior=ch->active_trace;
+ ch->active_trace=0;
+ while(ch->count<target){
+  REQUIRE(ch->count<MAX_QUEUE);
+  enqueue(ch,0x555,fake_frame,8);
+ }
+ ch->active_trace=prior;
+}
 static PASSTHRU_MSG frame(U32 proto,U32 id,const U8 *data,U32 len){PASSTHRU_MSG m={0};m.ProtocolID=proto;m.DataSize=len+4;m.Data[0]=(U8)(id>>24);m.Data[1]=(U8)(id>>16);m.Data[2]=(U8)(id>>8);m.Data[3]=(U8)id;if(len)memcpy(m.Data+4,data,len);return m;}
 static PASSTHRU_MSG readmsg(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_OK);REQUIRE(n==1);return m;}
 static void send(U32 cid,PASSTHRU_MSG *m){U32 n=1;REQUIRE(PassThruWriteMsgs(cid,m,&n,10)==ERR_OK);REQUIRE(n==1);}
