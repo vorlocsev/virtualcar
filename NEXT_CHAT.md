@@ -24,6 +24,13 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
+## Явная маршрутизация CEM A3/A6 без фиктивных ответов (01.11.2026, PR #20)
+
+- **PR #20** `fix/issue4-a3-a6-silent-cem-routing → development` объединён squash-коммитом `fc2eb08ffae12bc6e127d31dc23aaeeedafb2f30`. PR HEAD `ac5bbd64f7f4412174ad1909c66ccccbd43e129d`, [Emulator Windows x86 CI #41304616832](https://github.com/vorlocsev/virtualcar/actions/runs/41304616832) **success** (J2534/C, PE32 DLL/exports, Python, Go/vet, Windows x86 GUI и артефакт).
+- D2 CAN `0x000FFFFE` для target `0x40/0x50`, A3/A6 и префиксов `CB/CF/CA` теперь проходит известный маршрут `CEM` и выдаёт мета-событие `unimplemented_probe/no_response` при **полностью прежнем отсутствии ответа на шине**. Это неподдерживаемый в Virtual Car ответ, не утверждение о возможностях реального OEM CEM. Нет синтетических ответов E3/E6, зажигания, VIN и идентификационных данных. Неизвестные CAN ID остаются `UNHANDLED`; B9F0/B9FB/B9FC и их записанные фикстуры не изменены.
+- Backend auditor отличает `unsupported/unimplemented_probe` от `no_fixture/missing_profile` и неизвестных `unhandled_request`. Девять C host-маршрутных сценариев, семь Python регрессий #30–#36, включая отсутствие RX, разделение B9, конфликт маршрутов, противоречивые терминалы и неразглашение частных полей.
+- **Issue #4 остаётся OPEN** до настоящей read-only сессии SectorV/VDASH в VMware с текущей DLL и анализа обезличенного `backend-audit.json`. Нет положительных OEM A3/A6/B9F0 для XC90 V8 MY2009, верификации принятия VIN и физического J2534. Post-merge CI на новом SHA `development` проверять отдельно. Draft PR #12/#15 и #2 не объединять; `main`, релизы Virtual Car и Dvinholm не трогать.
+
 ## Матрица CEM probes и точное P3 DID (01.11.2026, PR #19)
 
 - **PR #19** `feature/issue4-cem-probe-coverage → development` объединён squash-коммитом `ca16ca04cc74ed5bacc0a296003bcd6b09d69248`. PR HEAD `3bc6dcc788b01a47412514b0e9426368854be5cd`, [Windows x86 emulator CI #41304043679](https://github.com/vorlocsev/virtualcar/actions/runs/41304043679) **success** (J2534/C regressions, DLL x86/exports, Python fixtures/audit, Go/vet, x86 GUI, artifact).
