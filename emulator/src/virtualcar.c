@@ -1008,6 +1008,10 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         n=msg->DataSize-4;data=msg->Data+4;
         if(c->protocol==PROTO_CAN){
             if((data[0]&0xF0)==0x30 && c->pending_len){
+                if(n<3){
+                    logline("ISO-TP FC ignored (missing block size or STmin)",msg->Data,msg->DataSize);
+                    return;
+                }
                 if(id!=c->pending_request_id){
                     logline("ISO-TP FC ignored (different request CAN ID)",msg->Data,msg->DataSize);
                     return;
