@@ -117,6 +117,18 @@ static void fill_untraced_rx(CHANNEL *ch,U32 target){
 static PASSTHRU_MSG frame(U32 proto,U32 id,const U8 *data,U32 len){PASSTHRU_MSG m={0};m.ProtocolID=proto;m.DataSize=len+4;m.Data[0]=(U8)(id>>24);m.Data[1]=(U8)(id>>16);m.Data[2]=(U8)(id>>8);m.Data[3]=(U8)id;if(len)memcpy(m.Data+4,data,len);return m;}
 static PASSTHRU_MSG readmsg(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_OK);REQUIRE(n==1);return m;}
 static void send(U32 cid,PASSTHRU_MSG *m){U32 n=1;REQUIRE(PassThruWriteMsgs(cid,m,&n,10)==ERR_OK);REQUIRE(n==1);}
+/* Synthetic RX occupancy for testing ISO-TP backpressure without real CAN. */
+static void fill_lab_rx(CHANNEL *c,U32 amount){
+ static const U8 marker[8]={0x46,0x49,0x4C,0x4C,0x54,0x45,0x53,0x54};
+ for(U32 i=0;i<amount;i++){
+   REQUIRE(c->count<MAX_QUEUE);
+   enqueue(c,0x555u,marker,8);
+ }
+}
+static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
+ REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
+ REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
+}
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
@@ -222,6 +234,153 @@ int main(){
  REQUIRE(assembled[0]==0x62&&assembled[1]==0xF1&&assembled[2]==0x06);
  for(U32 z=0;z<142;z++)REQUIRE(assembled[3+z]==(U8)z);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* F02: a granted ISO-TP burst resumes only after RX backpressure eases.
+    All frames and bus occupancy in this test are synthetic. */
+ {
+  U32 bp_cid=0,other_cid=0,got=0;
+  CHANNEL *bp;
+  PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(128,sizeof(*batch));
+  REQUIRE(batch!=0);
+  const U8 bs2[]={0x30,0x02,0,0,0,0,0,0};
+  const U8 wait_fc[]={0x31,0,0,0,0,0,0,0};
+  const U8 overflow_fc[]={0x32,0,0,0,0,0,0,0};
+  const U8 tester[]={0x02,0x3E,0x00,0,0,0,0,0};
+  /* 1+2: 64-entry FIFO before FC; BS=0 must preserve the grant.
+     One ReadMsgs(NumMsgs=128) drains 64 old frames plus all 20 CFs,
+     without corrupting the existing 142-byte F106 read-only fixture. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&bp_cid)==ERR_OK);
+  bp=channel(bp_cid);
+  m=frame(PROTO_CAN,0x726,f106_sf,8);send(bp_cid,&m);
+  REQUIRE(bp->count==1 && bp->pending_len==145 && bp->pending_pos==6);
+  fill_lab_rx(bp,MAX_QUEUE-1);
+  REQUIRE(bp->count==MAX_QUEUE && !bp->pending_cf_active);
+  m=frame(PROTO_CAN,0x726,fc,8);send(bp_cid,&m);
+  REQUIRE(bp->pending_cf_active && bp->pending_pos==6 && bp->count==MAX_QUEUE);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==84);
+  REQUIRE(batch[0].Data[4]==0x10 && batch[0].Data[5]==0x91);
+  for(U32 z=1;z<MAX_QUEUE;z++)REQUIRE(batch[z].Data[2]==0x05 && batch[z].Data[3]==0x55);
+  U8 restored[145];memcpy(restored,batch[0].Data+6,6);U32 pos=6;
+  for(U32 z=0;z<20;z++){
+    const PASSTHRU_MSG *part=&batch[MAX_QUEUE+z];
+    require_lab_cf(part,z+1);
+    U32 remain=145-pos;if(remain>7)remain=7;
+    memcpy(restored+pos,part->Data+5,remain);pos+=remain;
+  }
+  REQUIRE(pos==145 && restored[0]==0x62 && restored[1]==0xF1 && restored[2]==0x06);
+  for(U32 z=0;z<142;z++)REQUIRE(restored[3+z]==(U8)z);
+  REQUIRE(bp->count==0 && bp->pending_len==0 && !bp->pending_cf_active);
+  REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
+  /* 3+4: BS=2 when full grants exactly two CFs after draining;
+     each subsequent new grant is necessary, even after FIFO empties. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&bp_cid)==ERR_OK);
+  bp=channel(bp_cid);
+  m=frame(PROTO_CAN,0x726,f106_sf,8);send(bp_cid,&m);fill_lab_rx(bp,MAX_QUEUE-1);
+  m=frame(PROTO_CAN,0x726,bs2,8);send(bp_cid,&m);
+  REQUIRE(bp->pending_cf_active && bp->pending_cf_credit==2 && bp->pending_pos==6);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==66);
+  require_lab_cf(&batch[64],1);require_lab_cf(&batch[65],2);
+  REQUIRE(bp->pending_len==145 && bp->pending_pos==20);
+  REQUIRE(!bp->pending_cf_active && bp->pending_cf_credit==0);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_BUFFER_EMPTY && got==0);
+  m=frame(PROTO_CAN,0x726,fc1,8);send(bp_cid,&m);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==1);
+  require_lab_cf(&batch[0],3);
+  REQUIRE(!bp->pending_cf_active && bp->pending_pos==27);
+  m=frame(PROTO_CAN,0x726,fc,8);send(bp_cid,&m);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==17);
+  for(U32 z=0;z<17;z++)require_lab_cf(&batch[z],z+4);
+  REQUIRE(bp->pending_len==0 && !bp->pending_cf_active);
+  REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
+  /* 5: a physical FC for a different ECU must not release a grant. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&bp_cid)==ERR_OK);
+  bp=channel(bp_cid);
+  m=frame(PROTO_CAN,0x726,f106_sf,8);send(bp_cid,&m);fill_lab_rx(bp,MAX_QUEUE-1);
+  m=frame(PROTO_CAN,0x7E0,fc,8);send(bp_cid,&m);
+  REQUIRE(!bp->pending_cf_active && bp->pending_pos==6);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==64);
+  REQUIRE(bp->pending_len==145 && bp->pending_pos==6);
+  m=frame(PROTO_CAN,0x726,fc,8);send(bp_cid,&m);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==20);
+  for(U32 z=0;z<20;z++)require_lab_cf(&batch[z],z+1);
+  REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
+  /* 6: WAIT and then OVERFLOW cancel a stored CTS grant without
+     emitting any CF after a queued FF is read. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&bp_cid)==ERR_OK);
+  bp=channel(bp_cid);
+  m=frame(PROTO_CAN,0x726,f106_sf,8);send(bp_cid,&m);fill_lab_rx(bp,MAX_QUEUE-1);
+  m=frame(PROTO_CAN,0x726,wait_fc,8);send(bp_cid,&m);
+  REQUIRE(!bp->pending_cf_active);
+  m=frame(PROTO_CAN,0x726,fc,8);send(bp_cid,&m);
+  REQUIRE(bp->pending_cf_active && bp->pending_pos==6);
+  m=frame(PROTO_CAN,0x726,wait_fc,8);send(bp_cid,&m);
+  REQUIRE(!bp->pending_cf_active && bp->pending_cf_credit==0);
+  m=frame(PROTO_CAN,0x726,fc,8);send(bp_cid,&m);
+  REQUIRE(bp->pending_cf_active && bp->pending_pos==6);
+  m=frame(PROTO_CAN,0x726,overflow_fc,8);send(bp_cid,&m);
+  REQUIRE(!bp->pending_cf_active && bp->pending_len==0);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==64);
+  REQUIRE(batch[0].Data[4]==0x10 && batch[63].Data[3]==0x55);
+  got=1;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_BUFFER_EMPTY && got==0);
+  REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
+  /* 7: a fresh response must cancel a stored grant for superseded
+     transfer, and must not leak old CFs on the next ReadMsgs call. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&bp_cid)==ERR_OK);
+  bp=channel(bp_cid);
+  m=frame(PROTO_CAN,0x726,f106_sf,8);send(bp_cid,&m);fill_lab_rx(bp,MAX_QUEUE-1);
+  m=frame(PROTO_CAN,0x726,fc,8);send(bp_cid,&m);
+  REQUIRE(bp->pending_cf_active);
+  m=frame(PROTO_CAN,0x726,tester,8);send(bp_cid,&m);
+  REQUIRE(!bp->pending_cf_active && bp->pending_len==0);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==64);
+  got=1;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_BUFFER_EMPTY && got==0);
+  REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
+  /* 8: RX drain on another ChannelID does not consume the pending
+     grant or alter the first channel's CF sequence. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&bp_cid)==ERR_OK);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&other_cid)==ERR_OK);
+  bp=channel(bp_cid);
+  m=frame(PROTO_CAN,0x726,f106_sf,8);send(bp_cid,&m);fill_lab_rx(bp,MAX_QUEUE-1);
+  m=frame(PROTO_CAN,0x726,fc,8);send(bp_cid,&m);
+  m=frame(PROTO_CAN,0x726,tester,8);send(other_cid,&m);
+  got=128;REQUIRE(PassThruReadMsgs(other_cid,batch,&got,0)==ERR_OK && got==1);
+  REQUIRE(batch[0].Data[4]==0x02 && batch[0].Data[5]==0x7E);
+  REQUIRE(bp->count==MAX_QUEUE && bp->pending_pos==6 && bp->pending_cf_active);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==84);
+  for(U32 z=0;z<20;z++)require_lab_cf(&batch[64+z],z+1);
+  REQUIRE(bp->pending_len==0 && !bp->pending_cf_active);
+  REQUIRE(PassThruDisconnect(other_cid)==ERR_OK);
+  REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
+  free(batch);
+ }
+ /* F02/STmin integration: a drained full RX queue must preserve the
+    5-ms schedule, even when one ReadMsgs call requests 128 entries. */
+ {
+  U32 bp_cid=0,got=0,last_timestamp=0;
+  PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(128,sizeof(PASSTHRU_MSG));
+  const U8 fc5ms[]={0x30,0x00,0x05,0,0,0,0,0};
+  REQUIRE(batch!=0);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&bp_cid)==ERR_OK);
+  CHANNEL *bp=channel(bp_cid);
+  m=frame(PROTO_CAN,0x726,f106_sf,8);send(bp_cid,&m);
+  fill_lab_rx(bp,MAX_QUEUE-1);
+  m=frame(PROTO_CAN,0x726,fc5ms,8);send(bp_cid,&m);
+  REQUIRE(bp->pending_cf_active && bp->pending_pos==6);
+  got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==65);
+  require_lab_cf(&batch[64],1);
+  REQUIRE(bp->pending_len==0 && bp->count==19);
+  last_timestamp=batch[64].Timestamp;
+  for(U32 z=2;z<=20;z++){
+   got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_BUFFER_EMPTY && got==0);
+   advance_test_us(5000);
+   got=128;REQUIRE(PassThruReadMsgs(bp_cid,batch,&got,0)==ERR_OK && got==1);
+   require_lab_cf(&batch[0],z);
+   REQUIRE((U32)(batch[0].Timestamp-last_timestamp)>=5000u);
+   last_timestamp=batch[0].Timestamp;
+  }
+  REQUIRE(bp->count==0 && bp->pending_len==0 && !bp->pending_cf_active);
+  REQUIRE(PassThruDisconnect(bp_cid)==ERR_OK);
+  free(batch);
+ }
  /* Observer classifies A3, but never fabricates a positive E3 reply. */
  const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
  m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
