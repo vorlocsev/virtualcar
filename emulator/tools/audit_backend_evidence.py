@@ -106,11 +106,35 @@ def _new_event(e, session_number, ordinal):
         "context_conflict": False, "terminal": None,
         "duplicate_terminal": False, "late_events": False,
         "saw_tx": False, "probes": set(),
+        "last_tick": None, "sequence_conflict": False,
+        "dequeue_without_queue": False, "queued_open": 0,
     }
 
 
 def _update(r, e):
     kind = e["kind"]
+    # A record with a missing TX, repeated TX, out-of-order monotonic ticks,
+    # or a dequeue without a previously queued frame is incomplete evidence.
+    # rx_dropped does NOT consume queued_open: enqueue failures also emit it.
+    if r["last_tick"] is not None and e["tick"] < r["last_tick"]:
+        r["clock_conflict"] = True
+    r["last_tick"] = e["tick"]
+    if kind == "tx_received":
+        if r["saw_tx"] or r["counts"]:
+            r["sequence_conflict"] = True
+    elif not r["saw_tx"]:
+        r["sequence_conflict"] = True
+    if kind == "probe_classified" and (
+            r["counts"]["rx_queued"] or r["counts"]["rx_dequeued"]
+            or r["terminal"] is not None):
+        r["sequence_conflict"] = True
+    if kind == "rx_queued":
+        r["queued_open"] += 1
+    if kind == "rx_dequeued":
+        if r["queued_open"] <= 0:
+            r["dequeue_without_queue"] = True
+        else:
+            r["queued_open"] -= 1
     r["counts"][kind] += 1
     if kind == "probe_classified":
         r["probes"].add(e["probe"])
@@ -146,8 +170,12 @@ def _classify(r):
         return "unverified", "conflicting_probe_evidence"
     if r["context_conflict"] or len(r["routes"]) > 1:
         return "unverified", "inconsistent_route_or_channel"
-    if r["duplicate_terminal"] or r["late_events"]:
+    if r["duplicate_terminal"] or r["late_events"] or r["sequence_conflict"]:
         return "unverified", "inconsistent_event_lifecycle"
+    if r["clock_conflict"]:
+        return "unverified", "inconsistent_clock"
+    if r["dequeue_without_queue"]:
+        return "unverified", "dequeue_without_queue"
     if not r["saw_tx"]:
         return "unverified", "missing_tx_evidence"
     if terminal is None:
@@ -157,6 +185,8 @@ def _classify(r):
             return "unverified", "queued_not_delivered"
         return "unverified", "no_terminal_evidence"
     outcome, reason = terminal
+    if outcome == "no_response" and (queued or delivered):
+        return "unverified", "rx_evidence_with_no_response"
     if reason == "missing_profile" and outcome == "no_response":
         return "no_fixture", "explicit_missing_profile"
     if reason in ("unsupported_bus", "unhandled_request") and outcome == "no_response":
@@ -170,7 +200,7 @@ def _classify(r):
             return "partial_rx", "rx_delivery_interrupted"
         return "unverified", "aborted_or_dropped_before_rx"
     if outcome == "responded":
-        if delivered > 0 and not lost:
+        if delivered > 0 and not lost and r["queued_open"] == 0:
             return "delivered", "j2534_rx_only"
         return "unverified", "terminal_without_clean_rx"
     if delivered:
@@ -183,7 +213,9 @@ def _classify(r):
 def _result(r):
     status, reason = _classify(r)
     c = r["counts"]
-    details = PROBES[next(iter(r["probes"]))] if len(r["probes"]) == 1 else None
+    details = (PROBES[next(iter(r["probes"]))]
+               if len(r["probes"]) == 1 and r["saw_tx"]
+               and not r["sequence_conflict"] else None)
     duration = None
     if (not r["clock_conflict"] and r["start_tick"] is not None
             and r["end_tick"] is not None and r["end_tick"] >= r["start_tick"]):
@@ -233,6 +265,7 @@ def audit(lines):
         "identity_verified": False,
         "probe_detail_available": any(bool(r["probes"]) for r in transactions.values()),
         "limitations": [
+            "Missing, reordered or incomplete queue/terminal events downgrade delivery to unverified",
             "Only exact allowlisted probe_classified shapes identify a request; legacy logs remain unknown",
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
