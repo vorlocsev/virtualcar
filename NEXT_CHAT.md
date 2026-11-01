@@ -24,6 +24,15 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
+## VMware backend audit: PR #22 (01.11.2026)
+
+- Проверенный код: [PR #22](https://github.com/vorlocsev/virtualcar/pull/22), code HEAD `d4cd882263565fd7fb40e3e89a9d6e20acc7f3c9`, база `ad333635d37fffea651733745af5f1ce3f35d2ba`. Состояние интеграции и финальный SHA документационного обновления сверять по GitHub. На code HEAD [Emulator CI #41309278841](https://github.com/vorlocsev/virtualcar/actions/runs/41309278841) и [VMware packager #41309278839](https://github.com/vorlocsev/virtualcar/actions/runs/41309278839) **success**; публикация prerelease **skipped**. CI финального HEAD проверять отдельно.
+- Исправлены противоречивые маршруты физического silent completion (ECM/CEM → ECU_OTHER), дополнительного D2_Node и functional fanout. Ответы на шине не добавлены. Аудитор выводит `observed_routes` и `evidence_conflicts`; исторические конфликты остаются unverified. Восемь групп C/Python регрессий, в том числе настоящая цепочка C-emitter → Python-auditor; локально полный MSVC x86 host suite и 44 Python-проверки.
+- Исходный приватный backend JSONL найден локально и повторно проанализирован: **38 запросов / 14 сеансов / invalid=0**, no_fixture=20, unsupported=6, unverified=12. Все шесть inconsistent_route_or_channel — **только route**, ECM/ECU_OTHER. Для каждого подтверждена цепочка TX UNKNOWN → route_selected ECM → terminal ECU_OTHER/no_response; channel/protocol/baud не расходятся. Сервис этих запросов не маркирован. Шесть explicit_no_response также остаются без известного сервиса; это не доказательство A3/A6/B9FB.
+- 20 B9FB без фикстуры соответствуют пустым CEM D2 fixtures опубликованного synthetic профиля; ещё два target 50 на 250 kbit/s отклонены strict routing. Четыре P3 0x726/F114 остаются unsupported при профиле только с ECM. Никакие CEM ответы/узлы автоматически не добавлять.
+- **Следующая задача: Issue #4**, новый read-only VMware сеанс с CI сборкой PR #22: проверить отсутствие новых конфликтов меток. Для B9FB отдельно нужны подлинные совместимые fixtures; отсутствие конфликта не означает успешную идентификацию. Полный пользовательский журнал, профиль, payload и исходные request/session ID в GitHub не публиковать. Новый обезличенный аудит остаётся локально в workspace `.cache/backend-audit-route-details.json`.
+- Main, Dvinholm, draft PR #2/#12/#15 и опубликованный VMware prerelease/tag/assets не менять. Новая DLL в VMware и физический J2534 после исправления **не проверены**.
+
 ## VMware LAB prerelease 2026-11-01 (PR #21, verified)
 
 - **PR #21** `feature/vmware-readonly-release-package → development` merged squash at `f2eb76e8f19731239d93dec229d2eed487c5ca27`. Exact PR head `f59d7ce5f9c8ec3c7a2c4e4648f997a52e2dc2bf`, [Emulator CI #41305708695](https://github.com/vorlocsev/virtualcar/actions/runs/41305708695) **success**, [VMware packager CI #41305708832](https://github.com/vorlocsev/virtualcar/actions/runs/41305708832) **success**.
@@ -147,3 +156,4 @@ https://github.com/vorlocsev/virtualcar/blob/development/NEXT_CHAT.md
 ```
 
 *Этот документ создан для продолжения с **нового чата**. Его состояние обновляется через GitHub, а не зависит от памяти или истории текущей беседы.*
+
