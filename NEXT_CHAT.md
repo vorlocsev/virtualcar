@@ -24,6 +24,12 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
+## Проверка целостности backend evidence (01.11.2026, PR #18)
+
+- **PR #18** `fix/issue4-backend-event-integrity → development` объединён squash-коммитом `5307106c2a78d342c4206cd673fa47668ffe7777`. Аудитор `emulator/tools/audit_backend_evidence.py` теперь отмечает `unverified` при `rx_dequeued` без предшествующего `rx_queued`, при невручённых кадрах на момент `responded`, повторном/переставленном TX, запоздалой классификации запроса, нарушении порядка QPC ticks или частоты, либо `no_response` вместе с RX. `rx_dropped` может относиться к неудачной постановке в очередь, поэтому не трактуется как dequeue. Доработаны 8 регрессий (#14–#21), текущие старые тесты адаптированы к достоверной очереди. Исходные J2534 ответы не менялись.
+- PR HEAD `e28cc511aebcb4978853d07b6b0c66f380cf914d`, [Emulator Windows x86 CI #41303547651](https://github.com/vorlocsev/virtualcar/actions/runs/41303547651) **success**: DLL, x86 exports, Python, Go/vet, GUI и артефакт. Post-merge CI проверять отдельно на актуальном development SHA.
+- **Блокер Issue #4 прежний:** нет реального сеанса read-only VMware/диагностического клиента с текущей DLL; никакого доказанного положительного CEM A3/A6/B9F0 или ECU identification XC90 MY2009. Следующий этап: изучить только реальный обезличенный `backend-audit.json`, снять наблюдаемые пробелы по сервисам/каналам/ответам. Не публиковать оригинальный VIN/дампы. PR #12/#15 и gate #2 остаются draft, без автоматического merge; `main`/релизы не трогать.
+
 ## Текущее состояние (01.11.2026, Issue #4: probe-aware backend evidence)
 
 - **PR #17** `feature/issue4-allowlisted-probe-evidence → development` **объединён** squash-коммитом `ea80ea52834cf1f70a9c9853e3cade7c9a79fa42`. При включённом `BackendTelemetryEnabled=1` реальный J2534 TX может создать `probe_classified` для закрытого списка известных форм запросов D2 CEM 40/50 A3/A6/B9F0/B9FB/B9FC и P3 0x726 / 0x18DA50F1 F114/F1B0/F1A3/F106/F190. Метка связывается с дальнейшим RX по внутреннему `request_id`, но не выдаёт VIN, CAN payload и неизвестные CAN ID.
