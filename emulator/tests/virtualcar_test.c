@@ -125,8 +125,14 @@ static void require_route(const char *start,const char *route,U32 selected){
  REQUIRE(event_count_since(start,"\"kind\":\"route_selected\"")==selected);
  REQUIRE(event_count_since(start,"\"kind\":\"request_completed\"")==1);
  while(*line){const char *end=strchr(line,'\n');if(!end)break;
-  if(!field_within_line(line,end,"\"route\":\"UNKNOWN\""))
-   REQUIRE(field_within_line(line,end,field));
+  if(!field_within_line(line,end,"\"route\":\"UNKNOWN\"") &&
+     !field_within_line(line,end,field)){
+   const char *actual=strstr(line,"\"route\":\"");
+   if(actual && actual<end)actual+=9;
+   fprintf(stderr,"route mismatch expected %s, actual %.*s\\n",route,
+           actual?(int)(end-actual):0,actual?actual:"");
+   exit(1);
+  }
   line=end+1;
  }
 }
