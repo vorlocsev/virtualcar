@@ -6,6 +6,8 @@ EXPORTS
  GetModuleFileNameA
  GetPrivateProfileStringA
  GetTempPathA
+ GetEnvironmentVariableA
+ CreateDirectoryA
  CreateFileA
  SetFilePointer
  WriteFile
