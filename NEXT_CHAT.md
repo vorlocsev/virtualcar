@@ -24,6 +24,14 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
+## VMware LAB prerelease 2026-11-01 (PR #21, verified)
+
+- **PR #21** `feature/vmware-readonly-release-package → development` merged squash at `f2eb76e8f19731239d93dec229d2eed487c5ca27`. Exact PR head `f59d7ce5f9c8ec3c7a2c4e4648f997a52e2dc2bf`, [Emulator CI #41305708695](https://github.com/vorlocsev/virtualcar/actions/runs/41305708695) **success**, [VMware packager CI #41305708832](https://github.com/vorlocsev/virtualcar/actions/runs/41305708832) **success**.
+- Explicit, separate `vmware-release/2026-11-01` branch at `f2eb76e` triggered [read-only VMware release CI #41305885489](https://github.com/vorlocsev/virtualcar/actions/runs/41305885489), **success** with C/J2534, Python, Go/vet, Windows PE32 DLL/GUI, ZIP+SHA256 validation, and GitHub prerelease publication. **Published release:** https://github.com/vorlocsev/virtualcar/releases/tag/vmware-lab-2026-11-01 (prerelease, private repo), tag `vmware-lab-2026-11-01`, asset `VirtualCar-VMware-LAB-vmware-lab-2026.11.01-Windows-x86.zip`. Verified asset SHA256 `30ac68fa60bd6dcf1f548e1d403327c276b91137184fb90ba21231f541f9aef5`.
+- VMware ZIP includes Win32 J2534 DLL + Control GUI, install/uninstall PowerShell scripts, strict **synthetic P2 read-only** profile `ECUCount=1` with `BackendTelemetryEnabled=1`, zero active CEM D2 B9 fixtures, known A3/A6 missing-implementation status, metadata analyzer and Russian instructions. It has build information and SHA256 manifests; approved allowlist prevents private donor INIs/raw logs/ECU dumps. Eight Python packager checks added. No new positive ECU answers; no Stable/main changes.
+- **Validation boundary:** VM guest use with SectorV/VDASH, client acceptance of VIN, and real physical J2534 still NOT VERIFIED; Issue #4 remains OPEN. Next: run read-only discovery with this **exact prerelease** and analyze only redacted `backend-audit.json`. Never assume delivered RX proves ECU identity.
+- Release was explicitly requested by user. Do not automatically republish / overwrite the tag. Draft PR #2 (`development → main`), #12 and #15 remain separate and unmerged.
+
 ## Явная маршрутизация CEM A3/A6 без фиктивных ответов (01.11.2026, PR #20)
 
 - **PR #20** `fix/issue4-a3-a6-silent-cem-routing → development` объединён squash-коммитом `fc2eb08ffae12bc6e127d31dc23aaeeedafb2f30`. PR HEAD `ac5bbd64f7f4412174ad1909c66ccccbd43e129d`, [Emulator Windows x86 CI #41304616832](https://github.com/vorlocsev/virtualcar/actions/runs/41304616832) **success** (J2534/C, PE32 DLL/exports, Python, Go/vet, Windows x86 GUI и артефакт).
