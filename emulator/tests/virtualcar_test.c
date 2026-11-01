@@ -44,6 +44,22 @@ long InterlockedExchange(volatile long*dst,long val){long v=*dst;*dst=val;return
 static PASSTHRU_MSG frame(U32 proto,U32 id,const U8 *data,U32 len){PASSTHRU_MSG m={0};m.ProtocolID=proto;m.DataSize=len+4;m.Data[0]=(U8)(id>>24);m.Data[1]=(U8)(id>>16);m.Data[2]=(U8)(id>>8);m.Data[3]=(U8)id;if(len)memcpy(m.Data+4,data,len);return m;}
 static PASSTHRU_MSG readmsg(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_OK);REQUIRE(n==1);return m;}
 static void send(U32 cid,PASSTHRU_MSG *m){U32 n=1;REQUIRE(PassThruWriteMsgs(cid,m,&n,10)==ERR_OK);REQUIRE(n==1);}
+static void expect_empty(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_BUFFER_EMPTY);REQUIRE(n==0);}
+static void vin_first(const PASSTHRU_MSG *m,U32 response_id,U8 out[20]){
+ U32 id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
+ REQUIRE(id==response_id && m->DataSize==12 && m->ExtraDataIndex==12);
+ REQUIRE((m->RxStatus&CAN_29BIT_ID)==(response_id>0x7FF?CAN_29BIT_ID:0));
+ REQUIRE(m->Data[4]==0x10 && m->Data[5]==20);memcpy(out,m->Data+6,6);
+}
+static void vin_cf(const PASSTHRU_MSG *m,U32 sn,U8 out[20]){
+ REQUIRE(m->DataSize==12 && m->Data[4]==(0x20|sn));
+ memcpy(out+6+(sn-1)*7,m->Data+5,7);
+}
+static void vin_tail(U32 cid,U8 out[20],U8 service,U8 sub,U8 record){
+ PASSTHRU_MSG m=readmsg(cid);vin_cf(&m,1,out);m=readmsg(cid);vin_cf(&m,2,out);
+ REQUIRE(out[0]==service && out[1]==sub && out[2]==record);
+ REQUIRE(memcmp(out+3,g_vin,17)==0);expect_empty(cid);
+}
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
@@ -149,6 +165,63 @@ int main(){
  REQUIRE(assembled[0]==0x62&&assembled[1]==0xF1&&assembled[2]==0x06);
  for(U32 z=0;z<142;z++)REQUIRE(assembled[3+z]==(U8)z);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Functional OBD VIN uses a physical ECM FC address. These are synthetic
+    transport regressions; the existing VIN response bytes stay unchanged. */
+ {
+  U32 fc_cid,other,iso_cid,saved_count=g_ecu_count,saved_req=g_ecu[0].req,saved_resp=g_ecu[0].resp;
+  const U8 obd_sf[]={2,9,2,0,0,0,0,0},obd_payload[]={9,2};
+  U8 vin_bytes[20];PASSTHRU_MSG *frames=(PASSTHRU_MSG*)calloc(128,sizeof(*frames));REQUIRE(frames!=0);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&fc_cid)==ERR_OK);
+  /* 1: one ECU, functional request followed by physical ECM FC. */
+  g_ecu_count=1;m=frame(PROTO_CAN,0x7DF,obd_sf,8);send(fc_cid,&m);r=readmsg(fc_cid);vin_first(&r,0x7E8,vin_bytes);
+  m=frame(PROTO_CAN,0x7E0,fc,8);send(fc_cid,&m);vin_tail(fc_cid,vin_bytes,0x49,2,1);
+  /* 2: the default CEM must not cancel the ECM's segmented OBD reply. */
+  g_ecu_count=saved_count;REQUIRE(saved_count==2);
+  m=frame(PROTO_CAN,0x7DF,obd_sf,8);send(fc_cid,&m);n=128;
+  REQUIRE(PassThruReadMsgs(fc_cid,frames,&n,0)==ERR_OK && n==1);vin_first(&frames[0],0x7E8,vin_bytes);
+  m=frame(PROTO_CAN,0x7E0,fc,8);send(fc_cid,&m);vin_tail(fc_cid,vin_bytes,0x49,2,1);
+  /* 3: FC sent to the functional ID, or another ECU, cannot release CFs. */
+  m=frame(PROTO_CAN,0x7DF,obd_sf,8);send(fc_cid,&m);r=readmsg(fc_cid);vin_first(&r,0x7E8,vin_bytes);
+  m=frame(PROTO_CAN,0x7DF,fc,8);send(fc_cid,&m);expect_empty(fc_cid);
+  m=frame(PROTO_CAN,0x726,fc,8);send(fc_cid,&m);expect_empty(fc_cid);
+  m=frame(PROTO_CAN,0x7E0,fc,8);send(fc_cid,&m);vin_tail(fc_cid,vin_bytes,0x49,2,1);
+  /* 4: WAIT, reserved status and block size still govern the physical FC. */
+  m=frame(PROTO_CAN,0x7DF,obd_sf,8);send(fc_cid,&m);r=readmsg(fc_cid);vin_first(&r,0x7E8,vin_bytes);
+  m=frame(PROTO_CAN,0x7E0,fcwait,8);send(fc_cid,&m);expect_empty(fc_cid);
+  const U8 fc_reserved[]={0x33,0,0,0,0,0,0,0};
+  m=frame(PROTO_CAN,0x7E0,fc_reserved,8);send(fc_cid,&m);expect_empty(fc_cid);
+  m=frame(PROTO_CAN,0x7E0,fc1,8);send(fc_cid,&m);r=readmsg(fc_cid);vin_cf(&r,1,vin_bytes);expect_empty(fc_cid);
+  send(fc_cid,&m);r=readmsg(fc_cid);vin_cf(&r,2,vin_bytes);expect_empty(fc_cid);
+  REQUIRE(vin_bytes[0]==0x49 && vin_bytes[1]==2 && vin_bytes[2]==1 && memcmp(vin_bytes+3,g_vin,17)==0);
+  /* 5: overflow cancels the response; a fresh physical OBD request works. */
+  m=frame(PROTO_CAN,0x7DF,obd_sf,8);send(fc_cid,&m);r=readmsg(fc_cid);vin_first(&r,0x7E8,vin_bytes);
+  m=frame(PROTO_CAN,0x7E0,fcover,8);send(fc_cid,&m);expect_empty(fc_cid);
+  m=frame(PROTO_CAN,0x7E0,fc,8);send(fc_cid,&m);expect_empty(fc_cid);
+  m=frame(PROTO_CAN,0x7E0,obd_sf,8);send(fc_cid,&m);r=readmsg(fc_cid);vin_first(&r,0x7E8,vin_bytes);
+  m=frame(PROTO_CAN,0x7E0,fc,8);send(fc_cid,&m);vin_tail(fc_cid,vin_bytes,0x49,2,1);
+  /* 6: a matching physical ID on a second channel cannot consume pending. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&other)==ERR_OK);
+  m=frame(PROTO_CAN,0x7DF,obd_sf,8);send(fc_cid,&m);r=readmsg(fc_cid);vin_first(&r,0x7E8,vin_bytes);
+  m=frame(PROTO_CAN,0x7E0,fc,8);send(other,&m);expect_empty(other);expect_empty(fc_cid);
+  send(fc_cid,&m);vin_tail(fc_cid,vin_bytes,0x49,2,1);REQUIRE(PassThruDisconnect(other)==ERR_OK);
+  REQUIRE(PassThruDisconnect(fc_cid)==ERR_OK);
+  /* 7: the existing generic VIN handler preserves 29-bit physical FC IDs. */
+  g_ecu[0].req=0x18DA50F1;g_ecu[0].resp=0x18DAF150;
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000,&fc_cid)==ERR_OK);
+  m=frame(PROTO_CAN,0x18DA50F1,sf,8);m.TxFlags=CAN_29BIT_ID;send(fc_cid,&m);r=readmsg(fc_cid);vin_first(&r,0x18DAF150,vin_bytes);
+  m=frame(PROTO_CAN,0x726,fc,8);send(fc_cid,&m);expect_empty(fc_cid);
+  m=frame(PROTO_CAN,0x18DA50F1,fc,8);m.TxFlags=CAN_29BIT_ID;send(fc_cid,&m);vin_tail(fc_cid,vin_bytes,0x62,0xF1,0x90);
+  REQUIRE(PassThruDisconnect(fc_cid)==ERR_OK);g_ecu[0].req=saved_req;g_ecu[0].resp=saved_resp;
+  /* 8: ISO15765 returns the same one ECM answer; physical CEM NRC remains. */
+  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&iso_cid)==ERR_OK);
+  m=frame(PROTO_ISO15765,0x7DF,obd_payload,2);send(iso_cid,&m);n=128;
+  REQUIRE(PassThruReadMsgs(iso_cid,frames,&n,0)==ERR_OK && n==1);
+  REQUIRE(frames[0].DataSize==24 && frames[0].Data[4]==0x49 && frames[0].Data[5]==2 && frames[0].Data[6]==1);
+  REQUIRE(memcmp(frames[0].Data+7,g_vin,17)==0);expect_empty(iso_cid);
+  m=frame(PROTO_ISO15765,0x726,obd_payload,2);send(iso_cid,&m);r=readmsg(iso_cid);
+  REQUIRE(r.DataSize==7 && r.Data[4]==0x7F && r.Data[5]==9 && r.Data[6]==0x11);
+  REQUIRE(PassThruDisconnect(iso_cid)==ERR_OK);free(frames);
+ }
  /* Observer classifies A3, but never fabricates a positive E3 reply. */
  const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
  m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);

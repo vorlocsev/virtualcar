@@ -764,8 +764,15 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             else logline("Functional protected request ignored by lab emulator",msg->Data,msg->DataSize);
             return;
         }
+        /* The existing functional OBD VIN handler answers only as the ECM.
+           An unsupported-service reply from another configured node would
+           replace that ECM's still-pending segmented response. */
+        if(id==0x7DF && n>=2 && payload[0]==0x09 && payload[1]==0x02 && ecu->req!=0x7E0u)
+            continue;
         sz=answer_uds(ecu,payload,n,answer);
-        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;}
+        /* Even after a functional request, FC uses the responder's physical
+           request CAN ID. Preserve that owner rather than the broadcast ID. */
+        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=ecu->req;}
         if(id!=0x7DF)return;
     }
     if(!matched)logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
