@@ -388,6 +388,12 @@ static void backend_cancel_channel(CHANNEL *c,const char *reason,int d2_only) {
         backend_collect_rid(rids,&n,c->d2_trace);
     if(!d2_only && c->pending_trace && c->pending_len)
         backend_collect_rid(rids,&n,c->pending_trace);
+    /* Record discarded queued frames before terminal, never after. */
+    for(i=0;i<c->count;i++){
+        U32 slot=(c->r+i)%MAX_QUEUE;
+        if((!d2_only || c->queue_d2_gen[slot]) && c->queue_trace[slot])
+            backend_event(c,c->queue_trace[slot],"rx_dropped","UNKNOWN",reason,"unknown");
+    }
     for(i=0;i<n;i++){
         U64 rid=rids[i];
         const char *resolved=reason;
@@ -895,7 +901,7 @@ static U32 drop_queued_d2(CHANNEL *c){
     for(read=0;read<original;read++){
         U32 from=(c->r+read)%MAX_QUEUE,to=(c->r+keep)%MAX_QUEUE;
         if(c->queue_d2_gen[from]){
-            backend_event(c,c->queue_trace[from],"rx_dropped","UNKNOWN","other","unknown");
+            /* backend_cancel_channel logged this stale frame once. */
             dropped++;continue;
         }
         if(to!=from){bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
