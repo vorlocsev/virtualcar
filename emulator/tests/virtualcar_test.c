@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 static U32 tick=0;
-static char backend_lines[180000];static U32 backend_len=0;
+static char backend_lines[2000000];static U32 backend_len=0;
 static U32 event_count_since(const char *start,const char *pattern){
  U32 count=0;const char *p=start;
  while((p=strstr(p,pattern))!=0){++count;p+=strlen(pattern);}
