@@ -5,13 +5,43 @@
 #include <stdlib.h>
 #include <string.h>
 static U32 tick=0;
-static char backend_lines[180000];static U32 backend_len=0;
+static char backend_lines[800000];static U32 backend_len=0;
 static U32 event_count_since(const char *start,const char *pattern){
  U32 count=0;const char *p=start;
  while((p=strstr(p,pattern))!=0){++count;p+=strlen(pattern);}
  return count;
 }
 static U32 event_count(const char *pattern){return event_count_since(backend_lines,pattern);}
+static int field_within_line(const char *line,const char *end,const char *field){
+ const char *p=strstr(line,field);return p && p<end;
+}
+static U32 terminal_for(const char *start,U64 rid,const char *cause,const char *outcome){
+ char request[80],reason[96],result[96];U32 count=0;
+ const char *line=start;
+ snprintf(request,sizeof(request),"\"request_id\":%llu,",(unsigned long long)rid);
+ snprintf(reason,sizeof(reason),"\"reason\":\"%s\"",cause);
+ snprintf(result,sizeof(result),"\"outcome\":\"%s\"",outcome);
+ while(*line){
+  const char *end=strchr(line,'\n');
+  if(!end)break;
+  if(field_within_line(line,end,"\"kind\":\"request_completed\"") &&
+     field_within_line(line,end,request) &&
+     field_within_line(line,end,reason) &&
+     field_within_line(line,end,result))++count;
+  line=end+1;
+ }
+ return count;
+}
+static void fill_untraced_rx(CHANNEL *ch,U32 target){
+ static const U8 fake_frame[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0};
+ U64 prior=ch->active_trace;
+ ch->active_trace=0;
+ while(ch->count<target){
+  REQUIRE(ch->count<MAX_QUEUE);
+  enqueue(ch,0x555,fake_frame,8);
+ }
+ ch->active_trace=prior;
+}
 void Sleep(U32 ms){tick+=ms;}
 U32 GetTickCount(void){return tick;}
 int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
@@ -526,6 +556,122 @@ int main(){
  REQUIRE(backend_len==log_before_opt_out);
  g_backend_enabled=1;
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+
+ /* dev49 F09: real CHANNEL RX-loss evidence must retain per-request
+    causes, not a single dropped_trace shared across transactions.
+    All frames below are synthetic; no ECU addresses are asserted as OEM. */
+ {
+  U32 loss_channel=0,loss_filter=0;
+  CHANNEL *loss;
+  PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(128,sizeof(*batch));
+  const U8 lab_bytes[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0};
+  PASSTHRU_MSG loss_mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0),loss_pat=frame(PROTO_CAN,0x7E8,0,0);
+  U64 ridA,ridB,ridC,ridD,ridE,ridF;
+  REQUIRE(batch!=0);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&loss_channel)==ERR_OK);
+  loss=channel(loss_channel);
+  loss_mask.DataSize=4;loss_pat.DataSize=4;
+  /* 1: an entirely full RX FIFO produces queue_full, not filter_reject. */
+  fill_untraced_rx(loss,MAX_QUEUE);
+  case_log=backend_lines+backend_len;
+  ridA=next_backend_request();loss->active_trace=ridA;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridA);
+  REQUIRE(terminal_for(case_log,ridA,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridA,"filter_reject","dropped")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(loss->count==0);
+  /* 2: BLOCK filter without pressure is reported as filter_reject. */
+  REQUIRE(PassThruStartMsgFilter(loss_channel,2,&loss_mask,&loss_pat,0,&loss_filter)==ERR_OK);
+  case_log=backend_lines+backend_len;
+  ridB=next_backend_request();loss->active_trace=ridB;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridB);
+  REQUIRE(terminal_for(case_log,ridB,"filter_reject","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridB,"queue_full","dropped")==0);
+  REQUIRE(PassThruStopMsgFilter(loss_channel,loss_filter)==ERR_OK);
+  /* 3: two RIDs can fail while one is already queued; their terminals
+     must not overwrite each other's reason or arrive before dequeue. */
+  case_log=backend_lines+backend_len;
+  ridA=next_backend_request();loss->active_trace=ridA;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  fill_untraced_rx(loss,MAX_QUEUE);
+  ridB=next_backend_request();loss->active_trace=ridB;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridB);
+  loss->active_trace=ridA;enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridA);
+  REQUIRE(terminal_for(case_log,ridB,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridA,"queue_full","dropped")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(batch[0].Data[2]==0x07&&batch[0].Data[3]==0xE8);
+  REQUIRE(terminal_for(case_log,ridA,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridB,"queue_full","dropped")==1);
+  /* 4: filter rejection followed by queue_full for the same RID
+     yields a single terminal, prioritising loss caused by FIFO pressure. */
+  REQUIRE(PassThruStartMsgFilter(loss_channel,2,&loss_mask,&loss_pat,0,&loss_filter)==ERR_OK);
+  case_log=backend_lines+backend_len;
+  ridC=next_backend_request();loss->active_trace=ridC;
+  enqueue(loss,0x7E8,lab_bytes,8);
+  REQUIRE(PassThruStopMsgFilter(loss_channel,loss_filter)==ERR_OK);
+  fill_untraced_rx(loss,MAX_QUEUE);
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridC);
+  REQUIRE(terminal_for(case_log,ridC,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridC,"filter_reject","dropped")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  /* 5: queue_full followed by filter rejection retains the same
+     priority, independent of the order of observed failures. */
+  fill_untraced_rx(loss,MAX_QUEUE);
+  case_log=backend_lines+backend_len;
+  ridD=next_backend_request();loss->active_trace=ridD;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(PassThruStartMsgFilter(loss_channel,2,&loss_mask,&loss_pat,0,&loss_filter)==ERR_OK);
+  loss->active_trace=ridD;enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridD);
+  REQUIRE(terminal_for(case_log,ridD,"queue_full","dropped")==1);
+  REQUIRE(terminal_for(case_log,ridD,"filter_reject","dropped")==0);
+  REQUIRE(PassThruStopMsgFilter(loss_channel,loss_filter)==ERR_OK);
+  /* 6: F08 aborted lifecycle always wins over an earlier queue drop;
+     stale per-RID drop metadata must be released after terminal. */
+  case_log=backend_lines+backend_len;
+  ridE=next_backend_request();loss->active_trace=ridE;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  fill_untraced_rx(loss,MAX_QUEUE);
+  loss->active_trace=ridE;enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_abort_pending(loss,ridE,BACKEND_ABORT_SUPERSEDED);
+  REQUIRE(terminal_for(case_log,ridE,"superseded","aborted")==0);
+  n=128;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(terminal_for(case_log,ridE,"superseded","aborted")==1);
+  REQUIRE(terminal_for(case_log,ridE,"queue_full","dropped")==0);
+  for(U32 j=0;j<BACKEND_DROP_SLOTS;j++)REQUIRE(loss->drops[j].rid!=ridE);
+  /* 7: ordinary queued delivery still completes exactly once as
+     responded, with no false queue_full or filter_reject attribution. */
+  case_log=backend_lines+backend_len;
+  ridF=next_backend_request();loss->active_trace=ridF;
+  enqueue(loss,0x7E8,lab_bytes,8);loss->active_trace=0;
+  backend_end_if_drained(loss,ridF);
+  REQUIRE(terminal_for(case_log,ridF,"none","responded")==0);
+  n=1;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==1);
+  REQUIRE(terminal_for(case_log,ridF,"none","responded")==1);
+  REQUIRE(terminal_for(case_log,ridF,"queue_full","dropped")==0);
+  /* 8: with telemetry explicitly disabled, the same RX queue still
+     delivers frames but writes no new JSONL entries. */
+  {
+   U32 journal_before=backend_len;
+   g_backend_enabled=0;
+   loss->active_trace=next_backend_request();
+   REQUIRE(loss->active_trace==0);
+   enqueue(loss,0x7E8,lab_bytes,8);
+   n=1;REQUIRE(PassThruReadMsgs(loss_channel,batch,&n,0)==ERR_OK&&n==1);
+   REQUIRE(backend_len==journal_before);
+   g_backend_enabled=1;
+   loss->active_trace=0;
+  }
+  REQUIRE(PassThruDisconnect(loss_channel)==ERR_OK);
+  free(batch);
+ }
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
  REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
