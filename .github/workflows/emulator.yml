@@ -53,6 +53,10 @@ jobs:
             emulator/virtualcar-default.ini
             emulator/virtualcar-p2.ini
             emulator/README_DEV28.md
+            emulator/README_NATIVE_ROUTE_CHECK_RU.md
+            emulator/tools/verify_native_routes.ps1
+            emulator/tools/verify_native_routes.py
+            emulator/tools/audit_backend_evidence.py
 
   native-routes:
     needs: build
@@ -81,4 +85,5 @@ jobs:
           name: VirtualCar-native-route-audit-${{ github.sha }}
           path: ${{ runner.temp }}/native-route-regression-audit.json
           if-no-files-found: error
+
 
