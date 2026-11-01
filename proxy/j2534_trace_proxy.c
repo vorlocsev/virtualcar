@@ -97,7 +97,10 @@ static BOOL WINAPI init_real(INIT_ONCE *once,void *param,void **ctx) {
     if(!((real_path[1]==':' && (real_path[2]=='\\'||real_path[2]=='/')) || (real_path[0]=='\\'&&real_path[1]=='\\')))return 1;
     g_real=LoadLibraryA(real_path);
     if(!g_real || g_real==g_self) {g_real=0;return 1;}
-#define RESOLVE(name,field,type) field=(type)GetProcAddress(g_real,name)
+    /* Function-pointer conversions are permitted by C; the void(void)
+       intermediate also supports strict GCC host tests. Invoke only through
+       the resolved, correctly typed stdcall pointer. */
+#define RESOLVE(name,field,type) field=(type)(void (WINAPI *)(void))GetProcAddress(g_real,name)
     RESOLVE("PassThruOpen",real_open,PTOPEN);
     RESOLVE("PassThruClose",real_close,PTCLOSE);
     RESOLVE("PassThruConnect",real_connect,PTCONNECT);
