@@ -2,7 +2,15 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
-## Актуальный checkpoint: P2 research и PR #29/#30 (02.11.2026)
+## Актуальный checkpoint: offline A6/E6 validator (02.11.2026)
+
+- База этого этапа — development `c993844cafb24fa73d07a9da5fd3dbd036d08f46`; итоговые PR/merge SHA и CI сверять по GitHub. Ветка этапа: `fix/audit-d2-a6-single-frame`. Новый код меняет только Python evidence audit; исходник DLL, ECU responses и профили остаются прежними.
+- Полный single-frame E6 теперь сопоставляется с формой `CD target A6 identifier 01`: известный CEM CAN ID candidate, target/identifier echo, declared length, data-record byte и предоставленный channel/protocol/baud context. В JSON не выводятся identifier/value. Значения ignition/identity/normal-mode не интерпретируются; delivered означает только transport. Другие requests, E3 и multipart/negative A6 не становятся delivered. См. ограничения в `emulator/README_DEV31_EVIDENCE_RU.md`.
+- Восемь новых synthetic test groups. Локально 132 Python tests OK, один expected host-C integration skip; C suite и native x86 проверяются CI. Старая база не проходила новую регрессию. Для нормализованной опубликованной S80 MY2002 request/reply выдержки теперь RX=1/delivered; неизвестные channel/protocol/baud/window не заполняются.
+- Точный суффикс прежнего MY2005 VMware run PR #30 повторно разобран offline: все 37 распознанных transactions/counters/parse_errors совпали до/после; raw source и старый prefix не изменены. Два A6 всё ещё без RX; новый SectorV/VMware scan не выполнялся.
+- Следующая задача Issue #4 — доказать конкретное условие SectorV normal-mode preparation по подлинному успешному read-only CEM сеансу либо исходному описанию условия клиента. В исследованных публикациях нет сопоставимой непрерывной записи P2; положительные CEM responses по предположению не добавлять. MY2005 local tests разрешены пользователем, но не доказывают MY2009 compatibility. Не повторять неизменённый VMware scan как замену отсутствующему evidence.
+
+## Предыдущий checkpoint: P2 research и PR #29/#30 (02.11.2026)
 
 - **Кодовая база development после PR #30:** `c44af9972bad1b469f8d3387198ee99e9fa6f555`. Текущий HEAD и post-merge Actions сверять по GitHub; обновление этого handoff меняет только документацию.
 - **PR #29** объединён squash: `ccc475167eedf857106a114d6f287404e9a163d1`. Текстовый аудитор распознаёт полные prefixed D2 A3/A6, не публикуя параметры; восемь новых групп. **PR #30** объединён squash: `c44af9972bad1b469f8d3387198ee99e9fa6f555`. Общая проверка формы в DLL принимает CA–CF/known CEM target/полную declared length; malformed frames не получают эту метку. Только `unimplemented_probe/no_response`, без новых ECU RX.
