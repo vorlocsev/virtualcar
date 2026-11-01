@@ -795,14 +795,17 @@ static void maybe_passive_frame(CHANNEL *c){
    BS=0 is unlimited; nonzero BS stops precisely at exhausted credit.
    STmin remains a documented, separately-scoped timing limitation. */
 static void pump_can_cf(CHANNEL *c) {
-    U8 f[8];U32 i,sz;
+    U8 f[8];U32 i,sz;U64 now,due;
     if(c->protocol!=PROTO_CAN || !c->pending_cf_active || !c->pending_len)return;
     while(c->pending_cf_active && c->pending_pos<c->pending_len && c->count<MAX_QUEUE){
         sz=c->pending_len-c->pending_pos;if(sz>7)sz=7;
         bytes_zero(f,8);f[0]=(U8)(0x20 | (c->pending_sn&15));
         for(i=0;i<sz;i++)f[i+1]=c->pending[c->pending_pos+i];
-        {U64 previous=c->active_trace;c->active_trace=c->pending_trace;
-         enqueue(c,c->pending_id,f,8);c->active_trace=previous;}
+        now=now_us();due=c->pending_next_us>now?c->pending_next_us:now;
+        {U32 slot=c->w,before=c->count;U64 previous=c->active_trace;c->active_trace=c->pending_trace;
+         enqueue(c,c->pending_id,f,8);c->active_trace=previous;
+         if(c->count>before){c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;}}
+        c->pending_next_us=due+(U64)c->pending_stmin_us;
         c->pending_pos+=sz;c->pending_sn++;
         if(c->pending_cf_credit){
             --c->pending_cf_credit;
@@ -817,24 +820,9 @@ static void pump_can_cf(CHANNEL *c) {
     }
 }
 static void send_can_cf(CHANNEL *c,U32 block_size) {
-    U8 f[8];U32 i,sz,frames=0;U64 now,due;
-    while(c->pending_pos<c->pending_len && (block_size==0 || frames<block_size)){
-        if(c->count>=MAX_QUEUE)break; /* Preserve pending bytes until queue has space. */
-        sz=c->pending_len-c->pending_pos;if(sz>7)sz=7;
-        bytes_zero(f,8);f[0]=(U8)(0x20 | (c->pending_sn&15));
-        for(i=0;i<sz;i++)f[i+1]=c->pending[c->pending_pos+i];
-        now=now_us();due=c->pending_next_us>now?c->pending_next_us:now;
-        {U32 slot=c->w,before=c->count;U64 previous=c->active_trace;c->active_trace=c->pending_trace;
-         enqueue(c,c->pending_id,f,8);c->active_trace=previous;
-         if(c->count>before){c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;}}
-        c->pending_next_us=due+(U64)c->pending_stmin_us;
-        c->pending_pos+=sz;c->pending_sn++;frames++;
-    }
-    if(c->pending_pos==c->pending_len){
-        U64 previous=c->pending_trace;
-        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
-        backend_end_if_drained(c,previous);
-    }
+    if(c->protocol!=PROTO_CAN || !c->pending_len)return;
+    c->pending_cf_credit=block_size;c->pending_cf_active=1;
+    pump_can_cf(c);
 }
 static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
     U8 f[8];U32 i;
