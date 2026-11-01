@@ -1025,6 +1025,10 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                     return;
                 }
                 if((data[0]&15)!=0){logline("ISO-TP FC invalid status",msg->Data,msg->DataSize);return;}
+                if((data[2]>=0x80 && data[2]<=0xF0) || data[2]>=0xFA){
+                    logline("ISO-TP FC ignored (reserved STmin)",msg->Data,msg->DataSize);
+                    return;
+                }
                 logline("ISO-TP FC CTS received; sending bounded CFs",msg->Data,msg->DataSize);
                 send_can_cf(c,n>=2?data[1]:0);return;
             }
