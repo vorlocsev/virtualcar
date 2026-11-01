@@ -24,6 +24,13 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
+## Матрица CEM probes и точное P3 DID (01.11.2026, PR #19)
+
+- **PR #19** `feature/issue4-cem-probe-coverage → development` объединён squash-коммитом `ca16ca04cc74ed5bacc0a296003bcd6b09d69248`. PR HEAD `3bc6dcc788b01a47412514b0e9426368854be5cd`, [Windows x86 emulator CI #41304043679](https://github.com/vorlocsev/virtualcar/actions/runs/41304043679) **success** (J2534/C regressions, DLL x86/exports, Python fixtures/audit, Go/vet, x86 GUI, artifact).
+- `emulator/tools/audit_backend_evidence.py` теперь формирует `coverage` для **всех известных 20 форм** D2 CEM 40/50 A3/A6/B9F0/B9FB/B9FC и P3 0x726/0x18DA50F1 F114/F1B0/F1A3/F106/F190: `observed_requests`, `status_counts`, `attributed_requests`, `unattributed_requests`. **Не наблюдалось** не значит `unsupported`, `no_fixture` или таймаут. Конфликтные/запоздалые метки не приписываются известному probe. Восемь Python регрессий #22–#29.
+- `emulator/src/virtualcar.c` больше не помечает составной J2534 ISO15765 `22 F1xx F1yy` как одиночный `22F1xx`: для классификации требуется ровно три UDS-байта. Существующий raw CAN single-frame без изменений. Новые C host-проверки составного, избыточного и короткого ISO15765 payload. **Сами J2534 ответы и CEM фикстуры не изменены**.
+- **Главный блокер Issue #4:** нужен реальный read-only `backend-audit.json` из VMware с актуальной DLL и клиентом. Положительные CEM A3/A6/B9F0 XC90 V8 MY2009, VIN принятие клиентом, физический J2534 пока не доказаны. Без настоящего capture не добавлять synthetic positive. Post-merge CI на новом `development` SHA проверить отдельно. Draft PR #12/#15 и gate #2 не сливать; `main` и Virtual Car releases не трогать.
+
 ## Проверка целостности backend evidence (01.11.2026, PR #18)
 
 - **PR #18** `fix/issue4-backend-event-integrity → development` объединён squash-коммитом `5307106c2a78d342c4206cd673fa47668ffe7777`. Аудитор `emulator/tools/audit_backend_evidence.py` теперь отмечает `unverified` при `rx_dequeued` без предшествующего `rx_queued`, при невручённых кадрах на момент `responded`, повторном/переставленном TX, запоздалой классификации запроса, нарушении порядка QPC ticks или частоты, либо `no_response` вместе с RX. `rx_dropped` может относиться к неудачной постановке в очередь, поэтому не трактуется как dequeue. Доработаны 8 регрессий (#14–#21), текущие старые тесты адаптированы к достоверной очереди. Исходные J2534 ответы не менялись.
