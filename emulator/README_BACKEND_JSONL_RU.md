@@ -2,6 +2,15 @@
 
 Утилита `emulator/tools/audit_backend_evidence.py` работает **только с локальным обезличенным JSONL потоком** Virtual Car `virtualcar-backend-v1`. Исходные J2534-логи и приватный профиль автомобиля не нужны. Анализ не формирует CAN-ответы или фикстуры и ничего не записывает в эмулятор.
 
+Включите только локальную мета-телеметрию в `virtualcar.ini` рядом с J2534 DLL и перезапустите диагностический клиент:
+
+```ini
+[Diagnostics]
+BackendTelemetryEnabled=1
+```
+
+Текущая DLL сохраняет JSONL в `%LOCALAPPDATA%\\VirtualCar\\dev47-backend.jsonl` активного пользователя Windows. Этот файл отличается от старого текстового лога с CAN-пакетами; не путайте их.
+
 Пример запуска (Windows с установленным Python):
 
 ```powershell
