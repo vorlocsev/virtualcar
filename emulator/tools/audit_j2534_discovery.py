@@ -17,6 +17,11 @@ HEX = re.compile(r"\b[0-9A-Fa-f]{2}\b")
 LEGACY_BYTE = re.compile(r"\b0x([0-9A-Fa-f]{1,2})\b")
 D2_SERVICES = (0xF0, 0xFB, 0xFC)
 MAX_TRANSACTIONS = 20000
+# Observed CEM diagnostic route candidates, not a model-year compatibility map.
+D2_A6_RESPONSE_IDS = {
+    "0x40": (0x00800003,),
+    "0x50": (0x01000003, 0x01200003),
+}
 
 
 def _words(text):
@@ -163,11 +168,49 @@ def _id_format(can_id, flags):
     return "11bit" if flags is not None else "unknown"
 
 
+def _a6_request_identifier(raw):
+    """Retain only the two-byte echo key for the documented CD ... A6 ... 01 shape."""
+    data = raw[4:]
+    if (6 <= len(data) <= 8 and data[0] == 0xCD and data[2] == 0xA6
+            and data[5] == 1):
+        return data[3:5]
+    return None
+
+
+def _a6_frame(tx, can_id, payload, ctx):
+    """Attribute a single-frame E6 without reading or exporting its value bytes."""
+    if (tx["_a6_identifier"] is None or tx["protocol"] not in ("CAN", "unknown")
+            or can_id not in D2_A6_RESPONSE_IDS.get(tx["target"], ())
+            or (ctx is not None and (ctx[1] != 5
+                or (tx["baud_bps"] is not None and ctx[3] != tx["baud_bps"])))
+            or len(payload) < 3
+            or payload[1:3] != bytes((int(tx["target"], 16), 0xE6))
+            or (len(payload) >= 4 and not tx["_a6_identifier"].startswith(payload[3:5]))
+            or tx["_complete"] or tx["_a6_error"]):
+        tx["off_route_rx"] += 1
+        return False
+    tx["rx_frames"] += 1
+    tx["_rxid"] = can_id
+    count = payload[0] & 7
+    if not 0xC8 <= payload[0] <= 0xCF:
+        tx["_a6_error"] = "unsupported_d2_a6_framing"
+    elif len(payload) > 8 or len(payload) < 5 or count < 4 or len(payload) < count + 1:
+        tx["_a6_error"] = "invalid_d2_a6_length"
+    elif count == 4:
+        # Target + E6 + identifier without a data-record byte is not complete.
+        tx["_a6_error"] = "missing_d2_a6_data"
+    else:
+        tx["_complete"] = True
+    return True
+
+
 def _result(tx):
     if tx["_bad_route"]:
         status, reason = "unsupported", "strict_route_rejected"
     elif tx["_no_fixture"]:
         status, reason = "no_fixture", "explicit_missing_fixture"
+    elif tx["_a6_error"]:
+        status, reason = "partial_rx", tx["_a6_error"]
     elif tx["_invalid"]:
         status, reason = "partial_rx", ("invalid_iso_tp_framing" if tx["route"] == "P3" else "invalid_d2_sequence")
     elif tx["_p3_negative"]:
@@ -177,7 +220,10 @@ def _result(tx):
     elif tx["_p3_mismatch"]:
         status, reason = "unverified", "uds_response_does_not_match_request"
     elif tx["_complete"]:
-        status, reason = "delivered", ("p3_uds_transport_only" if tx["route"] == "P3" else "complete_d2_transport_only")
+        status = "delivered"
+        reason = ("p3_uds_transport_only" if tx["route"] == "P3" else
+                  "d2_a6_single_frame_transport_only" if tx["service"] == "A6" else
+                  "complete_d2_transport_only")
     elif tx["_p3_pending"]:
         if tx["_timeout"]:
             status, reason = "timeout", "j2534_timeout_after_response_pending"
@@ -227,7 +273,7 @@ def audit(lines):
             tx["_end_reason"] = why
             results.append(_result(tx))
 
-    def start(s, request, stamp):
+    def start(s, request, stamp, raw):
         kind, service, target, can_id = request
         ctx = s["txctx"]
         channel = ctx[0] if ctx else None
@@ -247,6 +293,8 @@ def audit(lines):
             "_start": start_at, "_last": None, "_time_mod": mod,
             "_rxid": None, "_seq": 1, "_base": 0x08, "_subblock": False,
             "_complete": False, "_invalid": False,
+            "_a6_identifier": _a6_request_identifier(raw) if service == "A6" else None,
+            "_a6_error": None,
             "_no_fixture": False, "_bad_route": False,
             "_timeout": False, "_end_reason": "no_delivery_evidence",
             "_p3_total": None, "_p3_received": 0, "_p3_sequence": 1,
@@ -282,6 +330,9 @@ def audit(lines):
             # The protocol is from the requesting channel, not an unrelated RX.
             # ISO15765 J2534 returns reassembled UDS; CAN returns PCI frames.
             _p3_frame(tx, payload, tx["protocol"])
+        elif tx["service"] == "A6":
+            if not _a6_frame(tx, can_id, payload, ctx):
+                return
         else:
             head = payload[0]
             if tx["_rxid"] is None:
@@ -299,7 +350,7 @@ def audit(lines):
                     else:
                         tx["off_route_rx"] += 1
                 else:
-                    # A3/A6 have no authenticated response framing yet.
+                    # A3 and other opaque probes remain outside validated RX framing.
                     tx["off_route_rx"] += 1
             elif can_id != tx["_rxid"] or tx["_complete"]:
                 tx["off_route_rx"] += 1
@@ -358,7 +409,7 @@ def audit(lines):
             raw = _words(text.split(marker, 1)[1])
             req = _request(raw)
             if req:
-                start(s, req, stamp)
+                start(s, req, stamp, raw)
             elif _flow_control(raw):
                 # Flow Control belongs to an ongoing CAN ISO-TP response.
                 # It must not supersede a diagnostic request.
@@ -429,6 +480,8 @@ def audit(lines):
             "UDS NRC 0x78 is nonterminal; pending-only probes stay unverified unless a read timeout is logged.",
             "A positive ReadDataByIdentifier header requires at least one data-record byte.",
             "P3 transport checks parse only UDS headers and ISO-TP lengths, not VIN or identity authenticity.",
+            "A6 delivery validates a single-frame E6 echo and length only; no parameter value or normal-mode state is decoded.",
+            "A6 route candidates are limited to observed CEM IDs; unknown routes and non-CD ... 01 request shapes stay unverified.",
             "Window is observed first-to-last delivered RX, not a claimed ECU processing duration.",
         ],
         "transactions": results,

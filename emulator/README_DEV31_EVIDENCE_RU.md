@@ -162,3 +162,43 @@ warning пока не доказаны. Для этого нужны подтв�
 
 После теста адаптер отключён, SectorV закрыт, прежний FunctionLibrary
 восстановлен. Программирование, reset, wake и очистка ошибок не применялись.
+
+
+## Проверка однокадровых A6/E6 в offline-аудите
+
+`audit_j2534_discovery.py` сопоставляет E6 с полным запросом формы
+`CD target A6 identifier(2 bytes) 01`, target 40/50. Identifier хранится
+только в памяти для сравнения echo и не выводится в JSON. Проверяются
+известный кандидат CAN ID, target, E6, identifier, declared length и
+наличие хотя бы одного data-record byte. Padding не считается данными.
+Один корректный ответ получает `delivered/d2_a6_single_frame_transport_only`.
+Это только наблюдаемый транспорт; значение параметра, ignition state,
+identity ECU и normal-mode gate не декодируются.
+
+Набор кандидатов: target40 → 0x00800003; target50 → 0x01000003/0x01200003,
+из опубликованных CEM diagnostic observations. Это ограниченный фильтр,
+не универсальная карта MY/платформ и не подтверждённые A6 fixtures HS CEM.
+Неизвестные IDs остаются unverified. Baud не назначается по CAN ID;
+если TX/RX содержат контекст, protocol и baud должны совпадать. Чужой
+channel не используется; без контекста metadata остаётся unknown/null.
+
+Другие формы запроса (в том числе непрозрачные legacy A6), E3, отрицательные
+ответы и многокадровая сборка A6 не поддерживаются как завершённый E6.
+Повреждённый либо multipart E6 с совпадающим заголовком остаётся partial_rx,
+без фиктивного completed response. Повторы не увеличивают доставку и не
+сдвигают окно; CLEAR_RX, disconnect, новый TX/open и PID изолируют ожидания.
+
+Восемь synthetic групп в `tests/test_audit_d2_a6.py`: корректные single frames;
+чужие ID/target/service/identifier; контекст каналов/protocol/baud; длина,
+missing data и multipart; неподдерживаемые requests/E3; жизненный цикл;
+совместный B9/P3 обмен; legacy timestamps и CLI privacy. Ни один тестовый
+E6 не добавляется в DLL или replay profile.
+
+Отдельная нормализованная read-only выдержка [S80 MY2002 автора Olaf](https://hackingvolvo.blogspot.com/2012/12/success.html)
+теперь даёт RX=1/delivered вместо off_route/unverified; channel/protocol/baud/
+window неизвестны и такими остаются. Это не непрерывный scan и не MY2009 fixture.
+Повторный offline разбор точного суффикса MY2005 run PR #30 сохранил все 37
+распознанных транзакций, counters и parse_errors: delivered=3, no_fixture=23,
+timeout=9, unsupported=1, unverified=1. Raw log и его старый префикс не изменены.
+Два реальных A6 по-прежнему без RX; предупреждение SectorV этим не исправлено.
+Новый VMware scan не выполнялся: ответы DLL не менялись.
