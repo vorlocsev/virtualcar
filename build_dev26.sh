@@ -6,10 +6,10 @@ pushd _build >/dev/null
 lld-link /dll /noentry /def:../proxy/kernel32.def /implib:kernel32.lib /machine:x86
 clang -target i686-pc-windows-msvc -fno-builtin -fno-stack-protector -ffreestanding -Werror -Wall -Wextra -c ../proxy/j2534_trace_proxy.c -o proxy.obj
 clang -target i686-pc-windows-msvc -fno-builtin -fno-stack-protector -ffreestanding -Werror -Wall -Wextra -c ../proxy/p2_message_classify.c -o classify.obj
-for f in p2_cem_router p2_ls_observer p2_vehicle_core p2_j2534_bridge freestanding_memory; do
+for f in p2_cem_router p2_ls_observer p2_vehicle_core p2_j2534_bridge j2534_observer freestanding_memory; do
     clang -target i686-pc-windows-msvc -fno-builtin -fno-stack-protector -ffreestanding -Werror -Wall -Wextra -c "../proxy/$f.c" -o "$f.obj"
 done
-args=(/dll /entry:DllMain@12 /machine:x86 /nodefaultlib /opt:ref /def:../proxy/exports.def /out:../cmd/oneclick/assets/VirtualCarTrace32.dll proxy.obj classify.obj p2_cem_router.obj p2_ls_observer.obj p2_vehicle_core.obj p2_j2534_bridge.obj freestanding_memory.obj kernel32.lib)
+args=(/dll /entry:DllMain@12 /machine:x86 /nodefaultlib /opt:ref /def:../proxy/exports.def /out:../cmd/oneclick/assets/VirtualCarTrace32.dll proxy.obj classify.obj p2_cem_router.obj p2_ls_observer.obj p2_vehicle_core.obj p2_j2534_bridge.obj j2534_observer.obj freestanding_memory.obj kernel32.lib)
 for spec in 'LoadLibraryA:4' 'GetProcAddress:8' 'GetEnvironmentVariableA:12' 'CreateFileA:28' 'WriteFile:20' 'CloseHandle:4' 'GetTickCount:0' 'InitOnceExecuteOnce:16' 'GetTempPathA:8'; do
   name=${spec%:*}; bytes=${spec#*:}; args+=("/alternatename:__imp__${name}@${bytes}=__imp__${name}")
 done
@@ -23,6 +23,17 @@ for c in gcc clang; do
   proxy/p2_cem_router.c proxy/p2_ls_observer.c proxy/p2_vehicle_core.c proxy/p2_j2534_bridge.c \
   tests/test_bridge.c -o "_build/test_bridge_$c"
   "_build/test_bridge_$c"
+done
+for c in gcc clang; do
+  "$c" -std=c99 -Werror -Wall -Wextra -pedantic -Iproxy \
+    proxy/j2534_observer.c tests/test_observer.c -o "_build/test_observer_$c"
+  "_build/test_observer_$c"
+  "$c" -std=c99 -Werror -Wall -Wextra -pedantic -Iproxy \
+    proxy/j2534_observer.c proxy/p2_message_classify.c proxy/p2_cem_router.c \
+    proxy/p2_ls_observer.c proxy/p2_vehicle_core.c proxy/p2_j2534_bridge.c \
+    tests/test_proxy.c -o "_build/test_proxy_$c"
+  "_build/test_proxy_$c" > "_build/test_proxy_$c.jsonl"
+  python3 tests/test_proxy_log.py "_build/test_proxy_$c.jsonl"
 done
 GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o cmd/oneclick/assets/VirtualCarTraceAttribution-x86.exe ./trace_attribution
 GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o cmd/oneclick/assets/VirtualCarTraceSummary-x86.exe ./cmd/trace_summary
