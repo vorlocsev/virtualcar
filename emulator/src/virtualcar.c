@@ -154,6 +154,11 @@ typedef struct { U32 id,type; U8 mask[4],pattern[4]; } FILTER;
 #define BACKEND_ABORT_FC_OVERFLOW 1u
 #define BACKEND_ABORT_SUPERSEDED 2u
 typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
+#define BACKEND_DROP_SLOTS (MAX_QUEUE+2u)
+#define BACKEND_DROP_QUEUE_FULL 1u
+#define BACKEND_DROP_FILTER_REJECT 2u
+#define BACKEND_DROP_INVALID_SIZE 3u
+typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
     FILTER filters[MAX_FILTERS]; U32 filters_count;
@@ -164,8 +169,9 @@ typedef struct {
     U8 d2_frame[MAX_D2_FRAMES][8];
     PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U32 r,w,count;
     /* Diagnostic correlation metadata. Never sent to the J2534 client. */
-    U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace,dropped_trace;
+    U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace;
     BACKEND_ABORT aborted[MAX_QUEUE];
+    BACKEND_DROP drops[BACKEND_DROP_SLOTS];
     PERIODIC periodic[MAX_PERIODIC];
     U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn;
     U32 pending_cf_active,pending_cf_credit; /* CTS grant survives RX pressure. */
@@ -282,6 +288,39 @@ static const char *backend_abort_cause(U32 cause) {
     if(cause==BACKEND_ABORT_SUPERSEDED)return "superseded";
     return "unknown";
 }
+static const char *backend_drop_cause(U32 cause) {
+    if(cause==BACKEND_DROP_QUEUE_FULL)return "queue_full";
+    if(cause==BACKEND_DROP_FILTER_REJECT)return "filter_reject";
+    return "other";
+}
+static void backend_note_drop(CHANNEL *c,U64 rid,U32 cause) {
+    U32 i,free_slot=BACKEND_DROP_SLOTS;
+    if(!rid)return;
+    for(i=0;i<BACKEND_DROP_SLOTS;i++){
+        if(c->drops[i].rid==rid){
+            /* A lost frame due to FIFO exhaustion takes precedence over
+               filter rejection if both occur within the same request. */
+            if(cause==BACKEND_DROP_QUEUE_FULL ||
+               c->drops[i].cause!=BACKEND_DROP_QUEUE_FULL)
+                c->drops[i].cause=cause;
+            return;
+        }
+        if(!c->drops[i].rid && free_slot==BACKEND_DROP_SLOTS)free_slot=i;
+    }
+    if(free_slot<BACKEND_DROP_SLOTS){
+        c->drops[free_slot].rid=rid;c->drops[free_slot].cause=cause;
+        return;
+    }
+    /* Bound is normally sufficient: every retained RID has at least one
+       queued/staged frame, and there are only MAX_QUEUE queued slots. */
+    backend_event(c,rid,"tracking_overflow","UNKNOWN","tracking_limit","unverified");
+}
+static void backend_forget_drop(CHANNEL *c,U64 rid) {
+    U32 i;
+    for(i=0;i<BACKEND_DROP_SLOTS;i++)if(c->drops[i].rid==rid) {
+        c->drops[i].rid=0;c->drops[i].cause=0;return;
+    }
+}
 static void backend_end_if_drained(CHANNEL *c,U64 rid) {
     U32 j;
     if(!rid)return;
@@ -295,13 +334,16 @@ static void backend_end_if_drained(CHANNEL *c,U64 rid) {
         backend_event(c,rid,"request_completed","UNKNOWN",
                       backend_abort_cause(c->aborted[j].cause),"aborted");
         c->aborted[j].rid=0;c->aborted[j].cause=0;
-        if(c->dropped_trace==rid)c->dropped_trace=0;
+        backend_forget_drop(c,rid);
         return;
     }
-    if(c->dropped_trace==rid) {
-        backend_event(c,rid,"request_completed","UNKNOWN","filter_reject","dropped");
-        c->dropped_trace=0;
-    } else backend_event(c,rid,"request_completed","UNKNOWN","none","responded");
+    for(j=0;j<BACKEND_DROP_SLOTS;j++)if(c->drops[j].rid==rid) {
+        backend_event(c,rid,"request_completed","UNKNOWN",
+                      backend_drop_cause(c->drops[j].cause),"dropped");
+        c->drops[j].rid=0;c->drops[j].cause=0;
+        return;
+    }
+    backend_event(c,rid,"request_completed","UNKNOWN","none","responded");
 }
 static void backend_abort_pending(CHANNEL *c,U64 rid,U32 cause) {
     U32 i;
@@ -321,7 +363,7 @@ static void backend_abort_pending(CHANNEL *c,U64 rid,U32 cause) {
         U32 slot=(c->r+i)%MAX_QUEUE;
         if(c->queue_trace[slot]==rid)c->queue_trace[slot]=0;
     }
-    if(c->dropped_trace==rid)c->dropped_trace=0;
+    backend_forget_drop(c,rid);
     backend_event(c,rid,"request_completed","UNKNOWN",
                   "tracking_limit","unverified");
 }
@@ -640,13 +682,15 @@ static int filter_allows(const CHANNEL *c,U32 response_id) {
 static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,U32 status) {
     PASSTHRU_MSG *msg;U32 i;
     if(c->count>=MAX_QUEUE||len>MAX_DATA-4){
-        backend_event(c,c->active_trace,"rx_dropped","UNKNOWN","queue_full","unknown");
-        c->dropped_trace=c->active_trace;
+        U32 cause=c->count>=MAX_QUEUE?BACKEND_DROP_QUEUE_FULL:BACKEND_DROP_INVALID_SIZE;
+        backend_event(c,c->active_trace,"rx_dropped","UNKNOWN",
+                      backend_drop_cause(cause),"unknown");
+        backend_note_drop(c,c->active_trace,cause);
         return;
     }
     if(!filter_allows(c,response_id)){
         backend_event(c,c->active_trace,"filter_drop","UNKNOWN","filter_reject","unknown");
-        c->dropped_trace=c->active_trace;
+        backend_note_drop(c,c->active_trace,BACKEND_DROP_FILTER_REJECT);
         U8 idbytes[4];u32_be(idbytes,response_id);
         logline("RX discarded by installed J2534 filter",idbytes,4);
         return;
