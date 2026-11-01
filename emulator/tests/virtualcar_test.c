@@ -626,6 +626,48 @@ int main(){
    n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY && n==0);
   }
  }
+ /* Eight groups: synthetic request shapes only; no ECU/security responses. */
+ {
+  U32 prefix,target,service,length,group;
+  for(group=0;group<8;group++){
+   for(prefix=0xCA;prefix<=0xCF;prefix++){
+    for(target=0x40;target<=0x50;target+=0x10){
+     for(service=0xA3;service<=0xA6;service+=3){
+      U8 request[9]={0};U32 id=0x000FFFFE;int expected=group<2;
+      const char *start;U64 rid;const char *label;
+      request[0]=(U8)prefix;request[1]=(U8)target;request[2]=(U8)service;
+      length=prefix-0xC8+1;
+      switch(group){
+       case 0: break; /* exact declared length, including CD A6 */
+       case 1: length=8;break; /* CAN padding */
+       case 2: length--;break; /* declared bytes truncated */
+       case 3: length=9;break; /* exceeds classic CAN */
+       case 4: request[0]=(prefix&1)?0xC9:0xD0;break;
+       case 5: request[1]=0x60;break;
+       case 6: request[2]=0xA7;break;
+       case 7: id=0x555;break;
+      }
+      m=frame(PROTO_CAN,id,request,length);
+      label=backend_probe_name(channel(cid),&m);
+      REQUIRE((label!=NULL)==expected);
+      start=backend_lines+backend_len;send(cid,&m);rid=last_tx_request(start);
+      REQUIRE(rid!=0 && terminal_count_for(start,rid)==1);
+      REQUIRE(terminal_for(start,rid,expected?"unimplemented_probe":"unhandled_request","no_response")==1);
+      REQUIRE(event_count_since(start,"\"kind\":\"probe_classified\"")== (U32)expected);
+      REQUIRE(strstr(start,"\"kind\":\"response_generated\"")==NULL);
+      n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY && n==0);
+     }
+    }
+   }
+  }
+  /* Identical bytes on ISO15765 are not D2 CAN requests. */
+  {
+   static CHANNEL wrong;U8 request[8]={0xCD,0x50,0xA6,0,0,0,0,0};
+   wrong=*channel(cid);wrong.protocol=PROTO_ISO15765;m=frame(PROTO_ISO15765,0x000FFFFE,request,8);
+   REQUIRE(backend_probe_name(&wrong,&m)==NULL);
+   REQUIRE(process_d2(&wrong,0x000FFFFE,request,8)==0);
+  }
+ }
  /* One configured B9FB fixture must not be misapplied to B9F0. */
  REQUIRE(g_d2[2].frame_count==0);
  /* B9FB with an explicit synthetic, non-sensitive fixture: verify 29-bit

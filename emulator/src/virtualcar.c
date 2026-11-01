@@ -309,6 +309,15 @@ static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *
                           const char *reason,const char *outcome) {
     backend_event_with_probe(c,rid,kind,route,reason,outcome,0);
 }
+/* Recognize only complete classic-CAN CEM A3/A6 request envelopes.
+   C8 + significant-byte count includes target/service; trailing CAN padding
+   is allowed. This validates shape only, never ECU acceptance or permission. */
+static int cem_d2_probe_shape(const U8 *p,U32 n){
+    return p && n>=3u && n<=8u && p[0]>=0xCAu && p[0]<=0xCFu &&
+           n>=(U32)(p[0]-0xC8u)+1u &&
+           (p[1]==0x40u||p[1]==0x50u) &&
+           (p[2]==0xA3u||p[2]==0xA6u);
+}
 /* The classifier outputs ONLY literals from this allowlist. These tokens are
    diagnostic request shapes, not evidence of actual ECU capabilities. */
 static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
@@ -323,12 +332,14 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
     id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
     p=m->Data+4;n=m->DataSize-4;
+    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && cem_d2_probe_shape(p,n)){
+        target=p[1]==0x40u?0u:1u;
+        return d2_labels[target][p[2]==0xA3u?0u:1u];
+    }
     if(id==0x000FFFFEu && c->protocol==PROTO_CAN && n>=3 &&
        (p[0]==0xCBu||p[0]==0xCFu||p[0]==0xCAu) &&
        (p[1]==0x40u||p[1]==0x50u)){
         target=p[1]==0x40u?0u:1u;
-        if(p[2]==0xA3u)return d2_labels[target][0];
-        if(p[2]==0xA6u)return d2_labels[target][1];
         if(p[2]!=0xB9u||n<4)return 0;
         if(p[3]==0xF0u)return d2_labels[target][2];
         if(p[3]==0xFBu)return d2_labels[target][3];
@@ -1029,9 +1040,7 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
        responses. Keep them silent, but distinguish the known missing emulator
        implementation from an arbitrary CAN ID or an absent B9 fixture.
        Never synthesize E3/E6, an ignition state, or a module identity. */
-    if(len>=3 && (data[0]==0xCBu||data[0]==0xCFu||data[0]==0xCAu) &&
-       (data[1]==0x40u||data[1]==0x50u) &&
-       (data[2]==0xA3u||data[2]==0xA6u)){
+    if(cem_d2_probe_shape(data,len)){
         backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
         logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
         backend_event(c,c->active_trace,"request_completed","CEM",
