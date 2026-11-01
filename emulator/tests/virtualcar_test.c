@@ -847,12 +847,53 @@ int main(){
  REQUIRE(memcmp(r.Data+7,"YV1CZ0002A0000001",17)==0);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  g_iso_rx_start=0;
- /* An unsupported 29-bit P3 route must remain unanswered. */
- const U8 missing_p3[]={0x22,0xF1,0x14};
- m=frame(PROTO_ISO15765,0x18DA50F1,missing_p3,3);send(cid,&m);
- n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
- REQUIRE(strstr(backend_lines,"\"route\":\"UNHANDLED\"")!=NULL);
- REQUIRE(strstr(backend_lines,"\"reason\":\"unhandled_request\"")!=NULL);
+ /* P3 F114 evidence matrix using a MY2005-style profile without CEM.
+    Exact known P3 probes are classified CEM/unimplemented with zero RX;
+    nearby or malformed requests remain UNHANDLED. All bytes are synthetic. */
+ {
+  U32 saved_count=g_ecu_count,p3cid=0,canid=0,k;
+  const U8 f114[]={0x22,0xF1,0x14};
+  const U8 f190[]={0x22,0xF1,0x90};
+  const U8 trailing[]={0x22,0xF1,0x14,0x00};
+  const U8 short_req[]={0x22,0xF1};
+  const U8 can_sf[]={0x03,0x22,0xF1,0x14,0,0,0,0};
+  struct p3_case {U32 proto,id;const U8 *data;U32 len;const char *route,*reason;} cases[]={
+   /* 1 */ {PROTO_ISO15765,0x726,f114,3,"CEM","unimplemented_probe"},
+   /* 2 */ {PROTO_ISO15765,0x18DA50F1,f114,3,"CEM","unimplemented_probe"},
+   /* 3 */ {PROTO_ISO15765,0x726,f190,3,"UNHANDLED","unhandled_request"},
+   /* 4 */ {PROTO_ISO15765,0x726,trailing,4,"UNHANDLED","unhandled_request"},
+   /* 5 */ {PROTO_ISO15765,0x726,short_req,2,"UNHANDLED","unhandled_request"},
+   /* 6 */ {PROTO_ISO15765,0x18DA51F1,f114,3,"UNHANDLED","unhandled_request"},
+   /* 7 */ {PROTO_CAN,0x726,can_sf,8,"UNHANDLED","unhandled_request"}
+  };
+  g_ecu_count=1; /* MY2005 donor profile has ECM only; no CEM fixture. */
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&canid)==ERR_OK);
+  for(k=0;k<sizeof(cases)/sizeof(cases[0]);k++){
+   U32 route_count=1;
+   PASSTHRU_MSG *target=cases[k].proto==PROTO_CAN?&m:&m;
+   (void)target;
+   case_log=backend_lines+backend_len;
+   m=frame(cases[k].proto,cases[k].id,cases[k].data,cases[k].len);
+   send(cases[k].proto==PROTO_CAN?canid:cid,&m);
+   require_route(case_log,cases[k].route,1);
+   REQUIRE(terminal_for(case_log,last_tx_request(case_log),cases[k].reason,"no_response")==1);
+   n=1;REQUIRE(PassThruReadMsgs(cases[k].proto==PROTO_CAN?canid:cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+   REQUIRE(n==0);
+  }
+  REQUIRE(PassThruDisconnect(canid)==ERR_OK);
+  /* 8: the pre-existing configured CEM F114 lab handler still answers;
+     this is a regression guard, not a claim about OEM response bytes. */
+  g_ecu_count=saved_count;
+  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&p3cid)==ERR_OK);
+  case_log=backend_lines+backend_len;
+  m=frame(PROTO_ISO15765,0x726,f114,3);send(p3cid,&m);
+  r=readmsg(p3cid);
+  REQUIRE(r.Data[0]==0&&r.Data[1]==0&&r.Data[2]==0x07&&r.Data[3]==0x2E);
+  REQUIRE(r.DataSize==24&&r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x14);
+  require_route(case_log,"CEM",1);
+  REQUIRE(terminal_for(case_log,last_tx_request(case_log),"none","responded")==1);
+  REQUIRE(PassThruDisconnect(p3cid)==ERR_OK);
+ }
  /* J2534 BLOCK filter must be distinguishable from missing ECU fixture. */
  U32 blocked_filter=0;
  REQUIRE(PassThruStartMsgFilter(cid,2,&mask,&pat,0,&blocked_filter)==ERR_OK);
