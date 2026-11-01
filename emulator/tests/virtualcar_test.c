@@ -877,6 +877,38 @@ int main(){
    g_backend_session=backend_session_id(g_host_pid,GetTickCount(),0x123456789ABCDEF1ull);
    REQUIRE(PassThruDisconnect(lc2)==ERR_OK);
   }
+
+  /* F03: an FC needs FS, BS and STmin; rejected short frames leave the
+     pending response intact until a complete CTS arrives. */
+  {
+   static const struct {const char *name;U32 id;U8 bytes[3];U32 len;int valid;} cases[]={
+    {"PCI only",0x7E0,{0x30,0,0},1,0},{"missing STmin BS0",0x7E0,{0x30,0,0},2,0},
+    {"missing STmin BS1",0x7E0,{0x30,1,0},2,0},{"wrong physical ID",0x7E1,{0x30,0,0},3,0},
+    {"WAIT",0x7E0,{0x31,0,0},3,0},{"reserved status",0x7E0,{0x33,0,0},3,0},
+    {"OVERFLOW",0x7E0,{0x32,0,0},3,0},{"complete CTS",0x7E0,{0x30,0,0},3,1}
+   };
+   U32 z;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+   for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+    U32 before_pos,before_count;PASSTHRU_MSG flow;
+    ch=channel(lc);
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+    tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+    tmp=readmsg(lc);REQUIRE(tmp.Data[4]==0x10);
+    REQUIRE(ch->pending_len==20&&ch->pending_pos==6&&ch->count==0);
+    before_pos=ch->pending_pos;before_count=ch->count;
+    flow=frame(PROTO_CAN,cases[z].id,cases[z].bytes,cases[z].len);send(lc,&flow);
+    if(cases[z].valid){
+     REQUIRE(ch->pending_len==0&&ch->count>before_count);
+    }else if(cases[z].bytes[0]==0x32){
+     REQUIRE(ch->pending_len==0&&ch->pending_pos==0);
+    }else{
+     REQUIRE(ch->pending_len==20&&ch->pending_pos==before_pos&&ch->count==before_count);
+    }
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+   }
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  }
  }
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
