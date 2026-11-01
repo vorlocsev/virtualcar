@@ -908,6 +908,37 @@ int main(){
     REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
    }
    REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+
+  /* F04: reserved STmin values cannot release pending Consecutive Frames;
+     valid millisecond and sub-millisecond ranges still work. */
+  {
+   static const struct {const char *name;U8 stmin;int valid;} cases[]={
+    {"zero milliseconds",0x00,1},{"127 milliseconds",0x7F,1},
+    {"reserved low boundary",0x80,0},{"reserved high boundary",0xF0,0},
+    {"100 microseconds",0xF1,1},{"900 microseconds",0xF9,1},
+    {"reserved microsecond boundary",0xFA,0},{"reserved maximum",0xFF,0}
+   };
+   U32 z;
+   REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&lc)==ERR_OK);
+   ch=channel(lc);
+   for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+    U8 fc_bytes[3]={0x30,0,cases[z].stmin};
+    PASSTHRU_MSG fc;
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+    tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
+    tmp=readmsg(lc);REQUIRE(tmp.Data[4]==0x10);
+    REQUIRE(ch->pending_len==20&&ch->pending_pos==6&&ch->count==0);
+    fc=frame(PROTO_CAN,0x7E0,fc_bytes,3);send(lc,&fc);
+    if(cases[z].valid){
+     REQUIRE(ch->pending_len==0&&ch->count==2);
+    }else{
+     REQUIRE(ch->pending_len==20&&ch->pending_pos==6&&ch->count==0);
+     fc=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(lc,&fc);
+     REQUIRE(ch->pending_len==0&&ch->count==2);
+    }
+   }
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  }
   }
  }
  REQUIRE(PassThruClose(dev)==ERR_OK);
