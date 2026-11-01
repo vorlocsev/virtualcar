@@ -426,6 +426,20 @@ int main(){
    m=frame(PROTO_ISO15765,0x726,p3iso,3);
    label=backend_probe_name(channel(iso),&m);
    REQUIRE(label && strcmp(label,"P3_726_F1B0")==0);
+   /* 5b: P3 multi-DID, trailing bytes and truncated requests must remain
+      unattributed, since a one-DID label would be misleading. */
+   {
+    const U8 multi[]={0x22,0xF1,0xB0,0xF1,0x14};
+    const U8 trailing[]={0x22,0xF1,0xB0,0x00};
+    m=frame(PROTO_ISO15765,0x726,multi,5);
+    REQUIRE(backend_probe_name(channel(iso),&m)==0);
+    m=frame(PROTO_ISO15765,0x18DA50F1,multi,5);
+    REQUIRE(backend_probe_name(channel(iso),&m)==0);
+    m=frame(PROTO_ISO15765,0x726,trailing,4);
+    REQUIRE(backend_probe_name(channel(iso),&m)==0);
+    m=frame(PROTO_ISO15765,0x726,p3iso,2);
+    REQUIRE(backend_probe_name(channel(iso),&m)==0);
+   }
    REQUIRE(PassThruDisconnect(iso)==ERR_OK);
   }
   /* 6: flow control, unsupported DID and arbitrary CAN are never tagged. */

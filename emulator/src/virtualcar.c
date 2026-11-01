@@ -343,7 +343,9 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
         if(n<4 || (p[0]&0xF0u)!=0 || (p[0]&0x0Fu)!=3u)return 0;
         uds=p+1;size=3;
     }else return 0;
-    if(size<3 || uds[0]!=0x22u || uds[1]!=0xF1u)return 0;
+    /* J2534 ISO15765 may carry multiple DID operands. Do not label a
+       compound 22 F1xx F1yy request as if it queried only the first DID. */
+    if(size!=3 || uds[0]!=0x22u || uds[1]!=0xF1u)return 0;
     which=id==0x726u?0u:1u;
     if(uds[2]==0x14u)index=0;
     else if(uds[2]==0xB0u)index=1;
