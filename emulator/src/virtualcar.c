@@ -880,7 +880,11 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             return;
         }
         sz=answer_uds(ecu,payload,n,answer);
-        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;}
+        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;
+            /* A filtered single-frame reply may never enter RX; close its
+               telemetry now without altering ECU/transport state. */
+            backend_end_if_drained(c,c->active_trace);
+        }
         else backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
         if(id!=0x7DF)return;
     }
