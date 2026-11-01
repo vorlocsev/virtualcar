@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 static U32 tick=0;
+static char backend_lines[180000];static U32 backend_len=0;
+static U32 event_count(const char *pattern){
+ U32 count=0;const char *p=backend_lines;
+ while((p=strstr(p,pattern))!=0){++count;p+=strlen(pattern);}
+ return count;
+}
 void Sleep(U32 ms){tick+=ms;}
 U32 GetTickCount(void){return tick;}
 int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
@@ -14,6 +20,7 @@ U32 GetModuleFileNameA(PTR mod,char*out,U32 n){(void)mod;strncpy(out,"C:\\Sector
 U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32 n,const char*path){
  (void)path;
  /* Only host-test fixture: the distributed INI keeps count=0 by default. */
+ if(strcmp(s,"Diagnostics")==0 && strcmp(k,"BackendTelemetryEnabled")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrame0")==0)d="CC 40 7F B9 31 00 00 00";
  if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"FrameCount")==0)d="3";
@@ -34,9 +41,24 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
  snprintf(out,n,"%s",d);return (U32)strlen(out);
 }
 U32 GetTempPathA(U32 n,char*out){snprintf(out,n,"/tmp/");return 5;}
-HANDLE CreateFileA(const char *p,U32 a,U32 sh,PTR sec,U32 creation,U32 flags,HANDLE template){(void)p;(void)a;(void)sh;(void)sec;(void)creation;(void)flags;(void)template;return INVALID_HANDLE;}
+U32 GetEnvironmentVariableA(const char *name,char*out,U32 n){
+ if(strcmp(name,"LOCALAPPDATA")!=0)return 0;
+ snprintf(out,n,"/tmp");return 4;
+}
+int CreateDirectoryA(const char *p,PTR sec){(void)p;(void)sec;return 1;}
+HANDLE CreateFileA(const char *p,U32 a,U32 sh,PTR sec,U32 creation,U32 flags,HANDLE template){
+ (void)a;(void)sh;(void)sec;(void)creation;(void)flags;(void)template;
+ return strstr(p,"dev47-backend.jsonl")?(HANDLE)1:INVALID_HANDLE;
+}
 U32 SetFilePointer(HANDLE file,U32 low,PTR high,U32 method){(void)file;(void)low;(void)high;(void)method;return 0;}
-int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){(void)f;(void)b;(void)n;(void)w;(void)o;return 1;}
+int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){
+ (void)o;
+ if(f!=(HANDLE)1 || n+backend_len>=sizeof(backend_lines))return 0;
+ memcpy(backend_lines+backend_len,b,n);backend_len+=n;
+ backend_lines[backend_len]=0;
+ if(w)*w=n;
+ return 1;
+}
 int CloseHandle(HANDLE file){(void)file;return 1;}
 long InterlockedCompareExchange(volatile long*dst,long exchange,long compare){long v=*dst;if(v==compare)*dst=exchange;return v;}
 long InterlockedExchange(volatile long*dst,long val){long v=*dst;*dst=val;return v;}
@@ -211,12 +233,16 @@ int main(){
  };
  g_d2[2].frame_count=13;
  for(U32 z=0;z<13;z++)memcpy(g_d2[2].frame[z],lab_b9fb[z],8);
+ U32 completed_before_fb=event_count("\"kind\":\"request_completed\"");
  m=frame(PROTO_CAN,0x000FFFFE,d2fb,8);send(cid,&m);
+ REQUIRE(event_count("\"kind\":\"request_completed\"")==completed_before_fb);
  for(U32 z=0;z<13;z++){
    n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,35)==ERR_OK);REQUIRE(n==1);
    REQUIRE(r.DataSize==12 && r.ProtocolID==PROTO_CAN);
    REQUIRE(memcmp(r.Data+4,lab_b9fb[z],8)==0);
+   if(z<12) REQUIRE(event_count("\"kind\":\"request_completed\"")==completed_before_fb);
  }
+ REQUIRE(event_count("\"kind\":\"request_completed\"")==completed_before_fb+1);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  /* Regression 0.3.5: switching to strict 125/500 CEM routes. */
  g_p2_strict_routing=1;
@@ -399,8 +425,32 @@ int main(){
  REQUIRE(memcmp(r.Data+7,"YV1CZ0002A0000001",17)==0);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  g_iso_rx_start=0;
+ /* An unsupported 29-bit P3 route must remain unanswered. */
+ const U8 missing_p3[]={0x22,0xF1,0x14};
+ m=frame(PROTO_ISO15765,0x18DA50F1,missing_p3,3);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ REQUIRE(strstr(backend_lines,"\"route\":\"UNHANDLED\"")!=NULL);
+ REQUIRE(strstr(backend_lines,"\"reason\":\"unhandled_request\"")!=NULL);
+ /* J2534 BLOCK filter must be distinguishable from missing ECU fixture. */
+ U32 blocked_filter=0;
+ REQUIRE(PassThruStartMsgFilter(cid,2,&mask,&pat,0,&blocked_filter)==ERR_OK);
+ m=frame(PROTO_ISO15765,0x7E0,vin_req,3);send(cid,&m);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ REQUIRE(strstr(backend_lines,"\"kind\":\"filter_drop\"")!=NULL);
+ REQUIRE(PassThruStopMsgFilter(cid,blocked_filter)==ERR_OK);
  REQUIRE(PassThruStopMsgFilter(cid,filterID)==ERR_OK);
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
  REQUIRE(PassThruClose(dev)==ERR_OK);
+ /* 8 telemetry checks, plus existing D2/ISO15765/READ128 regressions. */
+ REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
+ REQUIRE(event_count("\"kind\":\"tx_received\"")>0);
+ REQUIRE(event_count("\"kind\":\"route_selected\"")>0);
+ REQUIRE(strstr(backend_lines,"\"reason\":\"missing_profile\"")!=NULL);
+ REQUIRE(event_count("\"kind\":\"rx_queued\"")>0);
+ REQUIRE(event_count("\"kind\":\"rx_dequeued\"")>0);
+ REQUIRE(event_count("\"outcome\":\"responded\"")>0);
+ REQUIRE(strstr(backend_lines,"YV1CZ0002A0000001")==NULL);
+ REQUIRE(strstr(backend_lines,"SIM-CEM")==NULL);
+ REQUIRE(strstr(backend_lines,"\"can_id\"")==NULL);
  puts("PASS: 0.3.6.6 142-byte F106, ECU nodes, recorded bus fixtures, FC140, P3/VDASH, read-only");return 0;
 }
