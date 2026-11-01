@@ -489,6 +489,47 @@ int main(){
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x09);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x4C);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* Issue #4: A3/A6 are known CEM probes with NO validated response
+    implementation. Nine read-only routing checks. The telemetry must not
+    mistake them for arbitrary CAN IDs, missing B9 replay fixtures, or real
+    positive acknowledgments. */
+ {
+  static const struct {
+   U32 id;U8 prefix,target,opcode;int recognized;
+  } cases[]={
+   {0x000FFFFEu,0xCF,0x40,0xA3,1}, /* 1: CEM 40 A3 */
+   {0x000FFFFEu,0xCF,0x50,0xA3,1}, /* 2: CEM 50 A3 */
+   {0x000FFFFEu,0xCF,0x40,0xA6,1}, /* 3: CEM 40 A6 */
+   {0x000FFFFEu,0xCF,0x50,0xA6,1}, /* 4: CEM 50 A6 */
+   {0x000FFFFEu,0xCA,0x50,0xA6,1}, /* 5: recorded alternative preamble */
+   {0x000FFFFEu,0xCB,0x40,0xA3,1}, /* 6: other known preamble */
+   {0x000FFFFEu,0xCF,0x60,0xA3,0}, /* 7: unknown target */
+   {0x000FFFFEu,0xCF,0x50,0xA7,0}, /* 8: unknown opcode */
+   {0x00000555u,0xCF,0x50,0xA3,0}, /* 9: unrelated CAN identifier */
+  };
+  U32 z;
+  for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+   U8 request[]={0,0,0,0,0,0,0,0};
+   const char *start=backend_lines+backend_len;
+   U64 request_id;
+   request[0]=cases[z].prefix;request[1]=cases[z].target;
+   request[2]=cases[z].opcode;
+   m=frame(PROTO_CAN,cases[z].id,request,8);
+   REQUIRE((backend_probe_name(channel(cid),&m)!=0)==cases[z].recognized);
+   send(cid,&m);request_id=last_tx_request(start);
+   REQUIRE(request_id!=0);
+   if(cases[z].recognized){
+    REQUIRE(terminal_for(start,request_id,"unimplemented_probe","no_response")==1);
+    REQUIRE(strstr(start,"\"route\":\"CEM\"")!=NULL);
+   }else{
+    REQUIRE(terminal_for(start,request_id,"unhandled_request","no_response")==1);
+    REQUIRE(strstr(start,"\"route\":\"UNHANDLED\"")!=NULL);
+   }
+   REQUIRE(terminal_count_for(start,request_id)==1);
+   REQUIRE(strstr(start,"\"kind\":\"response_generated\"")==NULL);
+   n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY && n==0);
+  }
+ }
  /* One configured B9FB fixture must not be misapplied to B9F0. */
  REQUIRE(g_d2[2].frame_count==0);
  /* B9FB with an explicit synthetic, non-sensitive fixture: verify 29-bit
