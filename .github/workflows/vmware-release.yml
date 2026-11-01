@@ -1,0 +1,72 @@
+name: VMware LAB package and opt-in prerelease
+on:
+  pull_request:
+    branches: [development]
+    paths:
+      - "emulator/**"
+      - ".github/workflows/vmware-release.yml"
+  push:
+    branches:
+      - "vmware-release/**"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vmware-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang lld gcc binutils python3
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Read-only J2534 protocol and regression tests
+        run: |
+          cd emulator
+          gcc -std=c11 -O2 -Wall -Wextra -o /tmp/vmware_virtualcar_test tests/virtualcar_test.c src/p2core/p2_cem_router.c src/p2core/p2_ls_observer.c src/p2core/p2_vehicle_core.c src/p2core/p2_j2534_bridge.c
+          /tmp/vmware_virtualcar_test
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          (cd control && go test ./... -count=1 && go vet ./...)
+      - name: Build Windows x86 binaries
+        run: |
+          cd emulator
+          bash build-cross.sh
+          (cd control && GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H windowsgui' -o ../VirtualCarControl.exe .)
+          file VirtualCarJ2534.dll VirtualCarControl.exe
+          test "$(objdump -p VirtualCarJ2534.dll | grep -Ec '^\s*\[ *[0-9]+\].*PassThru[A-Za-z]+$')" -ge 14
+      - name: Package allowlisted VMware archive with SHA-256 manifests
+        run: |
+          mkdir -p emulator/vmware-dist
+          python3 emulator/tools/package_vmware_lab.py \
+            --root emulator \
+            --output-dir emulator/vmware-dist \
+            --source-sha "$(git rev-parse HEAD)" \
+            --version "vmware-lab-2026.11.01"
+          unzip -t emulator/vmware-dist/*.zip
+          (cd emulator/vmware-dist && sha256sum -c *.sha256)
+      - name: Upload isolated VMware test ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-VMware-LAB-${{ github.sha }}
+          path: |
+            emulator/vmware-dist/*.zip
+            emulator/vmware-dist/*.sha256
+          if-no-files-found: error
+      - name: Publish prerelease only from explicit vmware-release branch
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/vmware-release/') && github.repository == 'vorlocsev/virtualcar'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="vmware-lab-2026-11-01"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to overwrite" >&2
+            exit 1
+          fi
+          gh release create "$tag" emulator/vmware-dist/*.zip emulator/vmware-dist/*.sha256 \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Virtual Car VMware LAB 2026-11-01 (read-only)" \
+            --notes-file emulator/RELEASE_NOTES_VMWARE_RU.md
