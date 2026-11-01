@@ -32,6 +32,24 @@ static U32 terminal_for(const char *start,U64 rid,const char *cause,const char *
  }
  return count;
 }
+static U32 terminal_count_for(const char *start,U64 rid){
+ char request[80];U32 count=0;const char *line=start;
+ snprintf(request,sizeof(request),"\"request_id\":%llu,",(unsigned long long)rid);
+ while(*line){const char *end=strchr(line,'\n');if(!end)break;
+  if(field_within_line(line,end,"\"kind\":\"request_completed\"")&&field_within_line(line,end,request))count++;
+  line=end+1;
+ }
+ return count;
+}
+static U64 last_tx_request(const char *start){
+ const char *line=start,*found=0;
+ while(*line){const char *end=strchr(line,'\n');if(!end)break;
+  if(field_within_line(line,end,"\"kind\":\"tx_received\""))found=line;
+  line=end+1;
+ }
+ if(found){const char *p=strstr(found,"\"request_id\":");if(p){U64 value=0;p+=13;while(*p>='0'&&*p<='9'){value=value*10u+(U64)(*p-'0');p++;}return value;}}
+ return 0;
+}
 
 void Sleep(U32 ms){tick+=ms;}
 U32 GetTickCount(void){return tick;}
@@ -794,6 +812,44 @@ int main(){
    REQUIRE(backend_len==before);
    g_backend_enabled=1;
   }
+  /* F13: one functional request fans out to both configured ECUs, but gets
+     exactly one terminal event after every response/filter decision. */
+  {
+   static const struct {const char *name;U32 block_mask;int reverse;U8 service;} f13[]={
+    {"both blocked",3,0,0x02},{"ECM blocked",1,0,0x02},{"CEM response blocked",2,0,0x02},
+    {"both pass",0,0,0x02},{"reverse ECU order",1,1,0x02},{"duplicate ECM block",5,0,0x02},
+    {"short functional reply",1,0,0x0C},{"unsupported service fanout",3,0,0x55}
+   };
+   U32 case_no;
+   REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0x800,500000,&lc)==ERR_OK);
+   ch=channel(lc);
+   for(case_no=0;case_no<sizeof(f13)/sizeof(f13[0]);case_no++){
+    U32 f1=0,f2=0,f3=0,k;U64 rid;
+    PASSTHRU_MSG fm=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0),fp;
+    PASSTHRU_MSG request;
+    REQUIRE(PassThruIoctl(lc,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+    g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;g_ecu[1].req=0x726;g_ecu[1].resp=0x72E;
+    if(f13[case_no].reverse){ECU swap=g_ecu[0];g_ecu[0]=g_ecu[1];g_ecu[1]=swap;}
+    if(f13[case_no].block_mask&1){fp=frame(PROTO_ISO15765,0x7E8,0,0);REQUIRE(PassThruStartMsgFilter(lc,2,&fm,&fp,0,&f1)==ERR_OK);}
+    if(f13[case_no].block_mask&2){fp=frame(PROTO_ISO15765,0x72E,0,0);REQUIRE(PassThruStartMsgFilter(lc,2,&fm,&fp,0,&f2)==ERR_OK);}
+    if(f13[case_no].block_mask&4){fp=frame(PROTO_ISO15765,0x7E8,0,0);REQUIRE(PassThruStartMsgFilter(lc,2,&fm,&fp,0,&f3)==ERR_OK);}
+    {U8 service_req[2]={0x09,f13[case_no].service};request=frame(PROTO_ISO15765,0x7DF,service_req,2);}
+    start=backend_lines+backend_len;send(lc,&request);rid=last_tx_request(start);REQUIRE(rid);
+    for(k=0;k<4;k++){
+     n=1;
+     if(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY)break;
+     REQUIRE(n==1);
+    }
+    n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY);
+    REQUIRE(terminal_count_for(start,rid)==1);
+    if(f13[case_no].block_mask==3)REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1);
+    if(f1)REQUIRE(PassThruStopMsgFilter(lc,f1)==ERR_OK);
+    if(f2)REQUIRE(PassThruStopMsgFilter(lc,f2)==ERR_OK);
+    if(f3)REQUIRE(PassThruStopMsgFilter(lc,f3)==ERR_OK);
+   }
+   g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;g_ecu[1].req=0x726;g_ecu[1].resp=0x72E;
+   REQUIRE(PassThruDisconnect(lc)==ERR_OK);
+  }
  }
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
@@ -809,3 +865,4 @@ int main(){
  REQUIRE(strstr(backend_lines,"\"can_id\"")==NULL);
  puts("PASS: 0.3.6.6 142-byte F106, ECU nodes, recorded bus fixtures, FC140, P3/VDASH, read-only");return 0;
 }
+

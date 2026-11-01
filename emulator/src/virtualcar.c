@@ -973,7 +973,7 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
 }
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     U32 id,i,n,sz;U8 payload[256],answer[256];const ECU *ecu;
-    int matched=0;
+    int matched=0,answered=0;
     const U8 *data;
     if(msg->DataSize<5||msg->DataSize>MAX_DATA)return;
     id=((U32)msg->Data[0]<<24)|((U32)msg->Data[1]<<16)|((U32)msg->Data[2]<<8)|msg->Data[3];
@@ -1029,13 +1029,17 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             return;
         }
         sz=answer_uds(ecu,payload,n,answer);
-        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;
-            /* A filtered single-frame reply may never enter RX; close its
-               telemetry now without altering ECU/transport state. */
-            backend_end_if_drained(c,c->active_trace);
+        if(sz){answered=1;emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;
+            /* Functional requests visit every configured ECU. Complete their
+               shared telemetry record only after all responders were checked. */
+            if(id!=0x7DF)backend_end_if_drained(c,c->active_trace);
         }
-        else backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
+        else if(id!=0x7DF)backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
         if(id!=0x7DF)return;
+    }
+    if(id==0x7DF && matched){
+        if(answered)backend_end_if_drained(c,c->active_trace);
+        else backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
     }
     if(!matched) {
         logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
@@ -1292,3 +1296,4 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
 }
 /* DLL_PROCESS_ATTACH, no work under loader lock. */
 int WINCALL DllMain(PTR module,U32 reason,PTR reserved) {(void)reserved;if(reason==1)g_module=module;return 1;}
+
