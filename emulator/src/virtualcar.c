@@ -1023,7 +1023,7 @@ static void pump_d2(CHANNEL *c){
     else c->d2_next_us+=(U64)c->d2_spacing_ms*1000ull;
 }
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
-    U32 i;D2_PROFILE *d;
+    U32 i;D2_PROFILE *d;const char *route;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
     /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
        responses. Keep them silent, but distinguish the known missing emulator
@@ -1040,8 +1040,8 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     }
     if(len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
        (data[3]!=0xFBu&&data[3]!=0xF0u&&data[3]!=0xFCu))return 0;
-    backend_event(c,c->active_trace,"route_selected",
-                  (data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER","none","unknown");
+    route=(data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER";
+    backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
     {U8 detail[16];
      u32_be(detail,data[1]);u32_be(detail+4,data[3]);
      u32_be(detail+8,c->baud);u32_be(detail+12,c->flags);
@@ -1056,12 +1056,12 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
             logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
         if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
             logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
-            backend_event(c,c->active_trace,"request_completed","CEM","unsupported_bus","no_response");
+            backend_event(c,c->active_trace,"request_completed",route,"unsupported_bus","no_response");
             return 1;
         }
         if(d->frame_count){
             c->d2_trace=c->active_trace;
-            backend_event(c,c->active_trace,"response_generated","CEM","none","unknown");
+            backend_event(c,c->active_trace,"response_generated",route,"none","unknown");
             c->d2_generation++;
             if(!c->d2_generation)c->d2_generation=1;
             c->d2_response_id=d->response_id;c->d2_count=d->frame_count;
@@ -1071,16 +1071,17 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
             pump_d2(c);
         }else {
             logline("P2 D2 read command: no validated response fixture",data,4);
-            backend_event(c,c->active_trace,"request_completed","CEM","missing_profile","no_response");
+            backend_event(c,c->active_trace,"request_completed",route,"missing_profile","no_response");
         }
         return 1;
     }
     logline("P2 D2 command: no recorded ECU fixture for target",data,4);
-    backend_event(c,c->active_trace,"request_completed","CEM","missing_profile","no_response");
+    backend_event(c,c->active_trace,"request_completed",route,"missing_profile","no_response");
     return 1;
 }
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     U32 id,i,n,sz;U8 payload[256],answer[256];const ECU *ecu;
+    const char *route;
     int matched=0,answered=0;
     const U8 *data;
     if(msg->DataSize<5||msg->DataSize>MAX_DATA)return;
@@ -1134,10 +1135,12 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             bytes_copy(payload,data+1,sz);n=sz;
         }else if(n<=sizeof(payload)){bytes_copy(payload,data,n);}
         else continue;
+        /* One physical route must survive a silent completion. Functional
+           fanout is a single aggregate transaction, not conflicting ECU routes. */
+        route=id==0x7DFu?"ECU_OTHER":
+              (ecu->req==0x726u?"CEM":(ecu->req==0x7E0u?"ECM":"ECU_OTHER"));
+        if(!matched)backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
         matched=1;
-        backend_event(c,c->active_trace,"route_selected",
-                      ecu->req==0x726u?"CEM":(ecu->req==0x7E0u?"ECM":"ECU_OTHER"),
-                      "none","unknown");
         /* Never synthesize acknowledgments for protected functional requests:
            functional diagnostic resets and protected services are not supported.
            This also prevents the prior contradictory 'Unmatched' log line. */
@@ -1147,7 +1150,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             if(n>=2 && payload[0]==0x11 && payload[1]==0x81)
                 logline("Functional ECUReset 11 81: silent, no physical ECU to reset",msg->Data,msg->DataSize);
             else logline("Functional protected request ignored by lab emulator",msg->Data,msg->DataSize);
-            backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
+            backend_event(c,c->active_trace,"request_completed",route,"no_response","no_response");
             return;
         }
         sz=answer_uds(ecu,payload,n,answer);
@@ -1156,7 +1159,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                shared telemetry record only after all responders were checked. */
             if(id!=0x7DF)backend_end_if_drained(c,c->active_trace);
         }
-        else if(id!=0x7DF)backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
+        else if(id!=0x7DF)backend_event(c,c->active_trace,"request_completed",route,"no_response","no_response");
         if(id!=0x7DF)return;
     }
     if(id==0x7DF && matched){
@@ -1423,4 +1426,5 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
 }
 /* DLL_PROCESS_ATTACH, no work under loader lock. */
 int WINCALL DllMain(PTR module,U32 reason,PTR reserved) {(void)reserved;if(reason==1)g_module=module;return 1;}
+
 
