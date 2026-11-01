@@ -1,7 +1,7 @@
 name: Virtual Car Emulator Windows x86
 on:
   push:
-    branches: [main]
+    branches: [main, test/dev49-f01-compat]
     paths: ["emulator/**", ".github/workflows/emulator.yml"]
   pull_request:
     branches: [main, development]
