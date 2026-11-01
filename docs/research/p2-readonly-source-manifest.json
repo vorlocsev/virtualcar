@@ -1,5 +1,5 @@
 {
-  "reviewed_date": "2026-11-01",
+  "reviewed_date": "2026-11-02",
   "scope": "downloaded_public_sources_only",
   "raw_sources_committed": false,
   "files": [
@@ -56,6 +56,71 @@
       "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2003%20Volvo%20V70%20II%20D5244T%20M56/HSCAN_accthenignthenoff.csv",
       "bytes": 1893612,
       "sha256": "2ed34d81a8966079738637eec47d29a8b6a8a33dc7220a0a2841756bbb2904e1"
+    },
+    {
+      "name": "spnda_readme",
+      "url": "https://raw.githubusercontent.com/spnda/volvo_vida_db/e2f8ee165e373360d7f7fd0e80298f68c25bc07e/README.md",
+      "bytes": 6709,
+      "sha256": "9985e1c52082a7659d6e22e0703e8afdbf6fd60f20a98ee4a85184f233753f47",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "e2f8ee165e373360d7f7fd0e80298f68c25bc07e",
+      "commit_date_utc": "2026-10-15T14:45:05Z"
+    },
+    {
+      "name": "spnda_d2",
+      "url": "https://raw.githubusercontent.com/spnda/volvo_vida_db/e2f8ee165e373360d7f7fd0e80298f68c25bc07e/scripts/d2.py",
+      "bytes": 15616,
+      "sha256": "48ee47cac41f23900cae40edcfb8dc2e23294406756c2d4c839a8ebe38effb7e",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "e2f8ee165e373360d7f7fd0e80298f68c25bc07e",
+      "commit_date_utc": "2026-10-15T14:45:05Z"
+    },
+    {
+      "name": "martonn_readme",
+      "url": "https://raw.githubusercontent.com/martonn98/VolvoP2_CAN/708a54499b28b591862a1b51c203839ac4ae3449/README.md",
+      "bytes": 2411,
+      "sha256": "8f240fae79eabb9fbbb4c01993b53e9f3dae4960a47e3501c3e9f657b6e6c534",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "708a54499b28b591862a1b51c203839ac4ae3449",
+      "commit_date_utc": "2022-10-16T07:45:55Z"
+    },
+    {
+      "name": "jan_diagnostic",
+      "url": "https://jan-jansen.readthedocs.io/en/latest/_sources/volvo-diagnostic.rst.txt",
+      "bytes": 5394,
+      "sha256": "d1c699884f8d1e2d9cbd6ea7e5fd951ff3215bfd3bc1387f08c59904cea2f6e8",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture"
+    },
+    {
+      "name": "jan_intro",
+      "url": "https://jan-jansen.readthedocs.io/en/latest/_sources/intro.rst.txt",
+      "bytes": 2717,
+      "sha256": "82233646e1fb9ba479331e8825aa996129ce54ddb87a341d55e441938b85393e",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture"
+    },
+    {
+      "name": "jan_modules",
+      "url": "https://jan-jansen.readthedocs.io/en/latest/_sources/canbus/volvo-modules.rst.txt",
+      "bytes": 992,
+      "sha256": "d259efc82b9c0d2b2825ae60ee6cff2b0918126bc6a5554bdfa5dc218b4e5117",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture"
+    },
+    {
+      "name": "volvotools_readme",
+      "url": "https://raw.githubusercontent.com/prometey1982/VolvoTools/e725176a936177f288234a77507781e0cd5ba2a7/README.md",
+      "bytes": 3837,
+      "sha256": "6f6c48a631abe303e7f261369f4942821b8cca8d72e75507f6c95a64da211edb",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "e725176a936177f288234a77507781e0cd5ba2a7",
+      "commit_date_utc": "2026-10-20T06:10:34Z"
     }
-  ]
+  ],
+  "initial_review_date": "2026-11-01"
 }
