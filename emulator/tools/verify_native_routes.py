@@ -28,7 +28,7 @@ def verify(lines):
         ('CAN', 500000, 'CEM', 'no_fixture', 'explicit_missing_profile', 'B9FB', '0x50', 1),
         ('CAN', 250000, 'CEM', 'unsupported', 'unsupported_bus', 'B9FB', '0x50', 4),
         ('CAN', 500000, 'UNHANDLED', 'unsupported', 'unhandled_request', '22F114', None, 1),
-        ('ISO15765', 500000, 'UNHANDLED', 'unsupported', 'unhandled_request', '22F114', None, 3),
+        ('ISO15765', 500000, 'CEM', 'unsupported', 'unimplemented_probe', '22F114', None, 3),
         ('ISO15765', 500000, 'ECU_OTHER', *silent, 3),
     ]
     fields = ('protocol', 'baud_bps', 'route', 'status', 'reason', 'service', 'target', 'channel')
