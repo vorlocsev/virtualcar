@@ -24,6 +24,14 @@
 
 Источником истины является код GitHub `development`, а не прежние ZIP-архивы dev23–dev30 и не рассказ предыдущего чата.
 
+## Текущее состояние (01.11.2026, после интеграции dev49)
+
+- **PR #11** `feature/dev49-backend-evidence → development` **объединён** squash-коммитом `bb7cbf0d6d87ceaf3cc49ab4a6c33f878d5a5221`. Это реальное исходное J2534 backend-наблюдение, а не внешний proxy.
+- До слияния CI на точном HEAD PR #11 `755dce222ffd400c717b6f71351c258a47594570`: [Windows x86 emulator run 41269758124](https://github.com/vorlocsev/virtualcar/actions/runs/41269758124) **success**: C/J2534 regression, READ128, PE32 DLL/14 exports, Python, Go tests/vet, x86 GUI.
+- Опциональная локальная телеметрия `[Diagnostics] BackendTelemetryEnabled=1` сообщает жизненный цикл запроса и доставки RX без копирования VIN/сырых CAN-пакетов в **JSONL телеметрию**. Она не подтверждает принятие кадра SectorV и не заменяет проверку приватности старого текстового диагностического журнала.
+- **PR #13** (ISO-TP FC / FIFO backpressure) после этого слияния отличается от `development` на два коммита впереди и один позади; нужен осмысленный перенос с проверкой регрессий, а не автоматическое слияние устаревшей ветки. PR #12 и #15 остаются отдельными задачами.
+- **PR #2** `development → main` остаётся черновым gate. Windows/VMware SectorV/VDASH и физический J2534 на новой DLL не проверены; релиз не опубликован.
+
 ## 3. Проверенный снимок состояния (31.10.2026)
 
 - Последний проверенный `development` **перед dev33**: `96220cc57d5f12c1431bce39eefe2d3f380aff6f` (dev32 PR #7). Проверять фактический HEAD после слияния dev33.
@@ -55,7 +63,7 @@
 
 ## 5. Что делать в новом чате первым
 
-**Активный блокер: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** Открыть HEAD `development`, PR #10 (dev33), PR #2 и Actions **на точном SHA**. После интеграции dev32 следующий результат должен опираться на реальный обезличенный read-only лог из VMware, а не на дополнительную синтетическую идентификацию CEM.
+**Активный блокер: [Issue #4 — P0 CEM discovery diagnostics](https://github.com/vorlocsev/virtualcar/issues/4).** PR #11 (backend RX evidence) уже слит в development. Следующие шаги: интеграция совместимого исправления из PR #13, затем сбор обезличенного backend JSONL в VMware для A3/A6/B9F0/B9FB и 125 kbit/s. Открыть HEAD `development`, PR #10 (dev33), PR #2 и Actions **на точном SHA**. После интеграции dev32 следующий результат должен опираться на реальный обезличенный read-only лог из VMware, а не на дополнительную синтетическую идентификацию CEM.
 
 1. Сверить `PassThruWriteMsgs/ReadMsgs` с временными метками, ChannelID, baud, protocol и 11/29-bit форматами; отдельно сравнить D2 и P3 маршруты.
 2. Проверить `A3/A6/B9F0/B9FB` и `0x726/0x18DA50F1` без предположений о положительных ответах.

@@ -100,6 +100,8 @@ IMPORT U32 WINCALL GetCurrentProcessId(void) ALIAS(GetCurrentProcessId);
 IMPORT U32 WINCALL GetModuleFileNameA(PTR mod, char *out, U32 n) ALIAS(GetModuleFileNameA);
 IMPORT U32 WINCALL GetPrivateProfileStringA(const char *section,const char *key,const char *fallback,char *out,U32 size,const char *path) ALIAS(GetPrivateProfileStringA);
 IMPORT U32 WINCALL GetTempPathA(U32 n, char *out) ALIAS(GetTempPathA);
+IMPORT U32 WINCALL GetEnvironmentVariableA(const char *name, char *out, U32 n) ALIAS(GetEnvironmentVariableA);
+IMPORT int WINCALL CreateDirectoryA(const char *name, PTR sec) ALIAS(CreateDirectoryA);
 IMPORT HANDLE WINCALL CreateFileA(const char *path,U32 access,U32 sharing,PTR security,U32 creation,U32 flags,HANDLE templateFile) ALIAS(CreateFileA);
 IMPORT U32 WINCALL SetFilePointer(HANDLE file,U32 low,PTR high,U32 method) ALIAS(SetFilePointer);
 IMPORT int WINCALL WriteFile(HANDLE file,const void *buf,U32 count,U32 *written,PTR overlap) ALIAS(WriteFile);
@@ -115,6 +117,10 @@ static U32 g_filter_counter=1;
 static U32 g_periodic_counter=1;
 static char g_profile_path[512];
 static char g_log_path[512];
+static char g_backend_path[512];
+static U32 g_backend_enabled=0;
+static U32 g_backend_serial=0;
+static U64 g_backend_session=0;
 static char g_host_name[48]="unknown.exe";
 static U32 g_host_pid;
 static char g_vin[18]="YV1CZ0002A0000001";
@@ -144,6 +150,18 @@ static D2_PROFILE g_d2[MAX_D2_FIXTURES];
 
 typedef struct { U32 id,interval_ms; U64 next_us; PASSTHRU_MSG msg; int used; } PERIODIC;
 typedef struct { U32 id,type; U8 mask[4],pattern[4]; } FILTER;
+/* A recorded abort has to survive queued First/Consecutive Frames.
+   At most MAX_QUEUE different aborted requests can have queued frames. */
+#define BACKEND_ABORT_FC_OVERFLOW 1u
+#define BACKEND_ABORT_SUPERSEDED 2u
+typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
+/* Drop causes belong to request IDs, not to a single channel-wide slot.
+   At most MAX_QUEUE queued requests plus pending/active requests are live. */
+#define BACKEND_DROP_SLOTS (MAX_QUEUE+2u)
+#define BACKEND_DROP_QUEUE_FULL 1u
+#define BACKEND_DROP_FILTER_REJECT 2u
+#define BACKEND_DROP_INVALID_SIZE 3u
+typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
     FILTER filters[MAX_FILTERS]; U32 filters_count;
@@ -152,13 +170,17 @@ typedef struct {
     U64 d2_next_us;
     U32 d2_spacing_ms,d2_response_id,d2_count,d2_pos,d2_generation,d2_frame_number;
     U8 d2_frame[MAX_D2_FRAMES][8];
-    PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U32 r,w,count;
+    PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U64 queue_ready_us[MAX_QUEUE]; U32 r,w,count;
+    /* Diagnostic correlation metadata. Never sent to the J2534 client. */
+    U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace;
+    BACKEND_ABORT aborted[MAX_QUEUE];
+    BACKEND_DROP drops[BACKEND_DROP_SLOTS];
     PERIODIC periodic[MAX_PERIODIC];
     U8 pending[256]; U32 pending_len,pending_pos,pending_id,pending_request_id,pending_sn;
-    /* CTS grant is per-channel and survives RX FIFO backpressure.
-       pending_cf_credit == 0 means unlimited only when pending_cf_active. */
-    U32 pending_cf_active,pending_cf_credit;
-    U32 read_timeout_count;
+    U64 pending_next_us; U32 pending_stmin_us;
+    /* Flow Control CTS grant survives RX FIFO backpressure; zero credit is
+       unlimited only while pending_cf_active is set. */
+    U32 pending_cf_active,pending_cf_credit,read_timeout_count;
 } CHANNEL;
 static CHANNEL g_ch[MAX_CHANNELS];
 /* Read-only vehicle-state observer, serialized by g_lock. */
@@ -172,6 +194,18 @@ static U64 now_us(void){
     if(QueryPerformanceFrequency(&freq) && freq>0 && QueryPerformanceCounter(&count) && count>=0)
         return (U64)((double)count*(1000000.0/(double)freq));
     return (U64)GetTickCount()*1000ull;
+}
+static U64 backend_session_id(U32 pid,U32 tick,U64 counter){
+    U64 x=counter^(((U64)pid<<32)|tick)^0x9E3779B97F4A7C15ull;
+    x^=x>>30;x*=0xBF58476D1CE4E5B9ull;x^=x>>27;
+    x*=0x94D049BB133111EBull;x^=x>>31;
+    return x?x:1u;
+}
+static void append_hex64(char *out,U32 cap,U64 value){
+    static const char digits[]="0123456789abcdef";U32 i,n=0;
+    while(n<cap&&out[n])n++;
+    for(i=0;i<16&&n+1<cap;i++){U32 shift=(15u-i)*4u;out[n++]=digits[(value>>shift)&15u];}
+    if(n<cap)out[n]=0;
 }
 static U32 str_len(const char *s) { U32 i=0;if(!s)return 0;while(s[i] && i<4096)i++;return i; }
 static void bytes_copy(void *out,const void *src,U32 n) {U8 *d=(U8*)out;const U8 *s=(const U8*)src;U32 i;for(i=0;i<n;i++)d[i]=s[i];}
@@ -227,6 +261,185 @@ static void logline(const char *message,const U8 *data,U32 len) {
     if(f==INVALID_HANDLE)return;
     SetFilePointer(f,0,0,2);WriteFile(f,line,p,&written,0);CloseHandle(f);
 }
+
+/* dev49: optional, metadata-only backend events for the single Virtual Car UI.
+   Only fixed literals are permitted for kind/route/reason/outcome. No CAN
+   payload, VIN, ECU identifiers or profile paths are written to this stream.
+   Calls occur under g_lock; failures must never change J2534 behavior. */
+static void append_dec64(char *out,U32 cap,U64 value){
+    char reversed[24];U32 n=0,i;
+    do{reversed[n++]=(char)('0'+value%10u);value/=10u;}while(value && n<sizeof(reversed));
+    for(i=0;i<n;i++){char digitstr[2]={reversed[n-1-i],0};str_append(out,digitstr,cap);}
+}
+static U64 next_backend_request(void) {
+    U64 value;
+    if(!g_backend_enabled)return 0;
+    ++g_backend_serial;if(!g_backend_serial)++g_backend_serial;
+    value=((U64)g_host_pid<<32)|g_backend_serial;
+    return value?value:1;
+}
+static void backend_event(const CHANNEL *c,U64 rid,const char *kind,const char *route,
+                          const char *reason,const char *outcome) {
+    char line[640];HANDLE f;U32 written,len;I64 counter=0,freq=0;
+    if(!g_backend_enabled||!g_backend_path[0]||!rid||!c)return;
+    if(!QueryPerformanceCounter(&counter)||!QueryPerformanceFrequency(&freq)||freq<=0)return;
+    str_copy(line,"{\"format\":\"virtualcar-backend-v1\",\"kind\":\"",sizeof(line));
+    str_append(line,kind,sizeof(line));
+    str_append(line,"\",\"session_id\":\"",sizeof(line));append_hex64(line,sizeof(line),g_backend_session);
+    str_append(line,"\",\"request_id\":",sizeof(line));append_dec64(line,sizeof(line),rid);
+    str_append(line,",\"tick\":",sizeof(line));append_dec64(line,sizeof(line),counter>0?(U64)counter:1u);
+    str_append(line,",\"freq\":",sizeof(line));append_dec64(line,sizeof(line),(U64)freq);
+    str_append(line,",\"channel\":",sizeof(line));append_dec64(line,sizeof(line),c->id);
+    str_append(line,",\"protocol\":",sizeof(line));append_dec64(line,sizeof(line),c->protocol);
+    str_append(line,",\"baud\":",sizeof(line));append_dec64(line,sizeof(line),c->baud);
+    str_append(line,",\"route\":\"",sizeof(line));str_append(line,route,sizeof(line));
+    str_append(line,"\",\"reason\":\"",sizeof(line));str_append(line,reason,sizeof(line));
+    str_append(line,"\",\"outcome\":\"",sizeof(line));str_append(line,outcome,sizeof(line));
+    str_append(line,"\"}\n",sizeof(line));len=str_len(line);
+    if(len>=sizeof(line)-1)return;
+    f=CreateFileA(g_backend_path,4u,3u,0,4u,0x80u,0);
+    if(f==INVALID_HANDLE)return;
+    (void)WriteFile(f,line,len,&written,0);(void)CloseHandle(f);
+}
+static const char *backend_abort_cause(U32 cause) {
+    if(cause==BACKEND_ABORT_FC_OVERFLOW)return "flow_overflow";
+    if(cause==BACKEND_ABORT_SUPERSEDED)return "superseded";
+    return "unknown";
+}
+static const char *backend_drop_cause(U32 cause) {
+    if(cause==BACKEND_DROP_QUEUE_FULL)return "queue_full";
+    if(cause==BACKEND_DROP_FILTER_REJECT)return "filter_reject";
+    return "other";
+}
+static void backend_note_drop(CHANNEL *c,U64 rid,U32 cause) {
+    U32 i,free_slot=BACKEND_DROP_SLOTS;
+    if(!rid)return;
+    for(i=0;i<BACKEND_DROP_SLOTS;i++){
+        if(c->drops[i].rid==rid){
+            /* A lost frame due to FIFO exhaustion takes precedence over
+               filter rejection if both occur within the same request. */
+            if(cause==BACKEND_DROP_QUEUE_FULL ||
+               c->drops[i].cause!=BACKEND_DROP_QUEUE_FULL)
+                c->drops[i].cause=cause;
+            return;
+        }
+        if(!c->drops[i].rid && free_slot==BACKEND_DROP_SLOTS)free_slot=i;
+    }
+    if(free_slot<BACKEND_DROP_SLOTS){
+        c->drops[free_slot].rid=rid;c->drops[free_slot].cause=cause;
+        return;
+    }
+    /* Bound is normally sufficient: every retained RID has at least one
+       queued/staged frame, and there are only MAX_QUEUE queued slots. */
+    backend_event(c,rid,"tracking_overflow","UNKNOWN","tracking_limit","unverified");
+}
+static void backend_forget_drop(CHANNEL *c,U64 rid) {
+    U32 i;
+    for(i=0;i<BACKEND_DROP_SLOTS;i++)if(c->drops[i].rid==rid) {
+        c->drops[i].rid=0;c->drops[i].cause=0;return;
+    }
+}
+static void backend_end_if_drained(CHANNEL *c,U64 rid) {
+    U32 j;
+    if(!rid)return;
+    if((c->d2_count && c->d2_trace==rid) ||
+       (c->pending_len && c->pending_trace==rid))return;
+    for(j=0;j<c->count;j++)
+        if(c->queue_trace[(c->r+j)%MAX_QUEUE]==rid)return;
+    /* A delivered FF is not a completed ISO-TP response when CFs were
+       discarded by OVERFLOW or replaced by a newer response. */
+    for(j=0;j<MAX_QUEUE;j++)if(c->aborted[j].rid==rid) {
+        backend_event(c,rid,"request_completed","UNKNOWN",
+                      backend_abort_cause(c->aborted[j].cause),"aborted");
+        c->aborted[j].rid=0;c->aborted[j].cause=0;
+        backend_forget_drop(c,rid);
+        return;
+    }
+    for(j=0;j<BACKEND_DROP_SLOTS;j++)if(c->drops[j].rid==rid) {
+        backend_event(c,rid,"request_completed","UNKNOWN",
+                      backend_drop_cause(c->drops[j].cause),"dropped");
+        c->drops[j].rid=0;c->drops[j].cause=0;
+        return;
+    }
+    backend_event(c,rid,"request_completed","UNKNOWN","none","responded");
+}
+static void backend_abort_pending(CHANNEL *c,U64 rid,U32 cause) {
+    U32 i;
+    if(!rid)return; /* Opt-out: no telemetry state or file I/O. */
+    backend_event(c,rid,"response_aborted","UNKNOWN",
+                  backend_abort_cause(cause),"unknown");
+    for(i=0;i<MAX_QUEUE;i++)if(c->aborted[i].rid==rid) {
+        backend_end_if_drained(c,rid);return;
+    }
+    for(i=0;i<MAX_QUEUE;i++)if(!c->aborted[i].rid) {
+        c->aborted[i].rid=rid;c->aborted[i].cause=cause;
+        backend_end_if_drained(c,rid);return;
+    }
+    /* Defensive path: never report responded when our evidence table is full.
+       Keep actual J2534 frames unchanged, drop only their attribution. */
+    for(i=0;i<c->count;i++) {
+        U32 slot=(c->r+i)%MAX_QUEUE;
+        if(c->queue_trace[slot]==rid)c->queue_trace[slot]=0;
+    }
+    backend_forget_drop(c,rid);
+    backend_event(c,rid,"request_completed","UNKNOWN",
+                  "tracking_limit","unverified");
+}
+
+/* F11: terminal evidence for frames discarded by an existing lifecycle
+   action. Read-side/J2534 behavior is unchanged. All IDs are collected
+   before queue compaction or channel reset, so each RID completes once. */
+static void backend_collect_rid(U64 *rids,U32 *n,U64 rid) {
+    U32 j;
+    if(!rid)return;
+    for(j=0;j<*n;j++)if(rids[j]==rid)return;
+    if(*n<MAX_QUEUE+2u)rids[(*n)++]=rid;
+}
+static void backend_cancel_channel(CHANNEL *c,const char *reason,int d2_only) {
+    U64 rids[MAX_QUEUE+2u];U32 n=0,i,j;
+    for(i=0;i<c->count;i++){
+        U32 slot=(c->r+i)%MAX_QUEUE;
+        if(!d2_only || c->queue_d2_gen[slot])
+            backend_collect_rid(rids,&n,c->queue_trace[slot]);
+    }
+    if(c->d2_trace && c->d2_count)
+        backend_collect_rid(rids,&n,c->d2_trace);
+    if(!d2_only && c->pending_trace && c->pending_len)
+        backend_collect_rid(rids,&n,c->pending_trace);
+    /* Record discarded queued frames first. Terminal events must be last
+       for each RID and must not imply that dropped RX reached the client. */
+    for(i=0;i<c->count;i++){
+        U32 slot=(c->r+i)%MAX_QUEUE;
+        if((!d2_only || c->queue_d2_gen[slot]) && c->queue_trace[slot])
+            backend_event(c,c->queue_trace[slot],"rx_dropped","UNKNOWN",reason,"unknown");
+    }
+    for(i=0;i<n;i++){
+        U64 rid=rids[i];
+        const char *resolved=reason;
+        int abort_logged=0;
+        /* F08 already recorded the precise transport failure: keep that
+           cause instead of mislabeling it as a subsequent buffer reset. */
+        for(j=0;j<MAX_QUEUE;j++)if(c->aborted[j].rid==rid){
+            resolved=backend_abort_cause(c->aborted[j].cause);
+            abort_logged=1;
+            c->aborted[j].rid=0;c->aborted[j].cause=0;
+        }
+        if(!abort_logged)
+            backend_event(c,rid,"response_aborted","UNKNOWN",resolved,"unknown");
+        backend_event(c,rid,"request_completed","UNKNOWN",resolved,"aborted");
+        backend_forget_drop(c,rid);
+        /* A CLEAR_RX_BUFFER resets the actual queue, not ISO-TP state.
+           Keep its legacy transport behavior while detaching stale evidence:
+           later CFs after CLEAR must not claim a complete old response. */
+        if(!d2_only && c->pending_trace==rid)c->pending_trace=0;
+        if(c->d2_trace==rid)c->d2_trace=0;
+        if(!d2_only)for(j=0;j<c->count;j++){
+            U32 slot=(c->r+j)%MAX_QUEUE;
+            if(c->queue_trace[slot]==rid)c->queue_trace[slot]=0;
+        }
+    }
+}
+
 /* Validates framing only. No assertion about undocumented FB semantics. */
 static int validate_d2_fixture(const D2_PROFILE *d){
     U32 k;U8 base,seq=1;int final=0;
@@ -288,6 +501,9 @@ static void load_config(void) {
     /* Include the host executable and PID so GUI self-checks and SectorV
        sessions can be distinguished when they share the same log file. */
     g_host_pid=GetCurrentProcessId();
+    {I64 session_counter=0;QueryPerformanceCounter(&session_counter);
+     g_backend_session=backend_session_id(g_host_pid,GetTickCount(),session_counter>0?(U64)session_counter:0u);
+     g_backend_serial=0;}
     n=GetModuleFileNameA(0,v,sizeof(v));
     if(n>0 && n<sizeof(v)){
         U32 start=0,j;
@@ -302,6 +518,20 @@ static void load_config(void) {
     if(n>=sizeof(g_profile_path)-20)n=0;
     while(n && g_profile_path[n-1]!='\\'&&g_profile_path[n-1]!='/')n--;
     g_profile_path[n]=0;str_append(g_profile_path,"virtualcar.ini",sizeof(g_profile_path));
+    /* Explicit opt-in. The GUI can enable [Diagnostics] BackendTelemetryEnabled=1.
+       The log location is stable across sessions but contains no private bytes. */
+    g_backend_enabled=0;g_backend_path[0]=0;
+    GetPrivateProfileStringA("Diagnostics","BackendTelemetryEnabled","0",v,sizeof(v),g_profile_path);
+    if(parse_num(v,0)==1u){
+        char base[400];U32 bn=GetEnvironmentVariableA("LOCALAPPDATA",base,sizeof(base));
+        if(bn>0 && bn<sizeof(base) && bn+32<sizeof(g_backend_path)){
+            str_copy(g_backend_path,base,sizeof(g_backend_path));
+            str_append(g_backend_path,"\\VirtualCar",sizeof(g_backend_path));
+            (void)CreateDirectoryA(g_backend_path,0);
+            str_append(g_backend_path,"\\dev47-backend.jsonl",sizeof(g_backend_path));
+            g_backend_enabled=1;
+        }
+    }
     GetPrivateProfileStringA("Vehicle","VIN","YV1CZ0002A0000001",v,sizeof(v),g_profile_path);
     if(str_len(v)==17)str_copy(g_vin,v,sizeof(g_vin));
     GetPrivateProfileStringA("Vehicle","BatteryMv","12500",v,sizeof(v),g_profile_path);
@@ -526,8 +756,16 @@ static int filter_allows(const CHANNEL *c,U32 response_id) {
 }
 static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,U32 status) {
     PASSTHRU_MSG *msg;U32 i;
-    if(c->count>=MAX_QUEUE||len>MAX_DATA-4)return;
+    if(c->count>=MAX_QUEUE||len>MAX_DATA-4){
+        U32 cause=c->count>=MAX_QUEUE?BACKEND_DROP_QUEUE_FULL:BACKEND_DROP_INVALID_SIZE;
+        backend_event(c,c->active_trace,"rx_dropped","UNKNOWN",
+                      backend_drop_cause(cause),"unknown");
+        backend_note_drop(c,c->active_trace,cause);
+        return;
+    }
     if(!filter_allows(c,response_id)){
+        backend_event(c,c->active_trace,"filter_drop","UNKNOWN","filter_reject","unknown");
+        backend_note_drop(c,c->active_trace,BACKEND_DROP_FILTER_REJECT);
         U8 idbytes[4];u32_be(idbytes,response_id);
         logline("RX discarded by installed J2534 filter",idbytes,4);
         return;
@@ -544,8 +782,11 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
     msg->Data[0]=(U8)(response_id>>24);msg->Data[1]=(U8)(response_id>>16);
     msg->Data[2]=(U8)(response_id>>8);msg->Data[3]=(U8)response_id;
     for(i=0;i<len;i++)msg->Data[4+i]=payload[i];
-    c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;
+    c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;c->queue_ready_us[c->w]=0;
+    c->queue_trace[c->w]=c->active_trace;
     c->w=(c->w+1)%MAX_QUEUE;c->count++;
+    backend_event(c,c->active_trace,"filter_pass","UNKNOWN","none","unknown");
+    backend_event(c,c->active_trace,"rx_queued","UNKNOWN","none","unknown");
     logline(status==START_OF_MESSAGE?"RX START_OF_MESSAGE (ISO15765)":"RX (simulated)",msg->Data,msg->DataSize);
 }
 static void enqueue(CHANNEL *c,U32 response_id,const U8 *payload,U32 len){enqueue_status(c,response_id,payload,len,0);}
@@ -572,42 +813,49 @@ static void maybe_passive_frame(CHANNEL *c){
     enqueue(c,g_passive_id,g_passive_payload,8);
     logline("Passive CAN lab traffic tick (synthetic VCARLAB, not vehicle ignition)",0,0);
 }
-/* A Flow Control CTS grants a bounded burst. A full J2534 RX FIFO must
-   NOT consume the remaining grant: resume the same grant as the application
-   dequeues frames. BS=0 grants all remaining CFs, BS>0 requires another FC
-   after exactly BS frames. STmin timing remains outside this lab model. */
+/* Only a matching ECU Flow Control CTS grants Consecutive Frames.
+   Preserve remaining credit if J2534 RX FIFO is full. STmin is scheduled
+   using the existing microsecond clock and the queue-ready timestamp. */
 static void pump_can_cf(CHANNEL *c) {
-    U8 f[8];U32 i,sz;
+    U8 f[8];U32 i,sz;U64 now,due;
     if(c->protocol!=PROTO_CAN || !c->pending_cf_active || !c->pending_len)return;
     while(c->pending_cf_active && c->pending_pos<c->pending_len && c->count<MAX_QUEUE){
         sz=c->pending_len-c->pending_pos;if(sz>7)sz=7;
         bytes_zero(f,8);f[0]=(U8)(0x20 | (c->pending_sn&15));
         for(i=0;i<sz;i++)f[i+1]=c->pending[c->pending_pos+i];
-        enqueue(c,c->pending_id,f,8);
+        now=now_us();due=c->pending_next_us>now?c->pending_next_us:now;
+        {U32 slot=c->w,before=c->count;U64 previous=c->active_trace;c->active_trace=c->pending_trace;
+         enqueue(c,c->pending_id,f,8);c->active_trace=previous;
+         if(c->count>before){c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;}}
+        c->pending_next_us=due+(U64)c->pending_stmin_us;
         c->pending_pos+=sz;c->pending_sn++;
-        if(c->pending_cf_credit){
-            --c->pending_cf_credit;
-            if(!c->pending_cf_credit)c->pending_cf_active=0;
-        }
+        if(c->pending_cf_credit && --c->pending_cf_credit==0)
+            c->pending_cf_active=0;
     }
     if(c->pending_pos==c->pending_len){
+        U64 previous=c->pending_trace;
         c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;
+        c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
         c->pending_cf_active=0;c->pending_cf_credit=0;
+        backend_end_if_drained(c,previous);
     }
 }
 static void send_can_cf(CHANNEL *c,U32 block_size) {
     c->pending_cf_active=1;
-    c->pending_cf_credit=block_size;
+    c->pending_cf_credit=block_size; /* BS=0: unlimited until final CF. */
     pump_can_cf(c);
 }
 static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
     U8 f[8];U32 i;
+    backend_event(c,c->active_trace,"response_generated","UNKNOWN","none","unknown");
     /* This compact simulator has only one outstanding segmented response per
        channel. Never release stale CFs from an earlier ECU request. */
     if(c->pending_len){
+        U64 previous=c->pending_trace;
         logline("ISO-TP pending transfer superseded by a new ECU response",0,0);
-        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;
+        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
         c->pending_cf_active=0;c->pending_cf_credit=0;
+        backend_abort_pending(c,previous,BACKEND_ABORT_SUPERSEDED);
     }
     if(c->protocol==PROTO_ISO15765){
         if(g_iso_rx_start && len>7 && c->count+2<=MAX_QUEUE)
@@ -620,7 +868,7 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
     for(i=0;i<6;i++)f[i+2]=payload[i];
     enqueue(c,response_id,f,8);
     bytes_copy(c->pending,payload,len);c->pending_len=len;c->pending_pos=6;
-    c->pending_id=response_id;c->pending_sn=1;
+    c->pending_id=response_id;c->pending_sn=1;c->pending_trace=c->active_trace;c->pending_next_us=0;c->pending_stmin_us=0;
 }
 static U32 answer_uds(const ECU *ecu,const U8 *req,U32 len,U8 *res) {
     U32 i,n;U8 service;
@@ -677,9 +925,14 @@ static U32 drop_queued_d2(CHANNEL *c){
     U32 read,keep=0,dropped=0,original=c->count;
     for(read=0;read<original;read++){
         U32 from=(c->r+read)%MAX_QUEUE,to=(c->r+keep)%MAX_QUEUE;
-        if(c->queue_d2_gen[from]){dropped++;continue;}
+        if(c->queue_d2_gen[from]){
+            /* backend_cancel_channel emitted ordered rx_dropped evidence for
+               this D2 retry before terminal; do not log it twice. */
+            dropped++;continue;
+        }
         if(to!=from){bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
-            c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;}
+            c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;
+            c->queue_trace[to]=c->queue_trace[from];c->queue_ready_us[to]=c->queue_ready_us[from];}
         keep++;
     }
     c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
@@ -693,20 +946,28 @@ static void pump_d2(CHANNEL *c){
     now=now_us();
     if(now<c->d2_next_us)return;
     slot=c->w;
-    enqueue(c,c->d2_response_id,c->d2_frame[c->d2_pos],8);
+    {U64 previous=c->active_trace;c->active_trace=c->d2_trace;
+     enqueue(c,c->d2_response_id,c->d2_frame[c->d2_pos],8);
+     c->active_trace=previous;}
     /* Filters can discard a frame; never mark an older queue slot as new. */
     if(c->w!=slot){
         c->queue_d2_gen[slot]=c->d2_generation;
         c->queue_d2_frame[slot]=c->d2_pos+1;
     }
     c->d2_pos++;
-    if(c->d2_pos>=c->d2_count){c->d2_count=0;c->d2_pos=0;}
+    if(c->d2_pos>=c->d2_count){
+        U64 finished=c->d2_trace;
+        c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
+        backend_end_if_drained(c,finished);
+    }
     else c->d2_next_us+=(U64)c->d2_spacing_ms*1000ull;
 }
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     U32 i;D2_PROFILE *d;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN || len<4)return 0;
     if(data[0]!=0xCB || data[2]!=0xB9 || (data[3]!=0xFB&&data[3]!=0xF0&&data[3]!=0xFC))return 0;
+    backend_event(c,c->active_trace,"route_selected",
+                  (data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER","none","unknown");
     {U8 detail[16];
      u32_be(detail,data[1]);u32_be(detail+4,data[3]);
      u32_be(detail+8,c->baud);u32_be(detail+12,c->flags);
@@ -714,15 +975,19 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     for(i=0;i<MAX_D2_FIXTURES;i++){
         U32 j,discarded;
         d=&g_d2[i];if(data[1]!=d->target||data[3]!=d->subcommand)continue;
-        c->d2_count=0;c->d2_pos=0;
+        backend_cancel_channel(c,"d2_superseded",1);
+        c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
         discarded=drop_queued_d2(c);
         if(discarded){U8 count_be[4];u32_be(count_be,discarded);
             logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
         if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
             logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
+            backend_event(c,c->active_trace,"request_completed","CEM","unsupported_bus","no_response");
             return 1;
         }
         if(d->frame_count){
+            c->d2_trace=c->active_trace;
+            backend_event(c,c->active_trace,"response_generated","CEM","none","unknown");
             c->d2_generation++;
             if(!c->d2_generation)c->d2_generation=1;
             c->d2_response_id=d->response_id;c->d2_count=d->frame_count;
@@ -730,14 +995,19 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
             for(j=0;j<d->frame_count;j++)bytes_copy(c->d2_frame[j],d->frame[j],8);
             logline("P2 D2 read-only recorded frames staged",data,4);
             pump_d2(c);
-        }else logline("P2 D2 read command: no validated response fixture",data,4);
+        }else {
+            logline("P2 D2 read command: no validated response fixture",data,4);
+            backend_event(c,c->active_trace,"request_completed","CEM","missing_profile","no_response");
+        }
         return 1;
     }
-    logline("P2 D2 command: no recorded ECU fixture for target",data,4);return 1;
+    logline("P2 D2 command: no recorded ECU fixture for target",data,4);
+    backend_event(c,c->active_trace,"request_completed","CEM","missing_profile","no_response");
+    return 1;
 }
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     U32 id,i,n,sz;U8 payload[256],answer[256];const ECU *ecu;
-    int matched=0;
+    int matched=0,answered=0;
     const U8 *data;
     if(msg->DataSize<5||msg->DataSize>MAX_DATA)return;
     id=((U32)msg->Data[0]<<24)|((U32)msg->Data[1]<<16)|((U32)msg->Data[2]<<8)|msg->Data[3];
@@ -746,6 +1016,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
        We do not emulate a physical reset or fabricate an acknowledgment. */
     if(id==0x000FFFFEu && msg->DataSize>=6 && msg->Data[4]==0xFF && msg->Data[5]==0xC8){
         logline("P2 FF C8 broadcast reset: no physical ECU; intentionally silent",msg->Data,msg->DataSize);
+        backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
+        backend_event(c,c->active_trace,"request_completed","CEM","no_response","no_response");
         return;
     }
     for(i=0;i<g_ecu_count;i++){
@@ -753,17 +1025,33 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         n=msg->DataSize-4;data=msg->Data+4;
         if(c->protocol==PROTO_CAN){
             if((data[0]&0xF0)==0x30 && c->pending_len){
+                if(n<3){
+                    logline("ISO-TP FC ignored (missing block size or STmin)",msg->Data,msg->DataSize);
+                    return;
+                }
                 if(id!=c->pending_request_id){
                     logline("ISO-TP FC ignored (different request CAN ID)",msg->Data,msg->DataSize);
                     return;
                 }
-                if((data[0]&15)==1){logline("ISO-TP FC WAIT received",msg->Data,msg->DataSize);return;}
+                if((data[0]&15)==1){
+                    /* WAIT suspends an outstanding grant; another CTS is required. */
+                    c->pending_cf_active=0;c->pending_cf_credit=0;
+                    logline("ISO-TP FC WAIT received",msg->Data,msg->DataSize);return;
+                }
                 if((data[0]&15)==2){
+                    U64 previous=c->pending_trace;
                     logline("ISO-TP FC OVERFLOW received; pending response discarded",msg->Data,msg->DataSize);
-                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;
-                    c->pending_cf_active=0;c->pending_cf_credit=0;return;
+                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
+                    c->pending_cf_active=0;c->pending_cf_credit=0;
+                    backend_abort_pending(c,previous,BACKEND_ABORT_FC_OVERFLOW);
+                    return;
                 }
                 if((data[0]&15)!=0){logline("ISO-TP FC invalid status",msg->Data,msg->DataSize);return;}
+                if((data[2]>=0x80 && data[2]<=0xF0) || data[2]>=0xFA){
+                    logline("ISO-TP FC ignored (reserved STmin)",msg->Data,msg->DataSize);
+                    return;
+                }
+                c->pending_stmin_us=data[2]<=0x7F?(U32)data[2]*1000u:(U32)(data[2]-0xF0u)*100u;
                 logline("ISO-TP FC CTS received; sending bounded CFs",msg->Data,msg->DataSize);
                 send_can_cf(c,n>=2?data[1]:0);return;
             }
@@ -773,6 +1061,9 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         }else if(n<=sizeof(payload)){bytes_copy(payload,data,n);}
         else continue;
         matched=1;
+        backend_event(c,c->active_trace,"route_selected",
+                      ecu->req==0x726u?"CEM":(ecu->req==0x7E0u?"ECM":"ECU_OTHER"),
+                      "none","unknown");
         /* Never synthesize acknowledgments for protected functional requests:
            functional diagnostic resets and protected services are not supported.
            This also prevents the prior contradictory 'Unmatched' log line. */
@@ -782,13 +1073,27 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             if(n>=2 && payload[0]==0x11 && payload[1]==0x81)
                 logline("Functional ECUReset 11 81: silent, no physical ECU to reset",msg->Data,msg->DataSize);
             else logline("Functional protected request ignored by lab emulator",msg->Data,msg->DataSize);
+            backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
             return;
         }
         sz=answer_uds(ecu,payload,n,answer);
-        if(sz){emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;}
+        if(sz){answered=1;emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;
+            /* Functional requests visit every configured ECU. Complete their
+               shared telemetry record only after all responders were checked. */
+            if(id!=0x7DF)backend_end_if_drained(c,c->active_trace);
+        }
+        else if(id!=0x7DF)backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
         if(id!=0x7DF)return;
     }
-    if(!matched)logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
+    if(id==0x7DF && matched){
+        if(answered)backend_end_if_drained(c,c->active_trace);
+        else backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
+    }
+    if(!matched) {
+        logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
+        backend_event(c,c->active_trace,"route_selected","UNHANDLED","none","unknown");
+        backend_event(c,c->active_trace,"request_completed","UNHANDLED","unhandled_request","no_response");
+    }
 }
 
 /* No physical bus: periodic requests are replayed only while the client
@@ -811,8 +1116,13 @@ EXPORT U32 WINCALL PassThruOpen(PTR name,U32 *device) {
     logline("PassThruOpen -> device 1",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruClose(U32 device) {
+    U32 i;
     if(device!=1||!g_open)return error(ERR_INVALID_DEVICE_ID);
-    lock_state();g_open=0;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);logline("PassThruClose",0,0);unlock_state();return error(ERR_OK);
+    lock_state();
+    for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used)
+        backend_cancel_channel(&g_ch[i],"device_close",0);
+    g_open=0;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);
+    logline("PassThruClose",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U32 *channel_id){
     U32 i;if(!channel_id)return error(ERR_NULL_PARAMETER);
@@ -835,6 +1145,7 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
     CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     {U8 channel_be[4];u32_be(channel_be,id);
      logline("PassThruDisconnect channel (BE)",channel_be,4);}
+    backend_cancel_channel(c,"channel_disconnect",0);
     p2_bridge_disconnect(&g_vehicle_bridge,id);bytes_zero(c,sizeof(*c));logline("PassThruDisconnect",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
@@ -856,7 +1167,15 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
                 observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
                 logline(observed.label,0,0);
         }
+        /* Flow-control frames continue a previous response, not a new ECU
+           diagnostic request. They are intentionally not assigned a new ID. */
+        if(!(c->protocol==PROTO_CAN && msgs[i].DataSize>=5 &&
+             (msgs[i].Data[4]&0xF0u)==0x30u)){
+            c->active_trace=next_backend_request();
+            backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
+        } else c->active_trace=0;
         process_request(c,&msgs[i]);
+        c->active_trace=0;
     }
     *count=n;unlock_state();return error(ERR_OK);
 }
@@ -874,6 +1193,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         pump_d2(c);
         pump_can_cf(c);
         while(c->count&&actual<want){
+            if(c->queue_ready_us[c->r] && now_us()<c->queue_ready_us[c->r])break;
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
             {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
              u32_be(meta+8,msgs[actual].RxStatus);u32_be(meta+12,c->baud);
@@ -898,10 +1218,14 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
                 u32_be(meta+16,msgs[actual].Timestamp);
                 logline("PassThruReadMsgs ISO15765 protocol/status/size/extra-index/timestamp-us (BE)",meta,20);
             }
-            c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
-            /* The dequeued frame frees one slot: resume an already granted
-               CF burst, never manufacture a new Flow Control grant. */
-            pump_can_cf(c);
+            {U64 rid=c->queue_trace[c->r];
+             backend_event(c,rid,"rx_dequeued","UNKNOWN","none","unknown");
+             c->queue_trace[c->r]=0;c->queue_ready_us[c->r]=0;
+             c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
+             /* Resume only previously granted CFs after this slot is freed. */
+             pump_can_cf(c);
+             backend_end_if_drained(c,rid);
+            }
         }
         unlock_state();
         if(actual){
@@ -997,7 +1321,8 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_READ_PROG_VOLTAGE){if(!output)return error(ERR_NULL_PARAMETER);*(U32*)output=0;return error(ERR_OK);}
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(ioctl==IO_CLEAR_RX_BUFFER){
-        c->r=c->w=c->count=0;c->d2_count=0;c->d2_pos=0;
+        backend_cancel_channel(c,"clear_rx_buffer",0);
+        c->r=c->w=c->count=0;c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
         bytes_zero(c->queue_d2_gen,sizeof(c->queue_d2_gen));
         {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
          u32_be(meta+8,c->flags);u32_be(meta+12,c->baud);
@@ -1023,3 +1348,4 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
 }
 /* DLL_PROCESS_ATTACH, no work under loader lock. */
 int WINCALL DllMain(PTR module,U32 reason,PTR reserved) {(void)reserved;if(reason==1)g_module=module;return 1;}
+
