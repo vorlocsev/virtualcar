@@ -347,18 +347,21 @@ static const char *p2_informer_probe_name(const CHANNEL *c,U32 id,const U8 *p,U3
            p[5]==1u && p[6]==0u && p[7]==0u)
             return "P2INF_LS_CCM_A6";
     }
-    if(c->baud==500000u && p[5]==1u && p[6]==0u && p[7]==0u) {
-        if(p[0]==0xCDu && p[1]==0x7Au && p[2]==0xA6u){
+    if(c->baud==500000u) {
+        if(p[0]==0xCDu && p[1]==0x7Au && p[2]==0xA6u &&
+           p[5]==1u && p[6]==0u && p[7]==0u){
             for(i=0;i<sizeof(ecm_selectors)/sizeof(ecm_selectors[0]);i++)
                 if(ecm_selectors[i][0]==p[3] && ecm_selectors[i][1]==p[4])
                     return "P2INF_HS_ECM_A6";
         }
-        if(p[0]==0xCCu && p[1]==0x6Eu && p[2]==0xA5u && p[4]==1u){
+        if(p[0]==0xCCu && p[1]==0x6Eu && p[2]==0xA5u &&
+           p[4]==1u && p[5]==0u && p[6]==0u && p[7]==0u){
             for(i=0;i<sizeof(tcm_selectors)/sizeof(tcm_selectors[0]);i++)
                 if(tcm_selectors[i]==p[3])return "P2INF_HS_TCM_A5";
         }
         if(p[0]==0xCDu && p[1]==0x1Au && p[2]==0xA6u &&
-           p[3]==0u && (p[4]==0x05u||p[4]==0x03u||p[4]==0x02u))
+           p[3]==0u && (p[4]==0x05u||p[4]==0x03u||p[4]==0x02u) &&
+           p[5]==1u && p[6]==0u && p[7]==0u)
             return "P2INF_HS_DEM_A6";
     }
     return 0;
