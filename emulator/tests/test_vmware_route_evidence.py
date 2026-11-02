@@ -83,11 +83,16 @@ class VMwareRouteEvidenceTests(unittest.TestCase):
         self.assertEqual(result["summary"]["invalid_lines"], 0)
         self.assertEqual(result["summary"]["requests"], 21)
         self.assertEqual(result["summary"]["statuses"],
-                         {"unverified": 13, "no_fixture": 3, "unsupported": 3, "delivered": 2})
+                         {"unverified": 11, "suppressed": 2, "no_fixture": 3,
+                          "unsupported": 3, "delivered": 2})
         for one in result["transactions"]:
             self.assertEqual(one["evidence_conflicts"], [])
             self.assertTrue(one["terminal_seen"])
-        self.assertEqual(result["coverage"]["attributed_requests"], 3)
+        self.assertEqual(result["coverage"]["attributed_requests"], 5)
+        keepalive = next(p for p in result["coverage"]["probes"]
+                         if p["probe"] == "FUNC29_TP_SUPPRESSED")
+        self.assertEqual(keepalive["status_counts"], {"suppressed": 2})
+        self.assertEqual(keepalive["observed_requests"], 2)
         self.assertFalse(result["identity_verified"])
         self.assertFalse(result["client_acceptance_verified"])
 
