@@ -1291,10 +1291,20 @@ static void pump_periodic(CHANNEL *c){
     U32 i;U64 now=now_us();
     for(i=0;i<MAX_PERIODIC;i++){
         PERIODIC *p=&c->periodic[i];
+        U64 previous_trace;
         if(!p->used || now<p->next_us || c->count>=MAX_QUEUE)continue;
         p->next_us=now+(U64)p->interval_ms*1000ull;
         logline("J2534 periodic TX (read-only simulator)",p->msg.Data,p->msg.DataSize);
+        /* A StartPeriodicMsg registration can produce several TX firings
+           without any subsequent PassThruWriteMsgs call. Distinguish each
+           firing from an application write in metadata-only backend JSONL.
+           Keep normal J2534 responses/return codes exactly unchanged. */
+        previous_trace=c->active_trace;
+        c->active_trace=next_backend_request();
+        backend_event(c,c->active_trace,"periodic_fired","UNKNOWN","none","unknown");
+        backend_probe_event(c,c->active_trace,&p->msg);
         process_request(c,&p->msg);
+        c->active_trace=previous_trace;
     }
 }
 /* Standard 04.04 API. Undecorated export names are defined in virtualcar.def. */
