@@ -74,6 +74,8 @@ typedef void *HANDLE;
 #define ERR_INVALID_DEVICE_ID 26u
 #define PROTO_CAN 5u
 #define PROTO_ISO15765 6u
+#define PROTO_CAN_PS 0x8004u
+#define CONFIG_J1962_PINS 0x8001u
 #define IO_GET_CONFIG 1u
 #define IO_SET_CONFIG 2u
 #define IO_READ_VBATT 3u
@@ -119,6 +121,8 @@ static char g_profile_path[512];
 static char g_log_path[512];
 static char g_backend_path[512];
 static U32 g_backend_enabled=0;
+/* Configuration observation only: never a CAN_PS transport or ECU route. */
+static U32 g_can_ps_config_probe=0;
 static U32 g_backend_serial=0;
 static U64 g_backend_session=0;
 static char g_host_name[48]="unknown.exe";
@@ -164,6 +168,7 @@ typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
+    U32 can_ps_observed_pins;
     FILTER filters[MAX_FILTERS]; U32 filters_count;
     U32 passive_next_tick;
     U32 trace_next_tick[MAX_PASSIVE_TRACES];
@@ -277,12 +282,68 @@ static U32 connect_result(U32 protocol,U32 flags,U32 baud,U32 status){
 static void log_set_config(U32 channel_id,U32 parameter,U32 value){
     U8 meta[16];U32 known=0;
     if(parameter==1u || parameter==3u || parameter==23u ||
-       parameter==30u || parameter==31u || parameter==779u)known=1;
+       parameter==30u || parameter==31u || parameter==CONFIG_J1962_PINS)known=1;
     u32_be(meta,channel_id);
     u32_be(meta+4,known?parameter:0u);
     u32_be(meta+8,known?value:0u);
     u32_be(meta+12,parameter==1u?1u:0u);
     logline("J2534 SET_CONFIG channel/parameter/value/applied (BE)",meta,16);
+}
+/* Fixed, metadata-only operations on quarantined configuration-probe channels.
+   Unknown pin values are redacted; a remembered hint is not physical routing. */
+static void log_can_ps_probe(U32 channel_id,U32 operation,U32 value,U32 status){
+    U8 meta[16];
+    u32_be(meta,channel_id);u32_be(meta+4,operation);
+    u32_be(meta+8,value);u32_be(meta+12,status);
+    logline("J2534 CAN_PS config probe channel/operation/value/status (BE)",meta,16);
+}
+static int can_ps_probe_pins(U32 value){return value==0x030Bu||value==0x060Eu;}
+static int can_ps_probe_noop(U32 parameter){
+    return parameter==3u||parameter==23u||parameter==30u||parameter==31u;
+}
+static U32 can_ps_probe_config(CHANNEL *c,U32 ioctl,SCONFIG_LIST *list){
+    U32 i,pins=c->can_ps_observed_pins,baud=c->baud;
+    /* Validate the complete list before changing caller values or stored hints. */
+    for(i=0;i<list->NumOfParams;i++){
+        SCONFIG *s=&list->ConfigPtr[i];
+        if(s->Parameter==CONFIG_J1962_PINS){
+            if(ioctl==IO_SET_CONFIG){
+                if(!can_ps_probe_pins(s->Value)){
+                    log_can_ps_probe(c->id,2u,0u,ERR_INVALID_IOCTL_VALUE);
+                    return ERR_INVALID_IOCTL_VALUE;
+                }
+                if(pins && pins!=s->Value){
+                    log_can_ps_probe(c->id,2u,s->Value,ERR_NOT_SUPPORTED);
+                    return ERR_NOT_SUPPORTED;
+                }
+                pins=s->Value;
+            }
+        }else if(s->Parameter==1u){
+            if(ioctl==IO_SET_CONFIG){
+                if(s->Value!=125000u&&s->Value!=500000u){
+                    log_can_ps_probe(c->id,7u,1u,ERR_INVALID_BAUDRATE);
+                    return ERR_INVALID_BAUDRATE;
+                }
+                baud=s->Value;
+            }
+        }else if(!can_ps_probe_noop(s->Parameter)){
+            log_can_ps_probe(c->id,7u,0u,ERR_NOT_SUPPORTED);
+            return ERR_NOT_SUPPORTED;
+        }
+    }
+    if(ioctl==IO_SET_CONFIG){c->can_ps_observed_pins=pins;c->baud=baud;}
+    for(i=0;i<list->NumOfParams;i++){
+        SCONFIG *s=&list->ConfigPtr[i];
+        if(ioctl==IO_GET_CONFIG){
+            s->Value=s->Parameter==1u?c->baud:
+                     s->Parameter==CONFIG_J1962_PINS?c->can_ps_observed_pins:0u;
+            if(s->Parameter==CONFIG_J1962_PINS)log_can_ps_probe(c->id,3u,s->Value,ERR_OK);
+        }else{
+            log_set_config(c->id,s->Parameter,s->Value);
+            if(s->Parameter==CONFIG_J1962_PINS)log_can_ps_probe(c->id,2u,s->Value,ERR_OK);
+        }
+    }
+    return ERR_OK;
 }
 
 /* dev49: optional, metadata-only backend events for the single Virtual Car UI.
@@ -665,6 +726,8 @@ static void load_config(void) {
     if(n>=sizeof(g_profile_path)-20)n=0;
     while(n && g_profile_path[n-1]!='\\'&&g_profile_path[n-1]!='/')n--;
     g_profile_path[n]=0;str_append(g_profile_path,"virtualcar.ini",sizeof(g_profile_path));
+    GetPrivateProfileStringA("Diagnostics","EnableCanPsConfigProbe","0",v,sizeof(v),g_profile_path);
+    g_can_ps_config_probe=parse_num(v,0)==1u?1u:0u;
     /* Explicit opt-in. The GUI can enable [Diagnostics] BackendTelemetryEnabled=1.
        The log location is stable across sessions but contains no private bytes. */
     g_backend_enabled=0;g_backend_path[0]=0;
@@ -1303,10 +1366,16 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     U32 i;
     if(!channel_id)return connect_result(protocol,flags,baud,ERR_NULL_PARAMETER);
     if(!g_open||device!=1)return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);
-    /* P3Tool also contains driver-specific 0x8004/0x8005/0x10000001 modes.
-       Do not silently reinterpret them as standard CAN/ISO15765. */
-    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765)
+    /* Optional J2534-2 pin-switching IDs are not aliases for standard CAN.
+       The opt-in 0x8004 channel below observes configuration only. */
+    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765&&
+       !(protocol==PROTO_CAN_PS&&g_can_ps_config_probe))
         return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
+    if(protocol==PROTO_CAN_PS){
+        if(flags&~0x900u)return connect_result(protocol,flags,baud,ERR_INVALID_FLAGS);
+        if(baud!=125000u&&baud!=500000u)
+            return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);
+    }
     lock_state();for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
@@ -1315,9 +1384,10 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
     *channel_id=i+1;
-    p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
+    if(protocol!=PROTO_CAN_PS)p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
+    if(protocol==PROTO_CAN_PS)log_can_ps_probe(i+1,1u,PROTO_CAN_PS,ERR_OK);
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
 }
 EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
@@ -1330,6 +1400,10 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
     U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    if(c->protocol==PROTO_CAN_PS){
+        *count=0;log_can_ps_probe(id,4u,0u,ERR_NOT_SUPPORTED);
+        unlock_state();return error(ERR_NOT_SUPPORTED);
+    }
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
         if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5){*count=i;unlock_state();return error(ERR_INVALID_MSG);}
@@ -1367,6 +1441,9 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
     for(;;){
         CHANNEL *c;lock_state();c=channel(id);
         if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+        /* A configuration-probe channel cannot pump or deliver anything,
+           even if internal queue/periodic/fixture state were populated. */
+        if(c->protocol!=PROTO_CAN_PS){
         maybe_passive_frame(c);
         pump_recorded_trace(c);
         pump_periodic(c);
@@ -1407,6 +1484,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
              backend_end_if_drained(c,rid);
             }
         }
+        }
         unlock_state();
         if(actual){
             lock_state();c=channel(id);if(c)c->read_timeout_count=0;unlock_state();
@@ -1431,6 +1509,10 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     (void)flow;
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    if(c->protocol==PROTO_CAN_PS){
+        log_can_ps_probe(id,5u,0u,ERR_NOT_SUPPORTED);
+        unlock_state();return error(ERR_NOT_SUPPORTED);
+    }
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
     if(mask->DataSize<4||pattern->DataSize<4){unlock_state();return error(ERR_INVALID_MSG);}
     if(c->filters_count>=MAX_FILTERS){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
@@ -1459,9 +1541,14 @@ EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
 }
 EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *period_id,U32 interval){
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
-    if(interval<5 || interval>60000)return error(ERR_INVALID_TIME_INTERVAL);
-    if(msg->DataSize<5 || msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
-    lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    lock_state();CHANNEL *c=channel(id);
+    if(c&&c->protocol==PROTO_CAN_PS){
+        log_can_ps_probe(id,6u,0u,ERR_NOT_SUPPORTED);
+        unlock_state();return error(ERR_NOT_SUPPORTED);
+    }
+    if(interval<5 || interval>60000){unlock_state();return error(ERR_INVALID_TIME_INTERVAL);}
+    if(msg->DataSize<5 || msg->DataSize>MAX_DATA){unlock_state();return error(ERR_INVALID_MSG);}
+    if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     for(i=0;i<MAX_PERIODIC;i++)if(!c->periodic[i].used)break;
     if(i==MAX_PERIODIC){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     PERIODIC *p=&c->periodic[i];bytes_zero(p,sizeof(*p));
@@ -1517,6 +1604,10 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         SCONFIG_LIST *list=(SCONFIG_LIST*)input;
         if(!list||(!list->ConfigPtr&&list->NumOfParams)){unlock_state();return error(ERR_NULL_PARAMETER);}
         if(list->NumOfParams>64){unlock_state();return error(ERR_INVALID_IOCTL_VALUE);}
+        if(c->protocol==PROTO_CAN_PS){
+            U32 result=can_ps_probe_config(c,ioctl,list);
+            unlock_state();return error(result);
+        }
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){

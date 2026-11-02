@@ -74,6 +74,9 @@ public static class NativeRouteCheck {
     static extern uint PassThruWriteMsgs(uint channel, ref Msg msg, ref uint count, uint timeout);
     [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruReadMsgs(uint channel, IntPtr msg, ref uint count, uint timeout);
+    [StructLayout(LayoutKind.Sequential)] struct ConfigList { public uint Count; public IntPtr Entries; }
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruIoctl(uint channel, uint ioctl, ref ConfigList config, IntPtr output);
     static void Check(bool condition, string gate) { if (!condition) throw new Exception(gate); }
     static void Silent(uint channel, uint protocol, uint id, byte[] payload) {
         Msg msg = new Msg(); msg.ProtocolID=protocol; msg.DataSize=(uint)payload.Length+4;
@@ -89,6 +92,35 @@ public static class NativeRouteCheck {
         IntPtr buffer=Marshal.AllocHGlobal(bytes);
         try { uint count=128; Check(PassThruReadMsgs(channel,buffer,ref count,0)==16 && count==0,"Unexpected RX or READ128 failure"); }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+    public static void RunCanPsConfigProbe(bool enabled) {
+        uint device=0,channel=0;
+        Check(PassThruOpen(IntPtr.Zero,out device)==0,"PS Open failed");
+        IntPtr entry=Marshal.AllocHGlobal(8);
+        try {
+            uint status=PassThruConnect(device,0x8004,0x900,125000,out channel);
+            Check(status==(enabled ? 0u : 3u),"PS opt-in not respected");
+            if(!enabled) return;
+            ConfigList list=new ConfigList(); list.Count=1; list.Entries=entry;
+            Marshal.WriteInt32(entry,0,0x8001); Marshal.WriteInt32(entry,4,0);
+            Check(PassThruIoctl(channel,1,ref list,IntPtr.Zero)==0 && Marshal.ReadInt32(entry,4)==0,"PS initial hint wrong");
+            Marshal.WriteInt32(entry,4,0x030b);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==0,"PS SET hint failed");
+            Marshal.WriteInt32(entry,4,0);
+            Check(PassThruIoctl(channel,1,ref list,IntPtr.Zero)==0 && Marshal.ReadInt32(entry,4)==0x030b,"PS GET hint failed");
+            Marshal.WriteInt32(entry,4,0x060e);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==1,"PS rebind not rejected");
+            Check(PassThruIoctl(channel,1,ref list,IntPtr.Zero)==0 && Marshal.ReadInt32(entry,4)==0x030b,"PS rebind changed hint");
+            Msg msg=new Msg(); msg.ProtocolID=0x8004; msg.DataSize=12; msg.Data=new byte[4128];
+            uint count=1;
+            Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==1 && count==0,"PS write was not blocked");
+            Empty128(channel);
+            Console.WriteLine("PASS native CAN_PS configuration-only opt-in/roundtrip/rebind/write/RX checks");
+        } finally {
+            Marshal.FreeHGlobal(entry);
+            if(channel!=0) Check(PassThruDisconnect(channel)==0,"PS disconnect failed");
+            Check(PassThruClose(device)==0,"PS close failed");
+        }
     }
     public static void Run() {
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"x86 ABI mismatch");
@@ -136,6 +168,9 @@ public static class NativeRouteCheck {
     $source = $source.Replace('__ISOLATED_DLL__', $isolatedDll.Replace('"', '""'))
     Add-Type -TypeDefinition $source -Language CSharp
     [NativeRouteCheck]::Run()
+    [NativeRouteCheck]::RunCanPsConfigProbe($false)
+    [IO.File]::AppendAllText((Join-Path $directory 'virtualcar.ini'), "`r`nEnableCanPsConfigProbe=1`r`n", [Text.Encoding]::ASCII)
+    [NativeRouteCheck]::RunCanPsConfigProbe($true)
     $backend = Join-Path $directory 'VirtualCar/dev47-backend.jsonl'
     if (-not (Test-Path -LiteralPath $backend)) { throw 'Native DLL produced no backend evidence' }
     Write-Output 'Native calls passed. Verify the isolated backend with verify_native_routes.py.'

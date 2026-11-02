@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 static U32 tick=0;static I64 qpc_offset_us=0;
+static int test_can_ps_config_probe_ini=0;
 static char backend_lines[800000];static U32 backend_len=0;
 static int capture_connect_log=0;
 static char connect_log_lines[32000];static U32 connect_log_len=0;
@@ -64,6 +65,8 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
  (void)path;
  /* Only host-test fixture: the distributed INI keeps count=0 by default. */
  if(strcmp(s,"Diagnostics")==0 && strcmp(k,"BackendTelemetryEnabled")==0)d="1";
+ if(strcmp(s,"Diagnostics")==0 && strcmp(k,"EnableCanPsConfigProbe")==0)
+    d=test_can_ps_config_probe_ini?"1":"0";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrame0")==0)d="CC 40 7F B9 31 00 00 00";
  if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"FrameCount")==0)d="3";
@@ -354,7 +357,8 @@ static void test_p3tool_j2534_preflight(U32 dev){
  REQUIRE(ls!=lsraw && lsraw!=raw && lsraw!=hs && channel(ls)->flags==0x20000000u);
  REQUIRE(channel(ls)->baud==125000 && channel(hs)->baud==500000);
  REQUIRE(strstr(connect_log_lines,"00 00 00 06 20 00 00 00 00 01 E8 48 00 00 00 00")!=NULL);
- /* 3: 0x8004 and 0x8005 are vendor-specific, not automatic aliases. */
+ /* 3: optional J2534-2 pin-switch protocols are rejected by default,
+    never treated as automatic aliases for ordinary CAN/ISO15765. */
  before=connect_log_lines+connect_log_len;
  REQUIRE(PassThruConnect(dev,0x8004u,0,125000,&failed)==ERR_INVALID_PROTOCOL_ID);
  REQUIRE(PassThruConnect(dev,0x8005u,0,125000,&failed)==ERR_INVALID_PROTOCOL_ID);
@@ -388,7 +392,7 @@ static void test_p3tool_j2534_preflight(U32 dev){
  /* 7: explicitly show no-op config for P3Tool's sample point, pins,
     loopback, BS and STmin. Unknown parameter values are redacted. */
  {
-  static const U32 settings[]={3u,23u,30u,31u,779u,0xAA55AA55u};
+  static const U32 settings[]={3u,23u,30u,31u,CONFIG_J1962_PINS,0xAA55AA55u};
   U32 i;
   for(i=0;i<sizeof(settings)/sizeof(settings[0]);i++){
    option.Parameter=settings[i];option.Value=(i==5)?0xDEADBEEFu:((i==4)?0x030Bu:(i==1?80u:0u));
@@ -412,6 +416,184 @@ static void test_p3tool_j2534_preflight(U32 dev){
  capture_connect_log=0;
 }
 
+/* Eight groups for opt-in configuration observation, NOT CAN_PS transport.
+   No PS request is dispatched and no ECU/profile response may be generated. */
+static void test_can_ps_config_probe(U32 *dev){
+ U32 ps=0,other=0,std=0,n,output=0xC0DEFACEu,k;
+ SCONFIG option={CONFIG_J1962_PINS,0};SCONFIG_LIST list={1,&option};
+ PASSTHRU_MSG msg,rx,before_rx;
+ const U8 opaque[]={0xDE,0xAD,0xBE,0xEF,0xFA,0xCE,0,0};
+ const char *before;U32 saved_backend_len;
+ capture_connect_log=1;connect_log_len=0;connect_log_lines[0]=0;
+ /* 1: real INI opt-in, validation, output pointer preservation and capacity. */
+ REQUIRE(g_can_ps_config_probe==0);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&output)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(output==0xC0DEFACEu);
+ REQUIRE(PassThruClose(*dev)==ERR_OK);
+ test_can_ps_config_probe_ini=1;tick+=7;
+ REQUIRE(PassThruOpen(0,dev)==ERR_OK&&g_can_ps_config_probe==1);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,0)==ERR_NULL_PARAMETER);
+ REQUIRE(PassThruConnect(*dev+1,PROTO_CAN_PS,0,125000,&output)==ERR_INVALID_DEVICE_ID);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0x40,125000,&output)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0x20000000u,125000,&output)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,250000,&output)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(*dev,0x8005u,0,125000,&output)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(output==0xC0DEFACEu);
+ {
+  U32 ids[MAX_CHANNELS];static const U32 flags[]={0,0x100u,0x800u,0x900u};
+  for(k=0;k<MAX_CHANNELS;k++){
+   REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,flags[k%4],k<4?125000u:500000u,&ids[k])==ERR_OK);
+   REQUIRE(channel(ids[k])->protocol==PROTO_CAN_PS&&channel(ids[k])->can_ps_observed_pins==0);
+  }
+  REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&output)==ERR_EXCEEDED_LIMIT);
+  REQUIRE(output==0xC0DEFACEu);
+  for(k=0;k<MAX_CHANNELS;k++)REQUIRE(PassThruDisconnect(ids[k])==ERR_OK);
+ }
+ /* 2: known hints only, GET zero, idempotence, rejected rebind and atomic lists. */
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0x900,500000,&ps)==ERR_OK);
+ option.Value=0xBADu;REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&list,0)==ERR_OK&&option.Value==0);
+ {
+  static const U32 invalid[]={0u,0x0303u,0x030Bu|0x10000u,0xDEADBEEFu};
+  for(k=0;k<sizeof(invalid)/sizeof(invalid[0]);k++){
+   option.Value=invalid[k];
+   REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_INVALID_IOCTL_VALUE);
+   REQUIRE(channel(ps)->can_ps_observed_pins==0);
+  }
+ }
+ option.Value=0x030B;REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+ option.Value=0;REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&list,0)==ERR_OK&&option.Value==0x030B);
+ option.Value=0x060E;REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_NOT_SUPPORTED);
+ REQUIRE(channel(ps)->can_ps_observed_pins==0x030B);
+ {
+  SCONFIG settings[2]={{1u,125000u},{CONFIG_J1962_PINS,0xDEADBEEFu}};
+  SCONFIG_LIST pair={2,settings};
+  REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&pair,0)==ERR_INVALID_IOCTL_VALUE);
+  REQUIRE(channel(ps)->baud==500000u&&channel(ps)->can_ps_observed_pins==0x030B);
+  settings[1].Parameter=779u;before=connect_log_lines+connect_log_len;
+  REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&pair,0)==ERR_NOT_SUPPORTED);
+  REQUIRE(channel(ps)->baud==500000u&&channel(ps)->can_ps_observed_pins==0x030B);
+  REQUIRE(strstr(before,"00 00 00 07 00 00 00 00 00 00 00 01")!=NULL);
+  settings[0].Value=0xAABBCCDDu;settings[1].Parameter=779u;
+  REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&pair,0)==ERR_NOT_SUPPORTED);
+  REQUIRE(settings[0].Value==0xAABBCCDDu);
+ }
+ option.Parameter=1;option.Value=250000;
+ before=connect_log_lines+connect_log_len;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_INVALID_BAUDRATE&&channel(ps)->baud==500000);
+ REQUIRE(strstr(before,"00 00 00 07 00 00 00 01 00 00 00 19")!=NULL);
+ option.Parameter=779u;option.Value=0xDEADBEEFu;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_NOT_SUPPORTED);
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK);
+ /* 3: neither configured nor unconfigured reads can pump or deliver RX,
+    including deliberately seeded internal state from every source class. */
+ for(k=0;k<2;k++){
+  CHANNEL *ch;U32 saved_passive=g_passive_enabled,saved_trace_count=g_trace_count;
+  TRACE_FRAME saved_trace=g_trace[0];U32 bridge_tx=g_vehicle_bridge.inspected_tx;
+  REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&ps)==ERR_OK);ch=channel(ps);
+  option.Parameter=CONFIG_J1962_PINS;option.Value=0x030B;
+  if(k)REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+  g_passive_enabled=1;g_trace_count=1;bytes_zero(&g_trace[0],sizeof(g_trace[0]));
+  g_trace[0].enabled=1;g_trace[0].baud=125000;g_trace[0].period_ms=1;
+  ch->count=1;ch->w=1;ch->queue[0]=frame(PROTO_CAN_PS,0x555,opaque,8);
+  ch->d2_count=1;ch->d2_response_id=0x00800003;ch->d2_next_us=now_us();
+  ch->pending_len=20;ch->pending_cf_active=1;ch->pending_cf_credit=1;
+  ch->periodic[0].used=1;ch->periodic[0].next_us=now_us();ch->periodic[0].interval_ms=5;
+  ch->periodic[0].msg=frame(PROTO_CAN_PS,0x7DF,opaque,8);
+  memset(&rx,0xA5,sizeof(rx));before_rx=rx;saved_backend_len=backend_len;
+  n=1;REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+  n=1;REQUIRE(PassThruReadMsgs(ps,&rx,&n,3)==ERR_TIMEOUT&&n==0);
+  REQUIRE(memcmp(&rx,&before_rx,sizeof(rx))==0);
+  REQUIRE(ch->count==1&&ch->d2_pos==0&&ch->pending_pos==0);
+  REQUIRE(ch->periodic[0].next_us<=now_us());
+  REQUIRE(backend_len==saved_backend_len&&g_vehicle_bridge.inspected_tx==bridge_tx);
+  g_passive_enabled=saved_passive;g_trace_count=saved_trace_count;g_trace[0]=saved_trace;
+  REQUIRE(PassThruDisconnect(ps)==ERR_OK);
+ }
+ /* 4: transport APIs reject every message/protocol with no output IDs,
+    no backend root, no filter/periodic registration and no raw payload log. */
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0x900,125000,&ps)==ERR_OK);
+ msg=frame(PROTO_CAN_PS,0x000FFFFE,opaque,8);saved_backend_len=backend_len;
+ for(k=0;k<2;k++){
+  msg.ProtocolID=k?PROTO_CAN:PROTO_CAN_PS;n=1;
+  REQUIRE(PassThruWriteMsgs(ps,&msg,&n,0)==ERR_NOT_SUPPORTED&&n==0);
+  n=0;REQUIRE(PassThruWriteMsgs(ps,&msg,&n,0)==ERR_NOT_SUPPORTED&&n==0);
+  output=0xC0DEFACEu;
+  REQUIRE(PassThruStartMsgFilter(ps,1,&msg,&msg,0,&output)==ERR_NOT_SUPPORTED);
+  REQUIRE(output==0xC0DEFACEu);
+  REQUIRE(PassThruStartPeriodicMsg(ps,&msg,&output,k?0u:5u)==ERR_NOT_SUPPORTED);
+  REQUIRE(output==0xC0DEFACEu);
+ }
+ REQUIRE(channel(ps)->filters_count==0&&channel(ps)->periodic[0].used==0);
+ REQUIRE(backend_len==saved_backend_len);
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK);
+ /* 5: remembered hints and baud are channel-local and do not alter standard CAN. */
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&ps)==ERR_OK);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,500000,&other)==ERR_OK);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN,0,500000,&std)==ERR_OK);
+ option.Parameter=CONFIG_J1962_PINS;option.Value=0x030B;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(channel(other)->can_ps_observed_pins==0&&channel(std)->can_ps_observed_pins==0);
+ option.Value=0x060E;REQUIRE(PassThruIoctl(other,IO_SET_CONFIG,&list,0)==ERR_OK);
+ option.Parameter=1;option.Value=500000;REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(channel(ps)->can_ps_observed_pins==0x030B&&channel(other)->can_ps_observed_pins==0x060E);
+ option.Value=125000;REQUIRE(PassThruIoctl(std,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(channel(ps)->baud==500000&&channel(other)->baud==500000&&channel(std)->baud==125000);
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK&&PassThruDisconnect(other)==ERR_OK&&PassThruDisconnect(std)==ERR_OK);
+ /* 6: disconnect/reuse and device Close/Open erase every remembered hint. */
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&ps)==ERR_OK);
+ option.Parameter=CONFIG_J1962_PINS;option.Value=0x030B;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&other)==ERR_OK&&other==ps);
+ REQUIRE(channel(other)->can_ps_observed_pins==0&&channel(other)->count==0);
+ option.Value=0x060E;REQUIRE(PassThruIoctl(other,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(PassThruClose(*dev)==ERR_OK);tick+=7;REQUIRE(PassThruOpen(0,dev)==ERR_OK);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&ps)==ERR_OK);
+ REQUIRE(channel(ps)->can_ps_observed_pins==0);
+ /* 7: fixed metadata operations, accepted legacy no-ops and strict redaction.
+    0x8001 is J1962_PINS; decimal779 stays an unknown legacy parameter. */
+ option.Parameter=CONFIG_J1962_PINS;option.Value=0x030B;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+ option.Value=0;REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&list,0)==ERR_OK&&option.Value==0x030B);
+ option.Parameter=23;option.Value=80;REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&list,0)==ERR_OK);
+ option.Value=99;REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&list,0)==ERR_OK&&option.Value==0);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN,0,500000,&std)==ERR_OK);
+ before=connect_log_lines+connect_log_len;
+ option.Parameter=CONFIG_J1962_PINS;option.Value=0x030B;
+ REQUIRE(PassThruIoctl(std,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(strstr(before,"00 00 80 01 00 00 03 0B 00 00 00 00")!=NULL);
+ REQUIRE(strstr(before,"CAN_PS config probe")==NULL);
+ option.Parameter=779u;option.Value=0xDEADBEEFu;before=connect_log_lines+connect_log_len;
+ REQUIRE(PassThruIoctl(std,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(strstr(before,"00 00 00 00 00 00 00 00 00 00 00 00")!=NULL);
+ REQUIRE(strstr(connect_log_lines,"DE AD BE EF")==NULL);
+ REQUIRE(strstr(connect_log_lines,"FA CE")==NULL);
+ REQUIRE(strstr(connect_log_lines,"YV1")==NULL);
+ REQUIRE(event_count_since(connect_log_lines,"CAN_PS config probe")>20);
+ for(k=1;k<=7;k++){
+  char op[180];snprintf(op,sizeof(op),"J2534 CAN_PS config probe channel/operation/value/status (BE) 00 00 00 01 00 00 00 %02X",(unsigned)k);
+  REQUIRE(strstr(connect_log_lines,op)!=NULL);
+ }
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK&&PassThruDisconnect(std)==ERR_OK);
+ /* 8: standard ISO15765 and existing synthetic B9FB replay remain intact;
+    the next Open without opt-in rejects PS again. */
+ REQUIRE(PassThruConnect(*dev,PROTO_ISO15765,0,500000,&std)==ERR_OK);
+ {const U8 vin[]={0x22,0xF1,0x90};msg=frame(PROTO_ISO15765,0x7E0,vin,3);send(std,&msg);rx=readmsg(std);
+  REQUIRE(rx.ProtocolID==PROTO_ISO15765&&rx.DataSize==24&&rx.Data[4]==0x62);}
+ REQUIRE(PassThruDisconnect(std)==ERR_OK);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN,0,125000,&std)==ERR_OK);
+ {const U8 fb[]={0xCB,0x40,0xB9,0xFB,0,0,0,0};msg=frame(PROTO_CAN,0x000FFFFE,fb,8);send(std,&msg);rx=readmsg(std);
+  REQUIRE(rx.ProtocolID==PROTO_CAN&&rx.DataSize==12&&rx.Data[4]==0xCC&&rx.Data[5]==0x40);}
+ REQUIRE(PassThruDisconnect(std)==ERR_OK);
+ REQUIRE(PassThruClose(*dev)==ERR_OK);test_can_ps_config_probe_ini=0;tick+=7;
+ REQUIRE(PassThruOpen(0,dev)==ERR_OK&&g_can_ps_config_probe==0);
+ output=0xC0DEFACEu;
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&output)==ERR_INVALID_PROTOCOL_ID&&output==0xC0DEFACEu);
+ capture_connect_log=0;
+ puts("PASS: eight CAN_PS configuration-probe groups, no transport or ECU response");
+}
+
 static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
@@ -422,6 +604,7 @@ int main(){
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
+ test_can_ps_config_probe(&dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);

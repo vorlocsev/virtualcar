@@ -2,7 +2,13 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
-## Текущая рабочая ветка: VDASH offline evidence (02.11.2026)
+## Текущий этап: CAN_PS configuration-only probe (02.11.2026)
+
+- Development live base `ac1f523a319a0d29e61d7e5ac07307446925cf16` (PR #40 merged). PR #39 remains draft at `6f16bc34`; PR #41 open at `c0f6484`, CI [x86/native-routes #41449592025](https://github.com/vorlocsev/virtualcar/actions/runs/41449592025) и [VMware LAB #41449590010](https://github.com/vorlocsev/virtualcar/actions/runs/41449590010) success. Отчёт настоящего Windows GUI run MY2005 находится в #41: 68 CAN_PS/125k rejects, causal link с warning не доказана. Новая ветка `feature/can-ps-config-probe` создана от development, не включает код draft #39 и #41.
+- Проверены primary vendor docs. J1962_PINS ID **0x8001**, прежнее **779** было pin value, а не ID. Реализуется default-off `[Diagnostics] EnableCanPsConfigProbe=1`: отдельный ProtocolID 0x8004, observation GET/SET pins, без транспорта, RX, filters/periodic или передачи ECU. Не alias CAN. Подробности/источники: `emulator/README_CAN_PS_CONFIG_PROBE_RU.md`.
+- Следующий gate #37/#4: один version/hash-bound запуск клиента с этим opt-in для регистрации следующего API шага и реального J1962 value. Текущий этап проверяется offline/CI; новый VDASH, VMware guest и physical run не заявлять. Не добавлять положительные CEM ответы; main/Dvinholm/prerelease не менять.
+
+## Предыдущий этап: VDASH offline evidence (02.11.2026)
 
 - По присланному пользователем `docs/research/VDASH_RESEARCH_HANDOFF.md` подготовлен отдельный этап `feature/vdash-offline-evidence` от development **`ee9e2cd66d2da9ea2087605f6ea06fc4ecd2ca83`**. PR/HEAD/CI сверять live; VDASH handoff требует оставить PR для review без автоматического merge. Main/Dvinholm/опубликованный prerelease не менять.
 - PR #38 research уже merged: `ee9e2cd`; [Emulator #41393643625](https://github.com/vorlocsev/virtualcar/actions/runs/41393643625) и [cross-build #41393643578](https://github.com/vorlocsev/virtualcar/actions/runs/41393643578) success. Его docs-only source HEAD не запускал CI по path filters.

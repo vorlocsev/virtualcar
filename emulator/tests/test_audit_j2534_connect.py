@@ -73,7 +73,7 @@ class P3ToolJ2534PreflightTests(unittest.TestCase):
                  cfg(1, 23, 80),
                  cfg(1, 30, 0),
                  cfg(1, 31, 0),
-                 cfg(1, 779, 0x030B),
+                 cfg(1, 0x8001, 0x030B),
                  cfg(1, 0, 0)]
         result = tool.audit(lines)
         self.assertEqual(result["set_config"]["events"], 7)

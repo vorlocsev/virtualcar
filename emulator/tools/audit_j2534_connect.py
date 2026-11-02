@@ -14,6 +14,7 @@ import re
 FORMAT = "virtualcar-j2534-connect-audit-v1"
 CONNECT = "J2534 Connect result protocol/flags/baud/status (BE)"
 CONFIG = "J2534 SET_CONFIG channel/parameter/value/applied (BE)"
+PS_PROBE = "J2534 CAN_PS config probe channel/operation/value/status (BE)"
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} [^\]\r\n]{1,80}\] ")
 HEX_BYTE = re.compile(r"[0-9A-Fa-f]{2}\Z")
 PROTOCOLS = {5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS",
@@ -21,10 +22,15 @@ PROTOCOLS = {5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS",
 FLAGS = {0: "none", 0x20000000: "VOLVO_CH2", 0x600: "CAN_11BIT_ID_HS",
          0x20000600: "CAN_11BIT_ID_LS"}
 BAUDS = {125000: "125000", 250000: "250000", 500000: "500000"}
-STATUS = {0: "ok", 3: "invalid_protocol", 4: "null_parameter",
+STATUS = {0: "ok", 1: "not_supported", 3: "invalid_protocol", 4: "null_parameter",
+          5: "invalid_ioctl_value", 6: "invalid_flags",
           12: "channel_limit", 25: "invalid_baud", 26: "invalid_device"}
 PARAMS = {1: "DATA_RATE", 3: "LOOP_BACK", 23: "BIT_SAMPLE_POINT",
-          30: "ISO15765_BS", 31: "ISO15765_STMIN", 779: "J1962_PINS"}
+          30: "ISO15765_BS", 31: "ISO15765_STMIN", 0x8001: "J1962_PINS"}
+PS_OPERATIONS = {1: "channel_allocated", 2: "set_pin_observation", 3: "get_pin_observation",
+                 4: "write_rejected", 5: "filter_rejected", 6: "periodic_rejected",
+                 7: "config_rejected"}
+PS_PINS = {0x030B: "pins_3_11", 0x060E: "pins_6_14"}
 MAX_LINES = 250000
 MAX_LINE = 512
 
@@ -41,6 +47,8 @@ def audit(lines):
     connects = Counter()
     configs = Counter()
     invalid_connect = invalid_config = 0
+    ps_probes = Counter()
+    invalid_ps = 0
     for index, raw in enumerate(lines, 1):
         if index > MAX_LINES:
             raise ValueError("line_limit")
@@ -52,7 +60,33 @@ def audit(lines):
         if prefix is None:
             continue
         content = line[prefix.end():]
-        if content.startswith(CONNECT):
+        if content.startswith(PS_PROBE):
+            words = _decode_words(content[len(PS_PROBE):])
+            if words is None:
+                invalid_ps += 1
+                continue
+            channel, operation, value, status = words
+            valid = channel != 0 and operation in PS_OPERATIONS
+            if operation == 1:
+                valid = valid and value == 0x8004 and status == 0
+                selection = "protocol_can_ps"
+            elif operation == 2:
+                valid = valid and ((value in PS_PINS and status in (0, 1)) or (value == 0 and status == 5))
+                selection = PS_PINS.get(value, "redacted")
+            elif operation == 3:
+                valid = valid and value in (0, *PS_PINS) and status == 0
+                selection = PS_PINS.get(value, "unselected")
+            elif operation == 7:
+                valid = valid and ((value == 1 and status == 25) or (value == 0 and status == 1))
+                selection = "data_rate" if value == 1 else "redacted"
+            else:
+                valid = valid and value == 0 and status == 1
+                selection = "none"
+            if not valid:
+                invalid_ps += 1
+                continue
+            ps_probes[(PS_OPERATIONS[operation], selection, STATUS[status])] += 1
+        elif content.startswith(CONNECT):
             words = _decode_words(content[len(CONNECT):])
             if words is None:
                 invalid_connect += 1
@@ -80,7 +114,7 @@ def audit(lines):
     statuses = Counter()
     for (_proto, _flags, _baud, status), count in connects.items():
         statuses[status] += count
-    return {
+    report = {
         "format": FORMAT,
         "source_scope": "exact_virtualcar_j2534_metadata_only",
         "contains_payload_data": False,
@@ -89,7 +123,8 @@ def audit(lines):
         "limitations": [
             "Connect OK proves only virtual channel allocation, not ECU discovery",
             "VOLVO_CH2 is a recorded numeric flag, not a simulated physical LS bus",
-            "CAN_PS, ISO15765_PS and CAN_XON_XOFF remain unsupported in this build",
+            "CAN_PS transport remains unsupported; an opt-in configuration-only probe may allocate a quarantined channel",
+            "ISO15765_PS and CAN_XON_XOFF remain unsupported",
             "SET_CONFIG accepted_no_effect means success was returned but no physical option was implemented",
             "No raw CAN, VIN, keys, host names, process IDs, source paths or arbitrary parameters are exported",
         ],
@@ -112,6 +147,18 @@ def audit(lines):
             ],
         },
     }
+    if ps_probes or invalid_ps:
+        report["can_ps_config_probe"] = {
+            "events": sum(ps_probes.values()), "invalid_events": invalid_ps,
+            "mode": "configuration_only_no_transport",
+            "state_correlation_performed": False,
+            "hardware_pins_verified": False,
+            "operations": [
+                {"operation": operation, "selection": selection, "status": status, "count": count}
+                for (operation, selection, status), count in sorted(ps_probes.items())
+            ],
+        }
+    return report
 
 
 def main(argv=None):

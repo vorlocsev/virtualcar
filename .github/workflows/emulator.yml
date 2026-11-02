@@ -80,10 +80,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
           python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-route-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-config-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'CAN_PS config audit failed' }
+          $configAudit = Get-Content -LiteralPath "$env:RUNNER_TEMP\can-ps-config-audit.json" -Raw | ConvertFrom-Json
+          if ($configAudit.can_ps_config_probe.events -ne 7 -or $configAudit.can_ps_config_probe.invalid_events -ne 0) { throw 'Unexpected native CAN_PS metadata' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
-          path: ${{ runner.temp }}/native-route-regression-audit.json
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/can-ps-config-audit.json
           if-no-files-found: error
 
 
