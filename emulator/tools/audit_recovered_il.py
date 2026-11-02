@@ -6,6 +6,7 @@ Its output is an allowlisted method/shape summary from an independently supplied
 inventory JSON and IL excerpt. No source paths, VINs or string literals escape.
 """
 import argparse
+import ast
 import json
 import re
 from pathlib import Path
@@ -221,6 +222,46 @@ def _shared_predicate_result_and_hardware(ops):
     }
 
 
+_METHODSPEC_STRING = bytes((0x0A, 0x01, 0x0E))
+_METHODSPEC_LITERAL = re.compile(
+    r"^0x2B000002\s+\[\d+,\s+(b'(?:\\.|[^'\\])*')\]$"
+)
+
+
+def _string_methodspec_instantiation(operand):
+    """Verify the *reported* MethodSpec blob 0A 01 0E.
+
+    Per ECMA-335 II.23.2.15, this means GENRICINST with one
+    ELEMENT_TYPE_STRING generic argument. It does not identify the
+    generic method or establish its return type, constants, or semantics.
+    Decode a bounded bytes literal without evaluating executable code.
+    """
+    if len(operand) > 128:
+        return False
+    match = _METHODSPEC_LITERAL.fullmatch(operand)
+    if match is None:
+        return False
+    try:
+        blob = ast.literal_eval(match.group(1))
+    except (SyntaxError, ValueError, TypeError, MemoryError):
+        return False
+    return type(blob) is bytes and blob == _METHODSPEC_STRING
+
+
+def _string_methodspec_predicate_pairs(ops):
+    """Count adjacent MethodSpec<string> → opaque predicate callsites."""
+    count = 0
+    for first, second in zip(ops, ops[1:]):
+        if (first[0] == "call" and second[0] == "call"
+                and second[1].startswith("0x06001359")
+                and _string_methodspec_instantiation(first[1])):
+            count += 1
+    return {
+        "detect_shared_string_methodspec_predicate_call_count": count,
+        "detect_shared_string_methodspec_at_both_calls": count == 2,
+    }
+
+
 def _status_values(ops):
     values = set()
     for a, b in zip(ops, ops[1:]):
@@ -285,7 +326,7 @@ def audit(inventory, excerpts):
     detect_block = blocks.get(KNOWN["detect"], {})
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v4",
+        "format": "recovered-il-evidence-audit-v5",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -311,6 +352,7 @@ def audit(inventory, excerpts):
             "detect_result_predicate_direct_false_return":
                 _result_failure_branch(detect, detect_block.get("offsets", [])),
             **_shared_predicate_result_and_hardware(detect),
+            **_string_methodspec_predicate_pairs(detect),
             "execute_calls_parse_data": _has_call(execute, "0x06001160"),
             "execute_observed_status_numeric_comparisons": _status_values(execute),
             "execute_one_second_timer_shape": _one_shot_timer_shape(execute),
@@ -323,6 +365,7 @@ def audit(inventory, excerpts):
             "Constructor/data-flow motifs do not establish runtime reachability",
             "Direct branch targets do not prove that source blocks are reachable",
             "Shared opaque predicate usage does not reveal equality or acceptance semantics",
+            "MethodSpec<string> does not establish generic method return type or semantics",
         ],
     }
 
