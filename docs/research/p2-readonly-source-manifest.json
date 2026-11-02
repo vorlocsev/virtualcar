@@ -584,6 +584,42 @@
       "sha256": "cd7bed49fb1d2fc5cac8847fd05a2e0fc847c8face40f42774c045115321b1bb",
       "retrieved_at_utc": "2026-11-01T23:44:35+00:00",
       "classification": "adjacent_provenance_or_parameter_excerpt_not_independent_discovery"
+    },
+    {
+      "name": "vida_connect_readout",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/c0b686e3ccdc643dc0a801cc043e1ef5.htm",
+      "bytes": 6523,
+      "sha256": "475c5b0ff9357b74a15980176a3c6a99e4046029ce0e2ea7e13ec427d52657bd",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
+    },
+    {
+      "name": "vida_network_colors",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/e8876eb822bc9346c0a801cc00747894.htm",
+      "bytes": 7327,
+      "sha256": "659b697b48addad22f77faea8ac7fb98f6539cf554990355212f29ef82b1bf07",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
+    },
+    {
+      "name": "vida_diagnostic_protocols",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/b5980760141034ddc0a801cc2958048c.htm",
+      "bytes": 6118,
+      "sha256": "ac05906a508f05b2d02ff85a678fd8cb29a07d9a4f9a608fcd579d5949449de6",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
+    },
+    {
+      "name": "vida_dice_connection",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/dc558af3d7498f5ac0a801cc39204f08.htm",
+      "bytes": 5146,
+      "sha256": "c6481c375e6e927a3ab03fc4a348490356eea827d362b4b0715fa12b3122e1e7",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
     }
   ],
   "initial_review_date": "2026-11-01"

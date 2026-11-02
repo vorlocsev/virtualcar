@@ -2,7 +2,14 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
-## Актуальный checkpoint: VMware LAB preflight packaging (02.11.2026, PR #36)
+## Актуальный checkpoint: публичное исследование после PR #36 (02.11.2026)
+
+- База этапа `0db3f413bb1d2ae8d626b490d2d30859b3227890`: PR #34–36 уже merged, [Emulator #41392530265](https://github.com/vorlocsev/virtualcar/actions/runs/41392530265) и [cross-build #41392530215](https://github.com/vorlocsev/virtualcar/actions/runs/41392530215) success. Ветка `docs/p2-readonly-provenance-followup`; актуальный PR/merge/CI сверять по GitHub.
+- В `docs/research/p2-public-capture-followup.md` добавлены авторские Jagrullar ECM AE11/B9F0/A6 выдержки с происхождением, ограниченной последовательностью и восемью проверками. Они не показывают CEM startup, normal-mode predicate или MY2009 compatibility. Перепечатка Swedespeed не второй capture; оригинальный permalink не найден. HTML форума недоступен (403), SHA отсутствует и не выдуман.
+- Четыре официальные HTML страницы VIDA 321US04 сохранены/хешированы, manifest 63→67. Новое условие оценки эталона: VIDA может использовать прежний readout; требовать свежую запись TX/RX и подтверждение нового чтения. Это методика сравнения, не условие SectorV. Поддержка forum text проверена: 0 transactions означает неподдерживаемый формат/CEM scope, не RX=0.
+- Следующий шаг Issue #4 ограничен опубликованным полным P2 сеансом или точным predicate SectorV. Повторный широкий поиск одноимённых проектов/неизменённый VMware scan не заменяет доказательство. Новый VDASH handoff описывает отдельный набор ранее сообщённых результатов; он не доказывает SectorV gate и не меняет пользовательский приоритет публичного исследования. Эмулятор/fixtures не изменены; main/Dvinholm/prerelease не трогать.
+
+## Предыдущий checkpoint: VMware LAB preflight packaging (02.11.2026, PR #36)
 
 - **PR #36** [include J2534 preflight in VMware LAB](https://github.com/vorlocsev/virtualcar/pull/36) merged squash into `development` at **`45df9b053987258521aa8a8778e1663add1d3be6`**. Exact PR HEAD `e6987437417a75539bdcd10c4e0ced21c5bd0648`: [VMware LAB package CI #41380338340](https://github.com/vorlocsev/virtualcar/actions/runs/41380338340) **completed success**, [Windows x86 native DLL CI #41380338485](https://github.com/vorlocsev/virtualcar/actions/runs/41380338485) **completed success**.
 - Closed-allowlist VMware ZIP now includes `tools/audit_j2534_connect.py` and `README_P3TOOL_J2534_PREFLIGHT_RU.md`. Package test group #1 explicitly verifies these entries; 8 original group checks including SHA-256 and synthetic/no-CEM-fixture remain. `emulator/README_VMWARE_LAB_RU.md` has exact PowerShell command. This corrects an overlooked packaging hole in PR #35; no behavioral changes to DLL/ECUs in PR #36.
