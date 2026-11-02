@@ -2,7 +2,15 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
-## Актуальный checkpoint: публичное исследование после PR #36 (02.11.2026)
+## Текущая рабочая ветка: VDASH offline evidence (02.11.2026)
+
+- По присланному пользователем `docs/research/VDASH_RESEARCH_HANDOFF.md` подготовлен отдельный этап `feature/vdash-offline-evidence` от development **`ee9e2cd66d2da9ea2087605f6ea06fc4ecd2ca83`**. PR/HEAD/CI сверять live; VDASH handoff требует оставить PR для review без автоматического merge. Main/Dvinholm/опубликованный prerelease не менять.
+- PR #38 research уже merged: `ee9e2cd`; [Emulator #41393643625](https://github.com/vorlocsev/virtualcar/actions/runs/41393643625) и [cross-build #41393643578](https://github.com/vorlocsev/virtualcar/actions/runs/41393643578) success. Его docs-only source HEAD не запускал CI по path filters.
+- `docs/research/VDASH_PROTOCOL_EVIDENCE.md` разделяет Handoff/static 2.5.115.79, reported runtime 2.0, SectorV и donor claims. Proprietary binary/IL report и исходный VDASH run в этом этапе не перепроверены; методам GetVin/GetConfig и HTTP Data не назначен CAN смысл. RxStart size4/index0 и VIN size24/index24 подтверждены текущим source/synthetic test, не историческим запуском VDASH.
+- Existing discovery audit получил opt-in `--include-obd`: узкие 09 02/49 02 01 и 18DB33F1:3E80, отдельные start indications, source-order/repeat evidence, strict transport boundaries, metadata-only JSON и client_result_unknown. Восемь synthetic групп; локально 164 Python tests OK, 1 expected native-DLL integration skip. Без флага прежняя область/схема; DLL/профили/RX не меняются. Реальных VDASH/VMware/физических запусков нет.
+- Следующий материал для объяснения пустого ECU list: связанный полный actual-client read-only trace от Open до UI outcome либо подтверждённый parser/executor predicate той же версии. Свидетельства разных клиентов/версий не объединять; новых положительных CEM fixtures нет. Уточнена прежняя формулировка: ECM7A A6 вне A6 allowlist, но B9F0 target7A распознаётся после поддерживаемого преобразования формата.
+
+## Предыдущий checkpoint: публичное исследование после PR #36 (02.11.2026)
 
 - База этапа `0db3f413bb1d2ae8d626b490d2d30859b3227890`: PR #34–36 уже merged, [Emulator #41392530265](https://github.com/vorlocsev/virtualcar/actions/runs/41392530265) и [cross-build #41392530215](https://github.com/vorlocsev/virtualcar/actions/runs/41392530215) success. Ветка `docs/p2-readonly-provenance-followup`; актуальный PR/merge/CI сверять по GitHub.
 - В `docs/research/p2-public-capture-followup.md` добавлены авторские Jagrullar ECM AE11/B9F0/A6 выдержки с происхождением, ограниченной последовательностью и восемью проверками. Они не показывают CEM startup, normal-mode predicate или MY2009 compatibility. Перепечатка Swedespeed не второй capture; оригинальный permalink не найден. HTML форума недоступен (403), SHA отсутствует и не выдуман.

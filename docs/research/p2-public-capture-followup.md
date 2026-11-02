@@ -204,7 +204,8 @@ SHA-256 добавлены в [manifest](p2-readonly-source-manifest.json): вс
 поддерживаемым native/VIDA J2534 record. Воспроизводимый вызов
 `audit([line])` текущего `audit_j2534_discovery.py` даёт 0 transactions,
 `parse_errors={}`, `replay_approved=false`. Это ограничение входного формата;
-ECM7A также вне CEM scope аудитора. Результат **не означает отсутствие RX**.
+ECM7A A6 также вне A6 allowlist аудитора; B9F0 с этим target может распознаваться
+после корректной конверсии формата. Результат **не означает отсутствие RX**.
 Придуманные timestamps/каналы для конверсии не добавлялись; новый importer для
 неполного ECM фрагмента не нужен для текущего CEM вопроса.
 
