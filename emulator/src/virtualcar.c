@@ -1180,6 +1180,20 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         backend_event(c,c->active_trace,"request_completed","CEM","no_response","no_response");
         return;
     }
+    /* VDASH 2.0 laboratory traces include a 29-bit functional TesterPresent.
+       0x18DB33F1 is the ISO15765-4 functional address, not a CEM target.
+       3E 80 suppresses the positive response. Classify this exact request
+       without fabricating any ECU, ECU discovery result or response frame. */
+    if(id==0x18DB33F1u &&
+       ((c->protocol==PROTO_ISO15765 && msg->DataSize==6u &&
+         msg->Data[4]==0x3Eu && msg->Data[5]==0x80u) ||
+        (c->protocol==PROTO_CAN && msg->DataSize==12u &&
+         msg->Data[4]==0x02u && msg->Data[5]==0x3Eu && msg->Data[6]==0x80u))){
+        logline("29-bit functional TesterPresent 3E 80: suppressed, not ECU identification",0,0);
+        backend_event(c,c->active_trace,"route_selected","ECU_OTHER","none","unknown");
+        backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
+        return;
+    }
     for(i=0;i<g_ecu_count;i++){
         ecu=&g_ecu[i];if(id!=ecu->req&&id!=0x7DF)continue;
         n=msg->DataSize-4;data=msg->Data+4;
