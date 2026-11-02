@@ -134,6 +134,46 @@ envelopes, batch/zero, origins, изоляцию, исключённые опе�
 поведение. Actual x86 CI использует один **synthetic**, отклонённый B9FB envelope;
 его backend fixture остаётся с прежними 13 запросами.
 
+### Форма отклонённой настройки
+
+D8 shape не раскрывает аргументы StartMsgFilter и interval StartPeriodicMsg:
+отказ probe предшествует обычному logger/validation этих API. Перед отдельным
+API-outcome экспериментом добавлены два metadata marker, **с прежним отказом**:
+
+- `J2534 CAN_PS rejected filter channel/type/protocols/sizes/flags/flow/mask/pattern/status (BE)`:
+  девять uint32. Type — pass/block/flow-control/other; protocols — совпадающие
+  CAN_PS/CAN/ISO15765, mixed-known либо redacted; sizes — обе ID-only, обе full
+  classic CAN, одинаковые short, разные bounded либо outside catalog.
+  Flags — оба0, оба0x100, mixed-known либо redacted. Flow фиксирует только
+  наличие указателя: **он никогда не разыменовывается**.
+- Mask/pattern bodies классифицируются только при совпадающих CAN_PS/CAN
+  protocol и двух DataSize4. Mask — zero/full32/29bit/11bit/other; pattern —
+  zero/11bit/29bit/outside range. FFFFFFFF является категорией битовой маски,
+  а не ошибочным CAN ID. Произвольные значения/bytes не выводятся. Остальные
+  тела остаются uninspected; числовые DataSize также не экспортируются.
+- `J2534 CAN_PS rejected periodic channel/protocol/interval/check/status (BE)`:
+  пять uint32. Protocol — фиксированная allowlist. Interval выводится только
+  для 5/100/250/500/1000/2000/4000/5000/10000/60000ms; иной valid5..60000
+  редактируется с отдельной меткой, invalid также редактируется.
+
+Оба status всегда ERR_NOT_SUPPORTED. Null/invalid-channel precedence,
+неизменные output IDs, no registrations/RX/backend roots сохраняются.
+Старые rejected-attempt/config markers не заменяются. Анализатор добавляет
+`can_ps_rejected_setup` с раздельными filter/periodic counts; periodic record
+и прежний rejected-attempt record описывают один call, **не два TX**.
+Source-order ограничен 20000 records; channel/PID и private bytes не выдаются.
+Это аргументы API, не установленный filter, firing, wiring или ECU support.
+
+Восемь новых native/Python групп проверяют bounded headers/body, flow pointer
+без чтения, mask-vs-ID, интервалы, malformed metadata, privacy, отсутствие
+регистраций и прежние API errors. Actual x86 CI добавляет synthetic rejected
+PASS-filter и D8 periodic4000ms к прежнему rejected B9FB write: probe events9,
+rejected attempts2, setup filter1/periodic1, прежние backend requests13.
+
+Следующее измерение ограничивается несколькими завершёнными API-сеансами
+или таймаутом supervisor; direct loaded-module binding проверяется отдельно.
+Прежний многочасовой run не восстанавливает эти отсутствующие аргументы.
+
 ## Восемь групп проверки
 
 1. Default-off, opt-in Connect, ошибки и неизменные output pointers.

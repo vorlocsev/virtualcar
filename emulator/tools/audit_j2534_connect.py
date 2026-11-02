@@ -16,6 +16,8 @@ CONNECT = "J2534 Connect result protocol/flags/baud/status (BE)"
 CONFIG = "J2534 SET_CONFIG channel/parameter/value/applied (BE)"
 PS_PROBE = "J2534 CAN_PS config probe channel/operation/value/status (BE)"
 PS_REJECTED = "J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/shape/check/status (BE)"
+PS_FILTER = "J2534 CAN_PS rejected filter channel/type/protocols/sizes/flags/flow/mask/pattern/status (BE)"
+PS_PERIODIC = "J2534 CAN_PS rejected periodic channel/protocol/interval/check/status (BE)"
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} [^\]\r\n]{1,80}\] ")
 HEX_BYTE = re.compile(r"[0-9A-Fa-f]{2}\Z")
 PROTOCOLS = {5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS",
@@ -44,6 +46,15 @@ ATTEMPT_SHAPES = {
     40: "excluded_control_or_security", 41: "excluded_D2_control_prefix",
     42: "D2_D8_unverified_prefix",
 }
+FILTER_TYPES = {0: "other_redacted", 1: "pass_filter", 2: "block_filter", 3: "flow_control_filter"}
+FILTER_PROTOCOLS = {0: "other_redacted", 1: "both_CAN_PS", 2: "both_CAN", 3: "both_ISO15765", 4: "mixed_known"}
+FILTER_SIZES = {0: "outside_catalog", 1: "both_id_only", 2: "both_full_classic_can",
+                3: "same_short_classic_can", 4: "different_within_catalog"}
+FILTER_FLAGS = {0: "other_redacted", 1: "both_zero", 2: "both_extended", 3: "mixed_known"}
+FILTER_MASKS = {0: "uninspected", 1: "zero", 2: "full_uint32", 3: "id_29_bits", 4: "id_11_bits", 5: "other_redacted"}
+FILTER_PATTERNS = {0: "uninspected", 1: "zero", 2: "nonzero_11_bit_range", 3: "29_bit_range", 4: "outside_can_id_range"}
+PERIODIC_INTERVALS = {value: str(value) for value in (5, 100, 250, 500, 1000, 2000, 4000, 5000, 10000, 60000)}
+PERIODIC_CHECKS = {0: "valid_catalog_interval", 1: "valid_other_interval_redacted", 2: "invalid_interval_redacted"}
 for _target, _base in (("40", 10), ("50", 15)):
     ATTEMPT_SHAPES.update({_base+i: f"D2_{_target}_{service}"
                            for i, service in enumerate(("A3", "A6", "B9F0", "B9FB", "B9FC"))})
@@ -83,6 +94,33 @@ def _rejected_attempt(words):
             ATTEMPT_PROTOCOLS[protocol], ATTEMPT_SHAPES[shape], ATTEMPT_CHECKS[check])
 
 
+def _rejected_filter(words):
+    if words is None:
+        return None
+    channel, kind, protocols, sizes, flags, flow, mask, pattern, status = words
+    if (channel == 0 or kind not in FILTER_TYPES or protocols not in FILTER_PROTOCOLS
+            or sizes not in FILTER_SIZES or flags not in FILTER_FLAGS or flow not in (0, 1)
+            or mask not in FILTER_MASKS or pattern not in FILTER_PATTERNS or status != 1):
+        return None
+    inspected = protocols in (1, 2) and sizes == 1
+    if (inspected and (mask == 0 or pattern == 0)) or (not inspected and (mask != 0 or pattern != 0)):
+        return None
+    return (FILTER_TYPES[kind], FILTER_PROTOCOLS[protocols], FILTER_SIZES[sizes],
+            FILTER_FLAGS[flags], "present_uninspected" if flow else "absent",
+            FILTER_MASKS[mask], FILTER_PATTERNS[pattern])
+
+
+def _rejected_periodic(words):
+    if words is None:
+        return None
+    channel, protocol, interval, check, status = words
+    if channel == 0 or protocol not in ATTEMPT_PROTOCOLS or check not in PERIODIC_CHECKS or status != 1:
+        return None
+    if (check == 0 and interval not in PERIODIC_INTERVALS) or (check != 0 and interval != 0):
+        return None
+    return (ATTEMPT_PROTOCOLS[protocol], PERIODIC_INTERVALS.get(interval, "redacted"), PERIODIC_CHECKS[check])
+
+
 def audit(lines):
     connects = Counter()
     configs = Counter()
@@ -92,6 +130,9 @@ def audit(lines):
     rejected = Counter()
     rejected_order = []
     invalid_rejected = 0
+    filters, periodic = Counter(), Counter()
+    invalid_filter = invalid_periodic = 0
+    setup_order = []
     for index, raw in enumerate(lines, 1):
         if index > MAX_LINES:
             raise ValueError("line_limit")
@@ -103,7 +144,23 @@ def audit(lines):
         if prefix is None:
             continue
         content = line[prefix.end():]
-        if content.startswith(PS_REJECTED):
+        if content.startswith(PS_FILTER) or content.startswith(PS_PERIODIC):
+            is_filter = content.startswith(PS_FILTER)
+            marker = PS_FILTER if is_filter else PS_PERIODIC
+            words = _decode_words(content[len(marker):], 9 if is_filter else 5)
+            setup = _rejected_filter(words) if is_filter else _rejected_periodic(words)
+            if setup is None:
+                if is_filter:
+                    invalid_filter += 1
+                else:
+                    invalid_periodic += 1
+                continue
+            if len(setup_order) >= MAX_REJECTED_ATTEMPTS:
+                raise ValueError("rejected_setup_limit")
+            (filters if is_filter else periodic)[setup] += 1
+            setup_order.append({"line": index, "api": "filter" if is_filter else "periodic_registration",
+                                "outcome": "rejected_not_registered"})
+        elif content.startswith(PS_REJECTED):
             attempt = _rejected_attempt(_decode_words(content[len(PS_REJECTED):], 7))
             if attempt is None:
                 invalid_rejected += 1
@@ -227,6 +284,24 @@ def audit(lines):
                 for key, count in sorted(rejected.items())
             ],
             "source_order": rejected_order,
+        }
+    if filters or periodic or invalid_filter or invalid_periodic:
+        report["can_ps_rejected_setup"] = {
+            "filter_calls": sum(filters.values()), "invalid_filter_events": invalid_filter,
+            "periodic_registration_calls": sum(periodic.values()), "invalid_periodic_events": invalid_periodic,
+            "classification_scope": "api_setup_argument_categories_only",
+            "outcome": "rejected_not_registered",
+            "state_correlation_performed": False, "hardware_pins_verified": False,
+            "read_only_reference_approved": False, "periodic_firing_observed": False,
+            "filters": [
+                dict(zip(("type", "message_protocols", "sizes", "flags", "flow", "mask", "pattern"), key), count=count)
+                for key, count in sorted(filters.items())
+            ],
+            "periodic": [
+                dict(zip(("message_protocol", "interval_ms", "interval_check"), key), count=count)
+                for key, count in sorted(periodic.items())
+            ],
+            "source_order": setup_order,
         }
     return report
 

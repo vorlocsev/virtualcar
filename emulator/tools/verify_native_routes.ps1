@@ -74,6 +74,10 @@ public static class NativeRouteCheck {
     static extern uint PassThruWriteMsgs(uint channel, ref Msg msg, ref uint count, uint timeout);
     [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruReadMsgs(uint channel, IntPtr msg, ref uint count, uint timeout);
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStartMsgFilter(uint channel, uint type, ref Msg mask, ref Msg pattern, IntPtr flow, ref uint filter);
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStartPeriodicMsg(uint channel, ref Msg msg, ref uint period, uint interval);
     [StructLayout(LayoutKind.Sequential)] struct ConfigList { public uint Count; public IntPtr Entries; }
     [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruIoctl(uint channel, uint ioctl, ref ConfigList config, IntPtr output);
@@ -116,6 +120,15 @@ public static class NativeRouteCheck {
             Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xcb,0x40,0xb9,0xfb,0,0,0,0},msg.Data,12);
             uint count=1;
             Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==1 && count==0,"PS write was not blocked");
+            Msg mask=new Msg(); mask.ProtocolID=0x8004; mask.DataSize=4; mask.TxFlags=0x100; mask.Data=new byte[4128];
+            Array.Copy(new byte[]{0x1f,0xff,0xff,0xff},mask.Data,4);
+            Msg pattern=new Msg(); pattern.ProtocolID=0x8004; pattern.DataSize=4; pattern.TxFlags=0x100; pattern.Data=new byte[4128];
+            Array.Copy(new byte[]{0,0x80,0,3},pattern.Data,4);
+            uint filter=0xc0deface;
+            Check(PassThruStartMsgFilter(channel,1,ref mask,ref pattern,IntPtr.Zero,ref filter)==1 && filter==0xc0deface,"PS filter was not blocked");
+            Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xd8,0,0,0,0,0,0,0},msg.Data,12);
+            uint period=0xc0deface;
+            Check(PassThruStartPeriodicMsg(channel,ref msg,ref period,4000)==1 && period==0xc0deface,"PS periodic was not blocked");
             Empty128(channel);
             Console.WriteLine("PASS native CAN_PS configuration-only opt-in/roundtrip/rebind/write/RX checks");
         } finally {

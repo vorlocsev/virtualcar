@@ -375,6 +375,55 @@ static void log_can_ps_rejected_attempt(const CHANNEL *c,U32 origin,
     u32_be(meta+24,ERR_NOT_SUPPORTED);
     logline("J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/shape/check/status (BE)",meta,28);
 }
+static int can_ps_probe_known_protocol(U32 protocol){
+    return protocol==PROTO_CAN_PS||protocol==PROTO_CAN||protocol==PROTO_ISO15765;
+}
+/* Categories describe rejected filter arguments, never installed filters.
+   A mask is a bitmask, not a CAN ID. Flow is presence-only, even when non-null. */
+static void log_can_ps_rejected_filter(U32 channel_id,U32 type,const PASSTHRU_MSG *mask,
+                                     const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow){
+    U8 meta[36];U32 protocols=0u,sizes=0u,flags=0u,mask_kind=0u,pattern_kind=0u;
+    if(mask->ProtocolID==pattern->ProtocolID){
+        if(mask->ProtocolID==PROTO_CAN_PS)protocols=1u;
+        else if(mask->ProtocolID==PROTO_CAN)protocols=2u;
+        else if(mask->ProtocolID==PROTO_ISO15765)protocols=3u;
+    }else if(can_ps_probe_known_protocol(mask->ProtocolID)&&
+             can_ps_probe_known_protocol(pattern->ProtocolID))protocols=4u;
+    if(mask->DataSize>=4u&&mask->DataSize<=12u&&pattern->DataSize>=4u&&pattern->DataSize<=12u){
+        if(mask->DataSize!=pattern->DataSize)sizes=4u;
+        else sizes=mask->DataSize==4u?1u:mask->DataSize==12u?2u:3u;
+    }
+    if((mask->TxFlags==0u||mask->TxFlags==0x100u)&&
+       (pattern->TxFlags==0u||pattern->TxFlags==0x100u))
+        flags=mask->TxFlags!=pattern->TxFlags?3u:mask->TxFlags==0u?1u:2u;
+    /* Only matching raw-CAN, ID-only descriptors permit four-byte inspection.
+       All other bodies stay opaque, regardless of the filter type. */
+    if((protocols==1u||protocols==2u)&&sizes==1u){
+        U32 m=((U32)mask->Data[0]<<24)|((U32)mask->Data[1]<<16)|
+              ((U32)mask->Data[2]<<8)|(U32)mask->Data[3];
+        U32 p=((U32)pattern->Data[0]<<24)|((U32)pattern->Data[1]<<16)|
+              ((U32)pattern->Data[2]<<8)|(U32)pattern->Data[3];
+        mask_kind=m==0u?1u:m==0xFFFFFFFFu?2u:m==0x1FFFFFFFu?3u:m==0x7FFu?4u:5u;
+        pattern_kind=p==0u?1u:p<=0x7FFu?2u:p<=0x1FFFFFFFu?3u:4u;
+    }
+    u32_be(meta,channel_id);u32_be(meta+4,type>=1u&&type<=3u?type:0u);
+    u32_be(meta+8,protocols);u32_be(meta+12,sizes);u32_be(meta+16,flags);
+    u32_be(meta+20,flow?1u:0u);u32_be(meta+24,mask_kind);u32_be(meta+28,pattern_kind);
+    u32_be(meta+32,ERR_NOT_SUPPORTED);
+    logline("J2534 CAN_PS rejected filter channel/type/protocols/sizes/flags/flow/mask/pattern/status (BE)",meta,36);
+}
+static void log_can_ps_rejected_periodic(U32 channel_id,const PASSTHRU_MSG *msg,U32 interval){
+    U8 meta[20];U32 check=0u,value=0u;
+    if(interval<5u||interval>60000u)check=2u;
+    else switch(interval){
+        case 5u:case 100u:case 250u:case 500u:case 1000u:case 2000u:
+        case 4000u:case 5000u:case 10000u:case 60000u:value=interval;break;
+        default:check=1u;break;
+    }
+    u32_be(meta,channel_id);u32_be(meta+4,can_ps_probe_known_protocol(msg->ProtocolID)?msg->ProtocolID:0u);
+    u32_be(meta+8,value);u32_be(meta+12,check);u32_be(meta+16,ERR_NOT_SUPPORTED);
+    logline("J2534 CAN_PS rejected periodic channel/protocol/interval/check/status (BE)",meta,20);
+}
 static int can_ps_probe_noop(U32 parameter){
     return parameter==3u||parameter==23u||parameter==30u||parameter==31u;
 }
@@ -1588,6 +1637,7 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(c->protocol==PROTO_CAN_PS){
+        log_can_ps_rejected_filter(id,type,mask,pattern,flow);
         log_can_ps_probe(id,5u,0u,ERR_NOT_SUPPORTED);
         unlock_state();return error(ERR_NOT_SUPPORTED);
     }
@@ -1621,6 +1671,7 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);
     if(c&&c->protocol==PROTO_CAN_PS){
+        log_can_ps_rejected_periodic(id,msg,interval);
         log_can_ps_rejected_attempt(c,2u,msg,1u);
         log_can_ps_probe(id,6u,0u,ERR_NOT_SUPPORTED);
         unlock_state();return error(ERR_NOT_SUPPORTED);

@@ -83,11 +83,19 @@ jobs:
           python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-route-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-config-audit.json"
           if ($LASTEXITCODE -ne 0) { throw 'CAN_PS config audit failed' }
           $configAudit = Get-Content -LiteralPath "$env:RUNNER_TEMP\can-ps-config-audit.json" -Raw | ConvertFrom-Json
-          if ($configAudit.can_ps_config_probe.events -ne 7 -or $configAudit.can_ps_config_probe.invalid_events -ne 0) { throw 'Unexpected native CAN_PS metadata' }
+          if ($configAudit.can_ps_config_probe.events -ne 9 -or $configAudit.can_ps_config_probe.invalid_events -ne 0) { throw 'Unexpected native CAN_PS metadata' }
           $rejected = $configAudit.rejected_can_ps_attempts
-          if ($rejected.calls -ne 1 -or $rejected.invalid_events -ne 0 -or $rejected.outcome -ne 'rejected_not_transmitted') { throw 'Unexpected native rejected CAN_PS calls' }
-          $attempt = @($rejected.categories)
+          if ($rejected.calls -ne 2 -or $rejected.invalid_events -ne 0 -or $rejected.outcome -ne 'rejected_not_transmitted') { throw 'Unexpected native rejected CAN_PS calls' }
+          $attempt = @($rejected.categories | Where-Object origin -eq 'write_call')
           if ($attempt.Count -ne 1 -or $attempt[0].count -ne 1 -or $attempt[0].origin -ne 'write_call' -or $attempt[0].pins -ne 'pins_3_11' -or $attempt[0].message_protocol -ne 'CAN_PS' -or $attempt[0].shape -ne 'D2_40_B9FB' -or $attempt[0].inspection -ne 'inspected_raw_classic_can') { throw 'Unexpected rejected CAN_PS classification' }
+          $periodAttempt = @($rejected.categories | Where-Object origin -eq 'periodic_registration_call')
+          if ($periodAttempt.Count -ne 1 -or $periodAttempt[0].count -ne 1 -or $periodAttempt[0].pins -ne 'pins_3_11' -or $periodAttempt[0].message_protocol -ne 'CAN_PS' -or $periodAttempt[0].shape -ne 'D2_D8_unverified_prefix' -or $periodAttempt[0].inspection -ne 'inspected_raw_classic_can') { throw 'Unexpected rejected periodic shape' }
+          $setup = $configAudit.can_ps_rejected_setup
+          if ($setup.filter_calls -ne 1 -or $setup.periodic_registration_calls -ne 1 -or $setup.invalid_filter_events -ne 0 -or $setup.invalid_periodic_events -ne 0) { throw 'Unexpected native CAN_PS setup counts' }
+          $filter = @($setup.filters)
+          if ($filter.Count -ne 1 -or $filter[0].type -ne 'pass_filter' -or $filter[0].message_protocols -ne 'both_CAN_PS' -or $filter[0].sizes -ne 'both_id_only' -or $filter[0].flags -ne 'both_extended' -or $filter[0].flow -ne 'absent' -or $filter[0].mask -ne 'id_29_bits' -or $filter[0].pattern -ne '29_bit_range') { throw 'Unexpected native rejected filter arguments' }
+          $period = @($setup.periodic)
+          if ($period.Count -ne 1 -or $period[0].message_protocol -ne 'CAN_PS' -or $period[0].interval_ms -ne '4000' -or $period[0].interval_check -ne 'valid_catalog_interval') { throw 'Unexpected native rejected periodic arguments' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
