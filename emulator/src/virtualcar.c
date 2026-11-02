@@ -318,6 +318,54 @@ static int cem_d2_probe_shape(const U8 *p,U32 n){
            (p[1]==0x40u||p[1]==0x50u) &&
            (p[2]==0xA3u||p[2]==0xA6u);
 }
+/* Observer only: a bounded catalogue from drpioneer/Volvo-P2-informer
+   main@9cd3a6f603915e074ac28c73eccec6b7473e8297. Those frames came from a
+   2.5T project, NOT an OEM XC90 V8 identity/response fixture.
+   Do not interpret inferred ECU families as confirmation that a module exists. */
+static const char *p2_informer_probe_name(const CHANNEL *c,U32 id,const U8 *p,U32 n){
+    static const U8 ecm_selectors[][2]={
+        {0x10,0xB8},{0x10,0x05},{0x10,0xEF},{0x10,0xAF},
+        {0x10,0x01},{0x10,0x02},{0x10,0x93},{0x10,0xF8},
+        {0x12,0x48},{0x10,0xAD},{0x15,0x7D},{0x15,0x83},
+        {0x10,0x2D},{0x10,0x4E},{0x10,0x9A},{0x13,0x63},
+        {0x13,0x62},{0x10,0x2C}};
+    static const U8 tcm_selectors[]={
+        0x0C,0x06,0x07,0x20,0x21,0x22,0xB2,0xB3,
+        0xB4,0x01,0x93,0x15};
+    U32 i;
+    if(!c||!p||id!=0x000FFFFEu||c->protocol!=PROTO_CAN||n!=8u)return 0;
+    if(c->baud==125000u) {
+        /* Exact source single-frame VIN TX; no implied RX 62 F1 90. */
+        if(p[0]==0x03u && p[1]==0x22u && p[2]==0xF1u && p[3]==0x90u &&
+           p[4]==0u && p[5]==0u && p[6]==0u && p[7]==0u)
+            return "P2INF_LS_VIN_F190";
+        if(p[0]==0xCDu && p[1]==0x46u && p[2]==0xA6u &&
+           p[3]==0xD0u && p[4]==0xD4u && p[5]==1u && p[6]==0u && p[7]==0u)
+            return "P2INF_LS_REM_A6";
+        if(p[0]==0xCDu && p[1]==0x29u && p[2]==0xA6u &&
+           p[3]==0u && (p[4]==0x01u||p[4]==0xA1u||p[4]==0x30u) &&
+           p[5]==1u && p[6]==0u && p[7]==0u)
+            return "P2INF_LS_CCM_A6";
+    }
+    if(c->baud==500000u) {
+        if(p[0]==0xCDu && p[1]==0x7Au && p[2]==0xA6u &&
+           p[5]==1u && p[6]==0u && p[7]==0u){
+            for(i=0;i<sizeof(ecm_selectors)/sizeof(ecm_selectors[0]);i++)
+                if(ecm_selectors[i][0]==p[3] && ecm_selectors[i][1]==p[4])
+                    return "P2INF_HS_ECM_A6";
+        }
+        if(p[0]==0xCCu && p[1]==0x6Eu && p[2]==0xA5u &&
+           p[4]==1u && p[5]==0u && p[6]==0u && p[7]==0u){
+            for(i=0;i<sizeof(tcm_selectors)/sizeof(tcm_selectors[0]);i++)
+                if(tcm_selectors[i]==p[3])return "P2INF_HS_TCM_A5";
+        }
+        if(p[0]==0xCDu && p[1]==0x1Au && p[2]==0xA6u &&
+           p[3]==0u && (p[4]==0x05u||p[4]==0x03u||p[4]==0x02u) &&
+           p[5]==1u && p[6]==0u && p[7]==0u)
+            return "P2INF_HS_DEM_A6";
+    }
+    return 0;
+}
 /* The classifier outputs ONLY literals from this allowlist. These tokens are
    diagnostic request shapes, not evidence of actual ECU capabilities. */
 static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
@@ -332,6 +380,11 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
     id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
     p=m->Data+4;n=m->DataSize-4;
+    /* These source-labelled families are metadata only, never new CAN RX. */
+    {
+        const char *informer=p2_informer_probe_name(c,id,p,n);
+        if(informer)return informer;
+    }
     if(id==0x000FFFFEu && c->protocol==PROTO_CAN && cem_d2_probe_shape(p,n)){
         target=p[1]==0x40u?0u:1u;
         return d2_labels[target][p[2]==0xA3u?0u:1u];

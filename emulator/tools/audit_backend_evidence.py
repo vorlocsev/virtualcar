@@ -48,6 +48,24 @@ for _kind, _id, _bits in (("726", "0x726", "11bit"),
             "id_format": _bits, "target": None}
 
 
+# Published community Arduino/MCP2515 TX shapes, not OEM module responses.
+# Exact source: drpioneer/Volvo-P2-informer main@9cd3a6f603915e074ac28c73eccec6b7473e8297.
+# Labels are source-bound observations only; 2.5T observations cannot be
+# promoted into XC90 V8 MY2009 identity/response evidence.
+for _probe, _service in (
+    ("P2INF_LS_VIN_F190", "22F190"),
+    ("P2INF_LS_REM_A6", "A6"),
+    ("P2INF_LS_CCM_A6", "A6"),
+    ("P2INF_HS_ECM_A6", "A6"),
+    ("P2INF_HS_TCM_A5", "A5"),
+    ("P2INF_HS_DEM_A6", "A6"),
+):
+    PROBES[_probe] = {
+        "service": _service, "can_id": "0x000FFFFE",
+        "id_format": "29bit", "target": None,
+    }
+
+
 
 def _uint(value, maximum):
     return type(value) is int and 0 < value <= maximum
@@ -87,6 +105,12 @@ def _decode(line):
     if e["kind"] == "probe_classified":
         if type(e.get("probe")) is not str or e["probe"] not in PROBES:
             return None
+        if e["probe"].startswith("P2INF_"):
+            # Refuse wrong-protocol / wrong-bus provenance even if a
+            # locally supplied JSONL line spoofs an allowlisted token.
+            required_baud = 125000 if "_LS_" in e["probe"] else 500000
+            if e["protocol"] != 5 or e["baud"] != required_baud:
+                return None
     # Explicit allowlist. Unknown keys, including raw CAN or VIN, are discarded.
     out = {k: e[k] for k in ("session_id", "request_id", "kind", "route",
                               "reason", "outcome", "channel", "protocol",
