@@ -170,9 +170,16 @@ Source-order ограничен 20000 records; channel/PID и private bytes не
 PASS-filter и D8 periodic4000ms к прежнему rejected B9FB write: probe events9,
 rejected attempts2, setup filter1/periodic1, прежние backend requests13.
 
-Следующее измерение ограничивается несколькими завершёнными API-сеансами
-или таймаутом supervisor; direct loaded-module binding проверяется отдельно.
-Прежний многочасовой run не восстанавливает эти отсутствующие аргументы.
+В [ограниченном запуске setup](../docs/research/VDASH_CAN_PS_SETUP_RUNTIME_20261103.md)
+на source6153297 подтверждены3 PASS_FILTER: CAN_PS/DataSize4, flow отсутствует;
+два flags0 с redacted mask/11-bit pattern и один flags0x100 с zero mask/pattern.
+Все5 periodic registrations запросили **1000ms**, не4000ms из сравнительного
+VIDA примера. Получен прямой loaded-module path/hash binding, версия GUI85
+не менялась. Supervisor остановил worker по90s deadline, увидев2 Close;
+полный suffix содержит3 Open/3 Close. Warning наблюдался, ECU list до
+остановки не проверен. Прежние отказы/no-RX сохранились; API-outcome
+experiments остаются отдельным следующим этапом. Старые недостающие поля
+других запусков задним числом не восстанавливаются.
 
 ## Восемь групп проверки
 

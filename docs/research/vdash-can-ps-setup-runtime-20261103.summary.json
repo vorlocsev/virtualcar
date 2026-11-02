@@ -1,0 +1,272 @@
+{
+  "format": "vdash-can-ps-setup-runtime-summary-v1",
+  "date": "2026-11-03",
+  "synthetic_model_year": 2005,
+  "vmware_guest_tested": false,
+  "physical_j2534_tested": false,
+  "cem_identity_verified": false,
+  "normal_mode_predicate_verified": false,
+  "source": {
+    "pr": 42,
+    "head": "615329754f35cffed7142867e8ca91f96762b08b",
+    "ci_run": 41542194974,
+    "ci_merge_ref": "fbf3ec4296425ddec2cf6c7334ab1d1120183543",
+    "artifact_id": 13186614212,
+    "artifact_sha256": "3e534a2aed6f58815137ca103acacf3212962b751308ebd544e557cf904adf79",
+    "loaded_dll_sha256": "346df8f6b783a846e339c5b39b518ef3785297a8de2c956496a7c6a3808c3e94",
+    "profile_sha256": "cca3fc41ad09381a2c6239313466afb5c4b52b421e8015bacc276c839b2af860",
+    "gui_sha256": "eed3f62e84dbaf295f9225c8b82f043bd25d61fea74209e4b5c31c8a2d843ea8",
+    "worker_sha256": "b29b7f5e90645c9b04a12d12578a154b6ee7441c7aab1865a5e19d31277fe1aa",
+    "supervisor_sha256": "5fa798a85db353dfd03966f79ff84273e69b80c6e9199b4874452c3c2ff806e1",
+    "direct_module_binding_verified": true,
+    "text_auditor_commit": "c0f6484f62f0cc78afb8c8b804dffd78f1363dce",
+    "text_auditor_sha256": "e38170b56ec60467f5ff64bd89b4353a425f532a707d81bae010070466139233"
+  },
+  "runtime": {
+    "gui_file_version": "2.5.115.85",
+    "gui_invocations": 1,
+    "captured_native_process_count": 1,
+    "open_markers": 3,
+    "close_markers": 3,
+    "unfinished_api_sessions": 0,
+    "api_windows_lines": [
+      [
+        20,
+        143
+      ],
+      [
+        163,
+        249
+      ],
+      [
+        269,
+        354
+      ]
+    ],
+    "agent_refresh_cycles": 0,
+    "independent_vehicle_tests": false,
+    "termination_reason": "worker_runtime_deadline",
+    "requested_worker_deadline_seconds": 90,
+    "requested_close_limit": 3,
+    "close_markers_observed_by_supervisor": 2,
+    "cleanup_remaining": {
+      "monitor": 0,
+      "frontend": 0,
+      "worker": 0
+    },
+    "cleanup_included_wait_timeout": true
+  },
+  "capture": {
+    "text": {
+      "prefix_unchanged": true,
+      "suffix_bytes": 41728,
+      "suffix_lines": 354,
+      "suffix_sha256": "50a00b45ec65829660473ffdabdea33bd21dab40e5ac9f7af8bcba2382ed6e8e"
+    },
+    "backend": {
+      "prefix_unchanged": true,
+      "suffix_bytes": 11970,
+      "suffix_lines": 48,
+      "suffix_sha256": "24e9f9ebaaa28ad91297b9bdb71a6854fdabcc941b159dcbb8ad80275cbfb488"
+    }
+  },
+  "connect": {
+    "attempts": 23,
+    "invalid_events": 0,
+    "modes": [
+      {
+        "baud_bps": "500000",
+        "count": 1,
+        "flags": "other",
+        "protocol": "CAN",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "125000",
+        "count": 7,
+        "flags": "other",
+        "protocol": "CAN_PS",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "500000",
+        "count": 6,
+        "flags": "other",
+        "protocol": "ISO15765",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "other",
+        "count": 9,
+        "flags": "other",
+        "protocol": "other",
+        "status": "invalid_protocol"
+      }
+    ],
+    "statuses": {
+      "invalid_protocol": 9,
+      "ok": 14
+    }
+  },
+  "can_ps_config_probe": {
+    "events": 27,
+    "hardware_pins_verified": false,
+    "invalid_events": 0,
+    "mode": "configuration_only_no_transport",
+    "operations": [
+      {
+        "count": 7,
+        "operation": "channel_allocated",
+        "selection": "protocol_can_ps",
+        "status": "ok"
+      },
+      {
+        "count": 3,
+        "operation": "filter_rejected",
+        "selection": "none",
+        "status": "not_supported"
+      },
+      {
+        "count": 5,
+        "operation": "periodic_rejected",
+        "selection": "none",
+        "status": "not_supported"
+      },
+      {
+        "count": 7,
+        "operation": "set_pin_observation",
+        "selection": "pins_3_11",
+        "status": "ok"
+      },
+      {
+        "count": 5,
+        "operation": "write_rejected",
+        "selection": "none",
+        "status": "not_supported"
+      }
+    ],
+    "state_correlation_performed": false
+  },
+  "rejected_can_ps_attempts": {
+    "calls": 10,
+    "categories": [
+      {
+        "count": 5,
+        "inspection": "inspected_raw_classic_can",
+        "message_protocol": "CAN_PS",
+        "origin": "periodic_registration_call",
+        "pins": "pins_3_11",
+        "shape": "D2_D8_unverified_prefix"
+      },
+      {
+        "count": 5,
+        "inspection": "inspected_raw_classic_can",
+        "message_protocol": "CAN_PS",
+        "origin": "write_call",
+        "pins": "pins_3_11",
+        "shape": "D2_D8_unverified_prefix"
+      }
+    ],
+    "classification_scope": "lexical_request_shape_only",
+    "ecu_response_verified": false,
+    "hardware_pins_verified": false,
+    "invalid_events": 0,
+    "outcome": "rejected_not_transmitted",
+    "periodic_firing_observed": false,
+    "read_only_reference_approved": false,
+    "state_correlation_performed": false
+  },
+  "can_ps_rejected_setup": {
+    "classification_scope": "api_setup_argument_categories_only",
+    "filter_calls": 3,
+    "filters": [
+      {
+        "count": 1,
+        "flags": "both_extended",
+        "flow": "absent",
+        "mask": "zero",
+        "message_protocols": "both_CAN_PS",
+        "pattern": "zero",
+        "sizes": "both_id_only",
+        "type": "pass_filter"
+      },
+      {
+        "count": 2,
+        "flags": "both_zero",
+        "flow": "absent",
+        "mask": "other_redacted",
+        "message_protocols": "both_CAN_PS",
+        "pattern": "nonzero_11_bit_range",
+        "sizes": "both_id_only",
+        "type": "pass_filter"
+      }
+    ],
+    "hardware_pins_verified": false,
+    "invalid_filter_events": 0,
+    "invalid_periodic_events": 0,
+    "outcome": "rejected_not_registered",
+    "periodic": [
+      {
+        "count": 5,
+        "interval_check": "valid_catalog_interval",
+        "interval_ms": "1000",
+        "message_protocol": "CAN_PS"
+      }
+    ],
+    "periodic_firing_observed": false,
+    "periodic_registration_calls": 5,
+    "read_only_reference_approved": false,
+    "state_correlation_performed": false
+  },
+  "accepted_tx_scope": {
+    "calls": 9,
+    "each_7df_3e80_0902_func29_3e80": 3,
+    "obd": {
+      "scope": "0902_on_7df_7e0_and_exact_18db33f1_3e80_only",
+      "vin_requests": 3,
+      "vin_delivered": 3,
+      "tester_present_requests": 3,
+      "recognized_d2_p3_probes": 0,
+      "client_result": "client_result_unknown",
+      "vehicle_identity_verified": false,
+      "filter_effect": "not_observed"
+    },
+    "parse_errors": {},
+    "rx_start_records": 3,
+    "rx_data_records": 3,
+    "rx_metadata_checked": 6,
+    "missing_metadata": 0,
+    "invalid_metadata": 0,
+    "off_route_rx": 0,
+    "ignored_rx": 0
+  },
+  "backend": {
+    "requests": 9,
+    "sessions": 3,
+    "invalid_lines": 0,
+    "statuses": {
+      "delivered": 3,
+      "unsupported": 3,
+      "unverified": 3
+    },
+    "terminal_events": 9,
+    "queued": 6,
+    "dequeued": 6,
+    "drops": 0,
+    "filter_drops": 0,
+    "conflicts": 0
+  },
+  "ui": {
+    "communication_warning_observed": true,
+    "warning_acknowledged": true,
+    "reset_recommendation_executed": false,
+    "ecu_list": "not_observed_before_deadline",
+    "agent_invoked_start_clear_reset_security_programming": false
+  },
+  "restoration": {
+    "client_processes_closed": true,
+    "adapter_selection_restored": true,
+    "temporary_registration_removed": true,
+    "original_registration_unchanged": true
+  }
+}
