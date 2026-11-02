@@ -191,6 +191,36 @@ def _result_failure_branch(ops, offsets):
     return False
 
 
+def _shared_predicate_result_and_hardware(ops):
+    """Verify source neighborhoods for both callers of opaque 0x06001359.
+
+    Seeing the same MethodDef after different getters excludes a claim that
+    this method is *only* a dedicated CEM/DongleCommandResult validator.
+    Its actual semantics, argument types and return values remain unknown.
+    """
+    result_site = [
+        ("ldloc.1", None),
+        ("callvirt", "0x0600113E"),
+        ("ldc.i4", None), ("br.s", "0"),
+        ("call", "0x2B000002"), ("call", "0x06001359"),
+        ("brfalse", None),
+    ]
+    hardware_site = [
+        ("ldloc.s", "6"),
+        ("callvirt", "0x06001F95"),
+        ("ldc.i4", None), ("br.s", "0"),
+        ("call", "0x2B000002"), ("call", "0x06001359"),
+        ("brtrue.s", None),
+    ]
+    return {
+        "detect_shared_predicate_for_result_and_hardware_number":
+            _has_motif(ops, result_site) and _has_motif(ops, hardware_site),
+        "detect_shared_predicate_call_count":
+            sum(op == "call" and arg.startswith("0x06001359")
+                for op, arg in ops),
+    }
+
+
 def _status_values(ops):
     values = set()
     for a, b in zip(ops, ops[1:]):
@@ -255,7 +285,7 @@ def audit(inventory, excerpts):
     detect_block = blocks.get(KNOWN["detect"], {})
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v3",
+        "format": "recovered-il-evidence-audit-v4",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -280,6 +310,7 @@ def audit(inventory, excerpts):
             "detect_fires_done": _has_call(detect, "0x06001343"),
             "detect_result_predicate_direct_false_return":
                 _result_failure_branch(detect, detect_block.get("offsets", [])),
+            **_shared_predicate_result_and_hardware(detect),
             "execute_calls_parse_data": _has_call(execute, "0x06001160"),
             "execute_observed_status_numeric_comparisons": _status_values(execute),
             "execute_one_second_timer_shape": _one_shot_timer_shape(execute),
@@ -291,6 +322,7 @@ def audit(inventory, excerpts):
             "No J2534 request/ECU acceptance claim from recovered IL alone",
             "Constructor/data-flow motifs do not establish runtime reachability",
             "Direct branch targets do not prove that source blocks are reachable",
+            "Shared opaque predicate usage does not reveal equality or acceptance semantics",
         ],
     }
 
