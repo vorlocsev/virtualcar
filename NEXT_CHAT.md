@@ -4,9 +4,12 @@
 
 ## Текущий этап: CAN_PS configuration-only probe (02.11.2026)
 
+- Actual Windows run PR #42 HEAD `8247a594`, отчёт `docs/research/VDASH_CAN_PS_PROBE_RUNTIME_20261102.md` + metadata summary: GUI 2.5.115.84, synthetic MY2005, один invocation/worker, все 13 Open/13 Close, direct module hash. **27 PS Connect OK и 27 J1962_PINS=0x030B SET OK**; далее 3 filter, 25 write, 25 periodic регистрации ERR_NOT_SUPPORTED по дизайну probe. 13 VIN deliveries/26 metadata OK, warning/ECU list empty unchanged. App/monitor закрыты, selection восстановлен, temporary registration удалена.
+- Следующий gap: **payload/CAN ID 25 rejected PS WriteMsgs не логировались**; 39 ordinary TX не охватывают эти попытки. Нельзя объявлять отсутствие CEM attempts. Нужна отдельная безопасная классификация rejected/not-transmitted PS write attempts либо документированная модель полного virtual transport с pin binding. Не добавлять фиктивные CEM ответы. VMware guest/physical run с probe не выполнялся.
+
 - Development live base `ac1f523a319a0d29e61d7e5ac07307446925cf16` (PR #40 merged). PR #39 remains draft at `6f16bc34`; PR #41 open at `c0f6484`, CI [x86/native-routes #41449592025](https://github.com/vorlocsev/virtualcar/actions/runs/41449592025) и [VMware LAB #41449590010](https://github.com/vorlocsev/virtualcar/actions/runs/41449590010) success. Отчёт настоящего Windows GUI run MY2005 находится в #41: 68 CAN_PS/125k rejects, causal link с warning не доказана. Новая ветка `feature/can-ps-config-probe` создана от development, не включает код draft #39 и #41.
 - Проверены primary vendor docs. J1962_PINS ID **0x8001**, прежнее **779** было pin value, а не ID. Реализуется default-off `[Diagnostics] EnableCanPsConfigProbe=1`: отдельный ProtocolID 0x8004, observation GET/SET pins, без транспорта, RX, filters/periodic или передачи ECU. Не alias CAN. Подробности/источники: `emulator/README_CAN_PS_CONFIG_PROBE_RU.md`.
-- Следующий gate #37/#4: один version/hash-bound запуск клиента с этим opt-in для регистрации следующего API шага и реального J1962 value. Текущий этап проверяется offline/CI; новый VDASH, VMware guest и physical run не заявлять. Не добавлять положительные CEM ответы; main/Dvinholm/prerelease не менять.
+- Gate version/hash-bound Windows run выполнен, J1962 value и следующие API шаги подтверждены выше. Для новых функций нужны отдельные проверки: текущий probe не является CAN_PS transport. VMware guest и physical run не заявлять. Не добавлять положительные CEM ответы; main/Dvinholm/prerelease не менять.
 
 ## Предыдущий этап: VDASH offline evidence (02.11.2026)
 

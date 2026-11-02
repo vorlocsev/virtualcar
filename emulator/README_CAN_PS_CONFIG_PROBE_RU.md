@@ -101,7 +101,8 @@ Connect OK означает лишь выделение probe-канала. Hard
 7. Строгие metadata records, минимизация данных и CLI no-overwrite.
 8. Стандартные CAN/ISO и B9FB/READ128 остаются под прежними regression checks.
 
-Новый VDASH/VMware/physical run с этим probe-режимом пока не выполнен. Следующий
-результат — конкретный порядок вызовов и pin value после opt-in Connect той же
-версии клиента. Только затем проектировать полноценный виртуальный transport
-с явным pin binding и отдельной проверкой совместимости.
+В [фактическом Windows-запуске MY2005](../docs/research/VDASH_CAN_PS_PROBE_RUNTIME_20261102.md)
+клиент 27 раз задал J1962_PINS=0x030B, затем получал предусмотренные отказы
+filter/write/periodic. Полный CAN_PS transport, VMware guest и physical J2534
+не проверены. Payload/адреса 25 rejected writes не сохранены; это следующий
+пробел наблюдения, а не доказательство отсутствия CEM-проб.
