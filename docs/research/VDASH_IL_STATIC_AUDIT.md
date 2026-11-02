@@ -217,6 +217,25 @@ The **static analysis tool** now emits only two allowlisted evidence fields: `de
 
 **Next missing evidence:** to discover what `0x06001359` actually does, obtain the matching original recovered assembly (with authorized user access) and inspect MethodDef body, method signature and `0x2B000002` MethodSpec/type instantiation together. Neither original recovered DLL nor full method body is in the currently accessible saved extracts. Do not guess an ECU acceptance rule, hash validation, or server error from these callsites. The current PR does not modify the emulator's J2534 response behavior, main branch or releases.
 
+## MethodSpec metadata cross-check: one System.String generic argument (2026-11-02)
+
+A new, externally verified fact is available **without** possession of the original recovered assembly. At both previously documented `VddModel.Detect` sites (IL_0124 and IL_0423), the saved IL excerpt prints the **same** MethodSpec operand **`0x2B000002`** with a blob that decodes to the three bytes **`0A 01 0E`**. Both are adjacent to calls to the same opaque MethodDef `0x06001359` (at IL_0129 and IL_0428 respectively).
+
+Per **ECMA-335, sixth edition (June 2012), Partition II §§23.1.16 and 23.2.15**, a *MethodSpec* signature begins with `GENERICINST = 0x0A`, followed by a compressed generic-argument count, followed by those type signatures. The one-byte `0x01` count is exactly one; the one-byte `ELEMENT_TYPE_STRING = 0x0E` represents `System.String`. Therefore, **the printed MethodSpec is a generic-method instantiation using one System.String type argument**. Authoritative standard: https://www.ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf (see II.23.2.15 and the ELEMENT_TYPE table).
+
+This is **not** proof that the instantiated method returns `string`, decodes a constant, compares strings, validates ECUs, interprets the diagnostic status, or performs a server authorization. A generic type argument is type metadata, not a string value. The MethodSpec row's referenced base method and the bodies/signatures of `0x06001359` and the instantiated generic method remain unavailable in the 11 saved IL method bodies.
+
+Two localized, independent observations remain:
+
+1. `get_Result → constant → MethodSpec<string> → 0x06001359 → brfalse` leads to a direct `Detect = false` target if that source block is executed and the predicate is false.
+2. `get_HardwareNumber → different constant → MethodSpec<string> → 0x06001359 → brtrue` reuses the **same MethodSpec<string> and predicate**, but the flattened CFG prevents us from naming that predicate.
+
+### Safe automated check
+
+The non-executing audit script now reports only the **number of adjacent MethodSpec<string> / predicate pairs** and a boolean indicating whether both expected callsites match, under fixed schema `recovered-il-evidence-audit-v5`. It uses Python's bounded `ast.literal_eval` on *bytes literals*, not `eval`, and accepts only an exact `0A 01 0E` signature. Eight **synthetic** regression checks cover alternate bytes escaping, generic arity/type/prefix mutations, missing one MethodSpec call, malformed/oversize literals, and privacy of the allowlisted output. These checks do not require or embed proprietary binary or IL snippets.
+
+**Unblocked source requirement for stronger conclusions:** the matching recovered DLL/metadata (authorized local inspection only) must expose the MethodSpec table's underlying method token, signature, and corresponding `0x06001359` body. Only then can the expression be interpreted. Separately, body of `VddCommand.ParseData` and the `DetectResult/Ecus` constructors are needed to determine how a successful read-only command becomes a visible ECU. Do not fabricate CEM response blocks or borrow a donor's B9FB identity for an XC90 V8 MY2009.
+
 ## Handoff
 
 Linked to issues #37 and #4 and PR #39. Only the read-only analysis script, synthetic tests and research documentation were added in this follow-up; no ECU behavior, fixtures or emulator responses changed. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
