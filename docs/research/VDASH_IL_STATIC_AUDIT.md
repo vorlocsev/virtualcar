@@ -202,6 +202,21 @@ The non-executing, allowlist-only `emulator/tools/audit_recovered_il.py` was upd
 
 **Practical diagnostic implication:** For a future single, authorized VDASH 2.5.115.79 run, distinguish `PreDetectResult` cache/suggestion, the boolean return from `Detect` when observable through UI/logs, receipt and acceptance of `VddCommand.ResultData`, then construction and visibility of the `Ecus` model. This does *not* license fabricating CEM A6/B9FB replies, bypassing status checks, network interception or ECU programming. Full bodies for `0x06001359`, `CreateCommand`, `Enqueue`, `ParseData` and the `DetectResult/Ecus` constructors are still absent from selected artifacts.
 
+## Corrected hypothesis: opaque predicate 0x06001359 is reused (2026-11-02)
+
+**New source-grounded observation.** In the recovered IL excerpt for `Frontend.Client.Core.dll` / `VddModel.Detect` (MethodDef `0x0600132B`), `0x06001359` is called **twice**, not once, and both sites invoke the same intermediate generic MethodSpec `0x2B000002` (as printed by the extractor):
+
+| Site | Seven-opcode input neighborhood | Subsequent branch |
+|---|---|---|
+| `IL_0129 call 0x06001359` | `ldloc.1; get_Result (0x0600113E); ldc.i4 2109910401; br.s 0; call 0x2B000002; call 0x06001359` | `IL_012E brfalse +1437`, direct target `IL_06D0 ldc.i4.0; ret` |
+| `IL_0428 call 0x06001359` | `ldloc.s 6; get_HardwareNumber (0x06001F95); ldc.i4 1096372403; br.s 0; call 0x2B000002; call 0x06001359` | `IL_042D brtrue.s +8`, an ordinary flattened-CFG dispatch branch |
+
+**Correction:** `0x06001359` cannot responsibly be described as a **dedicated CEM-result validator**. It is reused with at least two different sources of data: a `VddCommand.Result` value and a `Unit.HardwareNumber` value. This is consistent with an equality/comparison or another reusable predicate, but **does not establish** its signature, return semantics, decoded constants, or enum meanings. The printed constant operands are not interpreted as plaintext. The `Detect = false` edge remains genuine, yet its meaning is unknown and the runtime reachability of this branch is not established.
+
+The **static analysis tool** now emits only two allowlisted evidence fields: `detect_shared_predicate_for_result_and_hardware_number` (true only when both exact seven-opcode local shapes are present) and `detect_shared_predicate_call_count` (an integer count, expected 2 in this excerpt). These are **method-body observations, not dynamic instrumentation**. Eight synthetic tests (#25–32) cover matching both sources, broken result/hardware getters, wrong helper/predicate, altered branch or local, plus the explicit uncertainty about semantic meaning. The normalized report format is `recovered-il-evidence-audit-v4`. Source artifacts remain private; no proprietary IL excerpt is checked into Git.
+
+**Next missing evidence:** to discover what `0x06001359` actually does, obtain the matching original recovered assembly (with authorized user access) and inspect MethodDef body, method signature and `0x2B000002` MethodSpec/type instantiation together. Neither original recovered DLL nor full method body is in the currently accessible saved extracts. Do not guess an ECU acceptance rule, hash validation, or server error from these callsites. The current PR does not modify the emulator's J2534 response behavior, main branch or releases.
+
 ## Handoff
 
 Linked to issues #37 and #4 and PR #39. Only the read-only analysis script, synthetic tests and research documentation were added in this follow-up; no ECU behavior, fixtures or emulator responses changed. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
