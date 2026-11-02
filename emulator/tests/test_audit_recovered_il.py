@@ -177,7 +177,113 @@ IL_0000 ret
         report = tool.audit(inventory_for_detect_shape(source), source)
         self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v2")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v3")
+
+
+    @staticmethod
+    def _get_vin_fixture():
+        return """Frontend.Client.Core.dll: MethodDef 0x0600133A VddModel.GetVin; 7 decoded opcodes
+IL_0000 ldarg.0
+IL_0001 call 0x060012F2 get_PreDetectResult
+IL_0006 brfalse.s 108
+IL_0008 ldc.i4.0
+IL_0009 ret
+IL_0074 ldarg.0
+IL_0075 call 0x060012E2 get_Volvo
+"""
+
+    @staticmethod
+    def _get_config_fixture():
+        return """Frontend.Client.Core.dll: MethodDef 0x06001339 VddModel.GetConfig; 9 decoded opcodes
+IL_0000 ldarg.0
+IL_0001 call 0x060012E8 get_DetectResult
+IL_0006 dup
+IL_0007 brtrue.s 3
+IL_0009 pop
+IL_000A ldnull
+IL_000B ret
+IL_000C callvirt 0x06001B7E get_Config
+IL_0011 ret
+"""
+
+    @staticmethod
+    def _get_result_gate_fixture():
+        return """Frontend.Client.Core.dll: MethodDef 0x0600132B VddModel.Detect; 11 decoded opcodes
+IL_0000 ldloc.1
+IL_0001 callvirt 0x0600113E get_Result
+IL_0006 ldc.i4 123
+IL_000B br.s 0
+IL_000D call 0x2B000002 opaque_generic
+IL_0012 call 0x06001359 opaque_predicate
+IL_0017 brfalse 3
+IL_001C ldc.i4.1
+IL_001D ret
+IL_001F ldc.i4.0
+IL_0020 ret
+"""
+
+    def test_17_get_vin_missing_predetect_falls_back_to_volvo(self):
+        src = self._get_vin_fixture()
+        out = tool.audit(inventory_for_single(src, "0x0600133A", 7), src)
+        self.assertTrue(out["evidence"][
+            "get_vin_missing_predetect_direct_volvo_fallback"])
+
+    def test_18_get_vin_wrong_relative_target_not_accepted(self):
+        src = self._get_vin_fixture().replace("brfalse.s 108", "brfalse.s 107")
+        out = tool.audit(inventory_for_single(src, "0x0600133A", 7), src)
+        self.assertFalse(out["evidence"][
+            "get_vin_missing_predetect_direct_volvo_fallback"])
+
+    def test_19_get_config_guard_targets_accessor(self):
+        src = self._get_config_fixture()
+        out = tool.audit(inventory_for_single(src, "0x06001339", 9), src)
+        self.assertTrue(out["evidence"][
+            "get_config_null_guard_direct_get_config"])
+
+    def test_20_get_config_bad_null_arm_rejected(self):
+        src = self._get_config_fixture().replace("IL_000A ldnull", "IL_000A ldc.i4.0")
+        out = tool.audit(inventory_for_single(src, "0x06001339", 9), src)
+        self.assertFalse(out["evidence"][
+            "get_config_null_guard_direct_get_config"])
+
+    def test_21_detect_result_predicate_false_return(self):
+        src = self._get_result_gate_fixture()
+        out = tool.audit(inventory_for_single(src, "0x0600132B", 11), src)
+        self.assertTrue(out["evidence"][
+            "detect_result_predicate_direct_false_return"])
+
+    def test_22_detect_result_wrong_target_rejected(self):
+        src = self._get_result_gate_fixture().replace("brfalse 3", "brfalse 4")
+        out = tool.audit(inventory_for_single(src, "0x0600132B", 11), src)
+        self.assertFalse(out["evidence"][
+            "detect_result_predicate_direct_false_return"])
+
+    def test_23_duplicate_il_offset_rejected(self):
+        src = D.replace("IL_0005 call", "IL_0000 call")
+        with self.assertRaisesRegex(ValueError, "nonmonotonic_il_offsets"):
+            tool.audit(inventory("0x0600132B"), src)
+
+    def test_24_branch_source_without_valid_edge_not_overinterpreted(self):
+        src = self._get_result_gate_fixture().replace("IL_0017 brfalse", "IL_0017 brtrue")
+        out = tool.audit(inventory_for_single(src, "0x0600132B", 11), src)
+        self.assertFalse(out["evidence"][
+            "detect_result_predicate_direct_false_return"])
+        self.assertIn(
+            "Direct branch targets do not prove that source blocks are reachable",
+            out["limitations"])
+
+
+
+
+def inventory_for_single(source, token, count):
+    # All fixtures are explicitly synthetic and isolated from real IL text.
+    return {"selected_methods": [{
+        "module": "Frontend.Client.Core.dll",
+        "method_token": token,
+        "decoded_instructions": count,
+    }]}
+
+
 
 
 def inventory_for_detect_shape(source):
