@@ -250,6 +250,28 @@ static void test_vmware_route_evidence(U32 dev){
   trial.Data[11]=0;trial.Data[3]=0xF0;
   REQUIRE(backend_probe_name(channel(hs),&trial)==0);
  }
+ /* Observe exact OBD VIN 09 02 *TX shape* without emitting a VIN or
+    modifying the frozen VMware-route capture above. No proof of UI uptake. */
+ {
+  const U8 uds_vin[2]={0x09,0x02};
+  const U8 can_vin[8]={0x02,0x09,0x02,0,0,0,0,0};
+  PASSTHRU_MSG request=frame(PROTO_ISO15765,0x7DFu,uds_vin,2);
+  const char *probe=backend_probe_name(channel(iso),&request);
+  REQUIRE(probe&&strcmp(probe,"OBD_FUNC_VIN_0902")==0);
+  REQUIRE(backend_probe_name(channel(ls),&request)==0);
+  request.Data[5]=0x03;
+  REQUIRE(backend_probe_name(channel(iso),&request)==0);
+  request=frame(PROTO_CAN,0x7DFu,can_vin,8);
+  probe=backend_probe_name(channel(hs),&request);
+  REQUIRE(probe&&strcmp(probe,"OBD_FUNC_VIN_0902")==0);
+  REQUIRE(backend_probe_name(channel(ls),&request)==0);
+  request.Data[11]=1;
+  REQUIRE(backend_probe_name(channel(hs),&request)==0);
+  request.Data[11]=0;request.Data[3]=0x7Eu;
+  REQUIRE(backend_probe_name(channel(hs),&request)==0);
+  request.Data[3]=0xDFu;request.Data[5]=0x0Au;
+  REQUIRE(backend_probe_name(channel(hs),&request)==0);
+ }
  /* Verify periodic firings without altering the frozen eight-group route
     fixture above. ReadMsgs causes the tick, not registration itself. */
  {
