@@ -2,7 +2,13 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
-## Текущая рабочая ветка: VDASH offline evidence (02.11.2026)
+## Текущий checkpoint: PR #40 merged (02.11.2026)
+
+- По явному запросу пользователя PR #40 объединён в development: `ac1f523a319a0d29e61d7e5ac07307446925cf16`. [Emulator / native-routes #41439236805](https://github.com/vorlocsev/virtualcar/actions/runs/41439236805) и [cross-build #41439236895](https://github.com/vorlocsev/virtualcar/actions/runs/41439236895) success именно для этого SHA. PR development → main не объединялся.
+- Продолжение Issue #4: найдены локальные Frontend / Vdash.Frontend **2.5.115.84**, тогда как handoff описывает **2.5.115.79**. Размеры, FileVersion и SHA-256 семи выбранных файлов внесены в `docs/research/VDASH_PROTOCOL_EVIDENCE.md`; binaries и личные пути в git не добавлены. Это проверка метаданных, не IL analysis и не подтверждение издателя.
+- Следующий результат: version-bound actual-client read-only trace с UI outcome либо проверенный parser predicate. Исходный IL report и связанный runtime capture в ограниченном поиске не найдены. Токены другой версии не переносить; CEM ответы не выдумывать. VDASH/VMware/physical run на этом этапе не выполнен.
+
+## Предыдущий этап: VDASH offline evidence (02.11.2026)
 
 - По присланному пользователем `docs/research/VDASH_RESEARCH_HANDOFF.md` подготовлен отдельный этап `feature/vdash-offline-evidence` от development **`ee9e2cd66d2da9ea2087605f6ea06fc4ecd2ca83`**. PR/HEAD/CI сверять live; VDASH handoff требует оставить PR для review без автоматического merge. Main/Dvinholm/опубликованный prerelease не менять.
 - PR #38 research уже merged: `ee9e2cd`; [Emulator #41393643625](https://github.com/vorlocsev/virtualcar/actions/runs/41393643625) и [cross-build #41393643578](https://github.com/vorlocsev/virtualcar/actions/runs/41393643578) success. Его docs-only source HEAD не запускал CI по path filters.
