@@ -182,6 +182,26 @@ These predicates **do not reconstruct control-flow flattening, decrypt strings, 
 
 **End-to-end blocker remains:** full method bodies for `CreateCommand` (`0x06001329`), `Enqueue` (`0x0600132C`), `ParseData` (`0x06001160`), `OnCheckResult` (`0x0600115F`) and the `0x060011BB/0x0600126D` constructors, plus the `Model_DetectDone` predicate. Until they are available, claiming a specific ECU-discovery acceptance rule would be conjecture.
 
+## Three exact direct-CIL branch edges: new negative-detect gate (2026-11-02)
+
+The saved recovered IL listing for **portable VDASH 2.5.115.79** was independently checked with actual byte offsets (module `Frontend.Client.Core.dll`). The three edges below are **source-level conditional branches**, not an entire reconstructed flattened CFG.
+
+| Method | Branch and computed target | Target operations | Bounded conclusion |
+|---|---|---|---|
+| `VddModel.GetVin`, MethodDef `0x0600133A` (47 opcodes) | `IL_0006 brfalse.s +108`; next IL_0008 + 108 = **IL_0074** | `ldarg.0; get_Volvo` | If the immediately preceding `get_PreDetectResult` null-check is false, execution enters the Volvo fallback. It does not imply a new J2534 read. |
+| `VddModel.GetConfig`, MethodDef `0x06001339` (9 opcodes) | `IL_0007 brtrue.s +3`; next IL_0009 + 3 = **IL_000C** | `get_Config; ret`; fall-through `pop; ldnull; ret` | The method returns `DetectResult.Config` if the DetectResult exists; otherwise returns null. No PassThru operation occurs in the nine-instruction body. |
+| `VddModel.Detect`, MethodDef `0x0600132B` (511 opcodes) | `IL_012E brfalse +1437`; next IL_0133 + 1437 = **IL_06D0** | `ldc.i4.0; ret` | **If a particular command-result-dependent predicate evaluates false, Detect directly returns false**, without following the rest of that path. |
+
+The predicate producing the third condition is visible immediately before the branch: `ldloc.1` → `get_Result (0x0600113E)` → obfuscated generic call `0x2B000002` → obfuscated function `0x06001359` → `brfalse`. **The semantic meaning of `get_Result` codes and function `0x06001359` remains unknown**. In particular, this does *not* prove the predicate represents timeout, invalid DataHash, an absent CEM, denial by a remote server, or any other specific error.
+
+We did not treat the existence of a false-return edge as proof that a particular runtime session took it; control-flow flattening still prevents complete reachability/probability analysis. The real body has another direct unconditional `br` from IL_0612 to the same `return false` target, whose preceding flattening dispatch has not been reconstructed. Do not conclude "false means missing ECU" from these edges.
+
+### Regression evidence and method identity
+
+The non-executing, allowlist-only `emulator/tools/audit_recovered_il.py` was updated to parse and check **monotonically increasing IL offsets**, then resolve only three recognized relative branch edges to existing instruction addresses. It retains (assembly, MethodDef token) identity and avoids exporting raw IL, strings, VINs or private logs. It now reports fixed-schema `recovered-il-evidence-audit-v3`. Eight **additional synthetic tests** (#17–24) include correct edges, off-by-one targets, malformed offsets, altered null arm, wrong opcode and the explicit inability to infer runtime reachability. They are synthetic checks only, and the original VDASH binary was neither run nor committed.
+
+**Practical diagnostic implication:** For a future single, authorized VDASH 2.5.115.79 run, distinguish `PreDetectResult` cache/suggestion, the boolean return from `Detect` when observable through UI/logs, receipt and acceptance of `VddCommand.ResultData`, then construction and visibility of the `Ecus` model. This does *not* license fabricating CEM A6/B9FB replies, bypassing status checks, network interception or ECU programming. Full bodies for `0x06001359`, `CreateCommand`, `Enqueue`, `ParseData` and the `DetectResult/Ecus` constructors are still absent from selected artifacts.
+
 ## Handoff
 
 Linked to issues #37 and #4 and PR #39. Only the read-only analysis script, synthetic tests and research documentation were added in this follow-up; no ECU behavior, fixtures or emulator responses changed. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
