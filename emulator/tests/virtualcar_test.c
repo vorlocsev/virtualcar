@@ -6,6 +6,8 @@
 #include <string.h>
 static U32 tick=0;static I64 qpc_offset_us=0;
 static char backend_lines[800000];static U32 backend_len=0;
+static int capture_connect_log=0;
+static char connect_log_lines[32000];static U32 connect_log_len=0;
 static U32 event_count_since(const char *start,const char *pattern){
  U32 count=0;const char *p=start;
  while((p=strstr(p,pattern))!=0){++count;p+=strlen(pattern);}
@@ -89,14 +91,22 @@ U32 GetEnvironmentVariableA(const char *name,char*out,U32 n){
 int CreateDirectoryA(const char *p,PTR sec){(void)p;(void)sec;return 1;}
 HANDLE CreateFileA(const char *p,U32 a,U32 sh,PTR sec,U32 creation,U32 flags,HANDLE template){
  (void)a;(void)sh;(void)sec;(void)creation;(void)flags;(void)template;
- return strstr(p,"dev47-backend.jsonl")?(HANDLE)1:INVALID_HANDLE;
+ if(strstr(p,"dev47-backend.jsonl"))return (HANDLE)1;
+ if(capture_connect_log && strstr(p,"SectorVVirtualCar.log"))return (HANDLE)2;
+ return INVALID_HANDLE;
 }
 U32 SetFilePointer(HANDLE file,U32 low,PTR high,U32 method){(void)file;(void)low;(void)high;(void)method;return 0;}
 int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){
  (void)o;
- if(f!=(HANDLE)1 || n+backend_len>=sizeof(backend_lines))return 0;
- memcpy(backend_lines+backend_len,b,n);backend_len+=n;
- backend_lines[backend_len]=0;
+ if(f==(HANDLE)2){
+  if(n+connect_log_len>=sizeof(connect_log_lines))return 0;
+  memcpy(connect_log_lines+connect_log_len,b,n);connect_log_len+=n;
+  connect_log_lines[connect_log_len]=0;
+ }else if(f==(HANDLE)1){
+  if(n+backend_len>=sizeof(backend_lines))return 0;
+  memcpy(backend_lines+backend_len,b,n);backend_len+=n;
+  backend_lines[backend_len]=0;
+ }else return 0;
  if(w)*w=n;
  return 1;
 }
@@ -322,6 +332,86 @@ static void test_p2_informer_observer(U32 dev){
  REQUIRE(PassThruDisconnect(ls)==ERR_OK);
 }
 
+
+/* Eight read-only J2534 compatibility/preflight groups derived from the
+   uploaded P3Tool IL report. These are API checks, not P2 ECU evidence. */
+static void test_p3tool_j2534_preflight(U32 dev){
+ U32 hs=0,raw=0,ls=0,lsraw=0,failed=0xC0DEFACEu,batt=0;
+ PASSTHRU_MSG rx;U32 n;
+ SCONFIG option;SCONFIG_LIST values={1,&option};
+ const char *before;
+ capture_connect_log=1;connect_log_len=0;connect_log_lines[0]=0;
+ /* 1: standard HS ISO15765 and CAN connect; metadata includes exact results. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&hs)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&raw)==ERR_OK);
+ REQUIRE(hs && raw && hs!=raw);
+ REQUIRE(strstr(connect_log_lines,"J2534 Connect result protocol/flags/baud/status (BE) 00 00 00 06 00 00 00 00 00 07 A1 20 00 00 00 00")!=NULL);
+ REQUIRE(strstr(connect_log_lines,"J2534 Connect result protocol/flags/baud/status (BE) 00 00 00 05 00 00 00 00 00 07 A1 20 00 00 00 00")!=NULL);
+ /* 2: 125k ISO15765 with observed VOLVO_CH2 flag and raw CAN remain
+    independent channels; flags are recorded, not translated into a bus. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0x20000000u,125000,&ls)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,125000,&lsraw)==ERR_OK);
+ REQUIRE(ls!=lsraw && lsraw!=raw && lsraw!=hs && channel(ls)->flags==0x20000000u);
+ REQUIRE(channel(ls)->baud==125000 && channel(hs)->baud==500000);
+ REQUIRE(strstr(connect_log_lines,"00 00 00 06 20 00 00 00 00 01 E8 48 00 00 00 00")!=NULL);
+ /* 3: 0x8004 and 0x8005 are vendor-specific, not automatic aliases. */
+ before=connect_log_lines+connect_log_len;
+ REQUIRE(PassThruConnect(dev,0x8004u,0,125000,&failed)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(PassThruConnect(dev,0x8005u,0,125000,&failed)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(failed==0xC0DEFACEu);
+ REQUIRE(strstr(before,"00 00 80 04 00 00 00 00 00 01 E8 48 00 00 00 03")!=NULL);
+ REQUIRE(strstr(before,"00 00 80 05 00 00 00 00 00 01 E8 48 00 00 00 03")!=NULL);
+ /* 4: 0x10000001 is not rebranded as raw CAN even with published flags. */
+ before=connect_log_lines+connect_log_len;
+ REQUIRE(PassThruConnect(dev,0x10000001u,0x600u,500000,&failed)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(PassThruConnect(dev,0x10000001u,0x20000600u,125000,&failed)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(strstr(before,"10 00 00 01 00 00 06 00 00 07 A1 20 00 00 00 03")!=NULL);
+ REQUIRE(strstr(before,"10 00 00 01 20 00 06 00 00 01 E8 48 00 00 00 03")!=NULL);
+ /* 5: NULL out pointer and invalid device explicitly report failure.
+    Neither error changes valid channel IDs or writes caller output. */
+ before=connect_log_lines+connect_log_len;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,0)==ERR_NULL_PARAMETER);
+ REQUIRE(PassThruConnect(dev+999u,PROTO_CAN,0,500000,&failed)==ERR_INVALID_DEVICE_ID);
+ REQUIRE(failed==0xC0DEFACEu);
+ REQUIRE(strstr(before,"00 00 00 05 00 00 00 00 00 07 A1 20 00 00 00 04")!=NULL);
+ REQUIRE(strstr(before,"00 00 00 05 00 00 00 00 00 07 A1 20 00 00 00 1A")!=NULL);
+ /* 6: SET_CONFIG 1 changes the selected channel baud only; other known
+    parameters are accepted by legacy API but are not implemented. */
+ before=connect_log_lines+connect_log_len;
+ option.Parameter=1u;option.Value=125000u;
+ REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&values,0)==ERR_OK);
+ REQUIRE(channel(hs)->baud==125000u && channel(raw)->baud==500000u);
+ REQUIRE(strstr(before,"J2534 SET_CONFIG channel/parameter/value/applied (BE)")!=NULL);
+ REQUIRE(strstr(before,"00 00 00 01 00 01 E8 48 00 00 00 01")!=NULL);
+ option.Value=0;REQUIRE(PassThruIoctl(hs,IO_GET_CONFIG,&values,0)==ERR_OK);
+ REQUIRE(option.Value==125000u);
+ /* 7: explicitly show no-op config for P3Tool's sample point, pins,
+    loopback, BS and STmin. Unknown parameter values are redacted. */
+ {
+  static const U32 settings[]={3u,23u,30u,31u,779u,0xAA55AA55u};
+  U32 i;
+  for(i=0;i<sizeof(settings)/sizeof(settings[0]);i++){
+   option.Parameter=settings[i];option.Value=(i==5)?0xDEADBEEFu:((i==4)?0x030Bu:(i==1?80u:0u));
+   before=connect_log_lines+connect_log_len;
+   REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&values,0)==ERR_OK);
+   REQUIRE(strstr(before,"J2534 SET_CONFIG channel/parameter/value/applied (BE)")!=NULL);
+   REQUIRE(strstr(before,"00 00 00 00")!=NULL);
+  }
+  REQUIRE(strstr(connect_log_lines,"DE AD BE EF")==NULL);
+  REQUIRE(strstr(connect_log_lines,"AA 55 AA 55")==NULL);
+ }
+ /* 8: no telemetry side effects on battery, RX or other channels. */
+ REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK && batt==12500);
+ n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
+ n=1;REQUIRE(PassThruReadMsgs(raw,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
+ REQUIRE(PassThruDisconnect(lsraw)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ls)==ERR_OK);
+ REQUIRE(PassThruDisconnect(raw)==ERR_OK);
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ REQUIRE(strstr(connect_log_lines,"YV1CZ0002A0000001")==NULL);
+ capture_connect_log=0;
+}
+
 static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
@@ -331,6 +421,7 @@ int main(){
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
+ test_p3tool_j2534_preflight(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);

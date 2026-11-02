@@ -262,6 +262,29 @@ static void logline(const char *message,const U8 *data,U32 len) {
     SetFilePointer(f,0,0,2);WriteFile(f,line,p,&written,0);CloseHandle(f);
 }
 
+/* P3Tool IL evidence: expose Connect's actual outcome even when no channel
+   exists. These four big-endian integers are API metadata, NOT CAN payloads;
+   changing this log must never change the return code or open a new protocol. */
+static U32 connect_result(U32 protocol,U32 flags,U32 baud,U32 status){
+    U8 meta[16];
+    u32_be(meta,protocol);u32_be(meta+4,flags);
+    u32_be(meta+8,baud);u32_be(meta+12,status);
+    logline("J2534 Connect result protocol/flags/baud/status (BE)",meta,16);
+    return error(status);
+}
+/* J2534 config reports distinguish implemented baud setting from accepted
+   no-op options. Unknown parameter IDs and values are deliberately redacted. */
+static void log_set_config(U32 channel_id,U32 parameter,U32 value){
+    U8 meta[16];U32 known=0;
+    if(parameter==1u || parameter==3u || parameter==23u ||
+       parameter==30u || parameter==31u || parameter==779u)known=1;
+    u32_be(meta,channel_id);
+    u32_be(meta+4,known?parameter:0u);
+    u32_be(meta+8,known?value:0u);
+    u32_be(meta+12,parameter==1u?1u:0u);
+    logline("J2534 SET_CONFIG channel/parameter/value/applied (BE)",meta,16);
+}
+
 /* dev49: optional, metadata-only backend events for the single Virtual Car UI.
    Only fixed literals are permitted for kind/route/reason/outcome. No CAN
    payload, VIN, ECU identifiers or profile paths are written to this stream.
@@ -1277,11 +1300,15 @@ EXPORT U32 WINCALL PassThruClose(U32 device) {
     logline("PassThruClose",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U32 *channel_id){
-    U32 i;if(!channel_id)return error(ERR_NULL_PARAMETER);
-    if(!g_open||device!=1)return error(ERR_INVALID_DEVICE_ID);
-    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765)return error(ERR_INVALID_PROTOCOL_ID);
+    U32 i;
+    if(!channel_id)return connect_result(protocol,flags,baud,ERR_NULL_PARAMETER);
+    if(!g_open||device!=1)return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);
+    /* P3Tool also contains driver-specific 0x8004/0x8005/0x10000001 modes.
+       Do not silently reinterpret them as standard CAN/ISO15765. */
+    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765)
+        return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
     lock_state();for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
-    if(i==MAX_CHANNELS){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
+    if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
     g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
@@ -1291,7 +1318,7 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
-    unlock_state();return error(ERR_OK);
+    unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
 }
 EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
     CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
@@ -1492,7 +1519,10 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         if(list->NumOfParams>64){unlock_state();return error(ERR_INVALID_IOCTL_VALUE);}
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
-            if(ioctl==IO_SET_CONFIG&&s->Parameter==1)c->baud=s->Value;
+            if(ioctl==IO_SET_CONFIG){
+                if(s->Parameter==1)c->baud=s->Value;
+                log_set_config(id,s->Parameter,s->Value);
+            }
             if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
         }
         unlock_state();return error(ERR_OK);
