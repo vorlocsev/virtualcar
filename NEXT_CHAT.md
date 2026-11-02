@@ -2,6 +2,13 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
+## Актуальный checkpoint: VMware LAB preflight packaging (02.11.2026, PR #36)
+
+- **PR #36** [include J2534 preflight in VMware LAB](https://github.com/vorlocsev/virtualcar/pull/36) merged squash into `development` at **`45df9b053987258521aa8a8778e1663add1d3be6`**. Exact PR HEAD `e6987437417a75539bdcd10c4e0ced21c5bd0648`: [VMware LAB package CI #41380338340](https://github.com/vorlocsev/virtualcar/actions/runs/41380338340) **completed success**, [Windows x86 native DLL CI #41380338485](https://github.com/vorlocsev/virtualcar/actions/runs/41380338485) **completed success**.
+- Closed-allowlist VMware ZIP now includes `tools/audit_j2534_connect.py` and `README_P3TOOL_J2534_PREFLIGHT_RU.md`. Package test group #1 explicitly verifies these entries; 8 original group checks including SHA-256 and synthetic/no-CEM-fixture remain. `emulator/README_VMWARE_LAB_RU.md` has exact PowerShell command. This corrects an overlooked packaging hole in PR #35; no behavioral changes to DLL/ECUs in PR #36.
+- After extracting **new CI artifact only**, run `py -3 .\\tools\\audit_j2534_connect.py "$env:TEMP\\SectorVVirtualCar.log" --output "$env:USERPROFILE\\Desktop\\j2534-connect-audit.json"` from archive root. Use a new filename if existing. Review JSON before sharing; do not share raw text log. Earlier vmware-lab-2026-11-01 prerelease remains unchanged, without these files and telemetry. No physical-J2534/VMware guest validation.
+- **Next:** Issue #4 authentic P2 MY2009 read-only CEM identification/normal-mode evidence; a fresh VMware connect report from verified new DLL may help separate adapter protocol failures from missing ECU fixture. Do not alias undocumented P3Tool vendor modes blindly. `main`, Dvinholm, draft PRs #2/#12/#15 unchanged. Post-merge development CI separately verify.
+
 ## Актуальный checkpoint: P3Tool J2534 preflight (02.11.2026, PR #35)
 
 - **PR #35** [P3Tool J2534 read-only preflight](https://github.com/vorlocsev/virtualcar/pull/35) merged squash into `development` at **`96e78ec5873821e1868ccf2802ebc8a32980fa18`**. Exact PR HEAD `fc3f0f64916f85a38a00efc565f8967390ff28ec`; [VMware LAB package CI #41380046765](https://github.com/vorlocsev/virtualcar/actions/runs/41380046765) **completed success**; [Windows x86 emulator / native DLL routes CI #41380046733](https://github.com/vorlocsev/virtualcar/actions/runs/41380046733) **completed success**. Post-merge development CI separately verify.
