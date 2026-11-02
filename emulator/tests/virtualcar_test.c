@@ -231,6 +231,43 @@ static void test_vmware_route_evidence(U32 dev){
  {const char *path=getenv("VIRTUALCAR_ROUTE_EVIDENCE");
   if(path){FILE *f=fopen(path,"wb");REQUIRE(f!=0);
    REQUIRE(fwrite(fixture_start,1,strlen(fixture_start),f)==strlen(fixture_start));REQUIRE(fclose(f)==0);}}
+ /* Verify periodic firings without altering the frozen eight-group route
+    fixture above. ReadMsgs causes the tick, not registration itself. */
+ {
+  U32 period_id=0,count=1;
+  U64 prior=channel(iso)->active_trace;
+  const U8 functional_keepalive[2]={0x3E,0x80};
+  const char *period_start=backend_lines+backend_len;
+  m=frame(PROTO_ISO15765,0x18DB33F1u,functional_keepalive,2);
+  REQUIRE(PassThruStartPeriodicMsg(iso,&m,&period_id,15)==ERR_OK);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"periodic_fired\"")==0);
+  tick+=16;
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"periodic_fired\"")==1);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"tx_received\"")==0);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"route_selected\"")==1);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"request_completed\"")==1);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"rx_queued\"")==0);
+  REQUIRE(channel(iso)->active_trace==prior);
+  count=1;tick+=16;
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"periodic_fired\"")==2);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"request_completed\"")==2);
+  REQUIRE(channel(iso)->active_trace==prior);
+  REQUIRE(PassThruStopPeriodicMsg(iso,period_id)==ERR_OK);
+  count=1;tick+=32;
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+  REQUIRE(event_count_since(period_start,"\"kind\":\"periodic_fired\"")==2);
+  /* When backend telemetry is disabled, the J2534 periodic behavior is the
+     same but no metadata is written. */
+  {U32 original_len=backend_len;g_backend_enabled=0;
+   REQUIRE(PassThruStartPeriodicMsg(iso,&m,&period_id,15)==ERR_OK);
+   count=1;tick+=16;
+   REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+   REQUIRE(backend_len==original_len);
+   REQUIRE(PassThruStopPeriodicMsg(iso,period_id)==ERR_OK);
+   g_backend_enabled=1;}
+ }
  REQUIRE(PassThruDisconnect(hs)==ERR_OK);REQUIRE(PassThruDisconnect(ls)==ERR_OK);
  REQUIRE(PassThruDisconnect(iso)==ERR_OK);
  memcpy(g_ecu,saved_ecu,sizeof(saved_ecu));memcpy(g_d2,saved_d2,sizeof(saved_d2));
