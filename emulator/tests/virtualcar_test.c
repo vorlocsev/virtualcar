@@ -220,6 +220,107 @@ static void fill_lab_rx(CHANNEL *c,U32 amount){
    enqueue(c,0x555u,marker,8);
  }
 }
+
+/* Eight observer-only groups derived from published 2.5T source shapes.
+   No private vehicle identification, no invented CEM positive response. */
+static void test_p2_informer_observer(U32 dev){
+ U32 ls=0,hs=0,wrong=0,iso=0,n,old_enabled=g_backend_enabled;
+ const char *tag,*start;U64 rid;PASSTHRU_MSG m,rx;
+ const U8 vin[]={0x03,0x22,0xF1,0x90,0,0,0,0};
+ const U8 ecm[]={0xCD,0x7A,0xA6,0x10,0xB8,0x01,0,0};
+ const U8 tcm[]={0xCC,0x6E,0xA5,0x0C,0x01,0,0,0};
+ const U8 dem[]={0xCD,0x1A,0xA6,0x00,0x05,0x01,0,0};
+ const U8 rem[]={0xCD,0x46,0xA6,0xD0,0xD4,0x01,0,0};
+ const U8 ccm[]={0xCD,0x29,0xA6,0x00,0x01,0x01,0,0};
+ const U8 d2[]={0xCB,0x50,0xB9,0xFB,0,0,0,0};
+ const U8 p3[]={0x03,0x22,0xF1,0x14,0,0,0,0};
+ U8 bad[8];U32 j;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,125000,&ls)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&hs)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,250000,&wrong)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,125000,&iso)==ERR_OK);
+ g_backend_enabled=1;
+ /* 1: Source VIN TX is LS-only 29-bit CAN, never a CEM B9FB fixture. */
+ m=frame(PROTO_CAN,0x000FFFFE,vin,8);
+ tag=backend_probe_name(channel(ls),&m);
+ REQUIRE(tag && strcmp(tag,"P2INF_LS_VIN_F190")==0);
+ REQUIRE(backend_probe_name(channel(hs),&m)==NULL);
+ /* 2: source HS ECM / TCM / DEM selectors remain separate. */
+ {
+  const U8 *requests[]={ecm,tcm,dem};
+  const char *tags[]={"P2INF_HS_ECM_A6","P2INF_HS_TCM_A5","P2INF_HS_DEM_A6"};
+  for(j=0;j<3;j++){
+   m=frame(PROTO_CAN,0x000FFFFE,requests[j],8);
+   tag=backend_probe_name(channel(hs),&m);
+   REQUIRE(tag && strcmp(tag,tags[j])==0);
+  }
+ }
+ /* 3: source LS REM / CCM selectors cannot masquerade as CEM probes. */
+ m=frame(PROTO_CAN,0x000FFFFE,rem,8);
+ REQUIRE(strcmp(backend_probe_name(channel(ls),&m),"P2INF_LS_REM_A6")==0);
+ m=frame(PROTO_CAN,0x000FFFFE,ccm,8);
+ REQUIRE(strcmp(backend_probe_name(channel(ls),&m),"P2INF_LS_CCM_A6")==0);
+ /* 4: wrong baud or ISO15765 transport cannot gain source provenance. */
+ m=frame(PROTO_CAN,0x000FFFFE,vin,8);
+ REQUIRE(backend_probe_name(channel(wrong),&m)==NULL);
+ m=frame(PROTO_ISO15765,0x000FFFFE,vin,8);
+ REQUIRE(backend_probe_name(channel(iso),&m)==NULL);
+ m=frame(PROTO_CAN,0x000FFFFE,ecm,8);
+ REQUIRE(backend_probe_name(channel(ls),&m)==NULL);
+ /* 5: 11-bit/unrelated request IDs cannot be attributed to 29-bit source. */
+ m=frame(PROTO_CAN,0x726,vin,8);
+ REQUIRE(backend_probe_name(channel(ls),&m)==NULL);
+ m=frame(PROTO_CAN,0x7E0,vin,8);
+ REQUIRE(backend_probe_name(channel(ls),&m)==NULL);
+ /* 6: truncated, non-listed selectors, nonzero padding are unclassified. */
+ m=frame(PROTO_CAN,0x000FFFFE,ecm,7);
+ REQUIRE(backend_probe_name(channel(hs),&m)==NULL);
+ memcpy(bad,ecm,8);bad[4]=0xFF;
+ m=frame(PROTO_CAN,0x000FFFFE,bad,8);
+ REQUIRE(backend_probe_name(channel(hs),&m)==NULL);
+ memcpy(bad,vin,8);bad[7]=0x99;
+ m=frame(PROTO_CAN,0x000FFFFE,bad,8);
+ REQUIRE(backend_probe_name(channel(ls),&m)==NULL);
+ memcpy(bad,tcm,8);bad[6]=0x01;
+ m=frame(PROTO_CAN,0x000FFFFE,bad,8);
+ REQUIRE(backend_probe_name(channel(hs),&m)==NULL);
+ /* 7: existing D2 and P3 labels are unchanged by source-only catalogue. */
+ m=frame(PROTO_CAN,0x000FFFFE,d2,8);
+ REQUIRE(strcmp(backend_probe_name(channel(hs),&m),"D2_50_B9FB")==0);
+ m=frame(PROTO_CAN,0x726,p3,8);
+ REQUIRE(strcmp(backend_probe_name(channel(hs),&m),"P3_726_F114")==0);
+ /* 8: J2534 TX yields only one allowlisted token and a silent terminal.
+    There is no generated ECU response, no exposed payload and no RX. */
+ {
+  const U8 *payloads[]={vin,ecm,tcm,dem,rem,ccm};
+  const char *tags[]={"P2INF_LS_VIN_F190","P2INF_HS_ECM_A6","P2INF_HS_TCM_A5",
+                     "P2INF_HS_DEM_A6","P2INF_LS_REM_A6","P2INF_LS_CCM_A6"};
+  for(j=0;j<6;j++){
+   U32 cid=(j==0||j>=4)?ls:hs;
+   m=frame(PROTO_CAN,0x000FFFFE,payloads[j],8);
+   start=backend_lines+backend_len;send(cid,&m);rid=last_tx_request(start);
+   REQUIRE(rid!=0);
+   REQUIRE(event_count_since(start,"\"kind\":\"probe_classified\"")==1);
+   REQUIRE(strstr(start,tags[j])!=NULL);
+   REQUIRE(terminal_for(start,rid,"unhandled_request","no_response")==1);
+   REQUIRE(event_count_since(start,"\"kind\":\"response_generated\"")==0);
+   REQUIRE(strstr(start,"\"raw_payload\"")==NULL);
+   n=1;REQUIRE(PassThruReadMsgs(cid,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+  }
+  /* Optional telemetry must not alter emulator responses or produce events. */
+  g_backend_enabled=0;
+  start=backend_lines+backend_len;
+  m=frame(PROTO_CAN,0x000FFFFE,vin,8);send(ls,&m);
+  REQUIRE(backend_lines+backend_len==start);
+  n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ }
+ g_backend_enabled=old_enabled;
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(wrong)==ERR_OK);
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ls)==ERR_OK);
+}
+
 static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
@@ -228,6 +329,7 @@ int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_vmware_route_evidence(dev);
+ test_p2_informer_observer(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
