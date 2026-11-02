@@ -20,6 +20,7 @@ KNOWN = {
     "execute": ("Frontend.Client.Core.dll", "0x0600115D"),
     "pre_detect": ("Frontend.Client.Core.dll", "0x0600133D"),
     "get_vin": ("Frontend.Client.Core.dll", "0x0600133A"),
+    "get_config": ("Frontend.Client.Core.dll", "0x06001339"),
     "parse_data": ("Frontend.Client.Core.dll", "0x06001160"),
     "ui_done": ("Frontend.exe", "0x06002472"),
     "send_v2": ("Client.Core.dll", "0x060002EF"),
@@ -37,7 +38,7 @@ def parse_excerpts(text):
             key = (heading.group(1), token)
             if key in blocks:
                 raise ValueError("duplicate_method_token")
-            current = {"declared": int(heading.group(4)), "ops": []}
+            current = {"declared": int(heading.group(4)), "ops": [], "offsets": []}
             blocks[key] = current
             continue
         if line.startswith("IL_"):
@@ -46,6 +47,10 @@ def parse_excerpts(text):
             op = IL.fullmatch(line)
             if not op:
                 raise ValueError("invalid_il_line")
+            offset = int(op.group(1), 16)
+            if current["offsets"] and offset <= current["offsets"][-1]:
+                raise ValueError("nonmonotonic_il_offsets")
+            current["offsets"].append(offset)
             current["ops"].append((op.group(2), (op.group(3) or "").strip()))
     if not blocks:
         raise ValueError("no_method_bodies")
@@ -108,6 +113,84 @@ def _model_shapes(detect):
     }
 
 
+def _branch_destination(ops, offsets, i):
+    """Resolve a printed relative CIL jump to an *existing* IL offset.
+
+    This is one structural edge only; it does not de-flatten all switch paths
+    or establish that the source basic block can ever be executed.
+    """
+    if i < 0 or i + 1 >= len(ops) or len(ops) != len(offsets):
+        return None
+    opcode, argument = ops[i]
+    if opcode not in ("brfalse", "brfalse.s", "brtrue", "brtrue.s"):
+        return None
+    if not re.fullmatch(r"[+-]?\d+", argument):
+        return None
+    dest = offsets[i + 1] + int(argument)
+    try:
+        return offsets.index(dest)
+    except ValueError:
+        return None
+
+
+def _get_vin_null_branch_to_volvo(ops, offsets):
+    for i in range(2, len(ops) - 1):
+        if not (
+            ops[i] == ("brfalse.s", "108")
+            and ops[i - 1][0] == "call"
+            and ops[i - 1][1].startswith("0x060012F2")
+        ):
+            continue
+        destination = _branch_destination(ops, offsets, i)
+        if destination is not None and _has_motif(
+            ops[destination:destination + 2],
+            [("ldarg.0", None), ("call", "0x060012E2")]
+        ):
+            return True
+    return False
+
+
+def _get_config_null_guard(ops, offsets):
+    for i, (opcode, arg) in enumerate(ops):
+        if opcode != "brtrue.s" or i < 3:
+            continue
+        if not _has_motif(ops[i - 3:i + 1], [
+            ("ldarg.0", None), ("call", "0x060012E8"),
+            ("dup", None), ("brtrue.s", None)
+        ]):
+            continue
+        if not _has_motif(ops[i + 1:i + 4], [
+            ("pop", None), ("ldnull", None), ("ret", None)
+        ]):
+            continue
+        dest = _branch_destination(ops, offsets, i)
+        if dest is not None and _has_motif(ops[dest:dest + 2], [
+            ("callvirt", "0x06001B7E"), ("ret", None)
+        ]):
+            return True
+    return False
+
+
+def _result_failure_branch(ops, offsets):
+    # Observed: get_Result -> opaque predicate 0x06001359 -> direct false return.
+    # The enum/constant/predicate meaning is intentionally NOT inferred.
+    seq = [
+        ("ldloc.1", None), ("callvirt", "0x0600113E"),
+        ("ldc.i4", None), ("br.s", "0"),
+        ("call", "0x2B"), ("call", "0x06001359"),
+        ("brfalse", None),
+    ]
+    for start in range(len(ops) - len(seq) + 1):
+        if not _has_motif(ops[start:start + len(seq)], seq):
+            continue
+        dest = _branch_destination(ops, offsets, start + len(seq) - 1)
+        if dest is not None and _has_motif(ops[dest:dest + 2], [
+            ("ldc.i4.0", None), ("ret", None)
+        ]):
+            return True
+    return False
+
+
 def _status_values(ops):
     values = set()
     for a, b in zip(ops, ops[1:]):
@@ -166,10 +249,13 @@ def audit(inventory, excerpts):
     detect = blocks.get(KNOWN["detect"], {}).get("ops", [])
     execute = blocks.get(KNOWN["execute"], {}).get("ops", [])
     predetect = blocks.get(KNOWN["pre_detect"], {}).get("ops", [])
-    getvin = blocks.get(KNOWN["get_vin"], {}).get("ops", [])
+    getvin_block = blocks.get(KNOWN["get_vin"], {})
+    getvin = getvin_block.get("ops", [])
+    config_block = blocks.get(KNOWN["get_config"], {})
+    detect_block = blocks.get(KNOWN["detect"], {})
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v2",
+        "format": "recovered-il-evidence-audit-v3",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -182,11 +268,18 @@ def audit(inventory, excerpts):
             "pre_detect_uses_suggested_vin": _has_call(predetect, "0x0600020C"),
             "pre_detect_uses_last_view_wrapper": _has_call(predetect, "0x06001377"),
             "get_vin_reads_pre_detect_result": _has_call(getvin, "0x060012F2"),
+            "get_vin_missing_predetect_direct_volvo_fallback":
+                _get_vin_null_branch_to_volvo(getvin, getvin_block.get("offsets", [])),
+            "get_config_null_guard_direct_get_config":
+                _get_config_null_guard(config_block.get("ops", []),
+                                       config_block.get("offsets", [])),
             "detect_calls_create_command": _has_call(detect, "0x06001329"),
             "detect_calls_enqueue": _has_call(detect, "0x0600132C"),
             "detect_calls_wait": _has_call(detect, "0x0600115B"),
             "detect_assigns_ecus_model": _has_call(detect, "0x060012DF"),
             "detect_fires_done": _has_call(detect, "0x06001343"),
+            "detect_result_predicate_direct_false_return":
+                _result_failure_branch(detect, detect_block.get("offsets", [])),
             "execute_calls_parse_data": _has_call(execute, "0x06001160"),
             "execute_observed_status_numeric_comparisons": _status_values(execute),
             "execute_one_second_timer_shape": _one_shot_timer_shape(execute),
@@ -197,6 +290,7 @@ def audit(inventory, excerpts):
             "Enum meaning and unknown wrapper effects not established",
             "No J2534 request/ECU acceptance claim from recovered IL alone",
             "Constructor/data-flow motifs do not establish runtime reachability",
+            "Direct branch targets do not prove that source blocks are reachable",
         ],
     }
 
