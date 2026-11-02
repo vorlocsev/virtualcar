@@ -100,5 +100,127 @@ class PeriodicBackendEvidenceTests(unittest.TestCase):
         self.assertEqual(t["evidence_conflicts"], ["channel"])
 
 
+    @staticmethod
+    def _suppressed(origin, rid):
+        return (
+            evt(origin, rid=rid),
+            evt("probe_classified", rid=rid, probe="FUNC29_TP_SUPPRESSED"),
+            evt("route_selected", rid=rid, route="ECU_OTHER"),
+            evt("request_completed", rid=rid, route="ECU_OTHER",
+                reason="no_response", outcome="no_response"),
+        )
+
+    def test_09_mixed_known_keepalive_by_origin(self):
+        r = audit(*self._suppressed("periodic_fired", 1),
+                  *self._suppressed("tx_received", 2))
+        self.assertEqual(r["summary"]["request_origins"],
+                         {"app_write": 1, "periodic": 1})
+        p = next(p for p in r["coverage"]["probes"]
+                 if p["probe"] == "FUNC29_TP_SUPPRESSED")
+        self.assertEqual(p["observed_requests"], 2)
+        self.assertEqual(p["status_counts"], {"suppressed": 2})
+        self.assertEqual(p["by_origin"], {
+            "app_write": {"suppressed": 1},
+            "periodic": {"suppressed": 1},
+        })
+        self.assertFalse(r["identity_verified"])
+
+    def test_10_same_cem_probe_two_different_sources(self):
+        def cem(source, rid):
+            return (
+                evt(source, rid=rid),
+                evt("probe_classified", rid=rid, probe="D2_40_B9FB"),
+                evt("route_selected", rid=rid, route="CEM"),
+                evt("request_completed", rid=rid, route="CEM",
+                    reason="missing_profile", outcome="no_response"),
+            )
+        r = audit(*cem("tx_received", 1), *cem("periodic_fired", 2))
+        p = next(x for x in r["coverage"]["probes"] if x["probe"] == "D2_40_B9FB")
+        self.assertEqual(p["by_origin"], {
+            "app_write": {"no_fixture": 1},
+            "periodic": {"no_fixture": 1},
+        })
+        self.assertEqual(p["status_counts"], {"no_fixture": 2})
+        self.assertFalse(r["client_acceptance_verified"])
+
+    def test_11_status_counts_remain_distinct_within_origin(self):
+        r = audit(
+            evt("tx_received", rid=1),
+            evt("probe_classified", rid=1, probe="D2_40_B9FB"),
+            evt("route_selected", rid=1, route="CEM"),
+            evt("request_completed", rid=1, route="CEM",
+                reason="missing_profile", outcome="no_response"),
+            evt("periodic_fired", rid=2),
+            evt("probe_classified", rid=2, probe="D2_40_B9FB"),
+            evt("route_selected", rid=2, route="CEM"),
+            evt("request_completed", rid=2, route="CEM",
+                reason="no_response", outcome="no_response"))
+        p = next(x for x in r["coverage"]["probes"] if x["probe"] == "D2_40_B9FB")
+        self.assertEqual(p["status_counts"], {"no_fixture": 1, "unverified": 1})
+        self.assertEqual(p["by_origin"], {
+            "app_write": {"no_fixture": 1},
+            "periodic": {"unverified": 1},
+        })
+
+    def test_12_unattributed_sources_count_only_in_summary(self):
+        r = audit(evt("tx_received", rid=1),
+                  evt("request_completed", rid=1, route="ECU_OTHER",
+                      reason="no_response", outcome="no_response"),
+                  evt("periodic_fired", rid=2),
+                  evt("request_completed", rid=2, route="ECU_OTHER",
+                      reason="no_response", outcome="no_response"))
+        self.assertEqual(r["coverage"]["attributed_requests"], 0)
+        self.assertEqual(r["coverage"]["unattributed_requests"], 2)
+        self.assertEqual(r["summary"]["request_origins"],
+                         {"app_write": 1, "periodic": 1})
+        self.assertTrue(all(not p["by_origin"] for p in r["coverage"]["probes"]))
+
+    def test_13_conflicting_origin_cannot_claim_probe_coverage(self):
+        r = audit(evt("periodic_fired"),
+                  evt("tx_received"),
+                  evt("probe_classified", probe="FUNC29_TP_SUPPRESSED"),
+                  evt("route_selected", route="ECU_OTHER"),
+                  evt("request_completed", route="ECU_OTHER",
+                      reason="no_response", outcome="no_response"))
+        self.assertEqual(r["summary"]["request_origins"], {"unknown": 1})
+        self.assertEqual(r["coverage"]["attributed_requests"], 0)
+        self.assertEqual(r["coverage"]["unattributed_requests"], 1)
+        self.assertEqual(r["summary"]["statuses"], {"unverified": 1})
+
+    def test_14_duplicate_request_id_from_two_sessions_is_separate(self):
+        second_session = "fedcba9876543210"
+        r = audit(*self._suppressed("tx_received", 1),
+                  evt("periodic_fired", sid=second_session, rid=1),
+                  evt("probe_classified", sid=second_session, rid=1,
+                      probe="FUNC29_TP_SUPPRESSED"),
+                  evt("route_selected", sid=second_session, rid=1,
+                      route="ECU_OTHER"),
+                  evt("request_completed", sid=second_session, rid=1,
+                      route="ECU_OTHER", reason="no_response",
+                      outcome="no_response"))
+        self.assertEqual(r["summary"]["sessions"], 2)
+        self.assertEqual(r["summary"]["request_origins"],
+                         {"app_write": 1, "periodic": 1})
+        self.assertNotIn(second_session, json.dumps(r))
+
+    def test_15_private_untrusted_fields_cannot_inflate_origins(self):
+        marker = "SYNTHETIC_VIN_DO_NOT_EMIT_ABCDEFG"
+        r = audit(evt("periodic_fired", rid=1, origin=marker, vin=marker),
+                  evt("request_completed", rid=1, route="ECU_OTHER",
+                      reason="no_response", outcome="no_response",
+                      source=marker))
+        self.assertEqual(r["summary"]["request_origins"], {"periodic": 1})
+        self.assertNotIn(marker, json.dumps(r))
+        self.assertFalse(r["contains_payload_data"])
+
+    def test_16_empty_input_has_no_fake_origin_or_discovery(self):
+        r = audit()
+        self.assertEqual(r["summary"]["requests"], 0)
+        self.assertEqual(r["summary"]["request_origins"], {})
+        self.assertEqual(r["coverage"]["attributed_requests"], 0)
+        self.assertTrue(all(not p["by_origin"] for p in r["coverage"]["probes"]))
+        self.assertFalse(r["identity_verified"])
+
+
 if __name__ == "__main__":
     unittest.main()
