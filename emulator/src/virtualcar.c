@@ -403,6 +403,18 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
     id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
     p=m->Data+4;n=m->DataSize-4;
+    /* Observe an exact functional OBD VIN request, never the returned VIN.
+       Only known J2534 ISO15765 and zero-padded raw CAN at 500 kbit/s.
+       An observed request does NOT imply that the diagnostic UI accepted
+       the VIN or started CEM enumeration. No CAN response is changed. */
+    if(id==0x7DFu && c->baud==500000u &&
+       ((c->protocol==PROTO_ISO15765 && n==2u &&
+         p[0]==0x09u && p[1]==0x02u) ||
+        (c->protocol==PROTO_CAN && n==8u &&
+         p[0]==0x02u && p[1]==0x09u && p[2]==0x02u &&
+         p[3]==0u && p[4]==0u && p[5]==0u &&
+         p[6]==0u && p[7]==0u)))
+        return "OBD_FUNC_VIN_0902";
     /* The exact VDASH 2.0 functional 3E 80 probe is session keepalive, not
        CEM discovery. Only metadata on a known 500-kbit/s route, no new RX.
        Raw CAN mode uses a full, zero-padded eight-byte single frame. */
