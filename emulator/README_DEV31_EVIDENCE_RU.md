@@ -202,3 +202,30 @@ window неизвестны и такими остаются. Это не неп
 timeout=9, unsupported=1, unverified=1. Raw log и его старый префикс не изменены.
 Два реальных A6 по-прежнему без RX; предупреждение SectorV этим не исправлено.
 Новый VMware scan не выполнялся: ответы DLL не менялись.
+
+## VIDA J2534 text: offline-аудит
+
+`tools/audit_j2534_discovery.py` также распознаёт формат VIDA с logger
+`J2534ChannelMana`: отдельный `PassThruWriteMsgs/ReadMsgs(channel,...)` и
+следующий `--->/<--- (index)` с comma bytes в том же logged thread.
+Явный Connect задаёт protocol/flags/baud; без него эти поля остаются неизвестными.
+Подробности, происхождение реального журнала и восемь synthetic test groups:
+[исследование опубликованного UDS prefix](../docs/research/p2-vida-published-prefix.md).
+
+Используется тот же CLI:
+
+```powershell
+python emulator/tools/audit_j2534_discovery.py C:\lab\readonly-prefix.log --output C:\lab\readonly-audit.json
+```
+
+ID-only RX не считается ответом ECU; ISO15765 RX может содержать уже собранный
+UDS payload длиннее восьми bytes. Отдельные client-level VehComm сообщения не
+подменяют raw delivery. Неполные/непривязанные records, unknown protocol и
+коллизии ChannelID между DeviceID не достраиваются догадками. Нулевой wait с
+ERR_BUFFER_EMPTY не объявляется таймаутом. Сырые payload/имена/пути не попадают
+в JSON; `delivered` по-прежнему означает только проверенную форму transport.
+
+Смешанный полный журнал нельзя считать эталоном read-only discovery: в новом
+исследовании используется только исходный prefix до первого RoutineControl.
+Он не доказывает SectorV normal-mode gate и совместимость с XC90 V8 MY2009;
+положительные ответы CEM в DLL этим изменением не добавляются.
