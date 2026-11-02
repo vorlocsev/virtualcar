@@ -18,7 +18,7 @@ MAX_LINE = 4096
 MAX_EVENTS = 200000
 MAX_REQUESTS = 20000
 KINDS = frozenset((
-    "tx_received", "probe_classified", "route_selected", "response_generated", "filter_pass",
+    "tx_received", "periodic_fired", "probe_classified", "route_selected", "response_generated", "filter_pass",
     "filter_drop", "rx_queued", "rx_dequeued", "rx_dropped",
     "response_aborted", "tracking_overflow", "request_completed",
 ))
@@ -129,7 +129,7 @@ def _new_event(e, session_number, ordinal):
         "freq": e["freq"], "clock_conflict": False,
         "context_conflict": False, "context_fields": set(), "terminal": None,
         "duplicate_terminal": False, "late_events": False,
-        "saw_tx": False, "probes": set(),
+        "saw_tx": False, "origin": "unknown", "probes": set(),
         "last_tick": None, "sequence_conflict": False,
         "dequeue_without_queue": False, "queued_open": 0,
     }
@@ -143,7 +143,7 @@ def _update(r, e):
     if r["last_tick"] is not None and e["tick"] < r["last_tick"]:
         r["clock_conflict"] = True
     r["last_tick"] = e["tick"]
-    if kind == "tx_received":
+    if kind in ("tx_received", "periodic_fired"):
         if r["saw_tx"] or r["counts"]:
             r["sequence_conflict"] = True
     elif not r["saw_tx"]:
@@ -168,8 +168,9 @@ def _update(r, e):
             r["context_fields"].add(field)
     if e["freq"] != r["freq"]:
         r["clock_conflict"] = True
-    if kind == "tx_received":
+    if kind in ("tx_received", "periodic_fired"):
         r["saw_tx"] = True
+        r["origin"] = "periodic" if kind == "periodic_fired" else "app_write"
         if r["start_tick"] is None:
             r["start_tick"] = e["tick"]
     if r["terminal"] is not None and kind != "request_completed":
@@ -236,7 +237,7 @@ def _classify(r):
 
 
 def _trusted_probe(r):
-    """Only a uniquely classified, well-ordered TX can enter coverage."""
+    """Only a uniquely classified, well-ordered request can enter coverage."""
     if len(r["probes"]) != 1 or not r["saw_tx"] or r["sequence_conflict"]:
         return None
     return next(iter(r["probes"]))
@@ -253,6 +254,7 @@ def _result(r):
         duration = round((r["end_tick"] - r["start_tick"]) * 1000 / r["freq"], 3)
     return {
         "session": r["session"], "request": r["ordinal"],
+        "request_origin": r["origin"] if not r["sequence_conflict"] else "unknown",
         "route": r["route"] if len(r["routes"]) == 1 else "UNKNOWN",
         # Allowlisted metadata only; never repair conflicting legacy evidence.
         "observed_routes": sorted(r["routes"]),
@@ -295,7 +297,7 @@ def audit(lines):
         _update(transactions[key], e)
     records = list(transactions.values())
     results = [_result(r) for r in records]
-    # Coverage is only about what the client actually *asked* the virtual DLL.
+    # Coverage is only about observed J2534 writes and fired periodic requests.
     # No probe is not a failure, no fixture, an ECU response, or a timeout.
     coverage_counts = {probe: Counter() for probe in PROBES}
     unattributed = 0
@@ -331,7 +333,7 @@ def audit(lines):
         "limitations": [
             "Missing, reordered or incomplete queue/terminal events downgrade delivery to unverified",
             "Only exact allowlisted probe_classified shapes identify a request; legacy logs remain unknown",
-            "Coverage describes observed client TX only; never infer a missing ECU reply from an unobserved probe",
+            "Coverage describes observed app writes and J2534 periodic firings only; never infer an ECU reply from an unobserved probe",
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
         ],
