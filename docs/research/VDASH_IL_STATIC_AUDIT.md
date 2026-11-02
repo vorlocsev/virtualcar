@@ -123,6 +123,34 @@ This addition compares the **actual saved, selected method listings** to externa
 7. Preserve redaction by allowlist, no private VIN, binary, user paths, account/session secrets, and no proprietary IL copies in repository.
 8. Verify existing offline CI; label **VMware end-to-end** and **physical J2534** untested until separately witnessed.
 
+## Structured IL audit / status-timer evidence (follow-up 2026-11-02)
+
+A **generic, non-executing, read-only** audit tool and eight synthetic tests have been added to this same PR:
+
+- `emulator/tools/audit_recovered_il.py` verifies that the declared per-MethodDef opcode counts match parsed IL lines, ties excerpt tokens to the selected method inventory, and emits a **fixed-schema allowlisted** summary only.
+- `emulator/tests/test_audit_recovered_il.py` checks exact extraction, callsite presence, unknown status values, timer shape, truncated bodies, duplicate/unknown tokens, omitted priority methods and privacy. No proprietary method contents or real VIN fixtures are committed.
+- For an authorized local copy (never check the two sources into this repository):
+
+```sh
+python3 emulator/tools/audit_recovered_il.py \
+  --inventory "/private/VDASH_Recovered_Methods_Inventory.json" \
+  --excerpts "/private/VDASH_Recovered_Diagnostic_IL_Excerpts.txt" \
+  --output "/private/vdash-il-evidence.json"
+```
+
+The previously saved user Library reports were re-read and inspected **locally** without including their bytes in Git. All 11 excerpt MethodDef bodies have **exactly the declared opcode counts**, totaling **1,104 IL instructions**. The inventory has 28 selected methods, leaving **17 indexed methods without a full body in the excerpt**. This is a limitation of the selected artifacts, not of the original deobfuscation claim that it recovered 55,786 method bodies.
+
+Additional facts from intact CIL instructions:
+
+1. `VddModel.Detect` (MethodDef `0x0600132B`) has 511 decoded instructions, 87 call/callvirt sites and five switch constructs in the flattened CFG. It contains separate `set_DetectResult` (IL_0184), `set_Ecus` (IL_026D), `OnDetectDone` (IL_0633), `set_DeviceAvailable` (IL_0685), and both `ldc.i4.1; ret` and `ldc.i4.0; ret` terminal sequences. **We cannot prove the runtime ordering or which return path was taken** without de-flattened control flow.
+2. `VddCommand.Execute` (MethodDef `0x0600115D`) has 311 instructions, 39 call/callvirt sites and three switch constructs. It stores `DongleCommandExecutionResult` in its `result` field (IL_005D..0062), invokes `ParseData` (IL_025E), and accesses `executionEvn`, `waitEvn`, `get_Timeout`, `set_Executing`, and `set_Executed`.
+3. The same opaque accessor **MethodDef `0x06001178`** is called before direct equality comparisons against numeric literals **3**, **4**, and **2** respectively (IL_01E2/01E7, IL_020C/0211, IL_0301/0306). It plausibly returns an execution status, but the symbol and enum map are **not** proven. Do **not** label these branches \`Failed\`, \`AllFailed\`, etc. without confirming method/enum metadata.
+4. Timer construction-shaped site IL_0186–01B1 supplies `OnCheckResult` via `TimerCallback`, the current result as state, a **1-second due time**, and `System.Threading.Timeout.InfiniteTimeSpan` as period, storing the returned object in field `timer`. The actual call at IL_01AC is still obfuscated (`0x0600117C`). Under ordinary `System.Threading.Timer(TimerCallback, object, TimeSpan, TimeSpan)` semantics, this is a single-shot timer: the InfiniteTimeSpan period disables repetition. Source: https://learn.microsoft.com/en-us/dotnet/api/system.threading.timer.-ctor . Since the wrapper and `OnCheckResult` bodies are not accessible, **neither an exact polling cadence nor a single total check can be claimed**.
+5. `VddCommand.Wait` is indexed as a five-instruction method calling an obfuscated wrapper. This local method has no explicit literal timeout; `Execute` separately uses `get_Timeout` and `executionEvn`. This distinguishes the caller wait from executor completion, but does not prove that any call blocks indefinitely.
+6. `PreDetect`, `Detect`, `Execute`, and \`Model_DetectDone\` must be correlated via a **new single-run, version-specific, consented trace**, not by matching only the names in recovered IL. A J2534 RX is not proof of `set_Ecus` or UI acceptance.
+
+**Scope and access limitations:** Only the 11 existing recovered IL excerpts can be opcode-validated here; there is not enough original IL text to reconstruct `CreateCommand`, `Enqueue`, `ParseData`, `OnCheckResult` or the UI acceptance predicate. The audit script does **not** reconstruct these branches and cannot obtain protected code. One CLI output may contain only metadata/booleans/numeric comparisons, not source strings. All tests are synthetic and do not claim VDASH itself ran.
+
 ## Handoff
 
-Linked to issues #37 and #4 and PR #39. No changes to emulator behavior or fixtures in this **documentation-only addition**. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
+Linked to issues #37 and #4 and PR #39. Only the read-only analysis script, synthetic tests and research documentation were added in this follow-up; no ECU behavior, fixtures or emulator responses changed. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
