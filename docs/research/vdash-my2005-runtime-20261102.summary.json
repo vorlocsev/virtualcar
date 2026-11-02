@@ -1,0 +1,169 @@
+{
+  "format": "vdash-my2005-runtime-summary-v1",
+  "date": "2026-11-02",
+  "read_only_lab": true,
+  "synthetic_profile": true,
+  "declared_model_year": 2005,
+  "physical_j2534_tested": false,
+  "vmware_guest_tested": false,
+  "cem_identity_verified": false,
+  "runtime_source": {
+    "pr": 39,
+    "head": "6f16bc34b65279fd19bdcea4619d2946cc208357",
+    "ci_run": 41436445230,
+    "ci_merge_ref": "50e83a393078ea97e5f91a7bad729bada8021ec5",
+    "artifact_sha256": "b0af113eb0cbfa6e5783e3229fb245584675d42dc4590b15ed51a5fca20b44e0",
+    "dll_sha256": "6b88755863495ada3a78d964aa45d00c60608486eeed1c16729388bd3e7d7351",
+    "profile_sha256": "69cff86f8338156149a64421af546bd71ac250514c804a227536bc3241819943"
+  },
+  "client": {
+    "gui_file_version": "2.5.115.84",
+    "gui_brand": "VDASH 2.0 - Sponsored",
+    "gui_sha256": "bb9153650a736e3f03ca1a4cea265d6a5692fe1123729b3169d60f9614eea0f9",
+    "native_worker_banner_version": "13.33.1.57",
+    "native_worker_sha256": "b29b7f5e90645c9b04a12d12578a154b6ee7441c7aab1865a5e19d31277fe1aa",
+    "gui_invocations": 1,
+    "child_workers_in_capture": 2,
+    "direct_module_sample_worker_ordinals": [
+      1
+    ],
+    "all_worker_modules_sampled": false
+  },
+  "capture": {
+    "text": {
+      "prefix_unchanged": true,
+      "suffix_bytes": 277220,
+      "sha256": "fe6ef7eebdab09d8cc330cb4a473ca41ceeedc1743f536f3902e607e54da17c9"
+    },
+    "backend": {
+      "prefix_unchanged": true,
+      "suffix_bytes": 150513,
+      "sha256": "3fa8240be8649a1ca2366291571d62ce70773ac665f02af57ef6b809d576828b"
+    }
+  },
+  "backend": {
+    "requests": 99,
+    "sessions": 33,
+    "invalid_lines": 0,
+    "statuses": {
+      "delivered": 33,
+      "suppressed": 33,
+      "unverified": 33
+    },
+    "request_origins": {
+      "app_write": 99
+    },
+    "terminal_seen": 99,
+    "evidence_conflicts": 0,
+    "rx_queued": 66,
+    "rx_dequeued": 66,
+    "rx_dropped": 0,
+    "filter_dropped": 0
+  },
+  "text": {
+    "transactions": 66,
+    "counts": {
+      "delivered": 33,
+      "unverified": 33
+    },
+    "parse_errors": {},
+    "vin_requests": 33,
+    "vin_delivered": 33,
+    "start_indications": 33,
+    "metadata_checked": 66,
+    "metadata_missing": 0,
+    "metadata_invalid": 0,
+    "recognized_cem_probes": 0,
+    "open_markers": 33,
+    "close_markers": 32,
+    "final_transaction_end": "end_of_log",
+    "worker1": {
+      "open": 19,
+      "close": 19,
+      "vin_delivered": 19,
+      "metadata_checked": 38
+    },
+    "worker2": {
+      "open": 14,
+      "close": 13,
+      "vin_delivered": 14,
+      "metadata_checked": 28
+    }
+  },
+  "connect": {
+    "attempts": 236,
+    "invalid_events": 0,
+    "modes": [
+      {
+        "baud_bps": "500000",
+        "count": 3,
+        "flags": "other",
+        "protocol": "CAN",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "125000",
+        "count": 68,
+        "flags": "other",
+        "protocol": "CAN_PS",
+        "status": "invalid_protocol"
+      },
+      {
+        "baud_bps": "500000",
+        "count": 66,
+        "flags": "other",
+        "protocol": "ISO15765",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "other",
+        "count": 99,
+        "flags": "other",
+        "protocol": "other",
+        "status": "invalid_protocol"
+      }
+    ],
+    "statuses": {
+      "invalid_protocol": 167,
+      "ok": 69
+    }
+  },
+  "can_ps_detail": {
+    "protocol": "0x8004",
+    "baud_bps": 125000,
+    "status": "ERR_INVALID_PROTOCOL",
+    "flags_0x800": 3,
+    "flags_0x900": 65
+  },
+  "ui": {
+    "brand": "VDASH 2.0 - Sponsored",
+    "version": "2.5.115.84",
+    "displayed_model": "XC90",
+    "displayed_year": 2005,
+    "displayed_engine": "B8444S",
+    "displayed_platform": "P2",
+    "displayed_battery_v": 12.5,
+    "warning": "Some ECUs in the car are not able to communicate or are stuck.",
+    "ecu_view": "Live datalogging by ECU",
+    "ecu_list": "empty",
+    "automatic_detection_after_manual_login": true,
+    "controlled_refresh_cycles": 1,
+    "reset_programming_security_actions": false
+  },
+  "restoration": {
+    "profile_unchanged": true,
+    "dll_unchanged": true,
+    "worker_file_unchanged": true,
+    "adapter_selection_restored": true,
+    "temporary_registration_removed": true,
+    "client_processes_closed": true
+  },
+  "interpretation": {
+    "vin_ui_display_observed": true,
+    "ecu_list_populated": false,
+    "command_result_received": "not_observed",
+    "detect_result_parsed": "not_observed",
+    "can_ps_warning_causal_link": "unverified",
+    "backend_text_row_join_performed": false
+  }
+}
