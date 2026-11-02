@@ -6,7 +6,9 @@
 
 - По явному запросу пользователя PR #40 объединён в development: `ac1f523a319a0d29e61d7e5ac07307446925cf16`. [Emulator / native-routes #41439236805](https://github.com/vorlocsev/virtualcar/actions/runs/41439236805) и [cross-build #41439236895](https://github.com/vorlocsev/virtualcar/actions/runs/41439236895) success именно для этого SHA. PR development → main не объединялся.
 - Продолжение Issue #4: найдены локальные Frontend / Vdash.Frontend **2.5.115.84**, тогда как handoff описывает **2.5.115.79**. Размеры, FileVersion и SHA-256 семи выбранных файлов внесены в `docs/research/VDASH_PROTOCOL_EVIDENCE.md`; binaries и личные пути в git не добавлены. Это проверка метаданных, не IL analysis и не подтверждение издателя.
-- Следующий результат: version-bound actual-client read-only trace с UI outcome либо проверенный parser predicate. Исходный IL report и связанный runtime capture в ограниченном поиске не найдены. Токены другой версии не переносить; CEM ответы не выдумывать. VDASH/VMware/physical run на этом этапе не выполнен.
+- PR #41 продолжен содержательной проверкой ISO15765 metadata в opt-in OBD audit: same-PID immediate adjacency, protocol/status/size/index, явные missing/checked/invalid counters. Противоречие больше не остаётся `delivered`; default audit прежний. Восемь новых групп, локально 172 Python tests OK, 1 expected native-DLL skip; PR HEAD/CI сверять live.
+- В накопленном частном native log найдены строки `vdash_u.exe`: 166 start 4/0 и 216 data 24/24 с VIN header. TX/RX context отсутствует, версия/UI outcome неизвестны; audit не восстанавливает канал из suffix. Хеш файла, агрегаты и ограничения в evidence doc, raw/личные значения вне git.
+- Следующий результат Issue #4: version-bound actual-client read-only trace с UI outcome либо проверенный parser predicate. Исходный IL report и capture, связанный с найденным Frontend 2.5.115.84, не найдены. Токены другой версии не переносить; CEM ответы не выдумывать. Нового VDASH/VMware/physical run на этом этапе нет.
 
 ## Предыдущий этап: VDASH offline evidence (02.11.2026)
 
