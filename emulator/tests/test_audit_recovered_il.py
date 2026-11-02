@@ -352,7 +352,7 @@ IL_0020 ret
         report = tool.audit(inventory_for_detect_shape(src), src)
         self.assertIn("Shared opaque predicate usage does not reveal equality or acceptance semantics",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v4")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v5")
         self.assertNotIn("hardware=real", json.dumps(report))
 
 
