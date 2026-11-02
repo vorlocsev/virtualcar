@@ -177,7 +177,7 @@ IL_0000 ret
         report = tool.audit(inventory_for_detect_shape(source), source)
         self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v3")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v4")
 
 
     @staticmethod
@@ -272,6 +272,88 @@ IL_0020 ret
             "Direct branch targets do not prove that source blocks are reachable",
             out["limitations"])
 
+
+
+
+    @staticmethod
+    def _shared_predicate_fixture():
+        # Both snippets are SYNTHETIC; copied names/tokens only, not VDASH IL.
+        lines = [
+            "ldloc.1", "callvirt 0x0600113E get_Result",
+            "ldc.i4 123", "br.s 0",
+            "call 0x2B000002 generic_helper",
+            "call 0x06001359 opaque_predicate", "brfalse 0",
+            "ldloc.s 6", "callvirt 0x06001F95 get_HardwareNumber",
+            "ldc.i4 456", "br.s 0",
+            "call 0x2B000002 generic_helper",
+            "call 0x06001359 opaque_predicate", "brtrue.s 0",
+        ]
+        return (
+            "Frontend.Client.Core.dll: MethodDef 0x0600132B "
+            f"VddModel.Detect; {len(lines)} decoded opcodes\n"
+            + "".join(f"IL_{i:04X} {instruction}\n"
+                      for i, instruction in enumerate(lines))
+        )
+
+    def test_25_shared_predicate_both_source_getters(self):
+        src = self._shared_predicate_fixture()
+        out = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertTrue(out[
+            "detect_shared_predicate_for_result_and_hardware_number"])
+        self.assertEqual(out["detect_shared_predicate_call_count"], 2)
+
+    def test_26_result_getter_mismatch_rejected(self):
+        src = self._shared_predicate_fixture().replace(
+            "0x0600113E get_Result", "0x0600113F set_Result")
+        out = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertFalse(out[
+            "detect_shared_predicate_for_result_and_hardware_number"])
+        self.assertEqual(out["detect_shared_predicate_call_count"], 2)
+
+    def test_27_hardware_getter_mismatch_rejected(self):
+        src = self._shared_predicate_fixture().replace(
+            "0x06001F95 get_HardwareNumber", "0x06001F96 get_Value")
+        out = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertFalse(out[
+            "detect_shared_predicate_for_result_and_hardware_number"])
+
+    def test_28_second_helper_mismatch_rejected(self):
+        src = self._shared_predicate_fixture().replace(
+            "call 0x2B000002 generic_helper\nIL_000C",
+            "call 0x2B000003 generic_helper\nIL_000C")
+        out = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertFalse(out[
+            "detect_shared_predicate_for_result_and_hardware_number"])
+
+    def test_29_second_predicate_mismatch_rejected(self):
+        src = self._shared_predicate_fixture().replace(
+            "IL_000C call 0x06001359", "IL_000C call 0x0600135A")
+        out = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertFalse(out[
+            "detect_shared_predicate_for_result_and_hardware_number"])
+        self.assertEqual(out["detect_shared_predicate_call_count"], 1)
+
+    def test_30_inverted_second_branch_rejected(self):
+        src = self._shared_predicate_fixture().replace(
+            "IL_000D brtrue.s", "IL_000D brfalse.s")
+        out = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertFalse(out[
+            "detect_shared_predicate_for_result_and_hardware_number"])
+
+    def test_31_hardware_operand_mismatch_rejected(self):
+        src = self._shared_predicate_fixture().replace(
+            "IL_0007 ldloc.s 6", "IL_0007 ldloc.s 7")
+        out = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertFalse(out[
+            "detect_shared_predicate_for_result_and_hardware_number"])
+
+    def test_32_no_semantic_comparator_claim_in_output(self):
+        src = self._shared_predicate_fixture()
+        report = tool.audit(inventory_for_detect_shape(src), src)
+        self.assertIn("Shared opaque predicate usage does not reveal equality or acceptance semantics",
+                      report["limitations"])
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v4")
+        self.assertNotIn("hardware=real", json.dumps(report))
 
 
 
