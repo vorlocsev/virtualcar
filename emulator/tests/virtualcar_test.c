@@ -269,7 +269,8 @@ static void test_p2_informer_observer(U32 dev){
  REQUIRE(backend_probe_name(channel(ls),&m)==NULL);
  /* 5: 11-bit/unrelated request IDs cannot be attributed to 29-bit source. */
  m=frame(PROTO_CAN,0x726,vin,8);
- REQUIRE(backend_probe_name(channel(ls),&m)==NULL);
+ /* Existing P3 11-bit F190 classifier remains authoritative, not P2 Informer. */
+ REQUIRE(strcmp(backend_probe_name(channel(ls),&m),"P3_726_F190")==0);
  m=frame(PROTO_CAN,0x7E0,vin,8);
  REQUIRE(backend_probe_name(channel(ls),&m)==NULL);
  /* 6: truncated, non-listed selectors, nonzero padding are unclassified. */
