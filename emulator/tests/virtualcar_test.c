@@ -192,6 +192,21 @@ static void test_vmware_route_evidence(U32 dev){
   start=backend_lines+backend_len;send(iso,&m);require_route(start,"ECU_OTHER",1);
   REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
  }
+ /* VDASH 2.0: 29-bit functional suppressed TesterPresent is a keepalive,
+    not an ECU discovery probe. Test J2534 ISO15765 and raw CAN encoding. */
+ for(k=0;k<3;k++){
+  const U8 can29_suppressed[8]={0x02,0x3E,0x80,0,0,0,0,0};
+  const U8 no_suppress[2]={0x3E,0x00};
+  U32 cid=k==1?hs:iso,count=1;
+  m=frame(k==1?PROTO_CAN:PROTO_ISO15765,0x18DB33F1u,
+          k==0?suppressed:(k==1?can29_suppressed:no_suppress),
+          k==1?8:2);
+  start=backend_lines+backend_len;send(cid,&m);
+  require_route(start,k==2?"UNHANDLED":"ECU_OTHER",1);
+  REQUIRE(terminal_for(start,last_tx_request(start),
+            k==2?"unhandled_request":"no_response","no_response")==1);
+  REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+ }
  /* 6: functional short replies still fan out without conflicting routes. */
  {const U8 tester[2]={0x3E,0};
   m=frame(PROTO_ISO15765,0x7DF,tester,2);start=backend_lines+backend_len;send(iso,&m);
