@@ -149,6 +149,14 @@ envelopes, batch/zero, origins, изоляцию, исключённые опе�
 клиент 27 раз задал J1962_PINS=0x030B, затем получал предусмотренные отказы
 filter/write/periodic. Полный CAN_PS transport, VMware guest и physical J2534
 не проверены. Payload/адреса прежних 25 rejected writes не сохранены и задним
-числом не восстанавливаются. Новая классификация требует нового version/hash-bound
-client run; она не меняет уже опубликованный runtime-отчёт и не объясняет warning
-сама по себе.
+числом не восстанавливаются.
+
+В [новом длительном запуске 02–03.11](../docs/research/VDASH_CAN_PS_REJECTED_RUNTIME_20261103.md)
+на source HEAD `7a41da1` и GUI **2.5.115.85** все 4022 rejected calls получили
+метку `D2_D8_unverified_prefix`: 2011 writes и 2011 periodic registrations,
+pins3/11, declared CAN_PS, invalid0. Это 1006 полных API-сеансов внутри одного
+invocation с фоновыми повторами, не независимые тесты. ECU list пуст.
+Прямого loaded-module sample в этом запуске нет; configured artifact/hash
+и новые metadata records не заменяют такую проверку. Прежний warning agent
+не наблюдал. Форма D8 установлена, но её смысл и условие продолжения клиента
+нужно проверить отдельно; ACK/положительный CEM ответ не добавляется.
