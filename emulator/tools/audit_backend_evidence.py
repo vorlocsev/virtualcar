@@ -34,7 +34,12 @@ REASONS = frozenset((
 SESSION = re.compile(r"[0-9a-fA-F]{16}\Z")
 # Only compile-time identifiers from the DLL are accepted. They reveal request
 # shape, not VIN, payload content or the presence of a physical ECU.
-PROBES = {}
+PROBES = {
+    "FUNC29_TP_SUPPRESSED": {
+        "service": "3E80", "can_id": "0x18DB33F1",
+        "id_format": "29bit", "target": None,
+    },
+}
 for _target in ("40", "50"):
     for _op in ("A3", "A6", "B9F0", "B9FB", "B9FC"):
         PROBES[f"D2_{_target}_{_op}"] = {
@@ -105,6 +110,11 @@ def _decode(line):
     if e["kind"] == "probe_classified":
         if type(e.get("probe")) is not str or e["probe"] not in PROBES:
             return None
+        if e["probe"] == "FUNC29_TP_SUPPRESSED":
+            # Only the metadata shapes emitted by the 500-kbit/s CAN/
+            # ISO15765 classifier are compatible with this known probe.
+            if e["baud"] != 500000 or e["protocol"] not in (5, 6):
+                return None
         if e["probe"].startswith("P2INF_"):
             # Refuse wrong-protocol / wrong-bus provenance even if a
             # locally supplied JSONL line spoofs an allowlisted token.
@@ -213,6 +223,18 @@ def _classify(r):
     outcome, reason = terminal
     if outcome == "no_response" and (queued or delivered):
         return "unverified", "rx_evidence_with_no_response"
+    # A confirmed suppress-positive-response keepalive is not a failed ECU
+    # discovery attempt. Require the exact probe, correct functional route,
+    # an explicit silent terminal and *no* contradictory RX/response events.
+    if (r["probes"] == {"FUNC29_TP_SUPPRESSED"}
+            and r["routes"] == {"ECU_OTHER"}
+            and r["baud"] == 500000 and r["protocol"] in (5, 6)
+            and outcome == "no_response" and reason == "no_response"
+            and not queued and not delivered and not lost
+            and not r["counts"]["response_generated"]
+            and not r["counts"]["filter_pass"]
+            and not r["counts"]["response_aborted"]):
+        return "suppressed", "functional_tester_present_no_rx_expected"
     if reason == "missing_profile" and outcome == "no_response":
         return "no_fixture", "explicit_missing_profile"
     if reason in ("unsupported_bus", "unhandled_request", "unimplemented_probe") and outcome == "no_response":
@@ -336,6 +358,7 @@ def audit(lines):
             "Coverage describes observed app writes and J2534 periodic firings only; never infer an ECU reply from an unobserved probe",
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
+            "suppressed means exact silent 3E80 functional request, never ECU discovery or client acceptance",
         ],
         "summary": {
             "requests": len(results), "sessions": len(sessions),
