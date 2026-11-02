@@ -14,14 +14,15 @@ HEADER = re.compile(r"^([^:\n]+): MethodDef (0x[0-9A-Fa-f]{8}) (.+?); (\d+) deco
 IL = re.compile(r"^IL_([0-9A-Fa-f]{4,8})\s+([A-Za-z0-9_.]+)(?:\s+(.*?))?\s*$")
 TOKEN = re.compile(r"0x[0-9A-Fa-f]{8}")
 IMPORTANT = ("0x06001329", "0x0600132C", "0x06001160", "0x06002472", "0x060002EF")
+# MethodDef tokens are unique only *inside an assembly*, not globally.
 KNOWN = {
-    "detect": "0x0600132B",
-    "execute": "0x0600115D",
-    "pre_detect": "0x0600133D",
-    "get_vin": "0x0600133A",
-    "parse_data": "0x06001160",
-    "ui_done": "0x06002472",
-    "send_v2": "0x060002EF",
+    "detect": ("Frontend.Client.Core.dll", "0x0600132B"),
+    "execute": ("Frontend.Client.Core.dll", "0x0600115D"),
+    "pre_detect": ("Frontend.Client.Core.dll", "0x0600133D"),
+    "get_vin": ("Frontend.Client.Core.dll", "0x0600133A"),
+    "parse_data": ("Frontend.Client.Core.dll", "0x06001160"),
+    "ui_done": ("Frontend.exe", "0x06002472"),
+    "send_v2": ("Client.Core.dll", "0x060002EF"),
 }
 
 
@@ -33,10 +34,11 @@ def parse_excerpts(text):
         heading = HEADER.fullmatch(line.strip())
         if heading:
             token = heading.group(2).upper().replace("0X", "0x")
-            if token in blocks:
+            key = (heading.group(1), token)
+            if key in blocks:
                 raise ValueError("duplicate_method_token")
             current = {"declared": int(heading.group(4)), "ops": []}
-            blocks[token] = current
+            blocks[key] = current
             continue
         if line.startswith("IL_"):
             if current is None:
@@ -57,6 +59,53 @@ def _has_call(ops, token):
     return any(op in ("call", "callvirt") and (TOKEN.search(arg) is not None)
                and TOKEN.search(arg).group(0).upper() == token.upper()
                for op, arg in ops)
+
+
+def _has_motif(ops, steps):
+    """Contiguous CIL shape only; no claim the CFG reaches this code."""
+    if not steps or len(ops) < len(steps):
+        return False
+    for start in range(len(ops) - len(steps) + 1):
+        if all(
+            actual[0] == expected[0]
+            and (expected[1] is None or actual[1].startswith(expected[1]))
+            for actual, expected in zip(ops[start:start + len(steps)], steps)
+        ):
+            return True
+    return False
+
+
+def _model_shapes(detect):
+    # Construct an *observed* def-use neighborhood, not de-flattened paths.
+    get_resultdata = next((i for i, (op, arg) in enumerate(detect)
+                           if op == "callvirt" and arg.startswith("0x06001142")), None)
+    near_local2 = get_resultdata is not None and any(
+        op == "stloc.2" for op, _ in detect[get_resultdata + 1:get_resultdata + 17]
+    )
+    return {
+        "detect_resultdata_near_local2_store": near_local2,
+        "detect_result_constructor_from_volvo_and_local2": _has_motif(detect, [
+            ("ldarg.0", None), ("ldarg.0", None),
+            ("call", "0x060012E2"), ("ldloc.2", None),
+            ("newobj", "0x060011BB"), ("call", "0x060012E9"),
+        ]),
+        "detect_ecus_constructor_from_detect_result": _has_motif(detect, [
+            ("ldarg.0", None), ("ldarg.0", None),
+            ("call", "0x060012E8"), ("newobj", "0x0600126D"),
+            ("call", "0x060012DF"),
+        ]),
+        "detect_model_stores_command_datahash": _has_motif(detect, [
+            ("ldarg.0", None), ("ldloc.1", None),
+            ("callvirt", "0x0600113C"), ("stfld", "0x040003A9"),
+        ]),
+        "detect_has_result_units_enumeration": _has_motif(detect, [
+            ("call", "0x060012E8"), ("callvirt", "0x06001B99"),
+            ("callvirt", "0x0A00011A"),
+        ]),
+        "detect_has_both_boolean_return_sites":
+            _has_motif(detect, [("ldc.i4.1", None), ("ret", None)])
+            and _has_motif(detect, [("ldc.i4.0", None), ("ret", None)]),
+    }
 
 
 def _status_values(ops):
@@ -94,19 +143,24 @@ def audit(inventory, excerpts):
     if not isinstance(selected, list) or not selected:
         raise ValueError("invalid_inventory")
     tokens = set()
+    by_key = {}
     for method in selected:
         token = method.get("method_token")
+        module = method.get("module")
         if not isinstance(token, str) or not TOKEN.fullmatch(token):
             raise ValueError("invalid_inventory_token")
-        if token in tokens:
+        if not isinstance(module, str) or not module:
+            raise ValueError("invalid_inventory_module")
+        key = (module, token)
+        if key in tokens:
             raise ValueError("duplicate_inventory_token")
-        tokens.add(token)
+        tokens.add(key)
+        by_key[key] = method
     blocks = parse_excerpts(excerpts)
-    for token, body in blocks.items():
-        if token not in tokens:
+    for key, body in blocks.items():
+        if key not in tokens:
             raise ValueError("excerpt_method_not_in_inventory")
-        item = next(x for x in selected if x["method_token"] == token)
-        if item.get("decoded_instructions") != body["declared"]:
+        if by_key[key].get("decoded_instructions") != body["declared"]:
             raise ValueError("inventory_excerpt_disagreement")
 
     detect = blocks.get(KNOWN["detect"], {}).get("ops", [])
@@ -115,7 +169,7 @@ def audit(inventory, excerpts):
     getvin = blocks.get(KNOWN["get_vin"], {}).get("ops", [])
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v1",
+        "format": "recovered-il-evidence-audit-v2",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -136,11 +190,13 @@ def audit(inventory, excerpts):
             "execute_calls_parse_data": _has_call(execute, "0x06001160"),
             "execute_observed_status_numeric_comparisons": _status_values(execute),
             "execute_one_second_timer_shape": _one_shot_timer_shape(execute),
+            **_model_shapes(detect),
         },
         "limitations": [
             "Method references do not prove execution order in flattened CFG",
             "Enum meaning and unknown wrapper effects not established",
             "No J2534 request/ECU acceptance claim from recovered IL alone",
+            "Constructor/data-flow motifs do not establish runtime reachability",
         ],
     }
 
