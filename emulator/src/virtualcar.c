@@ -403,6 +403,17 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
     id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
     p=m->Data+4;n=m->DataSize-4;
+    /* The exact VDASH 2.0 functional 3E 80 probe is session keepalive, not
+       CEM discovery. Only metadata on a known 500-kbit/s route, no new RX.
+       Raw CAN mode uses a full, zero-padded eight-byte single frame. */
+    if(id==0x18DB33F1u && c->baud==500000u &&
+       ((c->protocol==PROTO_ISO15765 && n==2u &&
+         p[0]==0x3Eu && p[1]==0x80u) ||
+        (c->protocol==PROTO_CAN && n==8u &&
+         p[0]==0x02u && p[1]==0x3Eu && p[2]==0x80u &&
+         p[3]==0u && p[4]==0u && p[5]==0u &&
+         p[6]==0u && p[7]==0u)))
+        return "FUNC29_TP_SUPPRESSED";
     /* These source-labelled families are metadata only, never new CAN RX. */
     {
         const char *informer=p2_informer_probe_name(c,id,p,n);
