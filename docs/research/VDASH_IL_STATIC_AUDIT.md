@@ -151,6 +151,37 @@ Additional facts from intact CIL instructions:
 
 **Scope and access limitations:** Only the 11 existing recovered IL excerpts can be opcode-validated here; there is not enough original IL text to reconstruct `CreateCommand`, `Enqueue`, `ParseData`, `OnCheckResult` or the UI acceptance predicate. The audit script does **not** reconstruct these branches and cannot obtain protected code. One CLI output may contain only metadata/booleans/numeric comparisons, not source strings. All tests are synthetic and do not claim VDASH itself ran.
 
+## Exact IL local provenance: DetectResult and ECU collection (2026-11-02)
+
+The existing, private recovered IL excerpt for **VDASH portable 2.5.115.79**, module `Frontend.Client.Core.dll`, MethodDef `0x0600132B`, supports a stronger **local data-origin assertion**, without undoing the flattened control flow:
+
+| Exact IL neighborhood | Directly supported assertion | Explicit limitation |
+|---|---|---|
+| IL_00F1–010C, including `get_ResultData`, a null check, an opaque generic helper and `stloc.2` | Command result data is part of the value placed in local 2, with a null/fallback path | Cannot name the data schema or prove which branch was taken |
+| IL_0177–0184, `get_Volvo → ldloc.2 → newobj 0x060011BB → set_DetectResult` | The new DetectResult model is constructed from the Volvo model and local 2 | The constructor body and data acceptance criteria were not recovered |
+| IL_0261–026D, `get_DetectResult → newobj 0x0600126D → set_Ecus` | The `Ecus` model is built using the already-created DetectResult | Constructor does not by itself prove individually queried ECU or non-empty list |
+| IL_0285–028C, `get_DataHash → stfld dataHash` | The current command's DataHash is stored on the model | No hash algorithm, cryptographic validation or server authorization proven |
+| IL_02A4–02AF and IL_04DF–04EA, `DetectResult.get_Units → GetEnumerator` | A second stage processes the DetectResult's `Units` collection | Unit enumeration need not imply real CAN transport or UI acceptance |
+| IL_06BB–06BC and IL_06D0–06D1 | Both true and false return sites are present | Flattened CFG prevents attributing conditions or runtime path |
+
+The pseudocode below describes **only adjacent IL data dependencies**, not program execution order:
+
+```text
+command.ResultData  → [nullable conversion / fallback] → local2
+(Volvo, local2)     → DetectResult constructor             → model.DetectResult
+model.DetectResult  → Ecus constructor                     → model.Ecus
+command.DataHash    → model.dataHash
+model.DetectResult  → Units enumeration / loader projections
+```
+
+### Automated independent verification
+
+The allowlist auditor `emulator/tools/audit_recovered_il.py` now uses **(module name, MethodDef token)** as method identity, because a MethodDef token is **module-scoped**. The previously selected 28 tokens happened not to collide; however, globally keying future input by numeric token alone could silently misattribute methods from two DLLs. The tool checks 6 exact, bounded `Detect` shape predicates and retains the existing timer/status/count checks. New synthetic tests #9–16 check module-token collisions, module mismatch/missing metadata, positive constructor provenance, negative constructor/hash mutations, and explicit non-reachability of source motifs.
+
+These predicates **do not reconstruct control-flow flattening, decrypt strings, identify the network protocol, or establish a physical CEM request**. No code, binaries, private logs, VINs, or new RX fixtures are incorporated. Two releases are **not** compared semantically: the recovered static module is VDASH portable 2.5.115.79 while earlier J2534 logs concern VDASH 2.0.
+
+**End-to-end blocker remains:** full method bodies for `CreateCommand` (`0x06001329`), `Enqueue` (`0x0600132C`), `ParseData` (`0x06001160`), `OnCheckResult` (`0x0600115F`) and the `0x060011BB/0x0600126D` constructors, plus the `Model_DetectDone` predicate. Until they are available, claiming a specific ECU-discovery acceptance rule would be conjecture.
+
 ## Handoff
 
 Linked to issues #37 and #4 and PR #39. Only the read-only analysis script, synthetic tests and research documentation were added in this follow-up; no ECU behavior, fixtures or emulator responses changed. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
