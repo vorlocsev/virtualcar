@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evidence-only audit of Virtual Car and legacy J2534 text traces.
+"""Evidence-only audit of Virtual Car, legacy and VIDA J2534 text traces.
 
 No frame payloads, VINs, PIDs, host names or source paths are written to JSON.
 'delivered' means J2534 returned RX, NOT that a diagnostic client accepted an ECU.
@@ -205,7 +205,9 @@ def _a6_frame(tx, can_id, payload, ctx):
 
 
 def _result(tx):
-    if tx["_bad_route"]:
+    if tx["_source_error"]:
+        status, reason = "unverified", tx["_source_error"]
+    elif tx["_bad_route"]:
         status, reason = "unsupported", "strict_route_rejected"
     elif tx["_no_fixture"]:
         status, reason = "no_fixture", "explicit_missing_fixture"
@@ -252,11 +254,178 @@ def _result(tx):
     }
 
 
+_VIDA_LINE = re.compile(
+    r"^(?:\d{2}:\d{2}:\d{2},\d{3}\s+)?"
+    r"\[J2534ChannelMana\s*\]\[([0-9A-Fa-f]{1,8})\]\[[^\]]+\]\s*(.*)$")
+_VIDA_LOGGER = re.compile(
+    r"^(?:\d{2}:\d{2}:\d{2},\d{3}\s+)?\[[^\]]+\]\[[0-9A-Fa-f]{1,8}\]\[[^\]]+\]")
+_VIDA_NUMBER = r"(?:0[xX][0-9A-Fa-f]+|[0-9]+)"
+_VIDA_CONNECT = re.compile(
+    r"^PassThruConnect\(\s*(" + _VIDA_NUMBER + r")\s*,\s*("
+    + _VIDA_NUMBER + r")\s*,\s*(" + _VIDA_NUMBER + r")\s*,\s*("
+    + _VIDA_NUMBER + r")\s*,\s*(" + _VIDA_NUMBER + r")\s*\)\s*$")
+_VIDA_IO = re.compile(
+    r"^PassThru(Read|Write)Msgs\(\s*([0-9]+)\s*,\s*PASSTHRU_MSG\s*,"
+    r"\s*([0-9]+)\s*,\s*([0-9]+)\s*\)(?:\s.*)?$")
+_VIDA_PACKET = re.compile(r"^(--->|<---)\s*\(([0-9]+)\)\s*(.*)$")
+_VIDA_ERROR = re.compile(
+    r"^J2534 function:PassThru(ReadMsgs|WriteMsgs|Connect) failed with return value:(ERR_[A-Z_]+)\b")
+_VIDA_BOUNDARY = re.compile(r"^Starting new logsession: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s*$")
+
+
+def _vida_number(text):
+    return int(text, 16 if text.lower().startswith("0x") else 10)
+
+
+class _VidaText:
+    """Bind VIDA's comma-byte records to calls in the same logged thread.
+
+    Only explicit Connect metadata is used. Client-level VehComm messages,
+    adapter names and inferred vehicle identity never become transport evidence.
+    """
+
+    def __init__(self, errors):
+        self.errors = errors
+        self.reset()
+
+    def reset(self):
+        self.channels = {}
+        self.pending = {}
+
+    def _forget_channel(self, channel):
+        self.channels.pop(channel, None)
+        self.pending = {t: p for t, p in self.pending.items() if p["channel"] != channel}
+
+    def feed(self, line):
+        if _VIDA_BOUNDARY.fullmatch(line.strip()):
+            self.reset()
+            return {"kind": "boundary"}
+        match = _VIDA_LINE.match(line.rstrip("\r\n"))
+        if not match:
+            return {"kind": "ignore"} if _VIDA_LOGGER.match(line) else None
+        thread, text = match.groups()
+        clock = _stamp(line)
+        event = {"kind": "ignore", "stamp": clock}
+        connect = _VIDA_CONNECT.fullmatch(text)
+        if connect:
+            device, protocol, flags, baud, channel = map(_vida_number, connect.groups())
+            if baud == 0 or any(x > 0xFFFFFFFF for x in (device, protocol, flags, baud, channel)):
+                self.errors["vida_invalid_connect"] += 1
+                self.pending.pop(thread, None)
+                if channel <= 0xFFFFFFFF:
+                    self._forget_channel(channel)
+                    return {"kind": "connect_failed", "channel": channel}
+                return event
+            previous = self.channels.get(channel)
+            self._forget_channel(channel)
+            if len(self.channels) >= 256 or len(self.pending) >= 256:
+                raise ValueError("too many VIDA channels or threads to audit safely")
+            metadata = {"channel": channel, "protocol": protocol,
+                        "flags": flags, "baud": baud, "device": device}
+            if previous is not None and previous["device"] != device:
+                # IO calls print ChannelID only. A collision between devices
+                # cannot be disambiguated from this text format.
+                self.errors["vida_ambiguous_channel"] += 1
+                metadata.update(protocol=None, flags=None, baud=None, device=None)
+            self.channels[channel] = metadata
+            self.pending[thread] = {"kind": "connect", "channel": channel}
+            return {"kind": "connect", "channel": channel}
+        if text.startswith("PassThruConnect("):
+            self.errors["vida_invalid_connect"] += 1
+            self.reset()
+            return {"kind": "format_boundary"}
+        call = _VIDA_IO.fullmatch(text)
+        if call:
+            method, channel, count, timeout = call.groups()
+            channel, count, timeout = map(int, (channel, count, timeout))
+            self.pending.pop(thread, None)
+            if channel > 0xFFFFFFFF or timeout > 0xFFFFFFFF or not 1 <= count <= 4096:
+                self.errors["vida_invalid_call"] += 1
+                return event
+            if len(self.channels) > 256 or len(self.pending) >= 256:
+                raise ValueError("too many VIDA channels or threads to audit safely")
+            self.pending[thread] = {"kind": "rx" if method == "Read" else "tx",
+                                    "channel": channel, "count": count, "next": 0,
+                                    "wait_ms": timeout}
+            return event
+        if text.startswith(("PassThruReadMsgs(", "PassThruWriteMsgs(")):
+            self.errors["vida_invalid_call"] += 1
+            self.pending.pop(thread, None)
+            return {"kind": "unbound_tx"} if text.startswith("PassThruWriteMsgs(") else event
+        error = _VIDA_ERROR.match(text)
+        if error:
+            method, code = error.groups()
+            pending = self.pending.pop(thread, None)
+            kind = {"ReadMsgs": "rx", "WriteMsgs": "tx", "Connect": "connect"}[method]
+            if pending is None or pending["kind"] != kind:
+                self.errors["vida_unbound_call_error"] += 1
+                return event
+            channel = pending["channel"]
+            if kind == "connect":
+                self._forget_channel(channel)
+                return {"kind": "connect_failed", "channel": channel}
+            if kind == "tx":
+                return {"kind": "write_failed", "channel": channel}
+            if code == "ERR_TIMEOUT" or (code == "ERR_BUFFER_EMPTY" and pending["wait_ms"] > 0):
+                return {"kind": "timeout", "channel": channel}
+            return event
+        disconnect = re.fullmatch(r"PassThruDisconnect\(\s*([0-9]+)\s*\)\s*", text)
+        if disconnect:
+            channel = int(disconnect[1])
+            self._forget_channel(channel)
+            return {"kind": "disconnect", "channel": channel}
+        if re.fullmatch(r"PassThruClose\(\s*(?:[0-9]+)?\s*\)\s*", text):
+            self.reset()
+            return {"kind": "close"}
+        clear = re.fullmatch(
+            r"PassThruIoctl\(\s*([0-9]+)\s*,\s*(?:CLEAR_RX_BUFFER|0[xX]0*8|8)\s*,.*\)\s*", text)
+        if clear:
+            channel = int(clear[1])
+            self.pending = {t: p for t, p in self.pending.items() if p["channel"] != channel}
+            return {"kind": "clear", "channel": channel}
+        if text == "J2534Channel::ClearRxBuffer()":
+            # No channel is printed; do not borrow one from another call/thread.
+            self.pending.clear()
+            return {"kind": "clear_all"}
+        packet = _VIDA_PACKET.fullmatch(text)
+        if packet:
+            direction, index, data = packet.groups()
+            kind = "tx" if direction == "--->" else "rx"
+            pending = self.pending.get(thread)
+            if (pending is None or pending["kind"] != kind
+                    or int(index) != pending["next"] or int(index) >= pending["count"]):
+                self.errors["vida_unbound_payload"] += 1
+                self.pending.pop(thread, None)
+                return {"kind": "unbound_tx"} if kind == "tx" else event
+            # Parsing whole tokens prevents truncated or decorated hex from
+            # silently turning into a plausible positive response.
+            tokens = data.split(",")
+            if tokens and not tokens[-1].strip():
+                tokens.pop()
+            # ID-only RX records contain no application bytes; receive() ignores
+            # them, just as it does in the existing native text format.
+            minimum = 4 if kind == "rx" else 5
+            if (not minimum <= len(tokens) <= 4128
+                    or any(not re.fullmatch(r"[0-9A-Fa-f]{2}", x.strip()) for x in tokens)):
+                self.errors["vida_malformed_payload"] += 1
+                self.pending.pop(thread, None)
+                return {"kind": "malformed_" + kind, "channel": pending["channel"]}
+            pending["next"] += 1
+            channel = pending["channel"]
+            metadata = self.channels.get(channel, {"channel": channel,
+                       "protocol": None, "flags": None, "baud": None})
+            return {"kind": kind, "channel": channel, "metadata": metadata,
+                    "raw": bytes(int(x.strip(), 16) for x in tokens), "stamp": clock}
+        return event
+
+
+
 def audit(lines):
     sessions = {}
     epoch = 0
     results = []
     errors = Counter()
+    vida = _VidaText(errors)
 
     def scope(pid):
         nonlocal epoch
@@ -273,26 +442,29 @@ def audit(lines):
             tx["_end_reason"] = why
             results.append(_result(tx))
 
-    def start(s, request, stamp, raw):
+    def start(s, request, stamp, raw, metadata=None):
         kind, service, target, can_id = request
         ctx = s["txctx"]
-        channel = ctx[0] if ctx else None
+        channel = metadata["channel"] if metadata is not None else ctx[0] if ctx else None
         s["last_tx_channel"] = channel
         finish(s, channel, "superseded_by_tx")
-        flags = ctx[2] if ctx else None
+        flags = metadata["flags"] if metadata is not None else ctx[2] if ctx else None
+        protocol = metadata["protocol"] if metadata is not None else ctx[1] if ctx else None
+        baud = metadata["baud"] if metadata is not None else ctx[3] if ctx else None
         start_at = ctx[4] if ctx else stamp
         mod = 2**32 if ctx else 86400000
         tx = {
             "session": s["number"], "service": service, "route": kind,
             "can_id": f"0x{can_id:08X}" if can_id > 0x7FF else f"0x{can_id:03X}",
             "id_format": _id_format(can_id, flags), "channel": channel,
-            "protocol": {5: "CAN", 6: "ISO15765"}.get(ctx[1], "other") if ctx else "unknown",
-            "baud_bps": ctx[3] if ctx else None,
+            "protocol": {5: "CAN", 6: "ISO15765"}.get(protocol, "other") if protocol is not None else "unknown",
+            "baud_bps": baud,
             "target": f"0x{target:02X}" if target is not None else None,
             "rx_frames": 0, "off_route_rx": 0,
             "_start": start_at, "_last": None, "_time_mod": mod,
             "_rxid": None, "_seq": 1, "_base": 0x08, "_subblock": False,
             "_complete": False, "_invalid": False,
+            "_source_error": None,
             "_a6_identifier": _a6_request_identifier(raw) if service == "A6" else None,
             "_a6_error": None,
             "_no_fixture": False, "_bad_route": False,
@@ -310,9 +482,9 @@ def audit(lines):
             return next(iter(s["active"].values()))
         return None
 
-    def receive(s, raw, stamp):
+    def receive(s, raw, stamp, metadata=None):
         ctx = s["rxctx"]
-        channel = ctx[0] if ctx else None
+        channel = metadata["channel"] if metadata is not None else ctx[0] if ctx else None
         tx = active(s, channel)
         if not tx or len(raw) < 5:
             return
@@ -329,9 +501,15 @@ def audit(lines):
                 return
             # The protocol is from the requesting channel, not an unrelated RX.
             # ISO15765 J2534 returns reassembled UDS; CAN returns PCI frames.
-            _p3_frame(tx, payload, tx["protocol"])
+            if metadata is not None and tx["protocol"] not in ("CAN", "ISO15765"):
+                tx["rx_frames"] += 1
+                tx["_source_error"] = "vida_unknown_transport"
+            else:
+                _p3_frame(tx, payload, tx["protocol"])
         elif tx["service"] == "A6":
-            if not _a6_frame(tx, can_id, payload, ctx):
+            route_ctx = ([channel, metadata["protocol"], None, metadata["baud"], None]
+                         if metadata is not None and metadata["protocol"] is not None else ctx)
+            if not _a6_frame(tx, can_id, payload, route_ctx):
                 return
         else:
             head = payload[0]
@@ -372,7 +550,47 @@ def audit(lines):
             tx["_last"] = at
 
     for line in lines:
+        event = vida.feed(line)
+        if event is not None:
+            kind = event["kind"]
+            if kind == "ignore":
+                continue
+            if kind == "boundary":
+                s = sessions.pop("vida", None)
+                if s:
+                    for ch in list(s["active"]):
+                        finish(s, ch, "session_boundary")
+                continue
+            s = scope("vida")
+            if kind in ("close", "clear_all", "unbound_tx", "format_boundary"):
+                for ch in list(s["active"]):
+                    finish(s, ch, {"close": "connection_closed",
+                                  "clear_all": "clear_rx_buffer_unknown_channel",
+                                  "unbound_tx": "unattributed_tx", "format_boundary": "vida_invalid_connect"}[kind])
+            elif kind in ("connect", "connect_failed", "disconnect", "write_failed", "clear", "malformed_tx"):
+                finish(s, event["channel"], {
+                    "connect": "channel_reconnected", "connect_failed": "connection_failed",
+                    "disconnect": "channel_disconnected", "write_failed": "j2534_write_failed",
+                    "clear": "clear_rx_buffer", "malformed_tx": "malformed_tx"}[kind])
+            elif kind == "malformed_rx":
+                tx = active(s, event["channel"])
+                if tx:
+                    tx["_source_error"] = "vida_malformed_rx_record"
+            elif kind == "timeout":
+                tx = active(s, event["channel"])
+                if tx:
+                    tx["_timeout"] = True
+            elif kind == "tx":
+                request = _request(event["raw"])
+                if request:
+                    start(s, request, event["stamp"], event["raw"], event["metadata"])
+                elif event["metadata"]["protocol"] != 5 or not _flow_control(event["raw"]):
+                    finish(s, event["channel"], "superseded_by_other_tx")
+            elif kind == "rx":
+                receive(s, event["raw"], event["stamp"], event["metadata"])
+            continue
         if "=== SECTORV VIRTUALCAR SESSION " in line:
+            vida.reset()
             for s in sessions.values():
                 for ch in list(s["active"]):
                     finish(s, ch, "session_boundary")
