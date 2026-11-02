@@ -35,6 +35,10 @@ SESSION = re.compile(r"[0-9a-fA-F]{16}\Z")
 # Only compile-time identifiers from the DLL are accepted. They reveal request
 # shape, not VIN, payload content or the presence of a physical ECU.
 PROBES = {
+    "OBD_FUNC_VIN_0902": {
+        "service": "0902", "can_id": "0x7DF",
+        "id_format": "11bit", "target": None,
+    },
     "FUNC29_TP_SUPPRESSED": {
         "service": "3E80", "can_id": "0x18DB33F1",
         "id_format": "29bit", "target": None,
@@ -110,7 +114,7 @@ def _decode(line):
     if e["kind"] == "probe_classified":
         if type(e.get("probe")) is not str or e["probe"] not in PROBES:
             return None
-        if e["probe"] == "FUNC29_TP_SUPPRESSED":
+        if e["probe"] in ("FUNC29_TP_SUPPRESSED", "OBD_FUNC_VIN_0902"):
             # Only the metadata shapes emitted by the 500-kbit/s CAN/
             # ISO15765 classifier are compatible with this known probe.
             if e["baud"] != 500000 or e["protocol"] not in (5, 6):
@@ -297,6 +301,51 @@ def _result(r):
     }
 
 
+def _vin_cem_request_order(records, results):
+    """Summarize *observed TX shapes* within one backend session.
+
+    Request ordering comes from the first appearance in this JSONL file, not
+    from cross-channel wall clocks. Do not imply VIN response reception,
+    client acceptance, CEM presence, or lack of another adapter's requests.
+    """
+    flows = {}
+    for record, result in zip(records, results):
+        session = result["session"]
+        if session not in flows:
+            flows[session] = {"session": session, "vin_request_count": 0,
+                              "cem_probe_count": 0, "cem_before_first_vin": None,
+                              "cem_after_first_vin": None,
+                              "_observed": []}
+        flow = flows[session]
+        probe = _trusted_probe(record)
+        if (record["context_conflict"] or record["clock_conflict"]
+                or record["duplicate_terminal"] or record["late_events"]
+                or len(record["routes"]) > 1):
+            continue
+        if probe == "OBD_FUNC_VIN_0902" or (
+                probe is not None and
+                (probe.startswith("D2_40_") or probe.startswith("D2_50_")
+                 or probe.startswith("P3_726_") or probe.startswith("P3_29_"))):
+            flow["_observed"].append((result["request"], probe))
+    for flow in flows.values():
+        found = flow.pop("_observed")
+        vins = [ordinal for ordinal, probe in found if probe == "OBD_FUNC_VIN_0902"]
+        cems = [ordinal for ordinal, probe in found if probe != "OBD_FUNC_VIN_0902"]
+        flow["vin_request_count"] = len(vins)
+        flow["cem_probe_count"] = len(cems)
+        if vins:
+            first = min(vins)
+            flow["cem_before_first_vin"] = sum(x < first for x in cems)
+            flow["cem_after_first_vin"] = sum(x > first for x in cems)
+        flow["observation"] = (
+            "vin_tx_then_cem_probe_tx" if vins and flow["cem_after_first_vin"]
+            else "vin_tx_no_later_cem_probe_observed" if vins
+            else "cem_probe_without_observed_obd_vin" if cems
+            else "no_matching_tx_probes_observed"
+        )
+    return list(flows.values())
+
+
 def audit(lines):
     sessions = {}
     transactions = {}
@@ -362,6 +411,11 @@ def audit(lines):
         "identity_verified": False,
         "probe_detail_available": bool(observed),
         "coverage": coverage,
+        "vin_cem_observation": {
+            "scope": "same_backend_session_order_of_allowlisted_tx_shapes",
+            "request_order_not_client_acceptance": True,
+            "sessions": _vin_cem_request_order(records, results),
+        },
         "limitations": [
             "Missing, reordered or incomplete queue/terminal events downgrade delivery to unverified",
             "Only exact allowlisted probe_classified shapes identify a request; legacy logs remain unknown",
@@ -369,6 +423,8 @@ def audit(lines):
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
             "Origin breakdown counts observed J2534 events, not VDASH internal decisions or ECU presence",
+            "VIN/CEM ordering is first appearance in backend JSONL, not a confirmed client-side phase or verified VIN",
+            "No later CEM probe observed does not prove no CEM exists or no other transport was used",
             "suppressed means exact silent 3E80 functional request, never ECU discovery or client acceptance",
         ],
         "summary": {
