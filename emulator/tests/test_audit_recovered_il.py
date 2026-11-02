@@ -133,8 +133,8 @@ IL_0000 ret
         ]
         return (
             "Frontend.Client.Core.dll: MethodDef 0x0600132B "
-            f"VddModel.Detect; {len(lines)} decoded opcodes\\n"
-            + "".join(f"IL_{i:04X} {instruction}\\n"
+            f"VddModel.Detect; {len(lines)} decoded opcodes\n"
+            + "".join(f"IL_{i:04X} {instruction}\n"
                       for i, instruction in enumerate(lines))
         )
 
@@ -182,7 +182,7 @@ IL_0000 ret
 
 def inventory_for_detect_shape(source):
     import re
-    m = re.search(r"VddModel.Detect; (\\d+) decoded opcodes", source)
+    m = re.search(r"VddModel.Detect; (\d+) decoded opcodes", source)
     if m is None:
         raise ValueError("missing synthetic fixture")
     return {"selected_methods": [{
