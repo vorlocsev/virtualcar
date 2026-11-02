@@ -201,7 +201,13 @@ static void test_vmware_route_evidence(U32 dev){
   m=frame(k==1?PROTO_CAN:PROTO_ISO15765,0x18DB33F1u,
           k==0?suppressed:(k==1?can29_suppressed:no_suppress),
           k==1?8:2);
-  start=backend_lines+backend_len;send(cid,&m);
+  start=backend_lines+backend_len;
+  {const char *probe=backend_probe_name(channel(cid),&m);
+   if(k<2)REQUIRE(probe&&strcmp(probe,"FUNC29_TP_SUPPRESSED")==0);
+   else REQUIRE(!probe);}
+  send(cid,&m);
+  if(k<2)REQUIRE(event_count_since(start,"\"probe\":\"FUNC29_TP_SUPPRESSED\"")==1);
+  else REQUIRE(event_count_since(start,"\"probe\":\"FUNC29_TP_SUPPRESSED\"")==0);
   require_route(start,k==2?"UNHANDLED":"ECU_OTHER",1);
   REQUIRE(terminal_for(start,last_tx_request(start),
             k==2?"unhandled_request":"no_response","no_response")==1);
@@ -231,6 +237,19 @@ static void test_vmware_route_evidence(U32 dev){
  {const char *path=getenv("VIRTUALCAR_ROUTE_EVIDENCE");
   if(path){FILE *f=fopen(path,"wb");REQUIRE(f!=0);
    REQUIRE(fwrite(fixture_start,1,strlen(fixture_start),f)==strlen(fixture_start));REQUIRE(fclose(f)==0);}}
+ /* Reject wrong route speed, nonzero CAN padding and wrong functional ID.
+    These call only the read-only metadata classifier. */
+ {
+  const U8 padded[8]={2,0x3E,0x80,0,0,0,0,0};
+  PASSTHRU_MSG trial=frame(PROTO_CAN,0x18DB33F1u,padded,8);
+  const char *probe=backend_probe_name(channel(hs),&trial);
+  REQUIRE(probe&&strcmp(probe,"FUNC29_TP_SUPPRESSED")==0);
+  REQUIRE(backend_probe_name(channel(ls),&trial)==0);
+  trial.Data[11]=1;
+  REQUIRE(backend_probe_name(channel(hs),&trial)==0);
+  trial.Data[11]=0;trial.Data[3]=0xF0;
+  REQUIRE(backend_probe_name(channel(hs),&trial)==0);
+ }
  /* Verify periodic firings without altering the frozen eight-group route
     fixture above. ReadMsgs causes the tick, not registration itself. */
  {
