@@ -17,6 +17,7 @@ HEX = re.compile(r"\b[0-9A-Fa-f]{2}\b")
 LEGACY_BYTE = re.compile(r"\b0x([0-9A-Fa-f]{1,2})\b")
 D2_SERVICES = (0xF0, 0xFB, 0xFC)
 MAX_TRANSACTIONS = 20000
+ISO_RX_METADATA = "PassThruReadMsgs ISO15765 protocol/status/size/extra-index/timestamp-us (BE)"
 # Observed CEM diagnostic route candidates, not a model-year compatibility map.
 D2_A6_RESPONSE_IDS = {
     "0x40": (0x00800003,),
@@ -291,6 +292,7 @@ def _result(tx):
         result["last_rx_line"] = tx["_obd_last_rx_line"]
         result["client_result"] = "client_result_unknown"
         result["vehicle_identity_verified"] = False
+        result["iso15765_rx_metadata"] = dict(tx["_obd_rx_metadata"])
     return result
 
 
@@ -489,6 +491,37 @@ def audit(lines, *, include_obd=False):
     errors = Counter()
     vida = _VidaText(errors)
     observed_events = Counter()
+    pending_native_rx = None
+
+    def missing_rx_metadata():
+        nonlocal pending_native_rx
+        if pending_native_rx is not None:
+            pending_native_rx["tx"]["_obd_rx_metadata"]["missing_frames"] += 1
+            pending_native_rx = None
+
+    def check_rx_metadata(pending, text):
+        """Check the native Virtual Car emitter's shape, not all J2534 adapters.
+
+        The suffix has no channel/ID; only immediate same-PID adjacency binds it.
+        Its timestamp is enqueue time, unlike RX context's delivery time.
+        """
+        tx, ctx = pending["tx"], pending["ctx"]
+        fields = _context(text, ISO_RX_METADATA, strict=True)
+        reason = None
+        if fields is None:
+            reason = "malformed_obd_iso15765_metadata"
+        else:
+            protocol, status, size, extra_index, _timestamp = fields
+            expected_index = 0 if ctx[2] & 0x02 else pending["size"]
+            if (protocol != 6 or protocol != ctx[1] or status != ctx[2]
+                    or size != pending["size"] or extra_index != expected_index):
+                reason = "inconsistent_obd_iso15765_metadata"
+        if reason:
+            tx["_source_error"] = tx["_source_error"] or reason
+            tx["_obd_rx_metadata"]["invalid_frames"] += 1
+            errors[reason] += 1
+        else:
+            tx["_obd_rx_metadata"]["checked_frames"] += 1
 
     def scope(pid):
         nonlocal epoch
@@ -538,6 +571,7 @@ def audit(lines, *, include_obd=False):
             "_p3_missing_data": False, "_p3_pending": 0,
             "_obd_starts": 0, "_obd_repeat": 0,
             "_obd_request_line": line_number, "_obd_last_rx_line": None,
+            "_obd_rx_metadata": {"checked_frames": 0, "missing_frames": 0, "invalid_frames": 0},
         }
         if kind == "OBD":
             key = (service, can_id, channel, protocol, baud, flags)
@@ -670,6 +704,14 @@ def audit(lines, *, include_obd=False):
             tx["_last"] = at
 
     for line_number, line in enumerate(lines, 1):
+        if include_obd and pending_native_rx is not None:
+            metadata_line = PREFIX.match(line)
+            if (metadata_line and metadata_line[1] == pending_native_rx["pid"]
+                    and metadata_line[2].startswith(ISO_RX_METADATA)):
+                check_rx_metadata(pending_native_rx, metadata_line[2])
+                pending_native_rx = None
+                continue
+            missing_rx_metadata()
         event = vida.feed(line)
         if event is not None:
             kind = event["kind"]
@@ -726,6 +768,9 @@ def audit(lines, *, include_obd=False):
                 observed_events[observed] += 1
         s = scope(pid)
         stamp = _stamp(line)
+        if include_obd and text.startswith(ISO_RX_METADATA):
+            errors["unbound_iso15765_metadata"] += 1
+            continue
         if "PassThruOpen ->" in text:
             for ch in list(s["active"]):
                 finish(s, ch, "new_connection")
@@ -784,7 +829,14 @@ def audit(lines, *, include_obd=False):
             if (include_obd and tx and tx["route"] == "OBD" and marker == "PassThruReadMsgs -> delivered"
                     and (not text.startswith(marker) or not re.fullmatch(r"[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*", text.split(marker, 1)[1].strip()))):
                 tx["_source_error"] = "malformed_obd_rx_record"
-            receive(s, _words(text.split(marker, 1)[1]), stamp)
+            raw = _words(text.split(marker, 1)[1])
+            before = (tx["rx_frames"], tx["_obd_starts"]) if tx else None
+            receive(s, raw, stamp)
+            if (include_obd and m and marker == "PassThruReadMsgs -> delivered"
+                    and tx and tx["route"] == "OBD" and s["rxctx"] is not None
+                    and s["rxctx"][1] == 6
+                    and before != (tx["rx_frames"], tx["_obd_starts"])):
+                pending_native_rx = {"tx": tx, "pid": pid, "ctx": s["rxctx"], "size": len(raw)}
             s["rxctx"] = None
             continue
         if "P2 D2 read command: no validated response fixture" in text or "P2 D2 command: no recorded ECU fixture" in text:
@@ -824,6 +876,7 @@ def audit(lines, *, include_obd=False):
             if ch in s["active"]:
                 finish(s, ch, "channel_disconnected")
             s["disconnect_channel"] = None
+    missing_rx_metadata()
     for s in sessions.values():
         for ch in list(s["active"]):
             finish(s, ch, "end_of_log")
@@ -871,7 +924,9 @@ def audit(lines, *, include_obd=False):
             "Event marker counts do not prove API return status, filter channel identity or a filter rejection.",
             "Use backend evidence audit for request IDs, queue lifecycle and explicit filter_reject; do not join by timing alone.",
             "OBD request_line/last_rx_line record source order, not a clock shared with another log or process.",
-            "ISO15765 ExtraDataIndex metadata is not validated here; native DLL tests cover the synthetic 4/0 and 24/24 forms.",
+            "Native Virtual Car ISO15765 suffixes are bound only by immediate same-PID RX adjacency; missing metadata stays unknown.",
+            "Metadata checks compare protocol/status/size and the native emitter's RxStart 4/0 or data size/size index shape, not all J2534 adapters.",
+            "Suffix timestamps are enqueue times and are not compared to RX context delivery times or another log clock.",
         ]
     return report
 
