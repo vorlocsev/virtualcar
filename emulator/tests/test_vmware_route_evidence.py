@@ -83,7 +83,7 @@ class VMwareRouteEvidenceTests(unittest.TestCase):
         self.assertEqual(result["summary"]["invalid_lines"], 0)
         self.assertEqual(result["summary"]["requests"], 21)
         self.assertEqual(result["summary"]["statuses"],
-                         {"unverified": 14, "no_fixture": 3, "unsupported": 2, "delivered": 2})
+                         {"unverified": 13, "no_fixture": 3, "unsupported": 3, "delivered": 2})
         for one in result["transactions"]:
             self.assertEqual(one["evidence_conflicts"], [])
             self.assertTrue(one["terminal_seen"])
