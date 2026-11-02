@@ -63,6 +63,9 @@ class VMwarePackageTests(unittest.TestCase):
         with zipfile.ZipFile(self.build()) as z:
             expected = set(tool.FILES) | {"virtualcar.ini", "BUILDINFO.json", "SHA256SUMS.txt"}
             self.assertEqual(set(z.namelist()), {tool.PREFIX + "/" + name for name in expected})
+            # Read-only J2534 preflight must actually be usable from unpacked LAB.
+            self.assertIn(tool.PREFIX + "/tools/audit_j2534_connect.py", z.namelist())
+            self.assertIn(tool.PREFIX + "/README_P3TOOL_J2534_PREFLIGHT_RU.md", z.namelist())
             self.assertFalse(any("private" in path.lower() or "dump" in path.lower()
                                  for path in z.namelist()))
 

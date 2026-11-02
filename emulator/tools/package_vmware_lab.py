@@ -19,8 +19,10 @@ FILES = {
     "scripts/uninstall.ps1": "scripts/uninstall.ps1",
     "tools/audit_backend_evidence.py": "tools/audit_backend_evidence.py",
     "tools/audit_j2534_discovery.py": "tools/audit_j2534_discovery.py",
+    "tools/audit_j2534_connect.py": "tools/audit_j2534_connect.py",
     "README_VMWARE_LAB_RU.md": "README_VMWARE_LAB_RU.md",
     "README_BACKEND_JSONL_RU.md": "README_BACKEND_JSONL_RU.md",
+    "README_P3TOOL_J2534_PREFLIGHT_RU.md": "README_P3TOOL_J2534_PREFLIGHT_RU.md",
 }
 SYNTHETIC_VIN = "YV1CZ0002A0000001"
 
