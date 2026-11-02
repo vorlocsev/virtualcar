@@ -177,7 +177,7 @@ IL_0000 ret
         report = tool.audit(inventory_for_detect_shape(source), source)
         self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v4")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v5")
 
 
     @staticmethod
@@ -354,6 +354,72 @@ IL_0020 ret
                       report["limitations"])
         self.assertEqual(report["format"], "recovered-il-evidence-audit-v4")
         self.assertNotIn("hardware=real", json.dumps(report))
+
+
+
+    @staticmethod
+    def _string_methodspec_fixture():
+        # Synthetic; the signature bytes are a three-byte ECMA-335 example.
+        return RecoveredIlTests._shared_predicate_fixture().replace(
+            "0x2B000002 generic_helper", r"0x2B000002 [12, b'\n\x01\x0e']"
+        )
+
+    def test_33_realistic_string_methodspec_on_both_calls(self):
+        src = self._string_methodspec_fixture()
+        proof = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertTrue(proof["detect_shared_string_methodspec_at_both_calls"])
+        self.assertEqual(
+            proof["detect_shared_string_methodspec_predicate_call_count"], 2)
+
+    def test_34_equivalent_escape_encoding_accepted(self):
+        src = self._string_methodspec_fixture().replace(
+            r"b'\n\x01\x0e'", r"b'\x0a\x01\x0e'")
+        proof = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertTrue(proof["detect_shared_string_methodspec_at_both_calls"])
+
+    def test_35_different_generic_arity_rejected(self):
+        src = self._string_methodspec_fixture().replace(
+            r"b'\n\x01\x0e'", r"b'\n\x02\x0e'")
+        proof = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertEqual(
+            proof["detect_shared_string_methodspec_predicate_call_count"], 0)
+
+    def test_36_integer_type_argument_not_string(self):
+        src = self._string_methodspec_fixture().replace(
+            r"b'\n\x01\x0e'", r"b'\n\x01\x08'")
+        proof = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertFalse(proof["detect_shared_string_methodspec_at_both_calls"])
+
+    def test_37_wrong_genericinst_prefix_rejected(self):
+        src = self._string_methodspec_fixture().replace(
+            r"b'\n\x01\x0e'", r"b'\x09\x01\x0e'")
+        proof = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertEqual(
+            proof["detect_shared_string_methodspec_predicate_call_count"], 0)
+
+    def test_38_one_methodspec_missing_detected(self):
+        src = self._string_methodspec_fixture().replace(
+            "IL_000B call 0x2B000002", "IL_000B call 0x2B000003")
+        proof = tool.audit(inventory_for_detect_shape(src), src)["evidence"]
+        self.assertEqual(
+            proof["detect_shared_string_methodspec_predicate_call_count"], 1)
+        self.assertFalse(proof["detect_shared_string_methodspec_at_both_calls"])
+
+    def test_39_malformed_or_too_long_bytes_rejected(self):
+        self.assertFalse(tool._string_methodspec_instantiation(
+            r"0x2B000002 [12, b'\xZZ\x01\x0e']"))
+        self.assertFalse(tool._string_methodspec_instantiation(
+            r"0x2B000002 [12, b'\n\x01\x0e']" + (" " * 256)))
+
+    def test_40_summary_is_allowlisted_no_raw_bytes(self):
+        src = self._string_methodspec_fixture()
+        report = tool.audit(inventory_for_detect_shape(src), src)
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v5")
+        self.assertNotIn("0x2B000002", json.dumps(report))
+        self.assertNotIn(r"\x01\x0e", json.dumps(report))
+        self.assertIn("MethodSpec<string> does not establish generic method return type or semantics",
+                      report["limitations"])
+
 
 
 
