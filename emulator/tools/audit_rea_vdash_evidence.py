@@ -48,7 +48,8 @@ def _identity(data):
     sha = artifact.get("sha256")
     if not isinstance(sha, str) or not _SHA.fullmatch(sha):
         raise ValueError("missing_artifact_digest")
-    if module.get("name", "").casefold() != MODULE:
+    name = module.get("name")
+    if not isinstance(name, str) or name.casefold() != MODULE:
         raise ValueError("wrong_module")
     if scope.get("token_identity") != "build-local":
         raise ValueError("unattested_token_scope")
@@ -115,10 +116,13 @@ def audit(document):
     for key, (_, _, expected) in _SITES.items():
         items = observed[key]
         offsets = sorted(e["il_offset"] for e in items)
-        names = {(e.get("target_name"), e.get("target_declaring_type")) for e in items}
-        resolved = len(names) == 1 and all(
-            isinstance(v, str) and bool(v.strip()) for v in next(iter(names), (None, None))
-        )
+        # Untrusted source fields may be null or unexpected JSON values.
+        identities = [(e.get("target_name"), e.get("target_declaring_type"))
+                      for e in items]
+        resolved = (bool(identities) and
+                    all(identity == identities[0] for identity in identities) and
+                    all(isinstance(value, str) and bool(value.strip())
+                        for value in identities[0]))
         sites[key] = {
             "observed_call_count": len(items),
             "exact_expected_sites": offsets == list(expected),
@@ -158,7 +162,7 @@ def main(argv=None):
             raise ValueError("same_file")
         if args.source.stat().st_size > MAX_INPUT:
             raise ValueError("input_limit")
-        with args.source.open(encoding="utf-8") as handle:
+        with args.source.open(encoding="utf-8-sig") as handle:
             report = audit(json.load(handle))
         # Never overwrite a user's private REA evidence or an existing report.
         with args.output.open("x", encoding="utf-8") as handle:
