@@ -34,7 +34,8 @@ IL_0037 ldc.i4.4
 
 def inventory(*tokens):
     return {"selected_methods": [
-        {"method_token": token, "decoded_instructions": { 
+        {"module": "Frontend.Client.Core.dll", "method_token": token,
+         "decoded_instructions": { 
             "0x0600132B": 4, "0x0600115D": 12, "0x06001160": 1
         }.get(token, 1)}
         for token in tokens
@@ -83,6 +84,113 @@ class RecoveredIlTests(unittest.TestCase):
         report = tool.audit(inventory("0x0600132B"), D + "# " + secret)
         self.assertNotIn(secret, json.dumps(report))
         self.assertNotIn("Frontend.Client.Core.dll", json.dumps(report))
+
+
+    def test_09_methoddef_tokens_are_scoped_to_assembly(self):
+        # The same token may legitimately identify two unrelated assemblies.
+        other = """Frontend.exe: MethodDef 0x0600132B Other.Detect; 1 decoded opcodes
+IL_0000 ret
+"""
+        inv = inventory("0x0600132B")
+        inv["selected_methods"].append({
+            "module": "Frontend.exe", "method_token": "0x0600132B",
+            "decoded_instructions": 1,
+        })
+        result = tool.audit(inv, D + other)
+        self.assertEqual(result["fully_extracted_excerpt_methods"], 2)
+        self.assertTrue(result["evidence"]["detect_assigns_ecus_model"])
+
+    def test_10_wrong_module_not_equivalent_to_matching_token(self):
+        with self.assertRaisesRegex(ValueError, "excerpt_method_not_in_inventory"):
+            tool.audit({"selected_methods": [{
+                "module": "Frontend.exe", "method_token": "0x0600132B",
+                "decoded_instructions": 4,
+            }]}, D)
+
+    def test_11_missing_inventory_assembly_is_rejected(self):
+        inv = inventory("0x0600132B")
+        del inv["selected_methods"][0]["module"]
+        with self.assertRaisesRegex(ValueError, "invalid_inventory_module"):
+            tool.audit(inv, D)
+
+    @staticmethod
+    def _shaped_detect(*, ecus_ctor="0x0600126D", result_ctor="0x060011BB",
+                       hash_field="0x040003A9"):
+        lines = [
+            "ldloc.1",
+            "callvirt 0x06001142 get_ResultData",
+            "dup", "brtrue.s 2", "pop", "ldnull", "stloc.2",
+            "ldarg.0", "ldarg.0", "call 0x060012E2 get_Volvo", "ldloc.2",
+            "newobj " + result_ctor, "call 0x060012E9 set_DetectResult",
+            "ldarg.0", "ldarg.0", "call 0x060012E8 get_DetectResult",
+            "newobj " + ecus_ctor, "call 0x060012DF set_Ecus",
+            "ldarg.0", "ldloc.1", "callvirt 0x0600113C get_DataHash",
+            "stfld " + hash_field,
+            "call 0x060012E8 get_DetectResult",
+            "callvirt 0x06001B99 get_Units",
+            "callvirt 0x0A00011A GetEnumerator",
+            "ldc.i4.0", "ret", "ldc.i4.1", "ret",
+        ]
+        return (
+            "Frontend.Client.Core.dll: MethodDef 0x0600132B "
+            f"VddModel.Detect; {len(lines)} decoded opcodes\\n"
+            + "".join(f"IL_{i:04X} {instruction}\\n"
+                      for i, instruction in enumerate(lines))
+        )
+
+    def test_12_resultdata_to_detectresult_model_neighborhood(self):
+        report = tool.audit(inventory_for_detect_shape(self._shaped_detect()),
+                            self._shaped_detect())
+        evidence = report["evidence"]
+        self.assertTrue(evidence["detect_resultdata_near_local2_store"])
+        self.assertTrue(evidence["detect_result_constructor_from_volvo_and_local2"])
+        self.assertTrue(evidence["detect_ecus_constructor_from_detect_result"])
+
+    def test_13_result_constructor_token_mismatch_rejected(self):
+        source = self._shaped_detect(result_ctor="0x060011BC")
+        report = tool.audit(inventory_for_detect_shape(source), source)
+        self.assertFalse(report["evidence"][
+            "detect_result_constructor_from_volvo_and_local2"])
+        self.assertTrue(report["evidence"][
+            "detect_ecus_constructor_from_detect_result"])
+
+    def test_14_ecus_constructor_token_mismatch_rejected(self):
+        source = self._shaped_detect(ecus_ctor="0x0600126E")
+        report = tool.audit(inventory_for_detect_shape(source), source)
+        self.assertFalse(report["evidence"][
+            "detect_ecus_constructor_from_detect_result"])
+        self.assertTrue(report["evidence"][
+            "detect_result_constructor_from_volvo_and_local2"])
+
+    def test_15_hash_field_mismatch_and_units_independent(self):
+        source = self._shaped_detect(hash_field="0x040003A8")
+        report = tool.audit(inventory_for_detect_shape(source), source)
+        evidence = report["evidence"]
+        self.assertFalse(evidence["detect_model_stores_command_datahash"])
+        self.assertTrue(evidence["detect_has_result_units_enumeration"])
+        self.assertTrue(evidence["detect_has_both_boolean_return_sites"])
+
+    def test_16_source_data_neighborhood_is_not_proof_of_execution(self):
+        # A flattened method can contain a syntactically intact but unreachable
+        # motif; detection is not execution, parsing, nor accepted ECU evidence.
+        source = self._shaped_detect()
+        report = tool.audit(inventory_for_detect_shape(source), source)
+        self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
+                      report["limitations"])
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v2")
+
+
+def inventory_for_detect_shape(source):
+    import re
+    m = re.search(r"VddModel.Detect; (\\d+) decoded opcodes", source)
+    if m is None:
+        raise ValueError("missing synthetic fixture")
+    return {"selected_methods": [{
+        "module": "Frontend.Client.Core.dll",
+        "method_token": "0x0600132B",
+        "decoded_instructions": int(m.group(1)),
+    }]}
+
 
 
 if __name__ == "__main__":
