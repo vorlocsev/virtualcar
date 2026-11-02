@@ -322,6 +322,10 @@ def audit(lines):
     # Coverage is only about observed J2534 writes and fired periodic requests.
     # No probe is not a failure, no fixture, an ECU response, or a timeout.
     coverage_counts = {probe: Counter() for probe in PROBES}
+    coverage_origins = {
+        probe: {"app_write": Counter(), "periodic": Counter(), "unknown": Counter()}
+        for probe in PROBES
+    }
     unattributed = 0
     for record, result in zip(records, results):
         probe = _trusted_probe(record)
@@ -329,6 +333,7 @@ def audit(lines):
             unattributed += 1
         else:
             coverage_counts[probe][result["status"]] += 1
+            coverage_origins[probe][result["request_origin"]][result["status"]] += 1
     observed = {
         probe: counts for probe, counts in coverage_counts.items() if counts
     }
@@ -342,6 +347,11 @@ def audit(lines):
                 "probe": probe,
                 "observed_requests": sum(counts.values()),
                 "status_counts": dict(sorted(counts.items())),
+                "by_origin": {
+                    origin: dict(sorted(by_status.items()))
+                    for origin, by_status in sorted(coverage_origins[probe].items())
+                    if by_status
+                },
             }
             for probe, counts in sorted(coverage_counts.items())
         ],
@@ -358,12 +368,15 @@ def audit(lines):
             "Coverage describes observed app writes and J2534 periodic firings only; never infer an ECU reply from an unobserved probe",
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
+            "Origin breakdown counts observed J2534 events, not VDASH internal decisions or ECU presence",
             "suppressed means exact silent 3E80 functional request, never ECU discovery or client acceptance",
         ],
         "summary": {
             "requests": len(results), "sessions": len(sessions),
             "invalid_lines": errors["invalid_lines"],
             "statuses": dict(sorted(Counter(r["status"] for r in results).items())),
+            "request_origins": dict(sorted(
+                Counter(r["request_origin"] for r in results).items())),
         },
         "transactions": results,
     }
