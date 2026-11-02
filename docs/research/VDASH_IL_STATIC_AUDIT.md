@@ -69,6 +69,60 @@ No payloads or private logs are reproduced. Counts are for **lines** and may inc
 - Investigation should next examine the actual bodies of `CreateCommand`, `Enqueue`, `ParseData`, `OnCheckResult`, `DetectViewModel.Model_DetectDone`, and provider-side `J2534DiagnoseManager` implementation when an authorized original build is available. Do not claim their bodies exist in the selected inventory.
 - Distinguish **(1) J2534 delivered**, **(2) command result received**, **(3) DetectResult parsed**, **(4) UI accepted and listed ECU** as four different verifiable events.
 
+## Follow-up: recovered IL branch dependencies and P2 diagnostic-mode keepalive (02.11.2026)
+
+This addition compares the **actual saved, selected method listings** to external published P2 CAN traces. The deobfuscation report indexes 28 selected methods, but the excerpt file prints only **11 MethodDef bodies**. In particular, **there is no full `VddCommand.ParseData`, `CreateCommand`, `Enqueue`, `DetectViewModel.Model_DetectDone`, or `VdashClient.SendV2` body in the excerpts**. Inventory call counts are not complete control-flow reconstructions.
+
+### Data provenance through pre-detection
+
+- In recovered `Frontend.Client.Core.dll` `VddModel.PreDetect` (`0x0600133D`), the excerpt shows `get_SuggestedVin` at IL_01DC, `set_Voltage` at IL_006B, `set_Volvo` at IL_0088 and `set_PreDetectResult` at IL_019A. The constructor invoked before `set_PreDetectResult` receives the Volvo model, `dongleId` and other computed locals (IL_0186–019A).
+- The same excerpt calls helpers `0x06001376` and `0x06001377` at IL_009B/00BC and IL_0124/0145; the recovered inventory independently names these wrappers `IDataFactory.ToPropertyId` and `IDataFactory.GetLastViewV2`. Their paths lead to `DataViewV2.GetValueString` (`0x06001378`), `DataViewV2.GetValue` (`0x06001379`) and `Utils.TryConvertDouble` (`0x0600137A`). The presence of a `GetLastViewV2` path is evidence that **previously available views can participate**; it is not proof that a particular transaction read fresh CAN data.
+- `VddModel.GetVin` `0x0600133A` invokes `get_PreDetectResult` and `get_Vin` (IL_002E–0034 and IL_0059–005F), and also has a `get_Volvo` fallback (IL_0074–0085). `VddModel.GetConfig` `0x06001339` simply reads `get_DetectResult → get_Config`.
+- Thus, seeing a VIN or an initialized Volvo object in the UI is **not by itself a proof** that this run reached OEM P2 CEM identification; cached/suggested inputs and fresh J2534 responses must be distinguished. We cannot prove from the flattened CFG which source was actually chosen on a specific run.
+
+### Command result and ECU list dependency
+
+- `Detect` excerpt: `CreateCommand` IL_006E → `Enqueue` IL_00AF → `Wait` IL_00B5; later there are `get_ResultData` IL_00F2, `get_Result` IL_0118 and `get_DataHash` IL_013E, and a `set_DetectResult` call at IL_0184. `set_Ecus` occurs at IL_026D; various ECM/DIM/ICM/PHM objects are instantiated. **These are occurrences in a flattened method, not a proven linear path across all conditions**.
+- `VddCommand.Execute` excerpt receives a `DongleCommandExecutionResult` (IL_005D–0062), writes `Session` (IL_00AB–00B0), schedules `OnCheckResult` polling (IL_0186–01B1), compares an obfuscated accessor to integer literals 2/3/4 (e.g. IL_01DC–022B and IL_02FB–0316), has `executionEvn` and `Timeout` (IL_031D–0337), and invokes `ParseData` at IL_025E.
+- The numeric literals above are real, but **their mapping to the previously reported 0..5 Status enum cannot be verified solely from this excerpt**. Do not claim `3` necessarily corresponds to a named server error before resolving the accessor and enum metadata. `ParseData` is named and called, but its exact result schema/validation is **unknown**.
+- The UI `DetectViewModel.Model_DetectDone` method `0x06002472` is present only in the 28-method **inventory**. It references `get_CemCommand`, `set_ModelId`, `set_Header` and `InitializeUnits`/availability routines. These are post-processing/UI operations, not direct CAN reads.
+
+**Falsifiable alternative explanations for an empty ECU list:** (A) pre-detect was populated without a fresh OEM scan; (B) J2534 delivery occurred but a command service result was not received/accepted; (C) ResultData/DataHash processing did not construct the required ECU data; (D) a result existed but the UI's availability/list predicate excluded it. **No ranking or concrete cause can be established yet.**
+
+### Independent external corroboration for `0x000FFFFE D8`
+
+- In an author's contemporaneous MOTOR-TALK P2/VADIS capture, `000FFFFE D8 00 00 00 00 00 00 00` is described as an **alive message for diagnostic mode**, approximately every four seconds:
+  https://www.motor-talk.de/forum/der-can-bus-im-volvo-t4420570.html?page=3
+- A separate Jagrullar account (2010) documents the same `D8` as repeated keepalive before ECM read-DTC transactions:
+  https://www.jagrullar.se/forum/viewtopic.php?start=36&t=48773
+- Consequently, six `000FFFFE D8 00` TX lines in the **accumulated VDASH 2.0 Virtual Car lab log** should be classified **P2 diagnostic-mode keepalive candidate**, not a CEM module-identification request or evidence of a valid ECU list. The source vehicle/year and cadence do **not** prove compatibility with XC90 V8 MY2009; the six lines occur in older, repeated emulator runs.
+- `FF C8` must **not** be mislabelled as CEM discovery either. The public `Volvo-CAN-Gauge/Codes.txt` labels the global `FF/C8` combination **Whole Bus Reset**:
+  https://github.com/Alfaa123/Volvo-CAN-Gauge/blob/master/Codes.txt
+  This is an independently written public code list, not the intercepted response of the target VDASH. The Virtual Car source already chooses intentionally silent no-physical-reset handling. Do not implement physical reset or fabricate acknowledgements.
+- `11 81` corresponds in UDS byte shape to ECUReset with suppress-positive-response bit and is observed on functional addresses in the accumulated file. This is not a read-only ECU discovery request; Virtual Car must keep it inert. `1DD01FFF` remains **unattributed**.
+
+### End-to-end acceptance gates for a single *new* anonymized test
+
+| Gate | Required evidence | What it does *not* prove |
+|---|---|---|
+| G1. J2534 transport | Fresh, version-labelled PassThru TX, matching RX status, protocol/baud/flags/filter and relevant metadata, plus no queue loss | That VDASH accepted vehicle identity |
+| G2. Command lifecycle | A visible new VDASH command initiated and completed with result in a permitted log/UI; not inferred from `PassThruClose` | That `ResultData` passed schema/data-hash validation |
+| G3. DetectResult | Verified UI/diagnostic state confirming fresh DetectResult/ECU set; do not derive solely from presence of static `set_Ecus` | That every ECU was individually queried |
+| G4. UI ECU acceptance | Explicit list of ECU items displayed by this VDASH version following the new run, with a source-bound chassis/model-year label | That all network-specific P2 features and authentic MY2009 CEM internals are supported |
+
+**Decision logic:** If no manufacturer-specific physical TX is observed after G1, don't invent B9F0/FB/A6 packets. If there is a physical TX but no delivered RX, first inspect allowlisted route/filter/no-fixture/timeout telemetry. If delivery exists but G2–G4 fail, focus static analysis on `CreateCommand`, `Enqueue`, `ParseData` and the UI predicate. If only keepalives `3E80/D8` or reset-like `1181/FF C8` are present, classify the session as **without observed read-only ECU discovery**, not as an ECU-negative response.
+
+### Eight bounded checks for the next evidence stage
+
+1. Verify source archive hash and application **version**; do not mix VDASH 2.0 runtime with 2.5.115.79 static.
+2. Verify exact text-log count attribution by process and call type; do not count repeated TX lines as distinct sessions.
+3. Check `PreDetect` cached view vs `SuggestedVin` vs newly delivered `49 02 01` when observable.
+4. Correlate `Detect` command lifecycle against timestamps/results without inventing HTTP, protobuf, or CEM wire content.
+5. Classify `D8` and `3E 80` as diagnostic-mode/TesterPresent keepalive, never ECU ID; constrain `FF C8` and `11 81` to inert reset-like handling.
+6. Distinguish missing physical CAN request from no fixture, filtered RX, incomplete multi-frame and client-declined result.
+7. Preserve redaction by allowlist, no private VIN, binary, user paths, account/session secrets, and no proprietary IL copies in repository.
+8. Verify existing offline CI; label **VMware end-to-end** and **physical J2534** untested until separately witnessed.
+
 ## Handoff
 
 Linked to issues #37 and #4 and PR #39. No changes to emulator behavior or fixtures in this **documentation-only addition**. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
