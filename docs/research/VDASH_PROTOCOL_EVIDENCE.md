@@ -48,6 +48,26 @@
 - https://charm.li/Volvo/2013/XC90%20FWD%20L6-3.2L%20VIN%2095%20B6324S5/Repair%20and%20Diagnosis/Powertrain%20Management/Technical%20Service%20Bulletins/All%20Technical%20Service%20Bulletins/Computers%2FControls%20-%20CEM%20Download%20Interrupt%20Recovery/
 - https://www.matthewsvolvosite.com/forums/viewtopic.php?p=573059
 
+## Дополнительная проверка сохранённого статического IL VDASH 2.5.115.79
+
+В пользовательской библиотеке найдены собственные ранее подготовленные артефакты **`VDASH_Recovered_Diagnostic_IL_Excerpts.txt`** (1154 строк) и **`VDASH_Recovered_Methods_Inventory.json`**. Повторно прочитаны конкретные фрагменты; это проверка отчёта извлечения, а не новый дизассемблинг исходных DLL. `source_zip_sha256=f76fa56fe07db18866db3078ec9c7187ccaab6f457a560eaa54ee9cc371808ec` в inventory позволяет при наличии оригинального законного архива проверить происхождение. Копии оригинального IL и бинарников в Git не включены.
+
+| Module / MethodDef | Что точно видно в сохранённом IL-фрагменте | Граница |
+|---|---|---|
+| `Frontend.Client.Core.dll / 0x0600133A VddModel.GetVin` | `get_PreDetectResult` → `get_Vin`, запасной путь через `get_Volvo` и обфусцированные вызовы | Сам фрагмент не содержит прямого `PassThruReadMsgs`, но обфускация не позволяет исключить диагностическую операцию в других ветвях |
+| `0x06001339 VddModel.GetConfig` | `get_DetectResult` → `get_Config`, 9 опкодов | Это getter результата, а не доказанный запрос конфигурации по CAN |
+| `0x0600133D VddModel.PreDetect` | `get_SuggestedVin`, `set_Voltage`, `set_Volvo`, `set_PreDetectResult`, событие `PreDetectDone` | Происхождение каждого входа/запроса без полной CFG не установлено |
+| `0x0600132B VddModel.Detect` | `CreateCommand (0x06001329)` → `Enqueue (0x0600132C)` → `VddCommand.Wait (0x0600115B)`, затем `get_ResultData`/`get_Result`/`get_DataHash` → `set_DetectResult` и создание представлений ECM/DIM/ICM | Видны вызовы, но сильно обфусцированный CFG не даёт гарантий порядка во всех путях и не даёт CAN ID |
+| `0x0600115D VddCommand.Execute` | Поля `client`/`command`/`result`, `DongleCommandExecutionResult`, `set_Session`, `OnCheckResult` по таймеру, `get_Timeout`, `TimeSpan.FromSeconds` и ожидание события | Подтверждает асинхронную логику получения результата в приложении, не доказывает маршрут серверного исполнителя |
+| `0x06001337 VddModel.FastDetectEcu` и `0x06001338 ... (out)` | Первое тело `ldc.i4.0; ret`; второе зануляет out и возвращает 0 | Локальный fast path в этих конкретных методах является stub, но другие способы поиска ECU могут существовать |
+| `0x06001326 VddModel.CheckDevice` | По inventory тело `ldnull; ret` | Не делает всё ПО неспособным проверять оборудование |
+| `0x06001C66 J2534DiagnoseManager.FindImplementation` | Чтение `diags`, `TryGetValue`, возврат найденного значения или null | Показывает диспетчеризацию диагностических реализаций, но **не** PassThru wire-transport |
+| `Frontend.exe / 0x060065AD J2534ServerClient..ctor` | Вызов `Vdash.Core.PipeServerClient..ctor` | Наличие IPC abstraction не доказывает, что локальный объект обрабатывает CEM |
+| `Frontend.exe / 0x060065AE J2534ServerClient.OnReceiveData` | Один `ret` | Именно этот обработчик пуст в извлечённой версии; не вывод о всех коммуникациях |
+| `Client.Core.dll / 0x060003AF VdashClient.StartSession` | Делегирование `0x060004D3` → `0x060003B0 StartSession` | В этих 5 опкодах сетевой endpoint не раскрыт |
+
+**Обновлённый вывод:** здесь подтверждён путь от `Detect` к командному объекту и возвращённым результатам; нет оснований объявлять `GetVin/GetConfig` непосредственными J2534 reads, приписывать `FastDetectEcu` активное сканирование или выводить CEM CAN кадры из HTTP/protobuf. Для восстановления конкретного ECU discovery необходима **временная привязка локальных PassThru событий VDASH** к завершению `VddCommand` и к обновлению UI, полученная штатным логированием, без MITM/TLS-decryption.
+
 ## Диагностический разбор следующего запуска VDASH
 
 Опорный вопрос: **почему распознанный OBD VIN не сопровождается доказанными физическими запросами идентификации ECU?** Это не равнозначно вопросу «почему 3E 80 остался без RX».
