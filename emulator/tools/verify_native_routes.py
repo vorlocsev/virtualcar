@@ -16,7 +16,8 @@ def verify(lines):
     report = audit(lines)
     if report['summary'] != {
             'requests': 13, 'sessions': 1, 'invalid_lines': 0,
-            'statuses': {'unverified': 8, 'no_fixture': 2, 'unsupported': 3}}:
+            'statuses': {'unverified': 8, 'no_fixture': 2, 'unsupported': 3},
+            'request_origins': {'app_write': 13}}:
         raise ValueError('unexpected_synthetic_summary')
     # protocol, baud, route, status, reason, service, target, channel
     silent = ('unverified', 'explicit_no_response', None, None)
