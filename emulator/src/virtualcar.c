@@ -298,6 +298,83 @@ static void log_can_ps_probe(U32 channel_id,U32 operation,U32 value,U32 status){
     logline("J2534 CAN_PS config probe channel/operation/value/status (BE)",meta,16);
 }
 static int can_ps_probe_pins(U32 value){return value==0x030Bu||value==0x060Eu;}
+/* These are lexical envelopes observed before an unchanged PS rejection,
+   never accepted TX, ECU support, permission checks or backend routes. */
+static U32 can_ps_rejected_shape(const U8 *p,U32 size,U32 id){
+    U32 i,zero;
+    /* Complete classic-CAN SF only. Inspect its service, never its operands;
+       this coarse excluded category enables no operation. */
+    if(p[0]>=1u&&p[0]<=7u&&size>p[0]){
+        switch(p[1]){
+        case 0x10u:case 0x11u:case 0x27u:case 0x2Eu:case 0x31u:
+        case 0x34u:case 0x36u:case 0x37u:case 0x85u:return 40u;
+        }
+    }
+    if(size==8u){
+        if(p[0]==2u&&((p[1]==9u&&p[2]==2u)||(p[1]==0x3Eu&&p[2]==0x80u))){
+            zero=1;for(i=3u;i<8u;i++)if(p[i])zero=0;
+            if(!zero)return 0u;
+            if(p[1]==9u&&p[2]==2u){
+                if(id==0x7DFu)return 1u;
+                if(id==0x7E0u)return 2u;
+            }
+            if(p[1]==0x3Eu&&p[2]==0x80u){
+                if(id==0x7DFu)return 3u;
+                if(id==0x18DB33F1u)return 4u;
+            }
+        }
+        if(id==0x000FFFFEu&&(p[1]==0x40u||p[1]==0x50u)){
+            U32 base=p[1]==0x40u?10u:15u;
+            if(p[0]==0xCFu&&p[2]==0xA3u)return base;
+            if(p[0]==0xCDu&&p[2]==0xA6u&&p[5]==1u&&!p[6]&&!p[7])return base+1u;
+            if(p[0]==0xCBu&&p[2]==0xB9u&&!p[4]&&!p[5]&&!p[6]&&!p[7]){
+                if(p[3]==0xF0u)return base+2u;
+                if(p[3]==0xFBu)return base+3u;
+                if(p[3]==0xFCu)return base+4u;
+            }
+        }
+        if((id==0x726u||id==0x18DA50F1u)&&p[0]==3u&&p[1]==0x22u&&p[2]==0xF1u&&
+           !p[4]&&!p[5]&&!p[6]&&!p[7]){
+            static const U8 did[]={0x14u,0xB0u,0xA3u,0x06u,0x90u};
+            for(i=0;i<5u;i++)if(p[3]==did[i])return (id==0x726u?20u:25u)+i;
+        }
+        if(id==0x000FFFFEu){
+            if(p[0]==0xFFu&&p[1]==0xC8u)return 41u;
+            if(p[0]==0xD8u){
+                zero=1;for(i=1u;i<8u;i++)if(p[i])zero=0;
+                if(zero)return 42u;
+            }
+        }
+    }
+    return 0u;
+}
+static void log_can_ps_rejected_attempt(const CHANNEL *c,U32 origin,
+                                      const PASSTHRU_MSG *msg,U32 count){
+    U8 meta[28];U32 protocol=0u,shape=0u,check=0u,id;
+    /* Count is the caller's input, before WriteMsgs zeros it. No batch walk,
+       and neither a zero nor a non-single count dereferences msg at all. */
+    if(count==0u)check=5u;
+    else if(count!=1u)check=6u;
+    else{
+        if(msg->ProtocolID==PROTO_CAN||msg->ProtocolID==PROTO_ISO15765||
+           msg->ProtocolID==PROTO_CAN_PS)protocol=msg->ProtocolID;
+        if(protocol!=PROTO_CAN&&protocol!=PROTO_CAN_PS)check=3u;
+        else if(msg->DataSize<5u||msg->DataSize>12u)check=1u;
+        else{
+            id=((U32)msg->Data[0]<<24)|((U32)msg->Data[1]<<16)|
+               ((U32)msg->Data[2]<<8)|(U32)msg->Data[3];
+            if(id>0x1FFFFFFFu)check=2u;
+            else if((msg->TxFlags!=0u&&msg->TxFlags!=0x100u)||
+                    (id>0x7FFu?msg->TxFlags!=0x100u:msg->TxFlags!=0u))check=4u;
+            else shape=can_ps_rejected_shape(msg->Data+4,msg->DataSize-4u,id);
+        }
+    }
+    u32_be(meta,c->id);u32_be(meta+4,origin);
+    u32_be(meta+8,can_ps_probe_pins(c->can_ps_observed_pins)?c->can_ps_observed_pins:0u);
+    u32_be(meta+12,protocol);u32_be(meta+16,shape);u32_be(meta+20,check);
+    u32_be(meta+24,ERR_NOT_SUPPORTED);
+    logline("J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/shape/check/status (BE)",meta,28);
+}
 static int can_ps_probe_noop(U32 parameter){
     return parameter==3u||parameter==23u||parameter==30u||parameter==31u;
 }
@@ -1401,6 +1478,7 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(c->protocol==PROTO_CAN_PS){
+        log_can_ps_rejected_attempt(c,1u,msgs,*count);
         *count=0;log_can_ps_probe(id,4u,0u,ERR_NOT_SUPPORTED);
         unlock_state();return error(ERR_NOT_SUPPORTED);
     }
@@ -1543,6 +1621,7 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);
     if(c&&c->protocol==PROTO_CAN_PS){
+        log_can_ps_rejected_attempt(c,2u,msg,1u);
         log_can_ps_probe(id,6u,0u,ERR_NOT_SUPPORTED);
         unlock_state();return error(ERR_NOT_SUPPORTED);
     }

@@ -90,6 +90,50 @@ Connect OK означает лишь выделение probe-канала. Hard
 остаются неподтверждёнными. Отсутствие marker в старом отчёте не доказывает
 отсутствие вызова стандартного J1962_PINS: прежняя DLL редактировала его ID.
 
+### Отклонённые попытки без передачи
+
+После фактического запуска добавлен отдельный marker для следующего измерения:
+
+`J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/shape/check/status (BE)`
+
+Это семь uint32 (28 bytes), одна запись на отклонённый API call. Origin 1 —
+WriteMsgs, 2 — StartPeriodicMsg registration, **не срабатывание таймера**.
+Status остаётся ERR_NOT_SUPPORTED. Предыдущая четырёхсловная запись отказа
+сохраняется; складывать её с новым marker как два TX нельзя.
+
+В журнал попадают только фиксированные категории. Pin observation — 0/0x030B/
+0x060E, declared message protocol — CAN/CAN_PS/ISO15765/other. Для одного
+сообщения проверяются DataSize 5..12, CAN ID до 29 bits и узкие TxFlags:
+0 для 11-bit, 0x100 для 29-bit. Иные комбинации получают причину без формы.
+Zero-count и batch WriteMsgs не разыменовывают message array и не экспортируют
+его размер. Null-pointer errors остаются прежними и нового marker не создают.
+
+Каталог сравнивает full-eight-byte raw CAN envelopes; отдельная excluded SF
+категория требует только полного короткого сообщения:
+
+| Категория | Узкая форма; это не доказательство назначения ECU |
+| --- | --- |
+| OBD/TesterPresent | 7DF/7E0 `02 09 02` либо 7DF/18DB33F1 `02 3E 80`, padding 0 |
+| D2 target40/50 | FFFFE: A3 prefix; A6 с suffix `01 00 00`; точные B9 F0/FB/FC с нулевым padding |
+| P3 candidate | 726/18DA50F1: `03 22 F1` + 14/B0/A3/06/90, padding 0 |
+| Excluded | CAN SF services 10/11/27/2E/31/34/36/37/85; D2 prefix FF C8. Параметры не сохраняются, как эталон чтения не используются |
+| Unverified | FFFFE: D8 + семь нулей; значение/ACK/read-only статус не назначается |
+
+Произвольные ID, operands, payload, длины, PIN/VIN не выводятся. A3/A6
+параметры остаются opaque, а различие declared CAN/CAN_PS не нормализуется.
+Любая форма остаётся **lexical candidate**, не разрешением передачи или
+подтверждённым read-only запросом. Все прежние API отказы, no-RX, no-backend-root
+и отсутствие ECU обработчиков сохраняются.
+
+Тот же анализатор добавляет `rejected_can_ps_attempts`: число calls, категории,
+порядок строк без PID/channel и outcome `rejected_not_transmitted`.
+`read_only_reference_approved=false`, `ecu_response_verified=false`; состояния
+не связываются. До 20000 валидных записей, затем явная ошибка вместо усечения.
+Восемь дополнительных native и восемь Python групп проверяют формы, malformed
+envelopes, batch/zero, origins, изоляцию, исключённые операции, тишину и legacy
+поведение. Actual x86 CI использует один **synthetic**, отклонённый B9FB envelope;
+его backend fixture остаётся с прежними 13 запросами.
+
 ## Восемь групп проверки
 
 1. Default-off, opt-in Connect, ошибки и неизменные output pointers.
@@ -104,5 +148,7 @@ Connect OK означает лишь выделение probe-канала. Hard
 В [фактическом Windows-запуске MY2005](../docs/research/VDASH_CAN_PS_PROBE_RUNTIME_20261102.md)
 клиент 27 раз задал J1962_PINS=0x030B, затем получал предусмотренные отказы
 filter/write/periodic. Полный CAN_PS transport, VMware guest и physical J2534
-не проверены. Payload/адреса 25 rejected writes не сохранены; это следующий
-пробел наблюдения, а не доказательство отсутствия CEM-проб.
+не проверены. Payload/адреса прежних 25 rejected writes не сохранены и задним
+числом не восстанавливаются. Новая классификация требует нового version/hash-bound
+client run; она не меняет уже опубликованный runtime-отчёт и не объясняет warning
+сама по себе.

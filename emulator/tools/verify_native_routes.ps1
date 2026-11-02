@@ -111,7 +111,9 @@ public static class NativeRouteCheck {
             Marshal.WriteInt32(entry,4,0x060e);
             Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==1,"PS rebind not rejected");
             Check(PassThruIoctl(channel,1,ref list,IntPtr.Zero)==0 && Marshal.ReadInt32(entry,4)==0x030b,"PS rebind changed hint");
-            Msg msg=new Msg(); msg.ProtocolID=0x8004; msg.DataSize=12; msg.Data=new byte[4128];
+            // SYNTHETIC B9FB envelope: classified before rejection, never transmitted.
+            Msg msg=new Msg(); msg.ProtocolID=0x8004; msg.DataSize=12; msg.TxFlags=0x100; msg.Data=new byte[4128];
+            Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xcb,0x40,0xb9,0xfb,0,0,0,0},msg.Data,12);
             uint count=1;
             Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==1 && count==0,"PS write was not blocked");
             Empty128(channel);

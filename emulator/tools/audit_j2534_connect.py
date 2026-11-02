@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Summarize P3Tool-relevant J2534 Connect and SET_CONFIG from Virtual Car text log.
 
-Only exact, 16-byte, big-endian *metadata* events emitted by Virtual Car are
+Only exact, allowlisted big-endian *metadata* events emitted by Virtual Car are
 parsed. All CAN TX/RX, host names, PID, VIN, paths and arbitrary values remain
 local and are never placed in the JSON output. No protocol alias is assumed.
 """
@@ -15,6 +15,7 @@ FORMAT = "virtualcar-j2534-connect-audit-v1"
 CONNECT = "J2534 Connect result protocol/flags/baud/status (BE)"
 CONFIG = "J2534 SET_CONFIG channel/parameter/value/applied (BE)"
 PS_PROBE = "J2534 CAN_PS config probe channel/operation/value/status (BE)"
+PS_REJECTED = "J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/shape/check/status (BE)"
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} [^\]\r\n]{1,80}\] ")
 HEX_BYTE = re.compile(r"[0-9A-Fa-f]{2}\Z")
 PROTOCOLS = {5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS",
@@ -31,16 +32,55 @@ PS_OPERATIONS = {1: "channel_allocated", 2: "set_pin_observation", 3: "get_pin_o
                  4: "write_rejected", 5: "filter_rejected", 6: "periodic_rejected",
                  7: "config_rejected"}
 PS_PINS = {0x030B: "pins_3_11", 0x060E: "pins_6_14"}
+ATTEMPT_ORIGINS = {1: "write_call", 2: "periodic_registration_call"}
+ATTEMPT_PROTOCOLS = {0: "uninspected_or_other", 5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS"}
+ATTEMPT_CHECKS = {0: "inspected_raw_classic_can", 1: "invalid_data_size",
+                  2: "invalid_can_id", 3: "unsupported_message_protocol",
+                  4: "outside_flag_address_catalog", 5: "zero_count",
+                  6: "batch_uninspected"}
+ATTEMPT_SHAPES = {
+    0: "unknown", 1: "OBD_7DF_0902", 2: "OBD_7E0_0902",
+    3: "TP_7DF_3E80", 4: "TP_FUNC29_3E80",
+    40: "excluded_control_or_security", 41: "excluded_D2_control_prefix",
+    42: "D2_D8_unverified_prefix",
+}
+for _target, _base in (("40", 10), ("50", 15)):
+    ATTEMPT_SHAPES.update({_base+i: f"D2_{_target}_{service}"
+                           for i, service in enumerate(("A3", "A6", "B9F0", "B9FB", "B9FC"))})
+for _target, _base in (("726", 20), ("29", 25)):
+    ATTEMPT_SHAPES.update({_base+i: f"P3_{_target}_{did}"
+                           for i, did in enumerate(("F114", "F1B0", "F1A3", "F106", "F190"))})
 MAX_LINES = 250000
 MAX_LINE = 512
+MAX_REJECTED_ATTEMPTS = 20000
 
 
-def _decode_words(text):
+def _decode_words(text, word_count=4):
     parts = text.strip().split(" ")
-    if len(parts) != 16 or any(HEX_BYTE.fullmatch(x) is None for x in parts):
+    if len(parts) != word_count*4 or any(HEX_BYTE.fullmatch(x) is None for x in parts):
         return None
     data = bytes(int(part, 16) for part in parts)
-    return tuple(int.from_bytes(data[i:i + 4], "big") for i in (0, 4, 8, 12))
+    return tuple(int.from_bytes(data[i:i + 4], "big") for i in range(0, len(data), 4))
+
+
+def _rejected_attempt(words):
+    if words is None:
+        return None
+    channel, origin, pins, protocol, shape, check, status = words
+    if (channel == 0 or origin not in ATTEMPT_ORIGINS or pins not in (0, *PS_PINS)
+            or protocol not in ATTEMPT_PROTOCOLS or shape not in ATTEMPT_SHAPES
+            or check not in ATTEMPT_CHECKS or status != 1):
+        return None
+    if check == 3:
+        valid = protocol in (0, 6)
+    elif check in (5, 6):
+        valid = protocol == 0 and origin == 1
+    else:
+        valid = protocol in (5, 0x8004)
+    if not valid or (check != 0 and shape != 0):
+        return None
+    return (ATTEMPT_ORIGINS[origin], PS_PINS.get(pins, "unselected"),
+            ATTEMPT_PROTOCOLS[protocol], ATTEMPT_SHAPES[shape], ATTEMPT_CHECKS[check])
 
 
 def audit(lines):
@@ -49,6 +89,9 @@ def audit(lines):
     invalid_connect = invalid_config = 0
     ps_probes = Counter()
     invalid_ps = 0
+    rejected = Counter()
+    rejected_order = []
+    invalid_rejected = 0
     for index, raw in enumerate(lines, 1):
         if index > MAX_LINES:
             raise ValueError("line_limit")
@@ -60,7 +103,18 @@ def audit(lines):
         if prefix is None:
             continue
         content = line[prefix.end():]
-        if content.startswith(PS_PROBE):
+        if content.startswith(PS_REJECTED):
+            attempt = _rejected_attempt(_decode_words(content[len(PS_REJECTED):], 7))
+            if attempt is None:
+                invalid_rejected += 1
+                continue
+            if len(rejected_order) >= MAX_REJECTED_ATTEMPTS:
+                raise ValueError("rejected_attempt_limit")
+            rejected[attempt] += 1
+            rejected_order.append(dict(zip(
+                ("origin", "pins", "message_protocol", "shape", "inspection"), attempt),
+                line=index, outcome="rejected_not_transmitted"))
+        elif content.startswith(PS_PROBE):
             words = _decode_words(content[len(PS_PROBE):])
             if words is None:
                 invalid_ps += 1
@@ -157,6 +211,22 @@ def audit(lines):
                 {"operation": operation, "selection": selection, "status": status, "count": count}
                 for (operation, selection, status), count in sorted(ps_probes.items())
             ],
+        }
+    if rejected or invalid_rejected:
+        report["rejected_can_ps_attempts"] = {
+            "calls": sum(rejected.values()), "invalid_events": invalid_rejected,
+            "outcome": "rejected_not_transmitted",
+            "classification_scope": "lexical_request_shape_only",
+            "state_correlation_performed": False,
+            "hardware_pins_verified": False,
+            "ecu_response_verified": False,
+            "read_only_reference_approved": False,
+            "periodic_firing_observed": False,
+            "categories": [
+                dict(zip(("origin", "pins", "message_protocol", "shape", "inspection"), key), count=count)
+                for key, count in sorted(rejected.items())
+            ],
+            "source_order": rejected_order,
         }
     return report
 
