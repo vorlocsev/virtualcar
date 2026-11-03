@@ -417,3 +417,56 @@ In parallel obtain a fresh read-only, version-scoped VDASH UI observation
 and J2534 transport audit before deciding whether transport or UI is the
 blocker. Do not hard-code fabricated OEM CEM responses to satisfy presumed
 UI conditions. The Virtual Car emulator and J2534 DLL were not changed.
+
+## G4 dependency body-coverage matrix: eight provenance gates (2026-11-03)
+
+This addition inventories **what can and cannot yet be read** from
+the user-authorized *VDASH portable 2.5.115.79* extracted method selection.
+It does **not** reconstruct the missing functions.
+
+| Target | Module / MethodDef | How it is referenced | Current saved selected evidence |
+| --- | --- | --- | --- |
+| `Model_DetectDone` | Frontend.exe `0x06002472` | Present in selected method inventory | Indexed, body absent from 11 saved excerpts |
+| `InitializeUnits` | Frontend.exe `0x06002469` | `Model_DetectDone` call inventory | Caller lists invocation; target not selected |
+| `DIM.RefreshAvailability` | Frontend.Client.Core.dll `0x06001BB2` | Exact static callsite in `VddModel.Detect` | Target body not selected |
+| `ECM.RefreshAvailability` | Frontend.Client.Core.dll `0x06001BBA` | Exact static callsite in `VddModel.Detect` | Target body not selected |
+| `ICM.RefreshAvailability` | Frontend.Client.Core.dll `0x06001BCC` | Exact static callsite in `VddModel.Detect` | Target body not selected |
+| `PHM.RefreshAvailability` | Frontend.Client.Core.dll `0x06001BE9` | Exact static callsite in `VddModel.Detect` | Target body not selected |
+| `DetectResult .ctor` | Frontend.Client.Core.dll `0x060011BB` | `get_Volvo + local2` constructor motif | Target body not selected |
+| `Ecus .ctor` | Frontend.Client.Core.dll `0x0600126D` | `DetectResult` constructor motif | Target body not selected |
+
+Here **not selected** means only *absent from our limited 28-method
+inventory*, not absent from the original program; **selected without
+excerpt** means a method was indexed but its complete IL body was not
+supplied among the 11 saved extracts. The two categories must not be
+conflated. All MethodDef tokens are **assembly-scoped** and
+**2.5.115.79 build-specific**.
+
+The `recovered-il-evidence-audit-v9` output now contains an independent
+`g4_dependency_coverage` object with exactly eight fixed labels. Each
+shows one source evidence level (`indexed_method`, `indexed_call`,
+`direct_il`, `not_observed`) and one target body coverage level
+(`excerpt_present`, `selected_without_excerpt`, `not_selected`).
+Only direct-CIL neighborhoods or the indexed `InitializeUnits` call
+justify a reference flag; target selection/body presence is checked
+independently. This is an *evidence availability map*, not a
+reconstructed VDASH control-flow graph.
+
+On the previously reviewed selected artifacts the expected coverage is
+**eight distinct indexed/referenced targets, zero complete method bodies
+for these targets**. The remaining gap is therefore primarily **source
+acquisition and verification**, not evidence for a specific ECU rejection
+rule. New synthetic tests #73–80 verify references, missing callers,
+module-token collisions, presence of one complete target body,
+independent refresh calls, mutation of one constructor and privacy.
+No original vendor CIL excerpts, customer VINs, or read/write protocol
+replies are committed.
+
+**Do not infer** that there are exactly eight relevant methods in the
+original client: this fixed shortlist is a research priority. A future
+authorized recovered body could disprove the working UI-acceptance
+hypothesis or reveal entirely different gates. Dynamic G4 ECU-list
+acceptance must still be checked in a fresh, read-only, version-specific
+VDASH UI session; current CI validates only synthetic metadata processing
+and Virtual Car code.
+

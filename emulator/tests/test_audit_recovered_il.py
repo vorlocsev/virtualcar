@@ -177,7 +177,7 @@ IL_0000 ret
         report = tool.audit(inventory_for_detect_shape(source), source)
         self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v9")
 
 
     @staticmethod
@@ -352,7 +352,7 @@ IL_0020 ret
         report = tool.audit(inventory_for_detect_shape(src), src)
         self.assertIn("Shared opaque predicate usage does not reveal equality or acceptance semantics",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v9")
         self.assertNotIn("hardware=real", json.dumps(report))
 
 
@@ -414,7 +414,7 @@ IL_0020 ret
     def test_40_summary_is_allowlisted_no_raw_bytes(self):
         src = self._string_methodspec_fixture()
         report = tool.audit(inventory_for_detect_shape(src), src)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v9")
         self.assertNotIn("0x2B000002", json.dumps(report))
         self.assertNotIn(r"\x01\x0e", json.dumps(report))
         self.assertIn("MethodSpec<string> does not establish generic method return type or semantics",
@@ -645,7 +645,7 @@ IL_0020 ret
     def test_56_allowlist_and_incomplete_evidence_never_claim_client_acceptance(self):
         src = self._phase_detect_fixture() + "# PRIVATE-VIN-AND-CUSTOMER-PATH"
         report = tool.audit(self._phase_inv(src, "0x0600132B"), src)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v9")
         self.assertNotIn("PRIVATE-VIN", json.dumps(report))
         self.assertIn("not proof of successful user-facing detection",
                       " ".join(report["limitations"]))
@@ -767,7 +767,7 @@ IL_0020 ret
         src = original + "# PRIVATE_VIN_AND_CREDENTIALS_SHOULD_STAY_PRIVATE\n"
         report = tool.audit(self._phase_inv(src, "0x0600132B"), src)
         dumped = json.dumps(report)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v9")
         self.assertNotIn("PRIVATE_VIN", dumped)
         self.assertIn("not proof of two executed loops", " ".join(report["limitations"]))
         self.assertIn("without authenticated identity or acceptance evidence",
@@ -915,13 +915,147 @@ IL_0003 ret
         })
         out = tool.audit(inv, D)
         dumped = json.dumps(out)
-        self.assertEqual(out["format"], "recovered-il-evidence-audit-v8")
+        self.assertEqual(out["format"], "recovered-il-evidence-audit-v9")
         self.assertNotIn("CUSTOMER-PRIVATE-VIN", dumped)
         self.assertNotIn("PRIVATE_UI_MARKER", dumped)
         self.assertNotIn("0x06002472", dumped)
         self.assertIn("not a recovered method body", " ".join(out["limitations"]))
         self.assertEqual(out["evidence"]["ui_done_inventory_state"],
                          "seven_single_calls_indexed")
+
+
+
+    @staticmethod
+    def _g4_fixture(*, include_ui=True):
+        # Construct a synthetic Detect method from small independently
+        # recognizable shapes. It is NOT the protected vendor method.
+        import re
+        original = RecoveredIlTests._phase_detect_fixture().splitlines()
+        extra = [
+            "IL_0177 ldarg.0",
+            "IL_0178 ldarg.0",
+            "IL_0179 call 0x060012E2 get_Volvo",
+            "IL_017E ldloc.2",
+            "IL_017F newobj 0x060011BB .ctor",
+            "IL_0184 call 0x060012E9 set_DetectResult",
+        ]
+        original[0] = re.sub(
+            r"; \d+ decoded opcodes$",
+            f"; {len(original) - 1 + len(extra)} decoded opcodes",
+            original[0],
+        )
+        source = "\n".join([original[0]] + extra + original[1:]) + "\n"
+        methods = [{
+            "module": "Frontend.Client.Core.dll",
+            "method_token": "0x0600132B",
+            "decoded_instructions": len(original) - 1 + len(extra),
+        }]
+        if include_ui:
+            methods += RecoveredIlTests._ui_done_fixture()["selected_methods"]
+        return source, {"selected_methods": methods}
+
+    @staticmethod
+    def _g4_map(report):
+        return {x["target"]: x for x in report["g4_dependency_coverage"]["targets"]}
+
+    def test_73_eight_targets_split_callsite_and_body_coverage(self):
+        source, inv = self._g4_fixture()
+        result = tool.audit(inv, source)["g4_dependency_coverage"]
+        by_name = {x["target"]: x for x in result["targets"]}
+        self.assertEqual(result["total_targets"], 8)
+        self.assertEqual(result["source_referenced"], 8)
+        self.assertEqual(result["full_excerpt_bodies"], 0)
+        self.assertEqual(len(result["prioritized_missing_bodies"]), 8)
+        self.assertEqual(by_name["model_detect_done"]["reference"], "indexed_method")
+        self.assertEqual(by_name["model_detect_done"]["body_coverage"],
+                         "selected_without_excerpt")
+        self.assertEqual(by_name["initialize_units"]["reference"], "indexed_call")
+        self.assertEqual(by_name["ecus_ctor"]["reference"], "direct_il")
+        self.assertFalse(result["runtime_execution_verified"])
+        self.assertFalse(result["ecu_list_acceptance_verified"])
+
+    def test_74_constructor_source_motif_mutation_is_localized(self):
+        source, inv = self._g4_fixture()
+        changed = source.replace("IL_017F newobj 0x060011BB",
+                                 "IL_017F newobj 0x060011BC")
+        evidence = self._g4_map(tool.audit(inv, changed))
+        self.assertEqual(evidence["detect_result_ctor"]["reference"], "not_observed")
+        self.assertEqual(evidence["ecus_ctor"]["reference"], "direct_il")
+        self.assertEqual(evidence["initialize_units"]["reference"], "indexed_call")
+
+    def test_75_missing_ui_inventory_preserves_detect_cil_references(self):
+        source, inv = self._g4_fixture(include_ui=False)
+        result = tool.audit(inv, source)["g4_dependency_coverage"]
+        evidence = {x["target"]: x for x in result["targets"]}
+        self.assertEqual(result["source_referenced"], 6)
+        self.assertEqual(evidence["model_detect_done"]["reference"], "not_observed")
+        self.assertEqual(evidence["initialize_units"]["reference"], "not_observed")
+        self.assertEqual(evidence["ecm_refresh"]["reference"], "direct_il")
+
+    def test_76_missing_ui_call_list_is_not_initialize_units_negative(self):
+        source, inv = self._g4_fixture()
+        inv["selected_methods"][1].pop("calls")
+        evidence = self._g4_map(tool.audit(inv, source))
+        self.assertEqual(evidence["model_detect_done"]["reference"], "indexed_method")
+        self.assertEqual(evidence["initialize_units"]["reference"], "not_observed")
+        self.assertEqual(evidence["initialize_units"]["body_coverage"],
+                         "not_selected")
+
+    def test_77_module_scoped_target_requires_exact_assembly(self):
+        source, inv = self._g4_fixture()
+        inv["selected_methods"].append({
+            "module": "Frontend.Client.Core.dll",
+            "method_token": "0x06002469",
+            "decoded_instructions": 1,
+        })
+        wrong = self._g4_map(tool.audit(inv, source))
+        self.assertEqual(wrong["initialize_units"]["body_coverage"], "not_selected")
+        inv["selected_methods"][-1]["module"] = "Frontend.exe"
+        correct = self._g4_map(tool.audit(inv, source))
+        self.assertEqual(correct["initialize_units"]["body_coverage"],
+                         "selected_without_excerpt")
+
+    def test_78_full_body_requires_matching_selected_method_and_excerpt(self):
+        source, inv = self._g4_fixture()
+        inv["selected_methods"].append({
+            "module": "Frontend.exe",
+            "method_token": "0x06002469",
+            "decoded_instructions": 1,
+        })
+        other = ("Frontend.exe: MethodDef 0x06002469 "
+                 "DetectViewModel.InitializeUnits; 1 decoded opcodes\n"
+                 "IL_0000 ret\n")
+        report = tool.audit(inv, source + other)["g4_dependency_coverage"]
+        self.assertEqual(report["full_excerpt_bodies"], 1)
+        self.assertEqual(
+            {x["target"]: x for x in report["targets"]}
+            ["initialize_units"]["body_coverage"], "excerpt_present")
+        self.assertFalse(report["ecu_list_acceptance_verified"])
+
+    def test_79_each_refresh_reference_requires_its_own_cil_callsite(self):
+        source, inv = self._g4_fixture()
+        damaged = source.replace("IL_05D3 callvirt 0x06001BB2",
+                                 "IL_05D3 callvirt 0x06001BB3")
+        refs = self._g4_map(tool.audit(inv, damaged))
+        self.assertEqual(refs["dim_refresh"]["reference"], "not_observed")
+        for label in ("ecm_refresh", "icm_refresh", "phm_refresh"):
+            self.assertEqual(refs[label]["reference"], "direct_il")
+
+    def test_80_dependency_summary_is_fixed_schema_and_private_safe(self):
+        source, inv = self._g4_fixture()
+        inv["selected_methods"][1]["calls"].append({
+            "token": "0x0600ABCD", "count": 1,
+            "symbol": "PERSONAL_VIN_PRIVATE_PATH",
+        })
+        report = tool.audit(inv, source)
+        data = json.dumps(report)
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v9")
+        self.assertNotIn("PERSONAL_VIN_PRIVATE_PATH", data)
+        self.assertNotIn("0x0600ABCD", data)
+        self.assertNotIn("0x06002469", data)
+        self.assertIn("not execution or ECU acceptance",
+                      " ".join(report["limitations"]))
+        self.assertEqual(report["g4_dependency_coverage"]["total_targets"], 8)
 
 
 def inventory_for_single(source, token, count):

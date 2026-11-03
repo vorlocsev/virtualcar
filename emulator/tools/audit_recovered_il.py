@@ -594,6 +594,90 @@ def _ui_done_inventory_phase(by_key, blocks):
 
 
 
+
+# The eight candidate bodies are build-local research targets, not a claim
+# about which code ran in VDASH or which ECUs would become visible.
+def _g4_dependency_coverage(by_key, blocks):
+    """Build a provenance-aware, allowlisted index of missing G4 method bodies.
+
+    Direct-CIL references, indexed UI calls, selected metadata and actual
+    complete excerpt bodies are intentionally different kinds of evidence.
+    No guessed execution order, private symbols, payload or identity leaks.
+    """
+    detect_body = blocks.get(KNOWN["detect"], {})
+    ops = detect_body.get("ops", [])
+    offsets = detect_body.get("offsets", [])
+    shapes = _model_shapes(ops)
+    ui_inventory = _ui_done_inventory_phase(by_key, blocks)
+
+    def direct(site):
+        return _exact_il_site(ops, offsets, site)
+
+    targets = [
+        ("model_detect_done", KNOWN["ui_done"],
+         "indexed_method" if KNOWN["ui_done"] in by_key else "not_observed"),
+        ("initialize_units", ("Frontend.exe", "0x06002469"),
+         "indexed_call" if ui_inventory["ui_done_initialize_units_call_indexed"]
+         else "not_observed"),
+        ("dim_refresh", ("Frontend.Client.Core.dll", "0x06001BB2"),
+         "direct_il" if direct([
+             (0x05CD, "ldarg.0", None),
+             (0x05CE, "call", "0x060012EC"),
+             (0x05D3, "callvirt", "0x06001BB2")]) else "not_observed"),
+        ("ecm_refresh", ("Frontend.Client.Core.dll", "0x06001BBA"),
+         "direct_il" if direct([
+             (0x0617, "ldarg.0", None),
+             (0x0618, "call", "0x060012F0"),
+             (0x061D, "callvirt", "0x06001BBA")]) else "not_observed"),
+        ("icm_refresh", ("Frontend.Client.Core.dll", "0x06001BCC"),
+         "direct_il" if direct([
+             (0x0648, "ldarg.0", None),
+             (0x0649, "call", "0x060012EE"),
+             (0x064E, "callvirt", "0x06001BCC")]) else "not_observed"),
+        ("phm_refresh", ("Frontend.Client.Core.dll", "0x06001BE9"),
+         "direct_il" if direct([
+             (0x069D, "ldarg.0", None),
+             (0x069E, "call", "0x060012EA"),
+             (0x06A3, "callvirt", "0x06001BE9")]) else "not_observed"),
+        ("detect_result_ctor", ("Frontend.Client.Core.dll", "0x060011BB"),
+         "direct_il" if shapes[
+             "detect_result_constructor_from_volvo_and_local2"
+         ] else "not_observed"),
+        ("ecus_ctor", ("Frontend.Client.Core.dll", "0x0600126D"),
+         "direct_il" if shapes[
+             "detect_ecus_constructor_from_detect_result"
+         ] else "not_observed"),
+    ]
+    records = []
+    for label, key, source in targets:
+        coverage = ("excerpt_present" if key in blocks else
+                    "selected_without_excerpt" if key in by_key else
+                    "not_selected")
+        records.append({
+            "target": label,
+            "reference": source,
+            "body_coverage": coverage,
+        })
+    missing = [
+        x["target"] for x in records
+        if x["reference"] != "not_observed"
+        and x["body_coverage"] != "excerpt_present"
+    ]
+    return {
+        "scope": "eight_build_local_static_method_targets",
+        "targets": records,
+        "total_targets": len(records),
+        "source_referenced": sum(
+            x["reference"] != "not_observed" for x in records),
+        "full_excerpt_bodies": sum(
+            x["body_coverage"] == "excerpt_present" for x in records),
+        "prioritized_missing_bodies": missing,
+        "runtime_execution_verified": False,
+        "ecu_list_acceptance_verified": False,
+    }
+
+
+
 def audit(inventory, excerpts):
     selected = inventory.get("selected_methods")
     if not isinstance(selected, list) or not selected:
@@ -628,7 +712,7 @@ def audit(inventory, excerpts):
     detect_block = blocks.get(KNOWN["detect"], {})
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v8",
+        "format": "recovered-il-evidence-audit-v9",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -672,6 +756,7 @@ def audit(inventory, excerpts):
                 detect_block.get("offsets", [])),
             **_ui_done_inventory_phase(by_key, blocks),
         },
+        "g4_dependency_coverage": _g4_dependency_coverage(by_key, blocks),
         "limitations": [
             "Method references do not prove execution order in flattened CFG",
             "Enum meaning and unknown wrapper effects not established",
@@ -688,6 +773,8 @@ def audit(inventory, excerpts):
             "UI method call inventory is not a recovered method body or a proven ECU-list visibility predicate",
             "Indexed InitializeUnits and CEM getter calls do not prove individual ECU reads or configuration access",
             "Availability method bodies missing from a selected excerpt are unobserved, not absent from the vendor program",
+            "G4 dependency coverage records static reference and source-body availability, not execution or ECU acceptance",
+            "An unselected MethodDef may exist in the original client and is not evidence of a missing method implementation",
         ],
     }
 
