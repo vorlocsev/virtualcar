@@ -372,8 +372,10 @@ def _exact_il_site(ops, offsets, site):
         actual_op, actual_arg = ops[start + index]
         if offsets[start + index] != offset or actual_op != opcode:
             return False
-        if operand is not None and actual_arg.split(maxsplit=1)[0].upper() != operand.upper():
-            return False
+        if operand is not None:
+            parts = actual_arg.split(maxsplit=1)
+            if not parts or parts[0].upper() != operand.upper():
+                return False
     return True
 
 
