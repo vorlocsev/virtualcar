@@ -845,6 +845,56 @@ int main(){
   REQUIRE(strstr(begin,"\"data\"")==NULL);
   n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  }
+ /* Eight A3 security-service observation checks: an apparent six-byte
+    match with a shorter D2 declared length is NOT an exact SectorV shape.
+    None of these checks sends an A3 or generates a positive E3 response. */
+ {
+  static const struct {
+   U32 id,baud;U8 prefix,target;U32 len;U8 mutate_index;
+   p2_cem_request request;p2_cem_decision decision;U8 full;
+  } samples[]={
+   /* 1: exact observed CF/50 request on HS 500 kbit/s. */
+   {0x000FFFFEu,500000u,0xCF,0x50,8,0,P2_CEM_A3_SHAPE,P2_CEM_NEED_EVIDENCE,1},
+   /* 2: same observed shape to CEM40 on LS 125 kbit/s. */
+   {0x000FFFFEu,125000u,0xCF,0x40,8,0,P2_CEM_A3_SHAPE,P2_CEM_NEED_EVIDENCE,1},
+   /* 3: CB declares only three significant bytes. Padding is not A3 data. */
+   {0x000FFFFEu,500000u,0xCB,0x50,8,0,P2_CEM_A3_OTHER,P2_CEM_NEED_EVIDENCE,0},
+   /* 4: CA declares only two significant bytes. */
+   {0x000FFFFEu,500000u,0xCA,0x50,8,0,P2_CEM_A3_OTHER,P2_CEM_NEED_EVIDENCE,0},
+   /* 5: changed observed operand, never full-shape match. */
+   {0x000FFFFEu,500000u,0xCF,0x50,8,4,P2_CEM_A3_OTHER,P2_CEM_NEED_EVIDENCE,0},
+   /* 6: truncated CAN payload despite CF significant-byte count. */
+   {0x000FFFFEu,500000u,0xCF,0x50,7,0,P2_CEM_A3_OTHER,P2_CEM_NEED_EVIDENCE,0},
+   /* 7: full shape, but physically wrong bus, remains a route mismatch. */
+   {0x000FFFFEu,125000u,0xCF,0x50,8,0,P2_CEM_A3_SHAPE,P2_CEM_ROUTE_MISMATCH,1},
+   /* 8: foreign CAN ID cannot be attributed to D2 CEM at all. */
+   {0x00000555u,500000u,0xCF,0x50,8,0,P2_CEM_NOT_D2,P2_CEM_KEEP_EXISTING,0}
+  };
+  U32 z;
+  for(z=0;z<sizeof(samples)/sizeof(samples[0]);z++){
+   U8 data[9]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0};
+   p2_cem_result candidate;
+   data[0]=samples[z].prefix;data[1]=samples[z].target;
+   if(samples[z].mutate_index)data[samples[z].mutate_index]^=0x01;
+   candidate=p2_cem_classify(samples[z].id,samples[z].baud,
+                             data,samples[z].len);
+   REQUIRE(candidate.request==samples[z].request);
+   REQUIRE(candidate.decision==samples[z].decision);
+   REQUIRE(candidate.matched_full_shape==samples[z].full);
+  }
+  /* No ninth attributed shape from oversized classic-CAN input. */
+  {
+   U8 malformed[9]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0,0};
+   p2_cem_result r=p2_cem_classify(0x000FFFFEu,500000u,malformed,9);
+   REQUIRE(r.matched_full_shape==0 && r.request==P2_CEM_A3_OTHER);
+  }
+  /* A prefix-only E3 observation never represents completed access. */
+  {
+   const U8 marker[]={0xE3,0x02};
+   REQUIRE(p2_cem_e3_02_candidate(marker,sizeof(marker))==1);
+   REQUIRE(p2_cem_e3_02_candidate(marker,1)==0);
+  }
+ }
  /* Observer classifies A3, but never fabricates a positive E3 reply. */
  const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
  m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
