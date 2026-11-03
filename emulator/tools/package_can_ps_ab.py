@@ -99,7 +99,7 @@ def check_pe32(data):
     if len(data) < 256 or data[:2] != b"MZ":
         raise ValueError("invalid_pe_binary")
     offset = struct.unpack_from("<I", data, 0x3C)[0]
-    if offset > len(data) - 26 or data[offset:offset + 4] != b"PE\\0\\0":
+    if offset > len(data) - 26 or data[offset:offset + 4] != b"PE\0\0":
         raise ValueError("invalid_pe_signature")
     if struct.unpack_from("<H", data, offset + 4)[0] != 0x014C:
         raise ValueError("binary_not_x86")
@@ -142,10 +142,10 @@ def check_source_profile(raw):
 def canonical_profile(mode):
     if mode not in dict(MODES):
         raise ValueError("unsupported_mode")
-    return (BASE_VEHICLE + "[Diagnostics]\\n"
-            + "BackendTelemetryEnabled=1\\n"
-            + "EnableCanPsConfigProbe=1\\n"
-            + f"CanPsApiOutcomeMode={mode}\\n").encode("ascii")
+    return (BASE_VEHICLE + "[Diagnostics]\n"
+            + "BackendTelemetryEnabled=1\n"
+            + "EnableCanPsConfigProbe=1\n"
+            + f"CanPsApiOutcomeMode={mode}\n").encode("ascii")
 
 
 def create(root, dll_path, out_dir, source_sha):
@@ -181,17 +181,17 @@ def create(root, dll_path, out_dir, source_sha):
         "actual_bus_tx_enabled": False,
     }
     files["README_RUN_RU.txt"] = (
-        "Virtual Car: CAN_PS A/B. Синтетический автомобиль, без физических ECU.\\n\\n"
-        "CONTROL = 0; A_FILTER = 1; B_D8_WRITE = 2; C_D8_PERIODIC = 3.\\n"
-        "Все четыре DLL идентичны. Перед сменой режима завершите VDASH.\\n"
-        "Выберите только виртуальную DLL соответствующего каталога.\\n"
-        "Журналы и VIN не публикуйте. Это имитация результата J2534 API,\\n"
-        "не доказательство CAN-обмена или успешного обнаружения блоков.\\n\\n"
+        "Virtual Car: CAN_PS A/B. Синтетический автомобиль, без физических ECU.\n\n"
+        "CONTROL = 0; A_FILTER = 1; B_D8_WRITE = 2; C_D8_PERIODIC = 3.\n"
+        "Все четыре DLL идентичны. Перед сменой режима завершите VDASH.\n"
+        "Выберите только виртуальную DLL соответствующего каталога.\n"
+        "Журналы и VIN не публикуйте. Это имитация результата J2534 API,\n"
+        "не доказательство CAN-обмена или успешного обнаружения блоков.\n\n"
         + README
     ).encode("utf-8")
-    files["BUILDINFO.json"] = (json.dumps(info, indent=2, sort_keys=True) + "\\n").encode("utf-8")
+    files["BUILDINFO.json"] = (json.dumps(info, indent=2, sort_keys=True) + "\n").encode("utf-8")
     files["SHA256SUMS.txt"] = "".join(
-        hashlib.sha256(data).hexdigest() + "  " + name + "\\n"
+        hashlib.sha256(data).hexdigest() + "  " + name + "\n"
         for name, data in sorted(files.items())
     ).encode("ascii")
     filename = f"{PACKAGE_NAME}-{source_sha[:12].lower()}.zip"
@@ -203,7 +203,7 @@ def create(root, dll_path, out_dir, source_sha):
             z.writestr(name, data)
     sidecar = out_dir / (filename + ".sha256")
     sidecar.write_text(hashlib.sha256(dest.read_bytes()).hexdigest()
-                       + "  " + filename + "\\n", encoding="ascii")
+                       + "  " + filename + "\n", encoding="ascii")
     return dest
 
 
