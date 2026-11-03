@@ -81,3 +81,48 @@ classification, truncated log or invalid JSON fails closed.
 
 The existing zero-fixture native audit remains unchanged. PR #39
 stays Draft and no Virtual Car release is published.
+
+
+## Same-native-log clock continuity gate (next stage)
+
+The existing native x86 test writes its J2534 text log to a
+fresh isolated TEMP directory. The DLL writes:
+- TX context channel/protocol/flags/baud/time-us (BE) immediately
+  before the application WriteMsgs request record;
+- RX context channel/protocol/status/baud/time-us (BE) immediately
+  before each delivered frame's PassThruReadMsgs record.
+
+Those 32-bit unsigned microsecond timestamps are produced by
+the **same running DLL process**; rollover is supported within a
+60-second bounded interval. RX context is taken when the frame is
+delivered to J2534, not when the client semantically parses it.
+
+The new emulator/tools/verify_native_d2_followup.py runs
+audit_d2_followup_window.audit on the native text log itself and
+requires:
+- One completed B9FB CEM50 sequence with exactly 13 RX frames.
+- First next **app** TX is A3, target CEM50 on the same HS500
+  channel, same bitrate and same source PID/log epoch.
+- The measured microsecond gap is finite and the 500ms/1000ms
+  classification agrees with the measured value.
+- Both client acceptance and vehicle identity remain unverified.
+- No raw CAN text log is uploaded to CI artifacts.
+
+The verification does not impose a *fixed* 500ms/1000ms deadline
+on CI: synthetic runner scheduling on Windows is variable. The
+window fields are observations rather than a claimed expected
+real-vehicle timing. An A3 on CEM40, an unrelated earlier TX,
+a partial B9FB, a different PID/channel, an absent timestamp
+or an improperly correlated frame fails the evidence gate.
+
+emulator/tests/test_verify_native_d2_followup.py contains eight
+synthetic regression groups: baseline, exact window boundaries,
+wrong target, unrelated/missing next TX, incomplete/off-route RX,
+PID/channel/clock conflicts, redaction and CLI no-overwrite.
+
+The old client recording from PR30 still lacks synchronized source
+timestamps and cannot inherit any gap measured in this test.
+Similarly a successful synthetic native test is *not* proof
+of SectorV VIN acceptance, successful A3/E3 authentication,
+CEM hardware number, an XC90 V8 MY2009 vehicle, or working
+read-only ECU enumeration.
