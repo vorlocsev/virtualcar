@@ -198,6 +198,25 @@ reports details that earlier callsite-only research did not capture:
 | `0x0600115D` (Execute) | 1073 IL bytes; 311 decoded opcodes; 0 issues; one direct `0x06001160` call |
 | `0x06001160` (ParseData) | 550 IL bytes; **171 decoded opcodes; 0 issues**; four `get_ResultData`, two `RaiseEvent`, one `set_DataHash`; one call each to `<ParseData>b__88_0` and `<ParseData>b__1` |
 
+The recovered inventory's first eight opcode names for
+`ParseData` start with `ldarg.1`, `brtrue.s`. The only defensible
+conclusion is that an early conditional branch shape was recorded: it does
+**not** establish a successful response, a null guard, or why a branch is
+taken. The entries for `Detect`, `Execute` and `ParseData` each also
+declare `return_only_stub=false`. The optional sanitized
+`methods.*.entry_opcode_shape` and `stub_status` fields explicitly
+separate **observed first-instruction metadata** from an omitted field,
+an unexpected prefix, or a reported return-only stub. The raw opcode list,
+private symbols and method text are never exported.
+
+The saved inventory was also checked as a complete JSON document by joining
+its two local text fragments: **28 selected method entries**, including
+**21 in `Frontend.Client.Core.dll`**. The focused IL lengths, decoder
+counts and call-token frequencies in the combined file agree with the
+aggregate claims above. This verifies the *saved inventory's internal
+representation*, **not** the absent source/recovered DLL bytes or any
+executed VDASH path.
+
 These statements are **inventory metadata claims from the local recovered
 archive**, not a newly decompiled body, execution proof, or confirmation of
 successful CEM identification. A decoder reporting zero issues still does
