@@ -35,7 +35,7 @@ If using the setup wizard, review its configuration changes before approving.
 Example PowerShell session; **replace the DLL path with your local copy**:
 
 ```powershell
-npm install --global rea-agents
+npm install --global rea-agents@6.8.0
 rea --help
 
 $private = Join-Path $env:USERPROFILE 'VDASH-REA-private'
