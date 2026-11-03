@@ -48,6 +48,60 @@ The probe first verifies the exact original DLL SHA-256, uses `PROCESS_VM_READ |
 - Unchanged bytes **do not disprove** anti-tamper, e.g. if the CLR has not initialized the module or it uses JIT-time replacement.
 - Actual decoded instruction bodies, logical condition checks and client acceptance of a virtual CEM remain **unverified**. Next analysis should be driven by a new concrete observation instead of more synthetic test count.
 
+## G2 observation export gate: bounded-window metadata (2026-11-03)
+
+A new **offline, non-executing** allowlist tool, `emulator/tools/audit_vdash_g2_observation.py`,
+summarizes a private v2-style *operator observation* **after** it has been
+normalized locally. It does not attach to a process, inspect memory, decode CIL
+or change the emulator. **No real runtime evidence has been supplied or
+analyzed by this tool yet.** Existing private v2 probe output is not claimed
+to match this interchange format automatically.
+
+The private JSON must have `format: "virtualcar.vdash.g2.observation.v1"`,
+an `attestation` object with two *operator-reported booleans*:
+`original_binary_hash_matched` and `running_original_image`; and
+exactly seven `probes`. Each probe must supply
+`token`, `next_distinct_method_distance_bytes`, `rva_alias_count`,
+`window_bytes`, `read_status`, `changed_vs_disk` and
+`cil_header_class`. Local private normalization is required when the
+operator's capture uses another field layout. Do not fabricate missing values.
+
+| Token | Label | Required bounded window |
+|---|---|---:|
+| `0x06000001` | Module initializer | 64 bytes |
+| `0x0600000D` | Loader candidate | 64 bytes |
+| `0x0600117A` | Result helper A | 20 bytes |
+| `0x0600117B` | Result helper B | 20 bytes |
+| `0x06001160` | ParseData | 64 bytes |
+| `0x0600132B` | Detect | 64 bytes |
+| `0x06001359` | Shared-RVA predicate *candidate* | 20 bytes; 72 RVA aliases |
+
+For each row `window_bytes` must equal
+`min(64, next_distinct_method_distance_bytes)`; all seven must agree
+with the measured v2 window list. A successful read uses
+`read_status: "ok"`, a boolean `changed_vs_disk` and a header class
+`tiny`, `fat`, `other` or `unknown`. Unreadable/not-attempted reads
+use `changed_vs_disk: null` and `cil_header_class: "unknown"`.
+Older 64-byte reads across the 20-byte boundaries are rejected; a change
+at the RVA shared by 72 MethodDefs is **unattributed**, even with a plausible
+CIL header. The output cannot claim runtime method recovery or ECU acceptance.
+
+After **local-only** conversion of an actual private result, run from
+`emulator`:
+
+```powershell
+py -3 .\tools\audit_vdash_g2_observation.py .\g2-private-normalized.json --output .\g2-sanitized.json
+py -3 -m unittest discover -s .\tests -p test_audit_vdash_g2_observation.py
+```
+
+The safe output includes only fixed tokens/labels, sample lengths,
+categorical assessments, and self-reported attestation flags. It excludes
+paths, executable hashes, process IDs, byte samples, private type names and
+real VINs. The input must remain private and the output is created with
+no overwrite. **Eight synthetic local checks** cover unchanged/changed
+interpretation, shared RVA, overlap prevention, malformed identity, failed
+read, privacy and CLI overwrite handling. These are not a VMware result.
+
 ## Separation of concerns
 
 This document is research-only and does not alter CAN, J2534, CEM synthetic replies, Virtual Car Stable/Development or release publication. Physical J2534 and a real VDASH vehicle-identification session remain untested.
