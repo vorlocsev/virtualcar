@@ -298,14 +298,42 @@ to \`Execute → ParseData\`. A match confirms a reported callsite
 in the inspected build; \`decoded_caller_corroborated\` additionally requires
 the complete decoded caller body, not runtime execution.
 
-**The signatures are not yet known.** Our fixtures use invented parameter
-and return types exclusively to test the sanitizer. Only the original or
-matching recovered \`Frontend.Client.Core.dll\` can supply actual REA
-signature evidence. Even complete signatures cannot, alone, establish
-the meaning of the helpers or VDASH command acceptance. The next step is
-to privately compare parameter and return metadata, then inspect the
-three method bodies to determine their data transformations. Do not
-convert the resulting types into synthetic OEM CEM replies.
+**New real VMware probe evidence (2026-11-03).** The private
+`metadata_probe_20261103_051302.zip` contains REA results from isolated
+header-count-normalized copies of the exact VDASH build verified against
+the previously supplied original ZIP. This is static metadata inspection,
+not recovered/decrypted executable CIL.
+
+Across the seven key assemblies, REA reported **29,524 methods**:
+**606 body-present, 28,110 malformed, 808 absent**. All seven reports
+retain `coverage.state=partial`; `Frontend.exe` has zero method rows
+because its metadata representation exceeded REA's 64 MiB limit.
+`Frontend.Client.Core.dll` has 8,546 decoded method **signatures**,
+while 8,069 method **bodies** remain malformed.
+
+| Method or field | REA decoded static signature |
+|---|---|
+| `VddCommand.result` field `0x04000333` | `class:1349` |
+| Helper `0x0600117A` | `(class:1349) -> class:205[]` |
+| Helper `0x0600117B` | `(class:1349) -> u1[]` (`byte[]`) |
+| `ParseData 0x06001160` | `(class:205[], u1[]) -> void` |
+| `VddModel.Detect 0x0600132B` | `(class:1084) -> bool` |
+| Opaque predicate `0x06001359` | `(string, string) -> bool` |
+
+The `class:...` references are unresolved, **build-local** signature
+identities, not proven CLR class names. Both helpers take the same type
+as the `result` field and their return types equal the ordered pair of
+`ParseData` parameter types. The new `typed_staging_alignment` validator
+reports this exact **static type compatibility**, not executed dataflow.
+Null `generic_parameter_count` in REA's decoded signatures is valid,
+and is retained as null rather than rewritten to zero.
+
+The probe did **not** decode the bodies of `ParseData`, the two helpers,
+`Detect`, or the opaque predicate; all report `body.status=malformed`.
+Residual duplicate Module/Assembly rows and invalid MethodSpec rows
+also remain. Original CEM answers or VDASH vehicle acceptance must not
+be inferred from these signatures. Next evidence gate: analyze matching
+recovered CIL bodies and run a separate read-only VDASH client test.
 
 ## Provenance
 
