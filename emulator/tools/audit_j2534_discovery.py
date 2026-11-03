@@ -30,8 +30,10 @@ def _words(text):
     return bytes(int(x, 16) for x in HEX.findall(text))
 
 
-def _context(text, label):
+def _context(text, label, strict=False):
     if not text.startswith(label):
+        return None
+    if strict and not re.fullmatch(r"(?:[0-9A-Fa-f]{2}\s+){19}[0-9A-Fa-f]{2}", text[len(label):].strip()):
         return None
     data = _words(text[len(label):])
     if len(data) != 20:
@@ -49,7 +51,7 @@ def _stamp(line):
     return ((h * 60 + minute) * 60 + second) * 1000 + ms
 
 
-def _request(raw):
+def _request(raw, include_obd=False):
     if len(raw) < 5:
         return None
     can_id = int.from_bytes(raw[:4], "big")
@@ -79,19 +81,45 @@ def _request(raw):
         if len(data) >= 4 and 3 <= data[0] <= 7 and data[1] == 0x22:
             return ("P3", f"22{data[2]:02X}{data[3]:02X}", None, can_id)
         return ("P3", "other", None, can_id)
+    if include_obd:
+        if can_id in (0x7DF, 0x7E0) and (data == b"\x09\x02" or
+                (3 <= len(data) <= 8 and data[:3] == b"\x02\x09\x02"
+                 and not any(data[3:]))):
+            return ("OBD", "0902", None, can_id)
+        if can_id == 0x18DB33F1 and data == b"\x3E\x80":
+            return ("OBD", "3E80", None, can_id)
     return None
 
 
-def _flow_control(raw):
-    """A CAN ISO-TP FC preserves an in-progress P3 transaction."""
+def _flow_control(raw, include_obd=False):
+    """A CAN ISO-TP FC preserves P3 or opt-in OBD transport."""
     if len(raw) < 5:
         return False
     can_id = int.from_bytes(raw[:4], "big")
+    if include_obd and can_id == 0x7E0:
+        return 7 <= len(raw) <= 12 and raw[4] in (0x30, 0x31, 0x32)
     return can_id in (0x726, 0x18DA50F1) and raw[4] & 0xF0 == 0x30
 
 
 def _p3_uds(tx, head, uds_length):
-    """Evaluate only UDS header and declared length, never identity data."""
+    """Evaluate only application headers and declared length, never identity data."""
+    if tx["route"] == "OBD":
+        if len(head) < 3:
+            tx["_invalid"] = True
+        elif head[:2] == b"\x7F\x09":
+            if head[2] == 0x78:
+                tx["_p3_pending"] += 1
+            else:
+                tx["_p3_negative"] = True
+        elif head == b"\x49\x02\x01":
+            # Header + record index + 17 bytes. No VIN value/checksum decoding.
+            if uds_length == 20:
+                tx["_complete"] = True
+            else:
+                tx["_p3_missing_data"] = True
+        else:
+            tx["_p3_mismatch"] = True
+        return
     if len(head) < 3:
         tx["_invalid"] = True
     elif head[0] == 0x7F and head[1] == 0x22:
@@ -214,18 +242,21 @@ def _result(tx):
     elif tx["_a6_error"]:
         status, reason = "partial_rx", tx["_a6_error"]
     elif tx["_invalid"]:
-        status, reason = "partial_rx", ("invalid_iso_tp_framing" if tx["route"] == "P3" else "invalid_d2_sequence")
+        status, reason = "partial_rx", ("invalid_iso_tp_framing" if tx["route"] in ("P3", "OBD") else "invalid_d2_sequence")
     elif tx["_p3_negative"]:
-        status, reason = "negative_response", "uds_negative_response_observed"
+        status, reason = "negative_response", ("obd_negative_response_observed" if tx["route"] == "OBD" else "uds_negative_response_observed")
     elif tx["_p3_missing_data"]:
-        status, reason = "partial_rx", "missing_uds_identifier_data"
+        status, reason = "partial_rx", ("invalid_obd_vin_length" if tx["route"] == "OBD" else "missing_uds_identifier_data")
     elif tx["_p3_mismatch"]:
-        status, reason = "unverified", "uds_response_does_not_match_request"
+        status, reason = "unverified", ("obd_response_does_not_match_request" if tx["route"] == "OBD" else "uds_response_does_not_match_request")
     elif tx["_complete"]:
         status = "delivered"
-        reason = ("p3_uds_transport_only" if tx["route"] == "P3" else
+        reason = ("obd_vin_header_length_transport_only" if tx["route"] == "OBD" else
+                  "p3_uds_transport_only" if tx["route"] == "P3" else
                   "d2_a6_single_frame_transport_only" if tx["service"] == "A6" else
                   "complete_d2_transport_only")
+    elif tx["route"] == "OBD" and tx["service"] == "3E80":
+        status, reason = "unverified", "suppressed_response_request_not_ecu_discovery"
     elif tx["_p3_pending"]:
         if tx["_timeout"]:
             status, reason = "timeout", "j2534_timeout_after_response_pending"
@@ -242,7 +273,7 @@ def _result(tx):
         delta = (tx["_last"] - tx["_start"]) % tx["_time_mod"]
         if delta < 60000 * (1000 if tx["_time_mod"] == 2**32 else 1):
             window = round(delta / (1000 if tx["_time_mod"] == 2**32 else 1), 3)
-    return {
+    result = {
         "session": tx["session"], "service": tx["service"],
         "route": tx["route"], "can_id": tx["can_id"],
         "id_format": tx["id_format"], "channel": tx["channel"],
@@ -252,6 +283,15 @@ def _result(tx):
         "off_route_rx": tx["off_route_rx"], "window_ms": window,
         "status": status, "reason": reason,
     }
+    if tx["route"] == "OBD":
+        result["start_indications"] = tx["_obd_starts"]
+        result["repeat_index"] = tx["_obd_repeat"]
+        result["ended_by"] = tx["_end_reason"]
+        result["request_line"] = tx["_obd_request_line"]
+        result["last_rx_line"] = tx["_obd_last_rx_line"]
+        result["client_result"] = "client_result_unknown"
+        result["vehicle_identity_verified"] = False
+    return result
 
 
 _VIDA_LINE = re.compile(
@@ -420,12 +460,35 @@ class _VidaText:
 
 
 
-def audit(lines):
+def _native_event(text):
+    """Count exact source markers, not inferred calls, channels or filter effects."""
+    exact = {"PassThruOpen -> device 1": "open", "PassThruClose": "close",
+             "PassThruDisconnect": "disconnect",
+             "J2534 CLEAR_RX_BUFFER: queued and staged D2 dropped": "clear_rx"}
+    if text in exact:
+        return exact[text]
+    for label, size, name in (
+            ("J2534 Connect result protocol/flags/baud/status (BE)", 16, "connect_result"),
+            ("J2534 SET_CONFIG channel/parameter/value/applied (BE)", 16, "set_config"),
+            ("PassThruStartMsgFilter type / id (BE)", 8, "filter_start")):
+        if text.startswith(label) and re.fullmatch(
+                r"(?:[0-9A-Fa-f]{2}\s+){%d}[0-9A-Fa-f]{2}" % (size - 1),
+                text[len(label):].strip()):
+            return name
+    if text.startswith("TX (app request) "):
+        return "tx_record"
+    if text.startswith("PassThruReadMsgs -> delivered "):
+        return "rx_delivery_record"
+    return None
+
+
+def audit(lines, *, include_obd=False):
     sessions = {}
     epoch = 0
     results = []
     errors = Counter()
     vida = _VidaText(errors)
+    observed_events = Counter()
 
     def scope(pid):
         nonlocal epoch
@@ -433,7 +496,8 @@ def audit(lines):
             epoch += 1
             sessions[pid] = {"number": epoch, "active": {},
                              "txctx": None, "rxctx": None, "clearctx": None,
-                             "last_tx_channel": None, "disconnect_channel": None}
+                             "last_tx_channel": None, "disconnect_channel": None,
+                             "obd_repeats": {}}
         return sessions[pid]
 
     def finish(s, channel, why):
@@ -472,7 +536,21 @@ def audit(lines):
             "_p3_total": None, "_p3_received": 0, "_p3_sequence": 1,
             "_p3_header": b"", "_p3_negative": False, "_p3_mismatch": False,
             "_p3_missing_data": False, "_p3_pending": 0,
+            "_obd_starts": 0, "_obd_repeat": 0,
+            "_obd_request_line": line_number, "_obd_last_rx_line": None,
         }
+        if kind == "OBD":
+            key = (service, can_id, channel, protocol, baud, flags)
+            tx["_obd_repeat"] = s["obd_repeats"].get(key, 0) + 1
+            s["obd_repeats"][key] = tx["_obd_repeat"]
+            if service == "0902" and not (
+                    (protocol == 6 and raw[4:] == b"\x09\x02") or
+                    (protocol == 5 and raw[4:7] == b"\x02\x09\x02")):
+                tx["_source_error"] = "obd_unknown_or_mismatched_transport"
+            if service == "0902" and flags is not None and flags & 0x180:
+                tx["_source_error"] = "obd_unsupported_addressing_flags"
+            if service == "3E80" and protocol not in (5, 6):
+                tx["_source_error"] = "obd_unknown_transport"
         s["active"][channel] = tx
 
     def active(s, channel):
@@ -486,14 +564,56 @@ def audit(lines):
         ctx = s["rxctx"]
         channel = metadata["channel"] if metadata is not None else ctx[0] if ctx else None
         tx = active(s, channel)
-        if not tx or len(raw) < 5:
+        if not tx or len(raw) < (4 if tx["route"] == "OBD" else 5):
             return
         can_id = int.from_bytes(raw[:4], "big")
         payload = raw[4:]
         if can_id > 0x1FFFFFFF:
             errors["invalid_rx_can_id"] += 1
             return
-        if tx["route"] == "P3":
+        if tx["route"] == "OBD":
+            if tx["service"] != "0902":
+                tx["off_route_rx"] += 1
+                return
+            expected = range(0x7E8, 0x7F0) if tx["can_id"] == "0x7DF" else (0x7E8,)
+            rx_protocol = metadata["protocol"] if metadata is not None else ctx[1] if ctx else None
+            rx_baud = metadata["baud"] if metadata is not None else ctx[3] if ctx else None
+            if (can_id not in expected or
+                    (tx["_rxid"] is not None and can_id != tx["_rxid"]) or
+                    (rx_protocol is not None and {5: "CAN", 6: "ISO15765"}.get(rx_protocol) != tx["protocol"]) or
+                    (rx_baud is not None and tx["baud_bps"] is not None and rx_baud != tx["baud_bps"]) or
+                    (ctx is not None and ctx[2] & 0x180)):
+                tx["off_route_rx"] += 1
+                return
+            if rx_protocol is None or tx["protocol"] not in ("CAN", "ISO15765"):
+                tx["_source_error"] = "obd_missing_transport_context"
+                return
+            if ctx is not None and ctx[2] & 0x09:
+                # TX_MSG_TYPE / TX_INDICATION are not ECU replies.
+                return
+            if ctx is not None and ctx[2] & 0x02:
+                if rx_protocol == 6 and not payload:
+                    tx["_obd_starts"] += 1
+                else:
+                    tx["_source_error"] = "invalid_obd_start_indication"
+                return
+            if not payload:
+                return  # VIDA has no RxStatus: an ID-only record stays unidentified.
+            if (tx["_complete"] or tx["_p3_negative"] or tx["_p3_mismatch"]
+                    or tx["_p3_missing_data"] or tx["_invalid"]):
+                tx["off_route_rx"] += 1
+                return
+            if tx["_rxid"] is None:
+                tx["_rxid"] = can_id
+            if tx["protocol"] == "CAN" and len(payload) > 8:
+                tx["rx_frames"] += 1
+                tx["_invalid"] = True
+            else:
+                _p3_frame(tx, payload, tx["protocol"])
+            tx["_obd_last_rx_line"] = line_number
+        elif len(raw) < 5:
+            return
+        elif tx["route"] == "P3":
             request_id = int(tx["can_id"], 16)
             expected = 0x72E if request_id == 0x726 else 0x18DAF150
             if can_id != expected:
@@ -549,12 +669,14 @@ def audit(lines):
         if at is not None and tx["_time_mod"] == (2**32 if ctx else 86400000):
             tx["_last"] = at
 
-    for line in lines:
+    for line_number, line in enumerate(lines, 1):
         event = vida.feed(line)
         if event is not None:
             kind = event["kind"]
             if kind == "ignore":
                 continue
+            if include_obd:
+                observed_events["vida_" + kind] += 1
             if kind == "boundary":
                 s = sessions.pop("vida", None)
                 if s:
@@ -581,10 +703,10 @@ def audit(lines):
                 if tx:
                     tx["_timeout"] = True
             elif kind == "tx":
-                request = _request(event["raw"])
+                request = _request(event["raw"], include_obd)
                 if request:
                     start(s, request, event["stamp"], event["raw"], event["metadata"])
-                elif event["metadata"]["protocol"] != 5 or not _flow_control(event["raw"]):
+                elif event["metadata"]["protocol"] != 5 or not _flow_control(event["raw"], include_obd):
                     finish(s, event["channel"], "superseded_by_other_tx")
             elif kind == "rx":
                 receive(s, event["raw"], event["stamp"], event["metadata"])
@@ -598,6 +720,10 @@ def audit(lines):
             continue
         m = PREFIX.match(line)
         pid, text = (m.group(1), m.group(2)) if m else ("legacy", line)
+        if include_obd and m:
+            observed = _native_event(text.rstrip("\r\n"))
+            if observed:
+                observed_events[observed] += 1
         s = scope(pid)
         stamp = _stamp(line)
         if "PassThruOpen ->" in text:
@@ -605,18 +731,27 @@ def audit(lines):
                 finish(s, ch, "new_connection")
             s["txctx"] = s["rxctx"] = s["clearctx"] = None
             s["last_tx_channel"] = s["disconnect_channel"] = None
-        txctx = _context(text, "TX context channel/protocol/flags/baud/time-us (BE)")
+            s["obd_repeats"].clear()
+        txctx = _context(text, "TX context channel/protocol/flags/baud/time-us (BE)", include_obd)
         if txctx is not None:
             s["txctx"] = txctx
             continue
-        rxctx = _context(text, "RX context channel/protocol/status/baud/time-us (BE)")
+        rxctx = _context(text, "RX context channel/protocol/status/baud/time-us (BE)", include_obd)
         if rxctx is not None:
             s["rxctx"] = rxctx
             continue
-        clearctx = _context(text, "CLEAR_RX context channel/protocol/flags/baud/time-us (BE)")
+        clearctx = _context(text, "CLEAR_RX context channel/protocol/flags/baud/time-us (BE)", include_obd)
         if clearctx is not None:
             s["clearctx"] = clearctx
             continue
+        if include_obd:
+            bad_context = next((name for prefix, name in (
+                ("TX context ", "txctx"), ("RX context ", "rxctx"),
+                ("CLEAR_RX context ", "clearctx")) if text.startswith(prefix)), None)
+            if bad_context:
+                s[bad_context] = None
+                errors["malformed_context"] += 1
+                continue
         if text.startswith("PassThruDisconnect channel (BE)"):
             data = _words(text.split("(BE)", 1)[-1])
             if len(data) == 4:
@@ -625,10 +760,14 @@ def audit(lines):
         if "TX (app request)" in text or "PassThruWriteMsgs() msg" in text:
             marker = "TX (app request)" if "TX (app request)" in text else "Data = ["
             raw = _words(text.split(marker, 1)[1])
-            req = _request(raw)
+            plain_valid = marker != "TX (app request)" or (text.startswith(marker) and re.fullmatch(
+                r"[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*", text.split(marker, 1)[1].strip()))
+            req = _request(raw, include_obd)
             if req:
                 start(s, req, stamp, raw)
-            elif _flow_control(raw):
+                if req[0] == "OBD" and not plain_valid:
+                    active(s, s["last_tx_channel"])["_source_error"] = "malformed_obd_tx_record"
+            elif _flow_control(raw, include_obd and plain_valid and s["txctx"] is not None and s["txctx"][1] == 5):
                 # Flow Control belongs to an ongoing CAN ISO-TP response.
                 # It must not supersede a diagnostic request.
                 pass
@@ -641,20 +780,24 @@ def audit(lines):
             continue
         if "PassThruReadMsgs -> delivered" in text or "PassThruReadMsgs() msg" in text:
             marker = "PassThruReadMsgs -> delivered" if "PassThruReadMsgs -> delivered" in text else "Data = ["
+            tx = active(s, s["rxctx"][0] if s["rxctx"] else None)
+            if (include_obd and tx and tx["route"] == "OBD" and marker == "PassThruReadMsgs -> delivered"
+                    and (not text.startswith(marker) or not re.fullmatch(r"[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*", text.split(marker, 1)[1].strip()))):
+                tx["_source_error"] = "malformed_obd_rx_record"
             receive(s, _words(text.split(marker, 1)[1]), stamp)
             s["rxctx"] = None
             continue
         if "P2 D2 read command: no validated response fixture" in text or "P2 D2 command: no recorded ECU fixture" in text:
             tx = active(s, s["last_tx_channel"])
-            if tx:
+            if tx and tx["route"] != "OBD":
                 tx["_no_fixture"] = True
         if "P2 D2 strict route rejected" in text:
             tx = active(s, s["last_tx_channel"])
-            if tx:
+            if tx and tx["route"] != "OBD":
                 tx["_bad_route"] = True
         if "P3 CEM " in text and " unavailable" in text:
             tx = active(s, s["last_tx_channel"])
-            if tx:
+            if tx and tx["route"] != "OBD":
                 tx["_no_fixture"] = True
         if "PassThruReadMsgs timeout:" in text:
             dat = _words(text.split("(BE)", 1)[-1])
@@ -687,7 +830,7 @@ def audit(lines):
     if len(results) > MAX_TRANSACTIONS:
         raise ValueError("too many transactions to audit safely")
     statuses = Counter(x["status"] for x in results)
-    return {
+    report = {
         "format": "virtualcar-j2534-evidence-v1", "read_only": True,
         "contains_payload_data": False, "replay_approved": False,
         "notes": [
@@ -700,24 +843,51 @@ def audit(lines):
             "P3 transport checks parse only UDS headers and ISO-TP lengths, not VIN or identity authenticity.",
             "A6 delivery validates a single-frame E6 echo and length only; no parameter value or normal-mode state is decoded.",
             "A6 route candidates are limited to observed CEM IDs; unknown routes and non-CD ... 01 request shapes stay unverified.",
-            "Window is observed first-to-last delivered RX, not a claimed ECU processing duration.",
+            ("OBD window_ms is observed TX-to-last matched RX, not a claimed ECU processing duration."
+             if include_obd else "Window is observed first-to-last delivered RX, not a claimed ECU processing duration."),
         ],
         "transactions": results,
         "counts": dict(sorted(statuses.items())),
         "parse_errors": dict(sorted(errors.items())),
     }
+    if include_obd:
+        obd = [item for item in results if item["route"] == "OBD"]
+        report["obd_observation"] = {
+            "scope": "0902_on_7df_7e0_and_exact_18db33f1_3e80_only",
+            "vin_requests": sum(item["service"] == "0902" for item in obd),
+            "vin_delivered": sum(item["service"] == "0902" and item["status"] == "delivered" for item in obd),
+            "tester_present_requests": sum(item["service"] == "3E80" for item in obd),
+            "recognized_d2_p3_probes": sum(item["route"] != "OBD" for item in results),
+            "client_result": "client_result_unknown",
+            "vehicle_identity_verified": False,
+            "filter_effect": "not_observed",
+        }
+        report["observed_event_markers"] = dict(sorted(observed_events.items()))
+        report["notes"] += [
+            "OBD support is opt-in; client name/version and empty ECU UI are not inferred from log text.",
+            "VIN header/length delivery does not verify VIN characters, checksum, identity, or ECU discovery.",
+            "Functional OBD correlates one observed responder per request; other responders are off-route evidence.",
+            "START_OF_MESSAGE is counted only with explicit native RxStatus and no payload; it is not VIN data.",
+            "Event marker counts do not prove API return status, filter channel identity or a filter rejection.",
+            "Use backend evidence audit for request IDs, queue lifecycle and explicit filter_reject; do not join by timing alone.",
+            "OBD request_line/last_rx_line record source order, not a clock shared with another log or process.",
+            "ISO15765 ExtraDataIndex metadata is not validated here; native DLL tests cover the synthetic 4/0 and 24/24 forms.",
+        ]
+    return report
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Privacy-safe, read-only J2534 evidence audit")
     parser.add_argument("log", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--include-obd", action="store_true",
+                        help="Also audit narrow OBD VIN/TesterPresent observations; never infer client acceptance")
     args = parser.parse_args(argv)
     if args.log.resolve() == args.output.resolve():
         parser.error("output must not overwrite input")
     try:
         with args.log.open("r", encoding="utf-8-sig", errors="replace") as stream:
-            report = audit(stream)
+            report = audit(stream, include_obd=args.include_obd)
         with args.output.open("x", encoding="utf-8") as stream:
             json.dump(report, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
