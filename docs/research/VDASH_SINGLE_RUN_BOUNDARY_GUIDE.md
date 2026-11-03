@@ -74,3 +74,30 @@ The analyzer always emits *vdash_command_completion_verified=false*, *initialize
 Note that the synthetic virtualcar-vdash-lab.ini still combines a P2 target with a P3 route and a non-MY2009 placeholder VIN. This is **not** an authenticated XC90 V8 MY2009 fixture. No emulator CAN behavior was changed in this stage.
 
 Eight synthetic tests cover delivered VIN, targeted reads without UI, J2534 failure, attestation/multiple-session mismatches, incomplete transport, nonempty UI, malformed data and privacy. CI exercises offline tooling and the Virtual Car binary, **not the proprietary VDASH client**.
+
+## Offline-only G4 classification hardening (2026-11-03)
+
+Per research request, PR #39 skips the VMware LAB job. This is a narrow
+branch-specific condition; other pull requests and explicit VMware workflows
+retain their pre-existing behavior. Windows x86 build and native J2534
+synthetic-route CI are separate offline checks, not a real VDASH run.
+
+The boundary correlator now refuses a cross-source failure classification
+when the sanitized J2534 Connect audit reports malformed metadata
+(connect.invalid_events > 0). Its report preserves that numeric count but
+never copies malformed log text. A missing or non-integer invalid_events
+counter is rejected, not treated as zero.
+
+Two additional operator-reported UI states are distinct:
+- ui_connect_not_complete: operator saw that Connect had not finished
+- ui_connect_completion_unknown: operator could not confirm completion
+
+Neither outcome supports a claim of completed client ECU enumeration.
+Only the explicitly observed completion state allows the existing narrow
+transport-versus-UI focus; even then VddCommand completion and
+InitializeUnits execution remain unverified.
+
+Eight synthetic tests (#09–16) verify invalid metadata, incomplete/unknown
+UI completion, bounded positive-path classification, partial/negative OEM
+transport, malformed or missing counters, and redaction of private extras.
+No emulator ECU reply, J2534 DLL, PIN, EEPROM, or firmware behavior changed.
