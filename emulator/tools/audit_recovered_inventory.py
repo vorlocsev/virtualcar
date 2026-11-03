@@ -21,6 +21,14 @@ FOCUS = {
     "execute": "0x0600115d",
     "parse_data": "0x06001160",
 }
+# These are only two-to-four opcode prefixes from the previously recovered
+# *private inventory*. Never treat them as a deobfuscated logical predicate.
+ENTRY_PREFIX = {
+    "detect": ("call", "dup", "ldc.i4.0", "call"),
+    "execute": ("ldarg.0", "ldfld", "ldarg.0", "ldftn"),
+    "parse_data": ("ldarg.1", "brtrue.s"),
+}
+_OPCODE = re.compile(r"[a-z][a-z0-9_.]{0,40}\Z")
 KNOWN = {
     "detect": {
         "methodspec_generic_call": "0x2b000002",
@@ -52,6 +60,30 @@ def _object(value, name):
 
 def _positive_int(value):
     return type(value) is int and 0 <= value <= 10000000
+
+
+def _entry_shape(row, name):
+    """Allowlisted prefix classification, never raw opcodes or inferred logic."""
+    ops = row.get("first_operations")
+    if ops is None:
+        return "not_reported"
+    if (not isinstance(ops, list) or len(ops) > 32
+            or not all(isinstance(op, str) and _OPCODE.fullmatch(op)
+                       for op in ops)):
+        raise ValueError("invalid_first_operations")
+    prefix = ENTRY_PREFIX[name]
+    return ("expected_static_prefix_observed"
+            if tuple(ops[:len(prefix)]) == prefix
+            else "different_or_incomplete_prefix")
+
+
+def _stub_status(row):
+    value = row.get("return_only_stub")
+    if value is None:
+        return "not_reported"
+    if type(value) is not bool:
+        raise ValueError("invalid_stub_flag")
+    return "reported_stub" if value else "reported_non_stub"
 
 
 def _build_binding(module, rea):
@@ -132,11 +164,14 @@ def audit(data, rea=None):
             if tid in by_token:
                 raise ValueError("duplicate_call_token")
             by_token[tid] = count
+        name = next(name for name, token in FOCUS.items() if token == key)
         targets[key] = {
             "il_bytes": il_bytes,
             "decoded_instructions": decoded,
             "decoder_issues": issues,
             "calls": by_token,
+            "entry_opcode_shape": _entry_shape(row, name),
+            "stub_status": _stub_status(row),
         }
     method_summary = {}
     for name, token in FOCUS.items():
@@ -148,6 +183,8 @@ def audit(data, rea=None):
                 "il_bytes": row["il_bytes"],
                 "decoded_instructions": row["decoded_instructions"],
                 "decoder_issues": row["decoder_issues"],
+                "entry_opcode_shape": row["entry_opcode_shape"],
+                "stub_status": row["stub_status"],
                 "call_counts": {
                     label: row["calls"].get(target, 0)
                     for label, target in KNOWN[name].items()
@@ -166,7 +203,8 @@ def audit(data, rea=None):
         "contains_binary_digests_or_private_symbols": False,
         "methods": method_summary,
         "limitations": [
-            "Counts are inventory claims, not a fresh complete REA IL decode",
+            "Counts and opcode prefixes are inventory claims, not a fresh complete REA IL decode",
+            "An ldarg.1 then brtrue.s prefix is a conditional branch shape, not a verified semantic guard",
             "Method names, control-flow reachability and successful ECU parsing remain unproven",
             "A source hash match alone does not attest recovered/normalized MethodDef token alignment",
             "A recovered-file digest match ties material, not VDASH runtime or server outcomes",
