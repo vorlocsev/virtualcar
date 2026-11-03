@@ -96,12 +96,32 @@ jobs:
           if ($filter.Count -ne 1 -or $filter[0].type -ne 'pass_filter' -or $filter[0].message_protocols -ne 'both_CAN_PS' -or $filter[0].sizes -ne 'both_id_only' -or $filter[0].flags -ne 'both_extended' -or $filter[0].flow -ne 'absent' -or $filter[0].mask -ne 'id_29_bits' -or $filter[0].pattern -ne '29_bit_range') { throw 'Unexpected native rejected filter arguments' }
           $period = @($setup.periodic)
           if ($period.Count -ne 1 -or $period[0].message_protocol -ne 'CAN_PS' -or $period[0].interval_ms -ne '4000' -or $period[0].interval_check -ne 'valid_catalog_interval') { throw 'Unexpected native rejected periodic arguments' }
+      - name: Actual x86 isolated API-outcome matrix, no transport
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-api-outcome" -ApiOutcomeRegression
+          if ($LASTEXITCODE -ne 0) { throw 'Native API-outcome matrix failed' }
+          python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-api-outcome\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-api-outcome-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native API-outcome audit failed' }
+          $report = Get-Content -LiteralPath "$env:RUNNER_TEMP\can-ps-api-outcome-audit.json" -Raw | ConvertFrom-Json
+          $api = $report.can_ps_api_outcomes
+          if ($api.mode_snapshots -ne 9 -or $api.calls -ne 58 -or $api.invalid_events -ne 0 -or $api.injected_success_calls -ne 12 -or $api.rejected_creation_calls -ne 16 -or $api.lifecycle_calls -ne 30 -or $api.capacity_errors -ne 0) { throw 'Unexpected native API-outcome counts' }
+          if ($api.can_transmission_verified -or $api.ecu_response_verified -or $api.periodic_firing_observed -or $api.read_only_reference_approved) { throw 'API outcome misrepresented as transport evidence' }
+          foreach ($mode in 0..7) {
+            $expected = 0
+            foreach ($bit in 1,2,4) { if ($mode -band $bit) { $expected++ } }
+            $actual = [int](($api.categories | Where-Object { $_.mask -eq $mode -and $_.outcome -eq 'simulated_api_success_no_transport' } | Measure-Object -Property count -Sum).Sum)
+            if ($actual -ne $expected) { throw 'API bits were not independent' }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
           path: |
             ${{ runner.temp }}/native-route-regression-audit.json
             ${{ runner.temp }}/can-ps-config-audit.json
+            ${{ runner.temp }}/can-ps-api-outcome-audit.json
           if-no-files-found: error
 
 

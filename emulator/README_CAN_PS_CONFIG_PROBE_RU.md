@@ -5,6 +5,11 @@
 ECU, не принимает CAN и не выдаёт RX, даже после сохранения пары пинов.
 Положительные ответы CEM и существующий B9FB replay не меняются.
 
+Дополнительный default-off [API-outcome experiment](README_CAN_PS_API_OUTCOME_RU.md)
+может независимо вернуть локальный успех для узких filter/D8/periodic calls.
+Его STATUS_NOERROR не включает CAN transmission, timer delivery или ECU RX.
+Ниже описан baseline с CanPsApiOutcomeMask=0.
+
 ## Основание этапа
 
 В фактическом Windows-запуске VDASH с синтетическим MY2005 все 68 попыток
@@ -60,7 +65,7 @@ EnableCanPsConfigProbe=1
   выбора — ERR_NOT_SUPPORTED, прежняя остаётся. Повтор той же пары допустим.
   Списки конфигурации проверяются до применения, чтобы ошибка не меняла baud
   или pins частично. Pin selection не включает транспорт и не освобождает RX.
-- WriteMsgs, StartMsgFilter и StartPeriodicMsg всегда ERR_NOT_SUPPORTED.
+- WriteMsgs, StartMsgFilter и StartPeriodicMsg в baseline всегда ERR_NOT_SUPPORTED.
   Write count возвращается 0; output IDs не меняются. Ни backend TX root,
   ни периодическая отправка, ни ECU response не создаются.
 - ReadMsgs возвращает пустой буфер/таймаут; канал исключён из passive/replay,
@@ -177,8 +182,8 @@ rejected attempts2, setup filter1/periodic1, прежние backend requests13.
 VIDA примера. Получен прямой loaded-module path/hash binding, версия GUI85
 не менялась. Supervisor остановил worker по90s deadline, увидев2 Close;
 полный suffix содержит3 Open/3 Close. Warning наблюдался, ECU list до
-остановки не проверен. Прежние отказы/no-RX сохранились; API-outcome
-experiments остаются отдельным следующим этапом. Старые недостающие поля
+остановки не проверен. Прежние отказы/no-RX сохранились; реализация отдельного
+API-outcome experiment описана по ссылке выше. Старые недостающие поля
 других запусков задним числом не восстанавливаются.
 
 ## Восемь групп проверки

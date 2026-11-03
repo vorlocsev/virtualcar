@@ -117,12 +117,16 @@ static U32 g_open;
 static U32 g_last;
 static U32 g_filter_counter=1;
 static U32 g_periodic_counter=1;
+/* PS-local experimental handles never consume standard IDs or wrap/restart. */
+static U32 g_can_ps_filter_counter=1;
+static U32 g_can_ps_periodic_counter=1;
 static char g_profile_path[512];
 static char g_log_path[512];
 static char g_backend_path[512];
 static U32 g_backend_enabled=0;
 /* Configuration observation only: never a CAN_PS transport or ECU route. */
 static U32 g_can_ps_config_probe=0;
+static U32 g_can_ps_api_outcome_mask=0;
 static U32 g_backend_serial=0;
 static U64 g_backend_session=0;
 static char g_host_name[48]="unknown.exe";
@@ -169,6 +173,9 @@ typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
     U32 can_ps_observed_pins;
+    /* API-only experiment: retain handles, never descriptors or messages. */
+    U32 can_ps_api_outcome_mask;
+    U32 can_ps_filter_handles[MAX_FILTERS],can_ps_periodic_handles[MAX_PERIODIC];
     FILTER filters[MAX_FILTERS]; U32 filters_count;
     U32 passive_next_tick;
     U32 trace_next_tick[MAX_PASSIVE_TRACES];
@@ -423,6 +430,51 @@ static void log_can_ps_rejected_periodic(U32 channel_id,const PASSTHRU_MSG *msg,
     u32_be(meta,channel_id);u32_be(meta+4,can_ps_probe_known_protocol(msg->ProtocolID)?msg->ProtocolID:0u);
     u32_be(meta+8,value);u32_be(meta+12,check);u32_be(meta+16,ERR_NOT_SUPPORTED);
     logline("J2534 CAN_PS rejected periodic channel/protocol/interval/check/status (BE)",meta,20);
+}
+/* These outcomes acknowledge only an isolated virtual API experiment. They
+   never claim CAN transmission, ECU acknowledgment or a diagnostic response. */
+static void log_can_ps_api_outcome(const CHANNEL *c,U32 operation,U32 shape,U32 status){
+    U8 meta[28];
+    u32_be(meta,c->id);u32_be(meta+4,c->can_ps_api_outcome_mask<=7u?c->can_ps_api_outcome_mask:0u);
+    u32_be(meta+8,operation);u32_be(meta+12,can_ps_probe_pins(c->can_ps_observed_pins)?c->can_ps_observed_pins:0u);
+    u32_be(meta+16,c->baud==125000u||c->baud==500000u?c->baud:0u);
+    u32_be(meta+20,shape);u32_be(meta+24,status);
+    logline("J2534 CAN_PS API outcome channel/mask/operation/pins/baud/shape/status (BE)",meta,28);
+}
+static int can_ps_api_eligible(const CHANNEL *c,U32 bit){
+    return c->protocol==PROTO_CAN_PS&&(c->can_ps_api_outcome_mask&bit)!=0u&&
+           c->can_ps_observed_pins==0x030Bu&&c->baud==125000u;
+}
+static int can_ps_api_filter_shape(U32 type,const PASSTHRU_MSG *mask,
+                                   const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow){
+    U32 id;
+    if(type!=1u||flow||mask->ProtocolID!=PROTO_CAN_PS||pattern->ProtocolID!=PROTO_CAN_PS||
+       mask->DataSize!=4u||pattern->DataSize!=4u||mask->TxFlags!=pattern->TxFlags||
+       (mask->TxFlags!=0u&&mask->TxFlags!=0x100u))return 0;
+    /* The mask may contain any 32-bit bitmask. Its body need not be read. */
+    id=((U32)pattern->Data[0]<<24)|((U32)pattern->Data[1]<<16)|
+       ((U32)pattern->Data[2]<<8)|(U32)pattern->Data[3];
+    return id<=(pattern->TxFlags==0u?0x7FFu:0x1FFFFFFFu);
+}
+static int can_ps_api_d8_shape(const PASSTHRU_MSG *msg,U32 count){
+    U32 i;
+    if(count!=1u)return 0; /* Even msgs[0] is unread for zero/batch calls. */
+    if(msg->ProtocolID!=PROTO_CAN_PS||msg->TxFlags!=0x100u||msg->DataSize!=12u||
+       msg->Data[0]!=0u||msg->Data[1]!=0x0Fu||msg->Data[2]!=0xFFu||msg->Data[3]!=0xFEu||
+       msg->Data[4]!=0xD8u)return 0;
+    for(i=5u;i<12u;i++)if(msg->Data[i])return 0;
+    return 1;
+}
+static U32 can_ps_api_add_handle(U32 *slots,U32 capacity,U32 *counter,U32 *output){
+    U32 i;
+    for(i=0u;i<capacity;i++)if(slots[i]==0u)break;
+    if(i==capacity||*counter==0u||*counter>=0x7FFFFFFFu)return ERR_EXCEEDED_LIMIT;
+    slots[i]=(*counter)++;*output=slots[i];return ERR_OK;
+}
+static U32 can_ps_api_stop_handle(U32 *slots,U32 capacity,U32 handle,U32 missing){
+    U32 i;
+    for(i=0u;i<capacity;i++)if(slots[i]&&slots[i]==handle){slots[i]=0u;return ERR_OK;}
+    return missing;
 }
 static int can_ps_probe_noop(U32 parameter){
     return parameter==3u||parameter==23u||parameter==30u||parameter==31u;
@@ -854,6 +906,9 @@ static void load_config(void) {
     g_profile_path[n]=0;str_append(g_profile_path,"virtualcar.ini",sizeof(g_profile_path));
     GetPrivateProfileStringA("Diagnostics","EnableCanPsConfigProbe","0",v,sizeof(v),g_profile_path);
     g_can_ps_config_probe=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","CanPsApiOutcomeMask","0",v,sizeof(v),g_profile_path);
+    g_can_ps_api_outcome_mask=g_can_ps_config_probe&&v[0]>='0'&&v[0]<='7'&&v[1]==0?
+                              (U32)(v[0]-'0'):0u;
     /* Explicit opt-in. The GUI can enable [Diagnostics] BackendTelemetryEnabled=1.
        The log location is stable across sessions but contains no private bytes. */
     g_backend_enabled=0;g_backend_path[0]=0;
@@ -1464,6 +1519,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
    polls ReadMsgs. Never spawn a background vehicle writer. */
 static void pump_periodic(CHANNEL *c){
     U32 i;U64 now=now_us();
+    if(c->protocol==PROTO_CAN_PS)return; /* Includes forced generic state. */
     for(i=0;i<MAX_PERIODIC;i++){
         PERIODIC *p=&c->periodic[i];
         if(!p->used || now<p->next_us || c->count>=MAX_QUEUE)continue;
@@ -1493,7 +1549,7 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(!channel_id)return connect_result(protocol,flags,baud,ERR_NULL_PARAMETER);
     if(!g_open||device!=1)return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);
     /* Optional J2534-2 pin-switching IDs are not aliases for standard CAN.
-       The opt-in 0x8004 channel below observes configuration only. */
+       The opt-in 0x8004 channel never enables CAN transport or ECU routing. */
     if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765&&
        !(protocol==PROTO_CAN_PS&&g_can_ps_config_probe))
         return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
@@ -1506,6 +1562,7 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
     g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
+    if(protocol==PROTO_CAN_PS)g_ch[i].can_ps_api_outcome_mask=g_can_ps_api_outcome_mask;
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
@@ -1513,7 +1570,10 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(protocol!=PROTO_CAN_PS)p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
-    if(protocol==PROTO_CAN_PS)log_can_ps_probe(i+1,1u,PROTO_CAN_PS,ERR_OK);
+    if(protocol==PROTO_CAN_PS){
+        log_can_ps_api_outcome(&g_ch[i],1u,0u,ERR_OK);
+        log_can_ps_probe(i+1,1u,PROTO_CAN_PS,ERR_OK);
+    }
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
 }
 EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
@@ -1527,9 +1587,16 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(c->protocol==PROTO_CAN_PS){
-        log_can_ps_rejected_attempt(c,1u,msgs,*count);
-        *count=0;log_can_ps_probe(id,4u,0u,ERR_NOT_SUPPORTED);
-        unlock_state();return error(ERR_NOT_SUPPORTED);
+        U32 shape,status;n=*count;
+        shape=can_ps_api_d8_shape(msgs,n)?42u:0u;
+        status=shape&&can_ps_api_eligible(c,2u)?ERR_OK:ERR_NOT_SUPPORTED;
+        log_can_ps_api_outcome(c,3u,shape,status);
+        if(status==ERR_NOT_SUPPORTED){
+            log_can_ps_rejected_attempt(c,1u,msgs,n);
+            log_can_ps_probe(id,4u,0u,ERR_NOT_SUPPORTED);
+        }
+        *count=status==ERR_OK?1u:0u;
+        unlock_state();return error(status);
     }
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
@@ -1637,9 +1704,15 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(c->protocol==PROTO_CAN_PS){
-        log_can_ps_rejected_filter(id,type,mask,pattern,flow);
-        log_can_ps_probe(id,5u,0u,ERR_NOT_SUPPORTED);
-        unlock_state();return error(ERR_NOT_SUPPORTED);
+        U32 shape=can_ps_api_filter_shape(type,mask,pattern,flow)?1u:0u,status=ERR_NOT_SUPPORTED;
+        if(shape&&can_ps_api_eligible(c,1u))
+            status=can_ps_api_add_handle(c->can_ps_filter_handles,MAX_FILTERS,&g_can_ps_filter_counter,filter_id);
+        log_can_ps_api_outcome(c,2u,shape,status);
+        if(status==ERR_NOT_SUPPORTED){
+            log_can_ps_rejected_filter(id,type,mask,pattern,flow);
+            log_can_ps_probe(id,5u,0u,ERR_NOT_SUPPORTED);
+        }
+        unlock_state();return error(status);
     }
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
     if(mask->DataSize<4||pattern->DataSize<4){unlock_state();return error(ERR_INVALID_MSG);}
@@ -1661,6 +1734,10 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
 }
 EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
     U32 i;CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    if(c->protocol==PROTO_CAN_PS&&c->can_ps_api_outcome_mask){
+        U32 status=can_ps_api_stop_handle(c->can_ps_filter_handles,MAX_FILTERS,filter_id,ERR_INVALID_FILTER_ID);
+        log_can_ps_api_outcome(c,5u,0u,status);unlock_state();return error(status);
+    }
     for(i=0;i<c->filters_count;i++)if(c->filters[i].id==filter_id){
         U32 j;for(j=i+1;j<c->filters_count;j++)c->filters[j-1]=c->filters[j];c->filters_count--;
         unlock_state();return error(ERR_OK);
@@ -1671,10 +1748,16 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);
     if(c&&c->protocol==PROTO_CAN_PS){
-        log_can_ps_rejected_periodic(id,msg,interval);
-        log_can_ps_rejected_attempt(c,2u,msg,1u);
-        log_can_ps_probe(id,6u,0u,ERR_NOT_SUPPORTED);
-        unlock_state();return error(ERR_NOT_SUPPORTED);
+        U32 shape=interval==1000u&&can_ps_api_d8_shape(msg,1u)?42u:0u,status=ERR_NOT_SUPPORTED;
+        if(shape&&can_ps_api_eligible(c,4u))
+            status=can_ps_api_add_handle(c->can_ps_periodic_handles,MAX_PERIODIC,&g_can_ps_periodic_counter,period_id);
+        log_can_ps_api_outcome(c,4u,shape,status);
+        if(status==ERR_NOT_SUPPORTED){
+            log_can_ps_rejected_periodic(id,msg,interval);
+            log_can_ps_rejected_attempt(c,2u,msg,1u);
+            log_can_ps_probe(id,6u,0u,ERR_NOT_SUPPORTED);
+        }
+        unlock_state();return error(status);
     }
     if(interval<5 || interval>60000){unlock_state();return error(ERR_INVALID_TIME_INTERVAL);}
     if(msg->DataSize<5 || msg->DataSize>MAX_DATA){unlock_state();return error(ERR_INVALID_MSG);}
@@ -1689,6 +1772,10 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
 }
 EXPORT U32 WINCALL PassThruStopPeriodicMsg(U32 id,U32 periodic_id){
     U32 i;lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    if(c->protocol==PROTO_CAN_PS&&c->can_ps_api_outcome_mask){
+        U32 status=can_ps_api_stop_handle(c->can_ps_periodic_handles,MAX_PERIODIC,periodic_id,ERR_INVALID_MSG_ID);
+        log_can_ps_api_outcome(c,6u,0u,status);unlock_state();return error(status);
+    }
     for(i=0;i<MAX_PERIODIC;i++)if(c->periodic[i].used&&c->periodic[i].id==periodic_id){
         c->periodic[i].used=0;unlock_state();return error(ERR_OK);
     }
@@ -1727,8 +1814,18 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
          logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 CLEAR_RX_BUFFER: queued and staged D2 dropped",0,0);
         unlock_state();return error(ERR_OK);}
-    if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
-    if(ioctl==IO_CLEAR_PERIODIC_MSGS){bytes_zero(c->periodic,sizeof(c->periodic));unlock_state();return error(ERR_OK);}
+    if(ioctl==IO_CLEAR_MSG_FILTERS){
+        if(c->protocol==PROTO_CAN_PS&&c->can_ps_api_outcome_mask){
+            bytes_zero(c->can_ps_filter_handles,sizeof(c->can_ps_filter_handles));
+            log_can_ps_api_outcome(c,7u,0u,ERR_OK);
+        }else c->filters_count=0;
+        unlock_state();return error(ERR_OK);}
+    if(ioctl==IO_CLEAR_PERIODIC_MSGS){
+        if(c->protocol==PROTO_CAN_PS&&c->can_ps_api_outcome_mask){
+            bytes_zero(c->can_ps_periodic_handles,sizeof(c->can_ps_periodic_handles));
+            log_can_ps_api_outcome(c,8u,0u,ERR_OK);
+        }else bytes_zero(c->periodic,sizeof(c->periodic));
+        unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
         SCONFIG_LIST *list=(SCONFIG_LIST*)input;

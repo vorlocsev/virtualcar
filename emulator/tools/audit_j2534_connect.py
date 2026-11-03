@@ -18,6 +18,7 @@ PS_PROBE = "J2534 CAN_PS config probe channel/operation/value/status (BE)"
 PS_REJECTED = "J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/shape/check/status (BE)"
 PS_FILTER = "J2534 CAN_PS rejected filter channel/type/protocols/sizes/flags/flow/mask/pattern/status (BE)"
 PS_PERIODIC = "J2534 CAN_PS rejected periodic channel/protocol/interval/check/status (BE)"
+PS_API_OUTCOME = "J2534 CAN_PS API outcome channel/mask/operation/pins/baud/shape/status (BE)"
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} [^\]\r\n]{1,80}\] ")
 HEX_BYTE = re.compile(r"[0-9A-Fa-f]{2}\Z")
 PROTOCOLS = {5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS",
@@ -55,6 +56,14 @@ FILTER_MASKS = {0: "uninspected", 1: "zero", 2: "full_uint32", 3: "id_29_bits", 
 FILTER_PATTERNS = {0: "uninspected", 1: "zero", 2: "nonzero_11_bit_range", 3: "29_bit_range", 4: "outside_can_id_range"}
 PERIODIC_INTERVALS = {value: str(value) for value in (5, 100, 250, 500, 1000, 2000, 4000, 5000, 10000, 60000)}
 PERIODIC_CHECKS = {0: "valid_catalog_interval", 1: "valid_other_interval_redacted", 2: "invalid_interval_redacted"}
+API_OUTCOME_OPERATIONS = {1: "mode_snapshot", 2: "filter_registration", 3: "write_call",
+                          4: "periodic_registration", 5: "stop_filter", 6: "stop_periodic",
+                          7: "clear_filters", 8: "clear_periodic"}
+API_OUTCOME_SHAPES = {0: "none_or_outside_envelope", 1: "PASS_ID_ONLY", 42: "exact_D8"}
+API_OUTCOME_STATUS = {0: "ok", 1: "not_supported", 12: "exceeded_limit",
+                     13: "invalid_msg_id", 22: "invalid_filter_id"}
+API_OUTCOME_BAUDS = {0: "redacted_or_unset", 125000: "125000", 500000: "500000"}
+API_OUTCOME_FIELDS = ("mask", "operation", "pins", "baud_bps", "shape", "status", "outcome")
 for _target, _base in (("40", 10), ("50", 15)):
     ATTEMPT_SHAPES.update({_base+i: f"D2_{_target}_{service}"
                            for i, service in enumerate(("A3", "A6", "B9F0", "B9FB", "B9FC"))})
@@ -64,6 +73,7 @@ for _target, _base in (("726", 20), ("29", 25)):
 MAX_LINES = 250000
 MAX_LINE = 512
 MAX_REJECTED_ATTEMPTS = 20000
+MAX_API_OUTCOMES = 20000
 
 
 def _decode_words(text, word_count=4):
@@ -121,6 +131,49 @@ def _rejected_periodic(words):
     return (ATTEMPT_PROTOCOLS[protocol], PERIODIC_INTERVALS.get(interval, "redacted"), PERIODIC_CHECKS[check])
 
 
+def _api_outcome(words):
+    if words is None:
+        return None
+    channel, mask, operation, pins, baud, shape, status = words
+    if (channel == 0 or mask not in range(8) or operation not in API_OUTCOME_OPERATIONS
+            or pins not in (0, *PS_PINS) or baud not in API_OUTCOME_BAUDS
+            or shape not in API_OUTCOME_SHAPES or status not in API_OUTCOME_STATUS):
+        return None
+    if operation == 1:
+        if pins != 0 or baud not in (125000, 500000) or shape != 0 or status != 0:
+            return None
+        outcome = "mode_snapshot"
+    elif operation in (2, 3, 4):
+        expected_shape = 1 if operation == 2 else 42
+        if shape not in (0, expected_shape):
+            return None
+        if status == 1:
+            outcome = "rejected_not_transmitted"
+        elif status in (0, 12):
+            if (not (mask & {2: 1, 3: 2, 4: 4}[operation]) or pins != 0x030B
+                    or baud != 125000 or shape != expected_shape
+                    or (operation == 3 and status == 12)):
+                return None
+            outcome = ("simulated_api_success_no_transport" if status == 0
+                       else "local_capacity_exhausted_no_transport")
+        else:
+            return None
+    else:
+        if mask == 0 or shape != 0:
+            return None
+        if operation == 5:
+            if status not in (0, 22) or (status == 0 and not (mask & 1)):
+                return None
+        elif operation == 6:
+            if status not in (0, 13) or (status == 0 and not (mask & 4)):
+                return None
+        elif status != 0:
+            return None
+        outcome = "local_resource_operation" if status == 0 else "local_handle_not_found"
+    return (mask, API_OUTCOME_OPERATIONS[operation], PS_PINS.get(pins, "unselected"),
+            API_OUTCOME_BAUDS[baud], API_OUTCOME_SHAPES[shape], API_OUTCOME_STATUS[status], outcome)
+
+
 def audit(lines):
     connects = Counter()
     configs = Counter()
@@ -133,6 +186,9 @@ def audit(lines):
     filters, periodic = Counter(), Counter()
     invalid_filter = invalid_periodic = 0
     setup_order = []
+    api_outcomes = Counter()
+    invalid_api_outcomes = 0
+    api_outcome_order = []
     for index, raw in enumerate(lines, 1):
         if index > MAX_LINES:
             raise ValueError("line_limit")
@@ -144,7 +200,16 @@ def audit(lines):
         if prefix is None:
             continue
         content = line[prefix.end():]
-        if content.startswith(PS_FILTER) or content.startswith(PS_PERIODIC):
+        if content.startswith(PS_API_OUTCOME):
+            api_outcome = _api_outcome(_decode_words(content[len(PS_API_OUTCOME):], 7))
+            if api_outcome is None:
+                invalid_api_outcomes += 1
+                continue
+            if len(api_outcome_order) >= MAX_API_OUTCOMES:
+                raise ValueError("api_outcome_limit")
+            api_outcomes[api_outcome] += 1
+            api_outcome_order.append(dict(zip(API_OUTCOME_FIELDS, api_outcome), line=index))
+        elif content.startswith(PS_FILTER) or content.startswith(PS_PERIODIC):
             is_filter = content.startswith(PS_FILTER)
             marker = PS_FILTER if is_filter else PS_PERIODIC
             words = _decode_words(content[len(marker):], 9 if is_filter else 5)
@@ -302,6 +367,29 @@ def audit(lines):
                 for key, count in sorted(periodic.items())
             ],
             "source_order": setup_order,
+        }
+    if api_outcomes or invalid_api_outcomes:
+        outcome_totals = Counter()
+        lifecycle_calls = 0
+        for key, count in api_outcomes.items():
+            outcome_totals[key[-1]] += count
+            if key[1] in ("stop_filter", "stop_periodic", "clear_filters", "clear_periodic"):
+                lifecycle_calls += count
+        snapshots = outcome_totals["mode_snapshot"]
+        report["can_ps_api_outcomes"] = {
+            "mode": "counterfactual_local_api_outcomes_only",
+            "mode_snapshots": snapshots, "calls": sum(api_outcomes.values()) - snapshots,
+            "invalid_events": invalid_api_outcomes,
+            "injected_success_calls": outcome_totals["simulated_api_success_no_transport"],
+            "capacity_errors": outcome_totals["local_capacity_exhausted_no_transport"],
+            "rejected_creation_calls": outcome_totals["rejected_not_transmitted"],
+            "lifecycle_calls": lifecycle_calls,
+            "state_correlation_performed": False, "can_transmission_verified": False,
+            "ecu_response_verified": False, "periodic_firing_observed": False,
+            "read_only_reference_approved": False,
+            "categories": [dict(zip(API_OUTCOME_FIELDS, key), count=count)
+                           for key, count in sorted(api_outcomes.items())],
+            "source_order": api_outcome_order,
         }
     return report
 
