@@ -102,4 +102,11 @@ hashes, direct module binding, полным Open/Close suffix и наблюде�
 Если A6 повторится и совпадёт с каталогом, selector будет установлен этим
 новым наблюдением. Если будет `other_redacted` либо A6 не повторится, пробел
 останется явным. Ответ CEM и условие SectorV этим probe не устанавливаются.
-Новый фактический VDASH/VMware/physical J2534 run пока не выполнен.
+В [новом фактическом VDASH run](../docs/research/VDASH_CAN_PS_A6_SELECTOR_RUNTIME_20261103.md)
+наблюдён один rejected **A6/1A04 target40**, PS/pins3/11/125000, mask4.
+Во время запуска worker изменился E35→988; sampled hash совпадает с файлом
+после stop. Это наблюдение нового worker с новой DLL, не раскрытие прежнего
+capture и не strict A/B. Read/RX markers после A6 отсутствуют; empty polling
+timeout0 не журналируется, поэтому любые ReadMsgs calls не исключены.
+Ответ CEM/значение parameter и SectorV predicate не установлены. VMware guest
+и physical J2534 этим локальным Windows run не проверялись.
