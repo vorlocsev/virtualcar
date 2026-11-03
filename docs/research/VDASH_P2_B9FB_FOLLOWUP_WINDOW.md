@@ -78,3 +78,39 @@ All assertions are offline and synthetic. Real SectorV, physical
 J2534, an authentic XC90 V8 MY2009 CEM identity and any positive A3
 response remain unverified. No emulator responses or release are
 modified by this work.
+
+
+## Native J2534 RX status gate
+
+Source-grounded in emulator/src/virtualcar.c:
+- Native DLL logs RX context channel/protocol/status/baud/time-us (BE)
+  immediately before PassThruReadMsgs -> delivered using the copied
+  PASSTHRU_MSG.RxStatus (near lines 1422-1430).
+- The virtual J2534 layer defines 0x100 (CAN_29BIT_ID) for extended
+  CAN and 0x02 (START_OF_MESSAGE) as a start indication.
+- J2534 also defines 0x01 (TX_MSG_TYPE) and 0x08 (TX_INDICATION).
+  An indication is not a positive CEM response even if its Data
+  happens to resemble a B9FB frame.
+
+The follow-up auditor now ignores RX records when any of the status
+bits 0x01, 0x02 or 0x08 are present, but accepts 0x100. This metadata
+safeguard is not an alteration of virtual CAN or J2534 behavior.
+
+Eight synthetic regressions cover normal extended-CAN RX, each
+indication bit, combinations, indication-only B9FB sequences, an
+interleaved indication that must not move the last RX timestamp,
+and the impossibility of inferring a complete B9FB/A3 transition
+from indications alone.
+
+## PR30 raw-log availability
+
+Accessible Project/Library files and the current research-branch
+GitHub tree do not contain a raw, single-run PR30 native log with
+both the last B9FB RX context and first subsequent A3 TX context
+timestamps. Existing reports such as j2534-diagnostics.json and
+p2-public-capture-followup.md are summaries and research notes.
+
+Therefore no measured A3 gap and no 500/1000 ms silence claim
+is made for the actual historical PR30 SectorV run. A separate
+donor DiCE capture or VIDA hardware-failure log cannot be spliced
+into the PR30 timeline based on wall-clock resemblance.
