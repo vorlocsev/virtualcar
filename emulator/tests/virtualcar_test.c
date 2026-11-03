@@ -895,6 +895,47 @@ int main(){
    REQUIRE(p2_cem_e3_02_candidate(marker,1)==0);
   }
  }
+ /* Eight end-to-end A3/A6 routes: the J2534 API succeeds for TX
+    but no E3/E6 response is synthesized. The terminal cause now distinguishes
+    unsupported CAN bus from a missing verified response implementation. */
+ {
+  static const struct {
+   U32 baud;U8 target,service;const char *reason;
+  } cases[]={
+   {500000u,0x50u,0xA3u,"unimplemented_probe"}, /* 1: HS A3 50 */
+   {125000u,0x40u,0xA3u,"unimplemented_probe"}, /* 2: LS A3 40 */
+   {500000u,0x40u,0xA3u,"unsupported_bus"}, /* 3: HS A3 40 */
+   {125000u,0x50u,0xA3u,"unsupported_bus"}, /* 4: LS A3 50 */
+   {500000u,0x50u,0xA6u,"unimplemented_probe"}, /* 5: HS A6 50 */
+   {125000u,0x40u,0xA6u,"unimplemented_probe"}, /* 6: LS A6 40 */
+   {125000u,0x50u,0xA6u,"unsupported_bus"}, /* 7: LS A6 50 */
+   {500000u,0x40u,0xA6u,"unsupported_bus"}, /* 8: HS A6 40 */
+  };
+  U32 ls=0,z;
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,125000u,&ls)==ERR_OK);
+  for(z=0;z<sizeof(cases)/sizeof(cases[0]);z++){
+   U8 data[8]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0};
+   U32 selected=cases[z].baud==125000u?ls:cid;
+   const char *start=backend_lines+backend_len;
+   U64 request_id;U32 returned=1;
+   data[1]=cases[z].target;data[2]=cases[z].service;
+   if(data[2]==0xA6u){
+    data[0]=0xCDu;data[3]=0x1Au;data[4]=0x04u;data[5]=0x01u;
+    data[6]=0u;data[7]=0u;
+   }
+   m=frame(PROTO_CAN,0x000FFFFEu,data,8);
+   REQUIRE(backend_probe_name(channel(selected),&m)!=NULL);
+   send(selected,&m);request_id=last_tx_request(start);
+   REQUIRE(request_id!=0);
+   REQUIRE(terminal_for(start,request_id,cases[z].reason,"no_response")==1);
+   REQUIRE(terminal_count_for(start,request_id)==1);
+   REQUIRE(strstr(start,"\"route\":\"CEM\"")!=NULL);
+   REQUIRE(strstr(start,"\"kind\":\"response_generated\"")==NULL);
+   REQUIRE(PassThruReadMsgs(selected,&r,&returned,0)==ERR_BUFFER_EMPTY);
+   REQUIRE(returned==0);
+  }
+  REQUIRE(PassThruDisconnect(ls)==ERR_OK);
+ }
  /* Observer classifies A3, but never fabricates a positive E3 reply. */
  const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
  m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
@@ -952,7 +993,8 @@ int main(){
    send(cid,&m);request_id=last_tx_request(start);
    REQUIRE(request_id!=0);
    if(cases[z].recognized){
-    REQUIRE(terminal_for(start,request_id,"unimplemented_probe","no_response")==1);
+    REQUIRE(terminal_for(start,request_id,cases[z].target==0x40u?
+                             "unsupported_bus":"unimplemented_probe","no_response")==1);
     REQUIRE(strstr(start,"\"route\":\"CEM\"")!=NULL);
    }else{
     REQUIRE(terminal_for(start,request_id,"unhandled_request","no_response")==1);
@@ -989,7 +1031,9 @@ int main(){
       REQUIRE((label!=NULL)==expected);
       start=backend_lines+backend_len;send(cid,&m);rid=last_tx_request(start);
       REQUIRE(rid!=0 && terminal_count_for(start,rid)==1);
-      REQUIRE(terminal_for(start,rid,expected?"unimplemented_probe":"unhandled_request","no_response")==1);
+      REQUIRE(terminal_for(start,rid,!expected?"unhandled_request":
+                           (target==0x40u?"unsupported_bus":"unimplemented_probe"),
+                           "no_response")==1);
       REQUIRE(event_count_since(start,"\"kind\":\"probe_classified\"")== (U32)expected);
       REQUIRE(strstr(start,"\"kind\":\"response_generated\"")==NULL);
       n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY && n==0);
