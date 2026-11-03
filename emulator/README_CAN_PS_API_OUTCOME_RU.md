@@ -100,5 +100,14 @@ direct module binding, одной маски, полного suffix и bounded d
 Следующий новый read-only probe после одного изменённого API-исхода поддержит
 гипотезу gate; это не доказательство SectorV normal-mode condition или ECU
 response. Отсутствие перехода ослабит только конкретную проверенную гипотезу.
-Фактический запуск новых исходов требует отдельного отчёта: прежний UI
-warning/empty-list не переносится по одному результату CI.
+В [фактическом filter-only run](../docs/research/VDASH_CAN_PS_FILTER_OUTCOME_RUNTIME_20261103.md)
+на source1a78b82 три локальных filter successes не устранили следующий
+PS ReadMsgs timeout100ms/disconnect. Write/periodic остались rejected D8,
+warning наблюдался, ECU list до deadline не проверен. Direct module binding
+подтверждён. Исторический baseline имел другую DLL/worker, поэтому отдельно
+выполнен свежий mask0 с теми же source1a78b82/DLL/GUI/worker; профили отличаются
+одним символом маски. В mask1 есть3 дополнительных CLEAR_RX после filters,
+но сохраняются те же100ms PS timeout/disconnect и обычный backend обмен.
+В обоих warning, ECU list не проверен; по одному invocation на условие.
+Количества повторов не сравниваются как outcome rates. Mask2/mask4 ещё
+требуют отдельных bounded run. CI не заменяет фактический UI outcome.
