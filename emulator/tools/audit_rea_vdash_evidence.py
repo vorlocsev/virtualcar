@@ -30,12 +30,18 @@ _STRUCTURAL_EDGES = {
         ("0x0600132b", "0x0600126d", "newobj", 0x0268),
     "execute_to_parse_data":
         ("0x0600115d", "0x06001160", "call", 0x025e),
+    "execute_to_result_helper_a":
+        ("0x0600115d", "0x0600117a", "call", 0x024e),
+    "execute_to_result_helper_b":
+        ("0x0600115d", "0x0600117b", "call", 0x0259),
 }
 _BODIES = {
     "execute": "0x0600115d",
     "detect": "0x0600132b",
     "predicate": "0x06001359",
     "parse_data": "0x06001160",
+    "result_helper_a": "0x0600117a",
+    "result_helper_b": "0x0600117b",
     "detect_result_constructor": "0x060011bb",
     "ecus_constructor": "0x0600126d",
 }
@@ -153,6 +159,61 @@ def _cil_decode_attestation(body):
         return "complete_decode_attested"
     return "partial_or_unavailable"
 
+
+
+_SIGNATURE_TARGETS = ("result_helper_a", "result_helper_b", "parse_data")
+
+
+def _safe_method_signature(method):
+    """Allowlisted shape only: never export obfuscated type names or hashes.
+
+    A decoded signature is still static metadata and does not establish the
+    meaning, value, or runtime availability of either helper's result.
+    """
+    unknown = {
+        "status": "unreported", "parameter_count": None,
+        "generic_parameter_count": None, "return_kind": "unknown",
+    }
+    if "signature" not in method:
+        return unknown
+    signature = _object(method["signature"], "method_signature")
+    status = signature.get("parse_status")
+    if status not in ("decoded", "partial", "unsupported", "malformed"):
+        raise ValueError("invalid_signature_parse_status")
+    kind = signature.get("kind")
+    if kind not in ("method", "field", "unknown"):
+        raise ValueError("invalid_signature_kind")
+    size = signature.get("raw_length")
+    digest = signature.get("raw_sha256")
+    if (type(size) is not int or size < 0 or size > 65536
+            or not isinstance(digest, str) or not _SHA.fullmatch(digest)):
+        raise ValueError("invalid_signature_provenance")
+    if status != "decoded":
+        return {**unknown, "status": status}
+    params = signature.get("parameter_count")
+    generic = signature.get("generic_parameter_count")
+    parameter_types = signature.get("parameter_types")
+    return_type = signature.get("return_type")
+    if (kind != "method"
+            or type(params) is not int or not 0 <= params <= 64
+            or type(generic) is not int or not 0 <= generic <= 64
+            or not isinstance(parameter_types, list)
+            or len(parameter_types) != params
+            or not all(isinstance(p, str) and bool(p.strip())
+                       for p in parameter_types)
+            or not isinstance(return_type, str) or not return_type.strip()):
+        raise ValueError("invalid_decoded_method_signature")
+    # The type name may be obfuscated. Record only void vs non-void.
+    return_kind = ("void" if return_type.strip().casefold()
+                   in ("void", "system.void") else "non_void")
+    return {
+        "status": "decoded",
+        "parameter_count": params,
+        "generic_parameter_count": generic,
+        "return_kind": return_kind,
+    }
+
+
 def audit(document):
     outer = _object(document, "document")
     data = _object(outer.get("normalized_result"), "complete_rea_result")
@@ -166,6 +227,7 @@ def audit(document):
         raise ValueError("row_limit")
     bodies = {}
     decodes = {}
+    signatures = {}
     for method in methods:
         if not isinstance(method, dict) or not _token(method.get("token")):
             raise ValueError("malformed_method")
@@ -180,6 +242,8 @@ def audit(document):
             raise ValueError("invalid_body_status")
         bodies[token] = status
         decodes[token] = _cil_decode_attestation(body)
+        if token in { _BODIES[name] for name in _SIGNATURE_TARGETS }:
+            signatures[token] = _safe_method_signature(method)
     observed = {key: [] for key in _SITES}
     structural = {key: [] for key in _STRUCTURAL_EDGES}
     for edge in edges:
@@ -256,6 +320,13 @@ def audit(document):
         "inspection_scope": inspection_scope,
         "call_sites": sites,
         "structural_edges": relationships,
+        "method_signatures": {
+            name: signatures.get(
+                _BODIES[name],
+                {"status": "not_inspected", "parameter_count": None,
+                 "generic_parameter_count": None, "return_kind": "unknown"})
+            for name in _SIGNATURE_TARGETS
+        },
         "method_bodies": {
             name: {
                 "inspected": token in bodies,
@@ -273,6 +344,9 @@ def audit(document):
             "Resolved metadata names do not reveal predicate semantics or runtime reachability",
             "newobj and call edges do not prove object construction succeeded, ParseData executed, or branches are reachable",
             "The MethodSpec type argument is known from separate private IL evidence, not inferred here",
+            "Decoded parameter count excludes any implicit instance receiver and does not establish argument meaning",
+            "Return kind only distinguishes void from non-void; the underlying obfuscated type name stays private",
+            "No matching helper body or signature in a selected inventory does not prove the helper is absent",
             "Static CIL evidence is not VDASH ECU acceptance or an OEM CEM response",
         ],
     }
