@@ -50,6 +50,24 @@ class VdashBoundaryTests(unittest.TestCase):
         self.assertFalse(x["ecu_identity_verified"])
         self.assertFalse(x["initialize_units_execution_verified"])
         self.assertEqual(x["vin_transport_deliveries"], 1)
+        # Realistic integration of the existing *synthetic* VDASH 2.0 log:
+        # the two upstream tools must be compatible with this correlator.
+        root = Path(__file__).resolve().parents[1]
+        def upstream(name):
+            path = root / "tools" / name
+            spec = importlib.util.spec_from_file_location(name[:-3], path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+        raw = (root / "tests" / "fixtures" / "vdash20_obd_synthetic.txt"
+               ).read_text(encoding="utf-8").splitlines()
+        con_report = upstream("audit_j2534_connect.py").audit(raw)
+        disc_report = upstream("audit_j2534_discovery.py").audit(raw, include_obd=True)
+        integrated = tool.audit(ui(), con_report, disc_report)
+        self.assertEqual(integrated["research_focus"],
+                         "vin_delivered_no_oem_request_observed")
+        self.assertEqual(integrated["j2534_connect_ok"], 1)
+        self.assertFalse(integrated["same_run_independently_verified"])
 
     def test_02_targeted_d2_delivered_not_vdash_parser_proof(self):
         x = tool.audit(ui(), connect(), discovery(
