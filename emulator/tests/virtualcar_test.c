@@ -7,6 +7,7 @@
 static U32 tick=0;static I64 qpc_offset_us=0;
 static int test_can_ps_config_probe_ini=0;
 static const char *test_can_ps_api_outcome_ini="0";
+static const char *test_can_ps_a6_selector_ini="0";
 static char backend_lines[800000];static U32 backend_len=0;
 static int capture_connect_log=0;
 static char connect_log_lines[32000];static U32 connect_log_len=0;
@@ -70,6 +71,8 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
     d=test_can_ps_config_probe_ini?"1":"0";
  if(strcmp(s,"Diagnostics")==0 && strcmp(k,"CanPsApiOutcomeMask")==0)
     d=test_can_ps_api_outcome_ini;
+ if(strcmp(s,"Diagnostics")==0 && strcmp(k,"EnableCanPsA6SelectorProbe")==0)
+    d=test_can_ps_a6_selector_ini;
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrame0")==0)d="CC 40 7F B9 31 00 00 00";
  if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"FrameCount")==0)d="3";
@@ -1271,6 +1274,128 @@ static void test_can_ps_api_outcomes(U32 *dev){
  puts("PASS: eight CAN_PS API-outcome groups, local handles only and no transmission");
 }
 
+static const char ps_a6_selector_marker[]="J2534 CAN_PS A6 selector channel/origin/pins/baud/protocol/target/selector/mask/status (BE)";
+static U32 ps_selector_open(U32 *dev,const char *setting,const char *mask,U32 expected_mask,U32 pins,U32 baud){
+ test_can_ps_a6_selector_ini=setting;
+ return ps_api_open(dev,mask,expected_mask,pins,baud);
+}
+static PASSTHRU_MSG ps_selector_frame(U32 protocol,U32 target,U32 selector){
+ U8 payload[8]={0xCD,0,0xA6,0,0,1,0,0};PASSTHRU_MSG msg;
+ payload[1]=(U8)target;payload[3]=(U8)(selector>>8);payload[4]=(U8)selector;
+ msg=frame(protocol,0xFFFFEu,payload,8);msg.TxFlags=0x100u;return msg;
+}
+static void ps_selector_call(U32 ps,U32 origin,PASSTHRU_MSG *msg,U32 observed,U32 pins,U32 baud,U32 selected,U32 mode){
+ U32 output=0xC0DEFACEu,n=1u;PASSTHRU_MSG before=*msg;ps_api_reset_log();
+ if(origin==1u)REQUIRE(PassThruWriteMsgs(ps,msg,&n,0)==ERR_NOT_SUPPORTED&&n==0u);
+ else REQUIRE(PassThruStartPeriodicMsg(ps,msg,&output,1000u)==ERR_NOT_SUPPORTED&&output==0xC0DEFACEu);
+ REQUIRE(memcmp(msg,&before,sizeof(before))==0);
+ if(observed){
+  U32 fields[9]={ps,origin,pins,baud,msg->ProtocolID,(U32)msg->Data[5],selected,mode,ERR_NOT_SUPPORTED};
+  require_ps_metadata(ps_a6_selector_marker,fields,9u);
+  REQUIRE(event_count_since(connect_log_lines,ps_a6_selector_marker)==1u);
+ }else REQUIRE(strstr(connect_log_lines,ps_a6_selector_marker)==0);
+ REQUIRE(event_count_since(connect_log_lines,"CAN_PS rejected attempt")==1u);
+}
+/* Eight synthetic groups. Catalog selectors identify request bytes only;
+   no parameter meaning, reply or diagnostic readiness is assigned. */
+static void test_can_ps_a6_selectors(U32 *dev){
+ U32 ps=0,other=0,std=0,k,j,t,n,output,serial,before_backend,bridge;
+ PASSTHRU_MSG msg,changed,rx,before_rx;SCONFIG option={CONFIG_J1962_PINS,0x030Bu};SCONFIG_LIST list={1,&option};
+ /* 1: strict independent opt-in, master prerequisite and Open snapshot. */
+ ps=ps_selector_open(dev,"0","4",4u,0x030Bu,125000u);msg=ps_selector_frame(PROTO_CAN_PS,0x40u,0x1A04u);
+ ps_selector_call(ps,1u,&msg,0u,0,0,0,0);
+ {static const char *invalid[]={"","01","2","-1","+1","1 "," 1","0x1","4294967297","1\n"};
+  for(k=0;k<sizeof(invalid)/sizeof(invalid[0]);k++){
+   ps=ps_selector_open(dev,invalid[k],"4",4u,0x030Bu,125000u);
+   REQUIRE(g_can_ps_a6_selector_probe==0u&&channel(ps)->can_ps_a6_selector_probe==0u);
+   ps_selector_call(ps,1u,&msg,0u,0,0,0,0);
+  }}
+ REQUIRE(PassThruClose(*dev)==ERR_OK);test_can_ps_config_probe_ini=0;test_can_ps_a6_selector_ini="1";tick+=7;
+ REQUIRE(PassThruOpen(0,dev)==ERR_OK&&g_can_ps_a6_selector_probe==0u);
+ output=0xC0DEFACEu;REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&output)==ERR_INVALID_PROTOCOL_ID&&output==0xC0DEFACEu);
+ ps=ps_selector_open(dev,"1","4",4u,0x030Bu,125000u);
+ REQUIRE(g_can_ps_a6_selector_probe==1u&&channel(ps)->can_ps_a6_selector_probe==1u);
+ test_can_ps_a6_selector_ini="0";REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000,&other)==ERR_OK);
+ REQUIRE(channel(other)->can_ps_a6_selector_probe==1u);REQUIRE(PassThruDisconnect(other)==ERR_OK);
+ /* 2: complete closed catalog, unknown redaction, both targets/protocols
+    and rejected API origins, with self-contained current mask metadata. */
+ {static const U32 selectors[]={0x1A02u,0x1A04u,0xD0D1u,0xBEEFu};
+  for(k=0;k<4u;k++)for(j=0;j<2u;j++)for(t=0;t<2u;t++){
+   msg=ps_selector_frame(j?PROTO_CAN:PROTO_CAN_PS,t?0x50u:0x40u,selectors[k]);
+   ps_selector_call(ps,1u,&msg,1u,0x030Bu,125000u,k<3u?k+1u:0u,4u);
+   ps_selector_call(ps,2u,&msg,1u,0x030Bu,125000u,k<3u?k+1u:0u,4u);
+  }}
+ /* 3: every request-envelope boundary stays opaque, without a selector
+    marker for malformed, security/control or unrelated messages. */
+ msg=ps_selector_frame(PROTO_CAN_PS,0x40u,0x1A04u);
+ for(k=0;k<13u;k++){
+  changed=msg;
+  switch(k){
+   case 0:changed.DataSize=11u;break;case 1:changed.DataSize=13u;break;
+   case 2:changed.Data[3]^=1u;break;case 3:changed.TxFlags=0u;break;
+   case 4:changed.ProtocolID=PROTO_ISO15765;break;case 5:changed.Data[4]=0xCCu;break;
+   case 6:changed.Data[5]=0x7Au;break;case 7:changed.Data[6]=0xA3u;break;
+   case 8:changed.Data[9]=2u;break;case 9:changed.Data[10]=1u;break;
+   case 10:changed.Data[11]=1u;break;case 11:changed.Data[4]=3u;changed.Data[5]=0x27u;break;
+   default:changed.Data[4]=0xFFu;changed.Data[5]=0xC8u;break;
+  }
+  ps_selector_call(ps,k&1u?2u:1u,&changed,0u,0,0,0,0);
+ }
+ /* 4: non-single counts never dereference msg; nulls and invalid channels
+    retain existing statuses and caller outputs without a selector event. */
+ for(k=0;k<3u;k++){
+  n=k==0u?0u:k==1u?2u:0xFFFFFFFFu;ps_api_reset_log();
+  REQUIRE(PassThruWriteMsgs(ps,(PASSTHRU_MSG *)1,&n,0)==ERR_NOT_SUPPORTED&&n==0u);
+  REQUIRE(strstr(connect_log_lines,ps_a6_selector_marker)==0);
+ }
+ ps_api_reset_log();n=1u;output=0xC0DEFACEu;
+ REQUIRE(PassThruWriteMsgs(ps,0,&n,0)==ERR_NULL_PARAMETER&&n==1u);
+ REQUIRE(PassThruStartPeriodicMsg(ps,0,&output,1000u)==ERR_NULL_PARAMETER&&output==0xC0DEFACEu);
+ REQUIRE(PassThruStartPeriodicMsg(ps,&msg,0,1000u)==ERR_NULL_PARAMETER);
+ REQUIRE(PassThruWriteMsgs(99u,&msg,&n,0)==ERR_INVALID_CHANNEL_ID&&n==1u);
+ REQUIRE(strstr(connect_log_lines,ps_a6_selector_marker)==0);
+ /* 5: pins and baud are observed independently, unknown values redacted;
+    channel reuse cannot retain the previous probe or route hint. */
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,500000u,&other)==ERR_OK);
+ ps_selector_call(other,1u,&msg,1u,0u,500000u,2u,4u);
+ option.Value=0x060Eu;REQUIRE(PassThruIoctl(other,IO_SET_CONFIG,&list,0)==ERR_OK);
+ ps_selector_call(other,1u,&msg,1u,0x060Eu,500000u,2u,4u);
+ channel(other)->can_ps_observed_pins=0xDEADBEEFu;channel(other)->baud=250000u;
+ ps_selector_call(other,2u,&msg,1u,0u,0u,2u,4u);
+ REQUIRE(PassThruDisconnect(other)==ERR_OK);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0,125000u,&other)==ERR_OK);
+ ps_selector_call(other,1u,&msg,1u,0u,125000u,2u,4u);
+ REQUIRE(PassThruDisconnect(other)==ERR_OK);
+ /* 6: instrumentation changes no state, scheduler, bridge, backend or RX.
+    READ128 never returns a response to an observed selector. */
+ {CHANNEL *ch=channel(ps),*snapshot=(CHANNEL *)malloc(sizeof(*snapshot));
+  REQUIRE(snapshot!=0);*snapshot=*ch;serial=g_backend_serial;before_backend=backend_len;bridge=g_vehicle_bridge.inspected_tx;
+  ps_selector_call(ps,1u,&msg,1u,0x030Bu,125000u,2u,4u);
+  ps_selector_call(ps,2u,&msg,1u,0x030Bu,125000u,2u,4u);
+  memset(&rx,0xA5,sizeof(rx));before_rx=rx;n=128u;
+  REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+  REQUIRE(memcmp(&rx,&before_rx,sizeof(rx))==0&&memcmp(snapshot,ch,sizeof(*ch))==0);
+  REQUIRE(serial==g_backend_serial&&before_backend==backend_len&&bridge==g_vehicle_bridge.inspected_tx);free(snapshot);
+ }
+ /* 7: a different API mask never accepts A6, and standard CAN is outside
+    this probe even when the new global option is enabled. */
+ ps=ps_selector_open(dev,"1","0",0u,0x030Bu,125000u);
+ ps_selector_call(ps,1u,&msg,1u,0x030Bu,125000u,2u,0u);
+ REQUIRE(PassThruConnect(*dev,PROTO_CAN,0,125000u,&std)==ERR_OK);
+ changed=msg;changed.ProtocolID=PROTO_CAN;ps_api_reset_log();send(std,&changed);
+ REQUIRE(strstr(connect_log_lines,ps_a6_selector_marker)==0);
+ REQUIRE(PassThruDisconnect(std)==ERR_OK);
+ /* 8: raw selectors/operands are absent from text, catalog events are
+    opt-in only, and a new Open disables the previous channel snapshot. */
+ msg=ps_selector_frame(PROTO_CAN_PS,0x50u,0xBEEFu);ps_selector_call(ps,1u,&msg,1u,0x030Bu,125000u,0u,0u);
+ REQUIRE(strstr(connect_log_lines,"BE EF")==0&&strstr(connect_log_lines,"DE AD BE EF")==0);
+ ps=ps_selector_open(dev,"0","0",0u,0x030Bu,125000u);
+ ps_selector_call(ps,1u,&msg,0u,0,0,0,0);
+ REQUIRE(PassThruClose(*dev)==ERR_OK);test_can_ps_config_probe_ini=0;test_can_ps_a6_selector_ini="0";test_can_ps_api_outcome_ini="0";tick+=7;
+ REQUIRE(PassThruOpen(0,dev)==ERR_OK&&g_can_ps_a6_selector_probe==0u);capture_connect_log=0;
+ puts("PASS: eight CAN_PS A6 selector groups, closed catalog and no transmission");
+}
+
 static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
@@ -1285,6 +1410,7 @@ int main(){
  test_can_ps_rejected_attempts(&dev);
  test_can_ps_rejected_setup(&dev);
  test_can_ps_api_outcomes(&dev);
+ test_can_ps_a6_selectors(&dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);

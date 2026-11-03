@@ -127,6 +127,7 @@ static U32 g_backend_enabled=0;
 /* Configuration observation only: never a CAN_PS transport or ECU route. */
 static U32 g_can_ps_config_probe=0;
 static U32 g_can_ps_api_outcome_mask=0;
+static U32 g_can_ps_a6_selector_probe=0;
 static U32 g_backend_serial=0;
 static U64 g_backend_session=0;
 static char g_host_name[48]="unknown.exe";
@@ -175,6 +176,7 @@ typedef struct {
     U32 can_ps_observed_pins;
     /* API-only experiment: retain handles, never descriptors or messages. */
     U32 can_ps_api_outcome_mask;
+    U32 can_ps_a6_selector_probe;
     U32 can_ps_filter_handles[MAX_FILTERS],can_ps_periodic_handles[MAX_PERIODIC];
     FILTER filters[MAX_FILTERS]; U32 filters_count;
     U32 passive_next_tick;
@@ -381,6 +383,24 @@ static void log_can_ps_rejected_attempt(const CHANNEL *c,U32 origin,
     u32_be(meta+12,protocol);u32_be(meta+16,shape);u32_be(meta+20,check);
     u32_be(meta+24,ERR_NOT_SUPPORTED);
     logline("J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/shape/check/status (BE)",meta,28);
+    /* Separate opt-in catalog observation, not a raw operand dump. The shape
+       above already established ID FFFFE, extended flag, eight-byte CD/A6
+       request and 01/00/00 tail. Unknown selectors never leave the process. */
+    if(c->protocol==PROTO_CAN_PS&&c->can_ps_a6_selector_probe&&check==0u&&(shape==11u||shape==16u)){
+        U8 selected[36];U32 selector=0u;
+        const U8 *p=msg->Data+4;
+        if(p[3]==0x1Au&&p[4]==0x02u)selector=1u;
+        else if(p[3]==0x1Au&&p[4]==0x04u)selector=2u;
+        else if(p[3]==0xD0u&&p[4]==0xD1u)selector=3u;
+        u32_be(selected,c->id);u32_be(selected+4,origin);
+        u32_be(selected+8,can_ps_probe_pins(c->can_ps_observed_pins)?c->can_ps_observed_pins:0u);
+        u32_be(selected+12,c->baud==125000u||c->baud==500000u?c->baud:0u);
+        u32_be(selected+16,protocol);u32_be(selected+20,shape==11u?0x40u:0x50u);
+        u32_be(selected+24,selector);
+        u32_be(selected+28,c->can_ps_api_outcome_mask<=7u?c->can_ps_api_outcome_mask:0u);
+        u32_be(selected+32,ERR_NOT_SUPPORTED);
+        logline("J2534 CAN_PS A6 selector channel/origin/pins/baud/protocol/target/selector/mask/status (BE)",selected,36);
+    }
 }
 static int can_ps_probe_known_protocol(U32 protocol){
     return protocol==PROTO_CAN_PS||protocol==PROTO_CAN||protocol==PROTO_ISO15765;
@@ -909,6 +929,8 @@ static void load_config(void) {
     GetPrivateProfileStringA("Diagnostics","CanPsApiOutcomeMask","0",v,sizeof(v),g_profile_path);
     g_can_ps_api_outcome_mask=g_can_ps_config_probe&&v[0]>='0'&&v[0]<='7'&&v[1]==0?
                               (U32)(v[0]-'0'):0u;
+    GetPrivateProfileStringA("Diagnostics","EnableCanPsA6SelectorProbe","0",v,sizeof(v),g_profile_path);
+    g_can_ps_a6_selector_probe=g_can_ps_config_probe&&v[0]=='1'&&v[1]==0?1u:0u;
     /* Explicit opt-in. The GUI can enable [Diagnostics] BackendTelemetryEnabled=1.
        The log location is stable across sessions but contains no private bytes. */
     g_backend_enabled=0;g_backend_path[0]=0;
@@ -1562,7 +1584,10 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
     g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
-    if(protocol==PROTO_CAN_PS)g_ch[i].can_ps_api_outcome_mask=g_can_ps_api_outcome_mask;
+    if(protocol==PROTO_CAN_PS){
+        g_ch[i].can_ps_api_outcome_mask=g_can_ps_api_outcome_mask;
+        g_ch[i].can_ps_a6_selector_probe=g_can_ps_a6_selector_probe;
+    }
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}

@@ -3,12 +3,15 @@
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [switch]$ApiOutcomeRegression
+    [switch]$ApiOutcomeRegression,
+    [switch]$A6SelectorRegression
 )
 $ErrorActionPreference = 'Stop'
+if ($ApiOutcomeRegression -and $A6SelectorRegression) { throw 'Select only one isolated regression mode' }
 if ([IntPtr]::Size -ne 4) {
     $forward = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-DllPath',$DllPath,'-OutputDirectory',$OutputDirectory)
     if ($ApiOutcomeRegression) { $forward += '-ApiOutcomeRegression' }
+    if ($A6SelectorRegression) { $forward += '-A6SelectorRegression' }
     & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" @forward
     exit $LASTEXITCODE
 }
@@ -197,6 +200,34 @@ public static class NativeRouteCheck {
             Check(PassThruClose(device)==0,"Outcome close failed");
         }
     }
+    // SYNTHETIC A6 selectors: rejected requests only, not accepted reads or replies.
+    public static void RunCanPsA6Selector(bool enabled) {
+        Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"Selector x86 ABI mismatch");
+        uint device=0,channel=0;
+        Check(PassThruOpen(IntPtr.Zero,out device)==0,"Selector Open failed");
+        IntPtr entry=Marshal.AllocHGlobal(8);
+        try {
+            Check(PassThruConnect(device,0x8004,0x900,125000,out channel)==0,"Selector PS connect failed");
+            ConfigList list=new ConfigList(); list.Count=1; list.Entries=entry;
+            Marshal.WriteInt32(entry,0,0x8001); Marshal.WriteInt32(entry,4,0x030b);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==0,"Selector pins failed");
+            foreach(ushort selector in new ushort[]{0x1a02,0x1a04,0xd0d1,0xbeef}) {
+                Msg msg=new Msg(); msg.ProtocolID=0x8004; msg.TxFlags=0x100; msg.DataSize=12; msg.Data=new byte[4128];
+                Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xcd,0x40,0xa6,(byte)(selector>>8),(byte)selector,1,0,0},msg.Data,12);
+                uint count=1;
+                Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==1 && count==0,"Selector Write was not rejected");
+                Empty128(channel);
+                uint period=0xc0deface;
+                Check(PassThruStartPeriodicMsg(channel,ref msg,ref period,1000)==1 && period==0xc0deface,"Selector periodic was not rejected");
+                Empty128(channel);
+            }
+            Console.WriteLine("PASS native A6 selector probe="+enabled+"; eight rejected calls, no RX");
+        } finally {
+            Marshal.FreeHGlobal(entry);
+            if(channel!=0) Check(PassThruDisconnect(channel)==0,"Selector disconnect failed");
+            Check(PassThruClose(device)==0,"Selector close failed");
+        }
+    }
     public static void Run() {
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"x86 ABI mismatch");
         IntPtr module=LoadLibraryW(Library); Check(module!=IntPtr.Zero,"LoadLibrary failed");
@@ -243,7 +274,15 @@ public static class NativeRouteCheck {
     $source = $source.Replace('__ISOLATED_DLL__', $isolatedDll.Replace('"', '""'))
     Add-Type -TypeDefinition $source -Language CSharp
     $backend = Join-Path $directory 'VirtualCar/dev47-backend.jsonl'
-    if ($ApiOutcomeRegression) {
+    if ($A6SelectorRegression) {
+        $ini = Join-Path $directory 'virtualcar.ini'
+        foreach ($setting in '0','1','01') {
+            [IO.File]::WriteAllText($ini,$profile+"`r`nEnableCanPsConfigProbe=1`r`nCanPsApiOutcomeMask=4`r`nEnableCanPsA6SelectorProbe=$setting`r`n",[Text.Encoding]::ASCII)
+            [NativeRouteCheck]::RunCanPsA6Selector($setting -ceq '1')
+        }
+        if ((Test-Path -LiteralPath $backend) -and (Get-Item -LiteralPath $backend).Length -ne 0) { throw 'A6-selector regression produced backend traffic' }
+        Write-Output 'Native A6 selector off/on/malformed checks passed; no backend requests.'
+    } elseif ($ApiOutcomeRegression) {
         $ini = Join-Path $directory 'virtualcar.ini'
         [IO.File]::WriteAllText($ini,$profile+"`r`nEnableCanPsConfigProbe=0`r`nCanPsApiOutcomeMask=7`r`n",[Text.Encoding]::ASCII)
         [NativeRouteCheck]::RunCanPsApiOutcome(0,$false)

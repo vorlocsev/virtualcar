@@ -115,6 +115,32 @@ jobs:
             $actual = [int](($api.categories | Where-Object { $_.mask -eq $mode -and $_.outcome -eq 'simulated_api_success_no_transport' } | Measure-Object -Property count -Sum).Sum)
             if ($actual -ne $expected) { throw 'API bits were not independent' }
           }
+      - name: Actual x86 rejected A6 selector probe, no transport
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-a6-selector" -A6SelectorRegression
+          if ($LASTEXITCODE -ne 0) { throw 'Native A6-selector regression failed' }
+          python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-a6-selector\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-a6-selector-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native A6-selector audit failed' }
+          $report = Get-Content -LiteralPath "$env:RUNNER_TEMP\can-ps-a6-selector-audit.json" -Raw | ConvertFrom-Json
+          $selectors = $report.can_ps_a6_selectors
+          if ($selectors.events -ne 8 -or $selectors.invalid_events -ne 0 -or $selectors.outcome -ne 'rejected_not_transmitted') { throw 'Unexpected A6-selector counts' }
+          if ($selectors.counts_are_additional_api_calls -or $selectors.state_correlation_performed -or $selectors.hardware_pins_verified -or $selectors.can_transmission_verified -or $selectors.ecu_response_verified -or $selectors.periodic_firing_observed -or $selectors.read_only_reference_approved -or $selectors.selector_semantics_verified) { throw 'A6 selector misrepresented as transport or ECU evidence' }
+          $categories = @($selectors.categories)
+          if ($categories.Count -ne 8) { throw 'Expected distinct selector/API-origin categories' }
+          foreach ($category in $categories) {
+            if ($category.count -ne 1 -or $category.origin -notin @('write_call','periodic_registration_call') -or $category.pins -ne 'pins_3_11' -or $category.baud_bps -ne '125000' -or $category.message_protocol -ne 'CAN_PS' -or $category.target -ne '0x40' -or $category.mask -ne 4 -or $category.status -ne 'not_supported') { throw 'Unexpected A6-selector route/API metadata' }
+          }
+          foreach ($selector in '1A02','1A04','D0D1','other_redacted') {
+            $selectorRows = @($categories | Where-Object selector -eq $selector)
+            if ($selectorRows.Count -ne 2 -or @($selectorRows.origin | Sort-Object -Unique).Count -ne 2 -or [int](($selectorRows | Measure-Object count -Sum).Sum) -ne 2) { throw 'A6 selector catalog/origin coverage failed' }
+          }
+          $legacy = $report.rejected_can_ps_attempts
+          if ($legacy.calls -ne 24 -or $legacy.invalid_events -ne 0 -or @($legacy.categories | Where-Object shape -ne 'D2_40_A6').Count -ne 0) { throw 'Selector records changed legacy rejected-call scope' }
+          $api = $report.can_ps_api_outcomes
+          if ($api.mode_snapshots -ne 3 -or $api.calls -ne 24 -or $api.invalid_events -ne 0 -or $api.injected_success_calls -ne 0 -or $api.rejected_creation_calls -ne 24 -or $api.lifecycle_calls -ne 0 -or $api.capacity_errors -ne 0) { throw 'A6 probe changed API outcomes' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
@@ -122,6 +148,7 @@ jobs:
             ${{ runner.temp }}/native-route-regression-audit.json
             ${{ runner.temp }}/can-ps-config-audit.json
             ${{ runner.temp }}/can-ps-api-outcome-audit.json
+            ${{ runner.temp }}/can-ps-a6-selector-audit.json
           if-no-files-found: error
 
 

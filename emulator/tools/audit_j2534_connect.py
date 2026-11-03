@@ -19,6 +19,7 @@ PS_REJECTED = "J2534 CAN_PS rejected attempt channel/origin/pins/msg-protocol/sh
 PS_FILTER = "J2534 CAN_PS rejected filter channel/type/protocols/sizes/flags/flow/mask/pattern/status (BE)"
 PS_PERIODIC = "J2534 CAN_PS rejected periodic channel/protocol/interval/check/status (BE)"
 PS_API_OUTCOME = "J2534 CAN_PS API outcome channel/mask/operation/pins/baud/shape/status (BE)"
+PS_A6_SELECTOR = "J2534 CAN_PS A6 selector channel/origin/pins/baud/protocol/target/selector/mask/status (BE)"
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} [^\]\r\n]{1,80}\] ")
 HEX_BYTE = re.compile(r"[0-9A-Fa-f]{2}\Z")
 PROTOCOLS = {5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS",
@@ -64,6 +65,9 @@ API_OUTCOME_STATUS = {0: "ok", 1: "not_supported", 12: "exceeded_limit",
                      13: "invalid_msg_id", 22: "invalid_filter_id"}
 API_OUTCOME_BAUDS = {0: "redacted_or_unset", 125000: "125000", 500000: "500000"}
 API_OUTCOME_FIELDS = ("mask", "operation", "pins", "baud_bps", "shape", "status", "outcome")
+A6_SELECTORS = {0: "other_redacted", 1: "1A02", 2: "1A04", 3: "D0D1"}
+A6_TARGETS = {0x40: "0x40", 0x50: "0x50"}
+A6_SELECTOR_FIELDS = ("origin", "pins", "baud_bps", "message_protocol", "target", "selector", "mask", "status")
 for _target, _base in (("40", 10), ("50", 15)):
     ATTEMPT_SHAPES.update({_base+i: f"D2_{_target}_{service}"
                            for i, service in enumerate(("A3", "A6", "B9F0", "B9FB", "B9FC"))})
@@ -74,6 +78,7 @@ MAX_LINES = 250000
 MAX_LINE = 512
 MAX_REJECTED_ATTEMPTS = 20000
 MAX_API_OUTCOMES = 20000
+MAX_A6_SELECTORS = 20000
 
 
 def _decode_words(text, word_count=4):
@@ -129,6 +134,20 @@ def _rejected_periodic(words):
     if (check == 0 and interval not in PERIODIC_INTERVALS) or (check != 0 and interval != 0):
         return None
     return (ATTEMPT_PROTOCOLS[protocol], PERIODIC_INTERVALS.get(interval, "redacted"), PERIODIC_CHECKS[check])
+
+
+def _a6_selector(words):
+    if words is None:
+        return None
+    channel, origin, pins, baud, protocol, target, selector, mask, status = words
+    if (channel == 0 or origin not in ATTEMPT_ORIGINS or pins not in (0, *PS_PINS)
+            or baud not in API_OUTCOME_BAUDS or protocol not in (5, 0x8004)
+            or target not in A6_TARGETS or selector not in A6_SELECTORS
+            or mask not in range(8) or status != 1):
+        return None
+    return (ATTEMPT_ORIGINS[origin], PS_PINS.get(pins, "unselected"),
+            API_OUTCOME_BAUDS[baud], ATTEMPT_PROTOCOLS[protocol], A6_TARGETS[target],
+            A6_SELECTORS[selector], mask, "not_supported")
 
 
 def _api_outcome(words):
@@ -189,6 +208,9 @@ def audit(lines):
     api_outcomes = Counter()
     invalid_api_outcomes = 0
     api_outcome_order = []
+    a6_selectors = Counter()
+    invalid_a6_selectors = 0
+    a6_selector_order = []
     for index, raw in enumerate(lines, 1):
         if index > MAX_LINES:
             raise ValueError("line_limit")
@@ -200,7 +222,17 @@ def audit(lines):
         if prefix is None:
             continue
         content = line[prefix.end():]
-        if content.startswith(PS_API_OUTCOME):
+        if content.startswith(PS_A6_SELECTOR):
+            a6_selector = _a6_selector(_decode_words(content[len(PS_A6_SELECTOR):], 9))
+            if a6_selector is None:
+                invalid_a6_selectors += 1
+                continue
+            if len(a6_selector_order) >= MAX_A6_SELECTORS:
+                raise ValueError("a6_selector_limit")
+            a6_selectors[a6_selector] += 1
+            a6_selector_order.append(dict(zip(A6_SELECTOR_FIELDS, a6_selector),
+                                          line=index, outcome="rejected_not_transmitted"))
+        elif content.startswith(PS_API_OUTCOME):
             api_outcome = _api_outcome(_decode_words(content[len(PS_API_OUTCOME):], 7))
             if api_outcome is None:
                 invalid_api_outcomes += 1
@@ -390,6 +422,20 @@ def audit(lines):
             "categories": [dict(zip(API_OUTCOME_FIELDS, key), count=count)
                            for key, count in sorted(api_outcomes.items())],
             "source_order": api_outcome_order,
+        }
+    if a6_selectors or invalid_a6_selectors:
+        report["can_ps_a6_selectors"] = {
+            "events": sum(a6_selectors.values()), "invalid_events": invalid_a6_selectors,
+            "classification_scope": "rejected_a6_selector_closed_catalog_only",
+            "outcome": "rejected_not_transmitted",
+            "counts_are_additional_api_calls": False,
+            "state_correlation_performed": False, "hardware_pins_verified": False,
+            "can_transmission_verified": False, "ecu_response_verified": False,
+            "read_only_reference_approved": False, "periodic_firing_observed": False,
+            "selector_semantics_verified": False,
+            "categories": [dict(zip(A6_SELECTOR_FIELDS, key), count=count)
+                           for key, count in sorted(a6_selectors.items())],
+            "source_order": a6_selector_order,
         }
     return report
 

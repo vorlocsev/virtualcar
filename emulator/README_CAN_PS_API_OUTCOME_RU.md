@@ -125,3 +125,9 @@ Mask2 warning наблюдался; mask4 Home NOTFOUND/CONNECT наблюдал
 warning не доказано. ECU list не проверен. Stop/restore/prefix integrity
 подтверждены. Следующий материал — точный A6 selector/условие клиента и
 совместимый read-only источник ответа. CI не заменяет фактический UI outcome.
+
+Для следующего нового run добавлен отдельный default-off
+[`EnableCanPsA6SelectorProbe`](README_CAN_PS_A6_SELECTOR_RU.md): закрытый каталог
+selectors1A02/1A04/D0D1 и opaque other, metadata только для строгого rejected A6.
+Прежние captures operands не содержат; probe не восстанавливает их задним
+числом и не меняет API outcomes/transport/RX.
