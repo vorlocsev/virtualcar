@@ -353,6 +353,95 @@ def _execute_staging_call_inventory(by_key):
             else "counts_differ")
 
 
+
+def _exact_il_site(ops, offsets, site):
+    """Check exact instruction offsets/opcodes/tokens within ONE recovered body.
+
+    This is a static neighborhood observation only, never a statement about
+    flattened control flow, successful event firing or visible ECU data.
+    """
+    if len(ops) != len(offsets) or not site:
+        return False
+    try:
+        start = offsets.index(site[0][0])
+    except ValueError:
+        return False
+    if start + len(site) > len(ops):
+        return False
+    for index, (offset, opcode, operand) in enumerate(site):
+        actual_op, actual_arg = ops[start + index]
+        if offsets[start + index] != offset or actual_op != opcode:
+            return False
+        if operand is not None and actual_arg.split(maxsplit=1)[0].upper() != operand.upper():
+            return False
+    return True
+
+
+def _predetect_completion_sites(ops, offsets):
+    """Prove only that PreDetectResult and guarded Done event have source sites."""
+    construction = [
+        (0x0186, "ldarg.0", None), (0x0187, "ldarg.0", None),
+        (0x0188, "call", "0x060012E2"), (0x018D, "ldarg.0", None),
+        (0x018E, "ldfld", "0x040003A6"), (0x0193, "ldloc.2", None),
+        (0x0194, "ldloc.3", None), (0x0195, "newobj", "0x0600139D"),
+        (0x019A, "call", "0x060012F3"),
+    ]
+    completion = [
+        (0x019F, "ldarg.0", None), (0x01A0, "ldfld", "0x040003CC"),
+        (0x01A5, "dup", None), (0x01A6, "brtrue.s", "6"),
+        (0x01A8, "pop", None), (0x01A9, "br", "-186"),
+        (0x01AE, "ldarg.0", None),
+        (0x01AF, "ldsfld", "0x0A0000DE"),
+        (0x01B4, "callvirt", "0x0A0000DF"),
+    ]
+    constructed = _exact_il_site(ops, offsets, construction)
+    event = _exact_il_site(ops, offsets, completion)
+    if event:
+        branch_index = offsets.index(0x01A6)
+        dest = _branch_destination(ops, offsets, branch_index)
+        event = dest is not None and offsets[dest] == 0x01AE
+    return {
+        "pre_detect_result_constructor_exact_static_site": constructed,
+        "pre_detect_done_guarded_event_exact_static_site": event,
+        "pre_detect_has_distinct_result_and_event_sites": constructed and event,
+    }
+
+
+def _detect_ui_availability_sites(ops, offsets):
+    """Track four ECU availability refresh *sites* and two completion markers."""
+    refresh = [
+        [(0x05CD, "ldarg.0", None), (0x05CE, "call", "0x060012EC"),
+         (0x05D3, "callvirt", "0x06001BB2")],  # DIM
+        [(0x0617, "ldarg.0", None), (0x0618, "call", "0x060012F0"),
+         (0x061D, "callvirt", "0x06001BBA")],  # ECM
+        [(0x0648, "ldarg.0", None), (0x0649, "call", "0x060012EE"),
+         (0x064E, "callvirt", "0x06001BCC")],  # ICM
+        [(0x069D, "ldarg.0", None), (0x069E, "call", "0x060012EA"),
+         (0x06A3, "callvirt", "0x06001BE9")],  # PHM
+    ]
+    count = sum(_exact_il_site(ops, offsets, site) for site in refresh)
+    done = _exact_il_site(ops, offsets, [
+        (0x0632, "ldarg.0", None),
+        (0x0633, "call", "0x06001343"),
+    ])
+    available = _exact_il_site(ops, offsets, [
+        (0x0683, "ldarg.0", None), (0x0684, "ldc.i4.1", None),
+        (0x0685, "call", "0x060012F7"),
+    ])
+    ecus = _exact_il_site(ops, offsets, [
+        (0x0261, "ldarg.0", None), (0x0262, "ldarg.0", None),
+        (0x0263, "call", "0x060012E8"),
+        (0x0268, "newobj", "0x0600126D"),
+        (0x026D, "call", "0x060012DF"),
+    ])
+    return {
+        "detect_availability_refresh_static_site_count": count,
+        "detect_on_detect_done_exact_static_site": done,
+        "detect_device_available_true_exact_static_site": available,
+        "detect_ecus_ctor_and_ui_sites_observed": ecus and done and available and count == 4,
+    }
+
+
 def audit(inventory, excerpts):
     selected = inventory.get("selected_methods")
     if not isinstance(selected, list) or not selected:
@@ -387,7 +476,7 @@ def audit(inventory, excerpts):
     detect_block = blocks.get(KNOWN["detect"], {})
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v5",
+        "format": "recovered-il-evidence-audit-v6",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -398,6 +487,8 @@ def audit(inventory, excerpts):
         ],
         "evidence": {
             "pre_detect_uses_suggested_vin": _has_call(predetect, "0x0600020C"),
+            **_predetect_completion_sites(predetect,
+                blocks.get(KNOWN["pre_detect"], {}).get("offsets", [])),
             "pre_detect_uses_last_view_wrapper": _has_call(predetect, "0x06001377"),
             "get_vin_reads_pre_detect_result": _has_call(getvin, "0x060012F2"),
             "get_vin_missing_predetect_direct_volvo_fallback":
@@ -423,6 +514,8 @@ def audit(inventory, excerpts):
             "execute_observed_status_numeric_comparisons": _status_values(execute),
             "execute_one_second_timer_shape": _one_shot_timer_shape(execute),
             **_model_shapes(detect),
+            **_detect_ui_availability_sites(detect,
+                detect_block.get("offsets", [])),
         },
         "limitations": [
             "Method references do not prove execution order in flattened CFG",
@@ -433,6 +526,8 @@ def audit(inventory, excerpts):
             "Shared opaque predicate usage does not reveal equality or acceptance semantics",
             "MethodSpec<string> does not establish generic method return type or semantics",
             "Two unknown result-field wrappers before ParseData do not reveal arguments or prove execution",
+            "PreDetectDone and OnDetectDone are separate static sites, not proof of successful user-facing detection",
+            "RefreshAvailability and DeviceAvailable sites do not establish runtime ECU list contents",
         ],
     }
 
