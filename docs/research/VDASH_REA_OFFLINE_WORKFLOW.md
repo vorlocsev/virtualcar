@@ -121,6 +121,46 @@ assembly build** as the saved IL excerpt. The available excerpt lacks a
 verified original binary SHA, so the tool reports exact local matches without
 automatically certifying version correspondence.
 
+### Completeness gates for real REA runs
+
+REA's published `managedMemberInspectionSchema` distinguishes the
+assembly-wide coverage state from two **independent bounds**:
+
+- `selection.type_names`: an explicit `--type` selection. Missing
+  `Execute` or `ParseData` in that subset is **not** evidence that the
+  corresponding MethodDef does not exist in the assembly.
+- `method_rows.offset/count/total`: examined zero-based MethodDef rows
+  **before** declaring-type filtering. If this is absent (historical reports)
+  or names only a subset, the new `inspection_scope.method_rows` reports
+  `unreported` or `page_only`, not `all_rows`.
+- `coverage.state`: `partial` or `unavailable` does not establish
+  complete source inventory even with all rows selected.
+
+The exported `inspection_scope.all_members_examined` is `true`
+**only** for a REA record that simultaneously attests complete coverage,
+no declaring-type selection and the entire MethodDef row interval. This
+describes reported **static inspection scope**, not an independently
+verified match to the private VDASH 2.5.115.79 build, runtime reachability,
+or successful ECU enumeration. An exact callsite from a partial report
+remains an exact observation of the rows **returned**, not proof that the
+complete graph has been decoded.
+
+The `method_bodies[].cil_decode` field is separate from REA's body
+`status`. It returns `complete_decode_attested` only if the source
+reports `status=present`, complete matching instruction counts,
+`truncated_instructions=0`, an available 64-hex-digit normalized CIL
+digest, and no issue. An omitted decode field yields `unreported`,
+and an inconsistent/truncated/incomplete decode yields
+`partial_or_unavailable`. The digest itself is **never exported**.
+`complete_decode_attested` is a property of local static decoding,
+not evidence that the method executed or produced usable
+`DetectResult`/`Ecus`.
+
+Eight additional **synthetic** tests validate full-vs-selected/paged
+scope, missing historical row metadata, complete-versus-truncated CIL,
+rejection of malformed counters and selections, and sanitization of
+private type names/digests.
+
 The checker limits input size and method/edge rows, rejects malformed method
 tokens, mismatched identity and incomplete JSON structure, and refuses to
 overwrite an output file. Its tests contain **synthetic** REA-shaped records
