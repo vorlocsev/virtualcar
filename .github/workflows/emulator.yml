@@ -1,7 +1,8 @@
 name: Virtual Car Emulator Windows x86
 on:
   push:
-    branches: [main]
+    # Isolated CI for draft #43. No release workflow is enabled on this branch.
+    branches: [main, experiment/can-ps-api-outcome-ab]
     paths: ["emulator/**", ".github/workflows/emulator.yml"]
   pull_request:
     branches: [main, development]
