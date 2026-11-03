@@ -79,6 +79,9 @@ jobs:
           if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          # Distinct isolated directory, baseline audits remain unaffected.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_can_ps_api_outcome.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\can-ps-outcome-native"
+          if ($LASTEXITCODE -ne 0) { throw 'Native CAN_PS A/B/C API-only regression failed' }
           python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
           python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-route-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-config-audit.json"
