@@ -204,7 +204,7 @@ def audit(data, rea=None):
         "methods": method_summary,
         "limitations": [
             "Counts and opcode prefixes are inventory claims, not a fresh complete REA IL decode",
-            "An ldarg.1 then brtrue.s prefix is a conditional branch shape, not a verified semantic guard",
+            "A recorded conditional branch prefix does not establish semantic guard meaning",
             "Method names, control-flow reachability and successful ECU parsing remain unproven",
             "A source hash match alone does not attest recovered/normalized MethodDef token alignment",
             "A recovered-file digest match ties material, not VDASH runtime or server outcomes",
