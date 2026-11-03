@@ -119,6 +119,10 @@ class RecoveredInventoryEvidenceTests(unittest.TestCase):
         bad["normalized_result"]["identity_scope"]["requires_mvid"] = PRIVATE
         with self.assertRaisesRegex(ValueError, "invalid_rea_mvid"):
             tool.audit(inventory(), bad)
+        bad = rea(RECOVERED)
+        bad["normalized_result"]["module"]["name"] = ["not", "a", "module"]
+        with self.assertRaisesRegex(ValueError, "invalid_rea_assembly"):
+            tool.audit(inventory(), bad)
 
     def test_05_missing_inventory_method_does_not_prove_absence(self):
         data = inventory()
