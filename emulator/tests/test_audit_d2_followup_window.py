@@ -103,14 +103,14 @@ class FollowupWindowTests(unittest.TestCase):
         self.assertEqual(item["followup_observation"], "first_next_tx_observed")
         # A malformed native app-TX still proves an event was observed,
         # but provides no trustworthy timing or channel attribution.
-            lines = tx() + response()
-            lines += [marker("TX (app request) MALFORMED_PRIVATE_FRAME")]
-            record = tool.audit("\n".join(lines))["observations"][0]
-            self.assertEqual(record["followup_observation"], "next_tx_unattributed")
-            self.assertEqual(record["within_500_ms"], "timestamp_unverified")
-            self.assertEqual(record["within_1000_ms"], "timestamp_unverified")
-            self.assertEqual(record["first_next_tx_service"], "unclassified_unattributed_tx")
-            self.assertIsNone(record["last_rx_to_first_next_tx_ms"])
+        lines = tx() + response()
+        lines += [marker("TX (app request) MALFORMED_PRIVATE_FRAME")]
+        record = tool.audit("\n".join(lines))["observations"][0]
+        self.assertEqual(record["followup_observation"], "next_tx_unattributed")
+        self.assertEqual(record["within_500_ms"], "timestamp_unverified")
+        self.assertEqual(record["within_1000_ms"], "timestamp_unverified")
+        self.assertEqual(record["first_next_tx_service"], "unclassified_unattributed_tx")
+        self.assertIsNone(record["last_rx_to_first_next_tx_ms"])
 
 
     def test_04_observed_tx_after_both_windows(self):
