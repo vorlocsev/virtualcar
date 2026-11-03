@@ -21,7 +21,7 @@ FORMAT = "virtualcar-native-d2-followup-gate-v1"
 def verify(source):
     result = audit(source)
     if (result["completed_b9fb_count"] != 1
-            or result["incomplete_b9fb_count"] != 0
+            or result["incomplete_b9fb_count"] != 1
             or len(result["observations"]) != 1
             or result["parse_errors"]):
         raise ValueError("incomplete_or_conflicted_native_d2")
@@ -60,6 +60,7 @@ def verify(source):
         "native_d2_followup_verified": True,
         "source_clock": result["source_clock"],
         "completed_b9fb_count": 1,
+        "other_unanswered_b9fb_attempts": 1,
         "b9fb_rx_frames": 13,
         "b9fb_target": "0x50",
         "first_next_tx_service": record["first_next_tx_service"],
@@ -80,6 +81,7 @@ def verify(source):
             "Finite timing is not proof of B9FB semantic acceptance or real E3.",
             "Only allowlisted CEM target and timing summary; no VIN, CAN, PID, host, or original paths.",
             "No timing threshold is asserted for real SectorV; synthetic CI scheduling can vary.",
+            "The isolated native runner separately sends one unanswered LS125 B9FB; its unmatched attempt is counted, not merged with complete HS500 B9FB.",
         ],
     }
 
