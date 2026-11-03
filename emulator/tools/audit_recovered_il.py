@@ -344,10 +344,10 @@ def _execute_staging_call_inventory(by_key):
         token, count = call.get("token"), call.get("count")
         if not isinstance(token, str) or not TOKEN.fullmatch(token):
             return "invalid_inventory"
-        if token.upper() in wanted:
+        if token.lower() in wanted:
             if type(count) is not int or count < 0:
                 return "invalid_inventory"
-            counted[token.upper()] += count
+            counted[token.lower()] += count
     return ("three_single_calls_observed"
             if all(count == 1 for count in counted.values())
             else "counts_differ")
