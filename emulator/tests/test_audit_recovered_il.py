@@ -177,7 +177,7 @@ IL_0000 ret
         report = tool.audit(inventory_for_detect_shape(source), source)
         self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v5")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
 
 
     @staticmethod
@@ -352,7 +352,7 @@ IL_0020 ret
         report = tool.audit(inventory_for_detect_shape(src), src)
         self.assertIn("Shared opaque predicate usage does not reveal equality or acceptance semantics",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v5")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
         self.assertNotIn("hardware=real", json.dumps(report))
 
 
@@ -414,7 +414,7 @@ IL_0020 ret
     def test_40_summary_is_allowlisted_no_raw_bytes(self):
         src = self._string_methodspec_fixture()
         report = tool.audit(inventory_for_detect_shape(src), src)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v5")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
         self.assertNotIn("0x2B000002", json.dumps(report))
         self.assertNotIn(r"\x01\x0e", json.dumps(report))
         self.assertIn("MethodSpec<string> does not establish generic method return type or semantics",
@@ -523,6 +523,135 @@ IL_0020 ret
         self.assertNotIn("opaque_helper_a", dumped)
         self.assertIn("Two unknown result-field wrappers before ParseData",
                       " ".join(report["limitations"]))
+
+
+
+    @staticmethod
+    def _phase_predetect_fixture():
+        # Synthetic shape with source-grounded offsets, no vendor IL or payload.
+        rows = [
+            (0x0186, "ldarg.0"), (0x0187, "ldarg.0"),
+            (0x0188, "call 0x060012E2 get_Volvo"),
+            (0x018D, "ldarg.0"), (0x018E, "ldfld 0x040003A6 dongleId"),
+            (0x0193, "ldloc.2"), (0x0194, "ldloc.3"),
+            (0x0195, "newobj 0x0600139D .ctor"),
+            (0x019A, "call 0x060012F3 set_PreDetectResult"),
+            (0x019F, "ldarg.0"), (0x01A0, "ldfld 0x040003CC PreDetectDone"),
+            (0x01A5, "dup"), (0x01A6, "brtrue.s 6"),
+            (0x01A8, "pop"), (0x01A9, "br -186"),
+            (0x01AE, "ldarg.0"),
+            (0x01AF, "ldsfld 0x0A0000DE System.EventArgs.Empty"),
+            (0x01B4, "callvirt 0x0A0000DF System.EventHandler.Invoke"),
+        ]
+        return ("Frontend.Client.Core.dll: MethodDef 0x0600133D VddModel.PreDetect; "
+                + str(len(rows)) + " decoded opcodes\\n"
+                + "".join(f"IL_{offset:04X} {line}\\n" for offset, line in rows))
+
+    @staticmethod
+    def _phase_detect_fixture():
+        # Offsets and method identities are fixture motifs; the source body is
+        # control-flow-flattened. No ordering/reachability is asserted.
+        rows = [
+            (0x0261, "ldarg.0"), (0x0262, "ldarg.0"),
+            (0x0263, "call 0x060012E8 get_DetectResult"),
+            (0x0268, "newobj 0x0600126D .ctor"),
+            (0x026D, "call 0x060012DF set_Ecus"),
+            (0x05CD, "ldarg.0"), (0x05CE, "call 0x060012EC get_Dim"),
+            (0x05D3, "callvirt 0x06001BB2 RefreshAvailability"),
+            (0x0617, "ldarg.0"), (0x0618, "call 0x060012F0 get_Ecm"),
+            (0x061D, "callvirt 0x06001BBA RefreshAvailability"),
+            (0x0632, "ldarg.0"), (0x0633, "call 0x06001343 OnDetectDone"),
+            (0x0648, "ldarg.0"), (0x0649, "call 0x060012EE get_Icm"),
+            (0x064E, "callvirt 0x06001BCC RefreshAvailability"),
+            (0x0683, "ldarg.0"), (0x0684, "ldc.i4.1"),
+            (0x0685, "call 0x060012F7 set_DeviceAvailable"),
+            (0x069D, "ldarg.0"), (0x069E, "call 0x060012EA get_Phm"),
+            (0x06A3, "callvirt 0x06001BE9 RefreshAvailability"),
+        ]
+        return ("Frontend.Client.Core.dll: MethodDef 0x0600132B VddModel.Detect; "
+                + str(len(rows)) + " decoded opcodes\\n"
+                + "".join(f"IL_{offset:04X} {line}\\n" for offset, line in rows))
+
+    @staticmethod
+    def _phase_inv(source, token):
+        import re
+        count = int(re.search(r"; (\\d+) decoded opcodes", source).group(1))
+        return {"selected_methods": [{
+            "module": "Frontend.Client.Core.dll",
+            "method_token": token, "decoded_instructions": count,
+        }]}
+
+    def test_49_predetect_constructor_and_completion_event_sites(self):
+        src = self._phase_predetect_fixture()
+        e = tool.audit(self._phase_inv(src, "0x0600133D"), src)["evidence"]
+        self.assertTrue(e["pre_detect_result_constructor_exact_static_site"])
+        self.assertTrue(e["pre_detect_done_guarded_event_exact_static_site"])
+        self.assertTrue(e["pre_detect_has_distinct_result_and_event_sites"])
+        self.assertFalse(e["detect_ecus_ctor_and_ui_sites_observed"])
+
+    def test_50_wrong_predetect_result_constructor_does_not_negate_event(self):
+        src = self._phase_predetect_fixture().replace(
+            "IL_0195 newobj 0x0600139D", "IL_0195 newobj 0x0600139E")
+        e = tool.audit(self._phase_inv(src, "0x0600133D"), src)["evidence"]
+        self.assertFalse(e["pre_detect_result_constructor_exact_static_site"])
+        self.assertTrue(e["pre_detect_done_guarded_event_exact_static_site"])
+        self.assertFalse(e["pre_detect_has_distinct_result_and_event_sites"])
+
+    def test_51_wrong_event_guard_branch_target_rejected(self):
+        src = self._phase_predetect_fixture().replace(
+            "IL_01A6 brtrue.s 6", "IL_01A6 brtrue.s 7")
+        e = tool.audit(self._phase_inv(src, "0x0600133D"), src)["evidence"]
+        self.assertFalse(e["pre_detect_done_guarded_event_exact_static_site"])
+        self.assertTrue(e["pre_detect_result_constructor_exact_static_site"])
+
+    def test_52_wrong_event_invocation_token_rejected(self):
+        src = self._phase_predetect_fixture().replace(
+            "IL_01B4 callvirt 0x0A0000DF", "IL_01B4 callvirt 0x0A0000DE")
+        e = tool.audit(self._phase_inv(src, "0x0600133D"), src)["evidence"]
+        self.assertFalse(e["pre_detect_done_guarded_event_exact_static_site"])
+
+    def test_53_four_refreshes_and_distinct_detect_completion_sites(self):
+        src = self._phase_detect_fixture()
+        e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+        self.assertEqual(e["detect_availability_refresh_static_site_count"], 4)
+        self.assertTrue(e["detect_on_detect_done_exact_static_site"])
+        self.assertTrue(e["detect_device_available_true_exact_static_site"])
+        self.assertTrue(e["detect_ecus_ctor_and_ui_sites_observed"])
+        self.assertFalse(e["pre_detect_has_distinct_result_and_event_sites"])
+
+    def test_54_each_refresh_token_checked_independently(self):
+        good = self._phase_detect_fixture()
+        for token in ("0x06001BB2", "0x06001BBA", "0x06001BCC", "0x06001BE9"):
+            with self.subTest(refresh=token):
+                src = good.replace(token, "0x06001BAD")
+                e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+                self.assertEqual(e["detect_availability_refresh_static_site_count"], 3)
+                self.assertFalse(e["detect_ecus_ctor_and_ui_sites_observed"])
+
+    def test_55_result_ui_and_available_markers_are_not_interchangeable(self):
+        good = self._phase_detect_fixture()
+        for target, expected_key in (
+            ("0x0600126D", "detect_ecus_ctor_and_ui_sites_observed"),
+            ("0x06001343", "detect_on_detect_done_exact_static_site"),
+            ("0x060012F7", "detect_device_available_true_exact_static_site"),
+        ):
+            with self.subTest(target=target):
+                src = good.replace(target, "0x06000000")
+                e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+                self.assertFalse(e[expected_key])
+                self.assertFalse(e["detect_ecus_ctor_and_ui_sites_observed"])
+                self.assertEqual(e["detect_availability_refresh_static_site_count"], 4)
+
+    def test_56_allowlist_and_incomplete_evidence_never_claim_client_acceptance(self):
+        src = self._phase_detect_fixture() + "# PRIVATE-VIN-AND-CUSTOMER-PATH"
+        report = tool.audit(self._phase_inv(src, "0x0600132B"), src)
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
+        self.assertNotIn("PRIVATE-VIN", json.dumps(report))
+        self.assertIn("not proof of successful user-facing detection",
+                      " ".join(report["limitations"]))
+        self.assertIn("do not establish runtime ECU list contents",
+                      " ".join(report["limitations"]))
+        self.assertFalse(report["evidence"]["pre_detect_has_distinct_result_and_event_sites"])
 
 
 def inventory_for_single(source, token, count):
