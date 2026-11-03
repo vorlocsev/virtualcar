@@ -144,5 +144,126 @@ class LegacyVida2010BoundaryTests(unittest.TestCase):
             self.assertNotIn(marker, errors.getvalue())
 
 
+    @staticmethod
+    def _published_preflight(*, target="40", connect_channel=90,
+                             filter_channel=90, periodic_channel=90,
+                             write_channel=90, baud=125000,
+                             protocol="0x10000001", flags="0x20000100",
+                             stmin=40, sample_point=68, config_label="DATA_RATA"):
+        return [
+            request(target),
+            old(f"PassThruConnect(88, {protocol}, {flags}, {baud}, {connect_channel})",
+                "22:36:22,291"),
+            old(f"PassThruIoctl SET_CONFIG {config_label}={baud}, LOOPBACK=0 BIT_SAMPLE_POINT={sample_point}",
+                "22:36:22,291"),
+            old(f"PassThruIoctl SET_CONFIG CAN_XON_XOFF_STMIN={stmin}"),
+            old(f"Start J2534 message filter ID 0 on channel {filter_channel}"),
+            old(f"Start J2534 periodic message channelId: {periodic_channel} pMsgId:0"),
+            old(f"PassThruWriteMsgs({write_channel}, PASSTHRU_MSG, 1, 2000)"),
+        ]
+
+    def test_09_published_vida_preflight_order_is_observed_not_success(self):
+        lines = self._published_preflight() + [
+            old("J2534 function:passThruWriteMsgs failed with return value:ERR_DEVICE_NOT_CONNECTED"),
+            dump("40"),
+        ]
+        data = tool.audit("\n".join(lines))
+        a = data["attempts"][0]
+        p = a["preflight"]
+        self.assertEqual(p["observed_stage_order"], list(tool.STAGE_ORDER))
+        self.assertTrue(p["matches_published_sample_call_order"])
+        self.assertTrue(p["connect_protocol_matches_published_sample"])
+        self.assertTrue(p["connect_flags_match_published_sample"])
+        self.assertEqual(p["connect_declared_baud_bps"], 125000)
+        self.assertTrue(p["set_config_rate_matches_connect"])
+        self.assertTrue(p["filter_channel_matches_connect"])
+        self.assertTrue(p["periodic_channel_matches_connect"])
+        self.assertTrue(p["write_channel_matches_connect"])
+        self.assertEqual(a["outcome"], "write_failed")
+        self.assertFalse(p["connect_success_verified"])
+        self.assertFalse(p["filter_effect_verified"])
+        self.assertFalse(p["periodic_effect_verified"])
+        self.assertFalse(a["j2534_write_success_verified"])
+
+    def test_10_out_of_order_and_missing_stmin_do_not_pass_stage_order(self):
+        original = self._published_preflight()
+        swap = list(original)
+        swap[3], swap[4] = swap[4], swap[3]
+        reordered = tool.audit("\n".join(swap))["attempts"][0]["preflight"]
+        self.assertFalse(reordered["matches_published_sample_call_order"])
+        self.assertEqual(reordered["observed_stage_order"][2], "start_filter")
+        missing = tool.audit("\n".join(original[:3] + original[4:]))
+        p = missing["attempts"][0]["preflight"]
+        self.assertFalse(p["set_config_stmin_40"])
+        self.assertFalse(p["matches_published_sample_call_order"])
+        self.assertTrue(p["connect_call_observed"])
+
+    def test_11_wrong_write_channel_is_not_treated_as_matched(self):
+        p = tool.audit("\n".join(self._published_preflight(write_channel=91))
+                       )["attempts"][0]["preflight"]
+        self.assertFalse(p["write_channel_matches_connect"])
+        self.assertFalse(p["matches_published_sample_call_order"])
+        self.assertFalse(p["connect_success_verified"])
+
+    def test_12_wrong_filter_periodic_channels_are_separate_failures(self):
+        p = tool.audit("\n".join(self._published_preflight(filter_channel=88,
+                                   periodic_channel=89)))["attempts"][0]["preflight"]
+        self.assertFalse(p["filter_channel_matches_connect"])
+        self.assertFalse(p["periodic_channel_matches_connect"])
+        self.assertTrue(p["write_channel_matches_connect"])
+        self.assertFalse(p["matches_published_sample_call_order"])
+
+    def test_13_sample_specific_flags_and_baud_are_not_normative_requirements(self):
+        altered = self._published_preflight(baud=500000, protocol="0x05",
+                                            flags="0x00000100")
+        p = tool.audit("\n".join(altered))["attempts"][0]["preflight"]
+        self.assertEqual(p["connect_declared_baud_bps"], 500000)
+        self.assertTrue(p["set_config_rate_matches_connect"])
+        self.assertFalse(p["connect_protocol_matches_published_sample"])
+        self.assertFalse(p["connect_flags_match_published_sample"])
+        self.assertFalse(p["matches_published_sample_call_order"])
+        self.assertFalse(p["connect_success_verified"])
+
+    def test_14_historical_config_spelling_and_corrected_alias(self):
+        old_label = self._published_preflight(config_label="DATA_RATA")
+        new_label = self._published_preflight(config_label="DATA_RATE")
+        for lines in (old_label, new_label):
+            with self.subTest(label=lines[2].split("=")[0]):
+                p = tool.audit("\n".join(lines))["attempts"][0]["preflight"]
+                self.assertTrue(p["set_config_rate_observed"])
+                self.assertTrue(p["set_config_loopback_disabled"])
+                self.assertTrue(p["set_config_sample_point_68"])
+                self.assertTrue(p["matches_published_sample_call_order"])
+
+    def test_15_bounded_connect_metadata_and_unknown_channels_fail_closed(self):
+        invalid = self._published_preflight()
+        invalid[1] = old("PassThruConnect(88, 0x10000001, 0x20000100, 125000, 4294967296)")
+        record = tool.audit("\n".join(invalid))
+        p = record["attempts"][0]["preflight"]
+        self.assertFalse(p["connect_call_observed"])
+        self.assertIsNone(p["write_channel_matches_connect"])
+        self.assertFalse(p["matches_published_sample_call_order"])
+        self.assertEqual(record["adapter_error_counts"]["invalid_preflight_connect_metadata"], 1)
+        # The number printed by the adapter must never become a report field.
+        self.assertNotIn("4294967296", json.dumps(record))
+
+    def test_16_multiple_preflight_attempts_and_private_metadata_do_not_leak(self):
+        privacy = "PRIVATE_CUSTOMER_SERIAL_AND_VIN"
+        lines = self._published_preflight()
+        lines += [old(f"J2534 manufacturer: {privacy}"),
+                  old("Get last J2534 error: " + privacy),
+                  old("J2534 function:passThruWriteMsgs failed with return value:ERR_DEVICE_NOT_CONNECTED"),
+                  request("50", time="22:36:22,416")]
+        result = tool.audit("\n".join(lines))
+        data = json.dumps(result)
+        self.assertNotIn(privacy, data)
+        self.assertNotIn("PassThruConnect(", data)
+        self.assertEqual(result["attempts"][0]["next_request_delta_ms"], 125)
+        self.assertTrue(result["attempts"][0]["preflight"]["matches_published_sample_call_order"])
+        self.assertFalse(result["attempts"][1]["preflight"]["connect_call_observed"])
+        self.assertFalse(result["thread_binding_verified"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
