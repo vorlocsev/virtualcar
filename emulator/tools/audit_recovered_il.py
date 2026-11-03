@@ -508,6 +508,92 @@ def _detect_unit_projection_sites(ops, offsets):
 
 
 
+
+# The UI view-model method is indexed only; its extracted *body* is absent.
+# Tokens below are module-local to Frontend.exe and name only a call inventory,
+# not a verified call path, unit filtering predicate or wire request.
+UI_DONE_CALL_TOKENS = {
+    "model_id": "0x0600695B",
+    "header": "0x0600695D",
+    "initialize_units": "0x06002469",
+    "dtcs_row_height": "0x060023C9",
+    "dtcs_visibility": "0x060023D5",
+    "cem_command_getter": "0x060023DC",
+    "tuning_getter": "0x060023F1",
+}
+AVAILABILITY_METHODS = (
+    ("Frontend.Client.Core.dll", "0x06001BB2"),
+    ("Frontend.Client.Core.dll", "0x06001BBA"),
+    ("Frontend.Client.Core.dll", "0x06001BCC"),
+    ("Frontend.Client.Core.dll", "0x06001BE9"),
+)
+
+
+def _ui_done_inventory_phase(by_key, blocks):
+    """Summarize UI method call *inventory* without inventing its method body.
+
+    A missing method or call inventory means unobserved evidence, not an
+    empty collection, false UI predicate, missing vehicle or failed scan.
+    """
+    known = by_key.get(KNOWN["ui_done"])
+    body = KNOWN["ui_done"] in blocks
+    refresh_bodies = sum(key in blocks for key in AVAILABILITY_METHODS)
+    result = {
+        "ui_done_inventory_state": "not_selected",
+        "ui_done_covered_call_tokens": 0,
+        "ui_done_initialize_units_call_indexed": False,
+        "ui_done_cem_command_getter_indexed": False,
+        "ui_done_ui_projection_call_token_count": 0,
+        "ui_done_full_body_in_excerpt": body,
+        "ui_done_availability_bodies_in_excerpt": refresh_bodies,
+        "ui_done_reported_decoded_instructions": None,
+        "ui_done_reported_decoder_issues": None,
+    }
+    if known is None:
+        return result
+    instructions = known.get("decoded_instructions")
+    if type(instructions) is int and 0 <= instructions <= 100000:
+        result["ui_done_reported_decoded_instructions"] = instructions
+    issues = known.get("decoder_issues")
+    if type(issues) is int and 0 <= issues <= 100000:
+        result["ui_done_reported_decoder_issues"] = issues
+    calls = known.get("calls")
+    if calls is None:
+        result["ui_done_inventory_state"] = "calls_unreported"
+        return result
+    if not isinstance(calls, list):
+        result["ui_done_inventory_state"] = "invalid_call_inventory"
+        return result
+    counts = {token.lower(): 0 for token in UI_DONE_CALL_TOKENS.values()}
+    for call in calls:
+        if not isinstance(call, dict):
+            result["ui_done_inventory_state"] = "invalid_call_inventory"
+            return result
+        token, count = call.get("token"), call.get("count")
+        if (not isinstance(token, str) or not TOKEN.fullmatch(token)
+                or type(count) is not int or count < 0 or count > 100000):
+            result["ui_done_inventory_state"] = "invalid_call_inventory"
+            return result
+        if token.lower() in counts:
+            counts[token.lower()] += count
+    result["ui_done_covered_call_tokens"] = sum(v == 1 for v in counts.values())
+    init = counts[UI_DONE_CALL_TOKENS["initialize_units"].lower()] == 1
+    cem = counts[UI_DONE_CALL_TOKENS["cem_command_getter"].lower()] == 1
+    result["ui_done_initialize_units_call_indexed"] = init
+    result["ui_done_cem_command_getter_indexed"] = cem
+    result["ui_done_ui_projection_call_token_count"] = sum(
+        counts[UI_DONE_CALL_TOKENS[label].lower()] == 1
+        for label in ("model_id", "header", "dtcs_row_height", "dtcs_visibility")
+    )
+    result["ui_done_inventory_state"] = (
+        "seven_single_calls_indexed"
+        if result["ui_done_covered_call_tokens"] == len(UI_DONE_CALL_TOKENS)
+        else "partial_or_duplicate_named_calls"
+    )
+    return result
+
+
+
 def audit(inventory, excerpts):
     selected = inventory.get("selected_methods")
     if not isinstance(selected, list) or not selected:
@@ -542,7 +628,7 @@ def audit(inventory, excerpts):
     detect_block = blocks.get(KNOWN["detect"], {})
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v7",
+        "format": "recovered-il-evidence-audit-v8",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -584,6 +670,7 @@ def audit(inventory, excerpts):
                 detect_block.get("offsets", [])),
             **_detect_unit_projection_sites(detect,
                 detect_block.get("offsets", [])),
+            **_ui_done_inventory_phase(by_key, blocks),
         },
         "limitations": [
             "Method references do not prove execution order in flattened CFG",
@@ -598,6 +685,9 @@ def audit(inventory, excerpts):
             "RefreshAvailability and DeviceAvailable sites do not establish runtime ECU list contents",
             "Two Units enumeration sites are not proof of two executed loops, nonempty Units, or individual ECU reads",
             "Unit hardware getters and LoaderResult assignment are static motifs without authenticated identity or acceptance evidence",
+            "UI method call inventory is not a recovered method body or a proven ECU-list visibility predicate",
+            "Indexed InitializeUnits and CEM getter calls do not prove individual ECU reads or configuration access",
+            "Availability method bodies missing from a selected excerpt are unobserved, not absent from the vendor program",
         ],
     }
 

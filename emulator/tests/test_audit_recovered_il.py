@@ -177,7 +177,7 @@ IL_0000 ret
         report = tool.audit(inventory_for_detect_shape(source), source)
         self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
 
 
     @staticmethod
@@ -352,7 +352,7 @@ IL_0020 ret
         report = tool.audit(inventory_for_detect_shape(src), src)
         self.assertIn("Shared opaque predicate usage does not reveal equality or acceptance semantics",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
         self.assertNotIn("hardware=real", json.dumps(report))
 
 
@@ -414,7 +414,7 @@ IL_0020 ret
     def test_40_summary_is_allowlisted_no_raw_bytes(self):
         src = self._string_methodspec_fixture()
         report = tool.audit(inventory_for_detect_shape(src), src)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
         self.assertNotIn("0x2B000002", json.dumps(report))
         self.assertNotIn(r"\x01\x0e", json.dumps(report))
         self.assertIn("MethodSpec<string> does not establish generic method return type or semantics",
@@ -645,7 +645,7 @@ IL_0020 ret
     def test_56_allowlist_and_incomplete_evidence_never_claim_client_acceptance(self):
         src = self._phase_detect_fixture() + "# PRIVATE-VIN-AND-CUSTOMER-PATH"
         report = tool.audit(self._phase_inv(src, "0x0600132B"), src)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
         self.assertNotIn("PRIVATE-VIN", json.dumps(report))
         self.assertIn("not proof of successful user-facing detection",
                       " ".join(report["limitations"]))
@@ -767,7 +767,7 @@ IL_0020 ret
         src = original + "# PRIVATE_VIN_AND_CREDENTIALS_SHOULD_STAY_PRIVATE\n"
         report = tool.audit(self._phase_inv(src, "0x0600132B"), src)
         dumped = json.dumps(report)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v8")
         self.assertNotIn("PRIVATE_VIN", dumped)
         self.assertIn("not proof of two executed loops", " ".join(report["limitations"]))
         self.assertIn("without authenticated identity or acceptance evidence",
@@ -779,6 +779,149 @@ IL_0020 ret
         r = tool.audit(self._phase_inv(other, "0x06001160"), other)
         self.assertEqual(r["evidence"]["detect_result_units_enumerator_static_site_count"], 0)
         self.assertFalse(r["evidence"]["detect_units_and_loader_static_shapes_complete"])
+
+
+
+    @staticmethod
+    def _ui_done_fixture(*, omit=(), extra=(), decoder_issues=0):
+        tokens = (
+            ("model_id", "0x0600695B"),
+            ("header", "0x0600695D"),
+            ("initialize_units", "0x06002469"),
+            ("dtcs_row_height", "0x060023C9"),
+            ("dtcs_visibility", "0x060023D5"),
+            ("cem_command_getter", "0x060023DC"),
+            ("tuning_getter", "0x060023F1"),
+        )
+        return {"selected_methods": [{
+            "module": "Frontend.exe", "method_token": "0x06002472",
+            "decoded_instructions": 379, "decoder_issues": decoder_issues,
+            "calls": [
+                {"token": token, "count": 1, "symbol": "PRIVATE_UI_MARKER"}
+                for name, token in tokens if name not in omit
+            ] + list(extra),
+        }]}
+
+    @staticmethod
+    def _ui_report(inv):
+        # No vendor method body is added: a one-instruction mock Detect
+        # exists only to exercise the audit's required parsed input.
+        return tool.audit(inv, D + "Frontend.Client.Core.dll: MethodDef "
+                          "0x06001160 VddCommand.ParseData; 1 decoded opcodes\n"
+                          "IL_0000 ret\n")
+
+    def test_65_ui_inventory_all_seven_methods_without_body(self):
+        inv = self._ui_done_fixture()
+        inv["selected_methods"].append({
+            "module": "Frontend.Client.Core.dll",
+            "method_token": "0x0600132B", "decoded_instructions": 4,
+        })
+        report = tool.audit(inv, D)
+        ev = report["evidence"]
+        self.assertEqual(ev["ui_done_inventory_state"], "seven_single_calls_indexed")
+        self.assertEqual(ev["ui_done_covered_call_tokens"], 7)
+        self.assertTrue(ev["ui_done_initialize_units_call_indexed"])
+        self.assertTrue(ev["ui_done_cem_command_getter_indexed"])
+        self.assertEqual(ev["ui_done_ui_projection_call_token_count"], 4)
+        self.assertEqual(ev["ui_done_reported_decoded_instructions"], 379)
+        self.assertEqual(ev["ui_done_reported_decoder_issues"], 0)
+        self.assertFalse(ev["ui_done_full_body_in_excerpt"])
+        self.assertEqual(ev["ui_done_availability_bodies_in_excerpt"], 0)
+
+    def test_66_missing_ui_method_means_not_selected(self):
+        report = tool.audit(inventory("0x0600132B"), D)
+        ev = report["evidence"]
+        self.assertEqual(ev["ui_done_inventory_state"], "not_selected")
+        self.assertEqual(ev["ui_done_covered_call_tokens"], 0)
+        self.assertIsNone(ev["ui_done_reported_decoded_instructions"])
+        self.assertFalse(ev["ui_done_full_body_in_excerpt"])
+
+    def test_67_partial_ui_call_inventory_is_not_a_full_ui_contract(self):
+        inv = self._ui_done_fixture(omit=("initialize_units", "tuning_getter"))
+        inv["selected_methods"].append({
+            "module": "Frontend.Client.Core.dll",
+            "method_token": "0x0600132B", "decoded_instructions": 4,
+        })
+        ev = tool.audit(inv, D)["evidence"]
+        self.assertEqual(ev["ui_done_inventory_state"],
+                         "partial_or_duplicate_named_calls")
+        self.assertEqual(ev["ui_done_covered_call_tokens"], 5)
+        self.assertFalse(ev["ui_done_initialize_units_call_indexed"])
+        self.assertTrue(ev["ui_done_cem_command_getter_indexed"])
+
+    def test_68_bad_ui_call_counts_and_tokens_fail_closed(self):
+        for invalid in (
+            {"token": "PRIVATE_VIN", "count": 1},
+            {"token": "0x06002469", "count": "1"},
+            {"token": "0x06002469", "count": True},
+            {"token": "0x06002469", "count": -1},
+        ):
+            with self.subTest(invalid=invalid):
+                inv = self._ui_done_fixture(extra=(invalid,))
+                inv["selected_methods"].append({
+                    "module": "Frontend.Client.Core.dll",
+                    "method_token": "0x0600132B", "decoded_instructions": 4,
+                })
+                ev = tool.audit(inv, D)["evidence"]
+                self.assertEqual(ev["ui_done_inventory_state"],
+                                 "invalid_call_inventory")
+
+    def test_69_duplicate_ui_call_does_not_count_as_single(self):
+        inv = self._ui_done_fixture(extra=(
+            {"token": "0x06002469", "count": 1, "symbol": "PRIVATE"},))
+        inv["selected_methods"].append({
+            "module": "Frontend.Client.Core.dll",
+            "method_token": "0x0600132B", "decoded_instructions": 4,
+        })
+        ev = tool.audit(inv, D)["evidence"]
+        self.assertEqual(ev["ui_done_covered_call_tokens"], 6)
+        self.assertFalse(ev["ui_done_initialize_units_call_indexed"])
+        self.assertEqual(ev["ui_done_inventory_state"],
+                         "partial_or_duplicate_named_calls")
+
+    def test_70_frontend_ui_token_is_module_scoped(self):
+        inv = self._ui_done_fixture()
+        inv["selected_methods"][0]["module"] = "Frontend.Client.Core.dll"
+        inv["selected_methods"][0]["decoded_instructions"] = 4
+        src = """Frontend.Client.Core.dll: MethodDef 0x06002472 Other.Name; 4 decoded opcodes
+IL_0000 nop
+IL_0001 nop
+IL_0002 nop
+IL_0003 ret
+"""
+        ev = tool.audit(inv, src)["evidence"]
+        self.assertEqual(ev["ui_done_inventory_state"], "not_selected")
+        self.assertFalse(ev["ui_done_full_body_in_excerpt"])
+
+    def test_71_method_body_flag_tracks_only_actual_excerpt(self):
+        inv = self._ui_done_fixture()
+        inv["selected_methods"][0]["decoded_instructions"] = 1
+        src = ("Frontend.exe: MethodDef 0x06002472 "
+               "DetectViewModel.Model_DetectDone; 1 decoded opcodes\n"
+               "IL_0000 ret\n")
+        report = tool.audit(inv, src)
+        ev = report["evidence"]
+        self.assertTrue(ev["ui_done_full_body_in_excerpt"])
+        self.assertEqual(ev["ui_done_inventory_state"], "seven_single_calls_indexed")
+        self.assertNotIn("ECU accepted", json.dumps(report))
+
+    def test_72_ui_audit_allowlisted_redacts_raw_symbols_and_unknowns(self):
+        inv = self._ui_done_fixture(extra=(
+            {"token": "0x0600ABCD", "count": 1, "symbol": "CUSTOMER-PRIVATE-VIN"},
+        ))
+        inv["selected_methods"].append({
+            "module": "Frontend.Client.Core.dll",
+            "method_token": "0x0600132B", "decoded_instructions": 4,
+        })
+        out = tool.audit(inv, D)
+        dumped = json.dumps(out)
+        self.assertEqual(out["format"], "recovered-il-evidence-audit-v8")
+        self.assertNotIn("CUSTOMER-PRIVATE-VIN", dumped)
+        self.assertNotIn("PRIVATE_UI_MARKER", dumped)
+        self.assertNotIn("0x06002472", dumped)
+        self.assertIn("not a recovered method body", " ".join(out["limitations"]))
+        self.assertEqual(out["evidence"]["ui_done_inventory_state"],
+                         "seven_single_calls_indexed")
 
 
 def inventory_for_single(source, token, count):

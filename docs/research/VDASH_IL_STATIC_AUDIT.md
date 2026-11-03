@@ -365,3 +365,55 @@ client acceptance or a real XC90 V8 MY2009 scan.
 
 **Next gating evidence:** obtain legally accessible original/recovered bodies for the constructors `0x060011BB/0x0600126D`, the four `RefreshAvailability` implementations, the `get_Ecu`/`get_HardwareNumber` property types, the loader callback `0x06001387` and the UI's `Model_DetectDone` predicate. In an isolated, read-only VDASH client session, independently record (1) source/version and selected driver, (2) fresh pre-detect vs cache, (3) explicit Connect, (4) J2534 TX/RX/filters with statuses, (5) command-completion milestone and (6) actual ECU list. No CEM A3/A6/B9FB positive response should be fabricated to pass these gates.
 
+## UI Model_DetectDone call inventory: known tokens, missing body (2026-11-03)
+
+The saved **VDASH portable 2.5.115.79** selected-method inventory includes
+`Frontend.exe` `DetectViewModel.Model_DetectDone` (MethodDef `0x06002472`,
+reported **379 decoded instructions**, **0 decoder issues**). Importantly,
+the user-provided selected IL *excerpt does not contain its full body*.
+The inventory lists method calls, **not their order or reached branches**:
+
+| Named call in indexed inventory | MethodDef in Frontend.exe | Bounded interpretation |
+| --- | --- | --- |
+| `set_ModelId` | `0x0600695B` | Model identifier may be updated in UI; actual value unknown |
+| `set_Header` | `0x0600695D` | Displayed header has a setter; not proof of a freshly detected vehicle |
+| `InitializeUnits` | `0x06002469` | A unit-list initializer is referenced; **body and acceptance predicate unavailable** |
+| `set_DtcsRowHeight` | `0x060023C9` | UI layout property, not an ECU scan |
+| `set_IsShowDtcsVisible` | `0x060023D5` | DTC visibility property, not ECU availability proof |
+| `get_CemCommand` | `0x060023DC` | Command property getter only; not evidence of CEM transmission, configuration or PIN |
+| `get_Tuning` | `0x060023F1` | UI/model property getter; not evidence a tuning command ran |
+
+The earlier static `VddModel.Detect` sites called
+`RefreshAvailability` on DIM/ECM/ICM/PHM methods:
+`0x06001BB2 / 0x06001BBA / 0x06001BCC / 0x06001BE9`
+(all in `Frontend.Client.Core.dll`). **None of these four method bodies
+nor `Model_DetectDone` was included in the selected recovered IL excerpt.**
+This is an **evidence-coverage limitation**, not evidence that the original
+program lacks their implementations.
+
+### New G4 coverage report
+
+The existing static auditor reports, under
+`recovered-il-evidence-audit-v8`, the number of seven exact one-count UI
+call tokens indexed, presence of `InitializeUnits` and the `CemCommand`
+getter, four UI projection method tokens, known instruction/decoder issue
+counts, and whether corresponding full method bodies are actually present
+in the selected excerpt. Its status is intentionally
+`not_selected / calls_unreported / invalid_call_inventory /
+partial_or_duplicate_named_calls / seven_single_calls_indexed`.
+An index-only result can **never** be treated as a parsed ECU list or a
+verified display predicate.
+
+Eight additional synthetic regressions (#65–72) enforce assembly-local
+MethodDef matching, missing source, partial/duplicate/malformed call
+inventories, direct method-body presence distinction, and output
+allowlisting. No proprietary CIL, VIN, identifiers, PIN, auth tokens or
+wire payloads were stored.
+
+**Next missing evidence:** complete authorized bodies of
+`Model_DetectDone`, `InitializeUnits`, four `RefreshAvailability`
+implementations, `Ecus` constructor and `DetectResult.Units` model.
+In parallel obtain a fresh read-only, version-scoped VDASH UI observation
+and J2534 transport audit before deciding whether transport or UI is the
+blocker. Do not hard-code fabricated OEM CEM responses to satisfy presumed
+UI conditions. The Virtual Car emulator and J2534 DLL were not changed.
