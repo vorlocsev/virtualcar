@@ -196,7 +196,8 @@ def _safe_method_signature(method):
     return_type = signature.get("return_type")
     if (kind != "method"
             or type(params) is not int or not 0 <= params <= 64
-            or type(generic) is not int or not 0 <= generic <= 64
+            or (generic is not None and
+                (type(generic) is not int or not 0 <= generic <= 64))
             or not isinstance(parameter_types, list)
             or len(parameter_types) != params
             or not all(isinstance(p, str) and bool(p.strip())
@@ -211,6 +212,84 @@ def _safe_method_signature(method):
         "parameter_count": params,
         "generic_parameter_count": generic,
         "return_kind": return_kind,
+    }
+
+
+
+def _typed_staging_alignment(methods, fields):
+    """Compare raw signature types *within one REA-inspected DLL*.
+
+    This exports categorical, allowlisted structure only. Metadata token
+    identities are valid only for the reported patched-file SHA/MVID.
+    """
+    unknown = {
+        "status": "unreported",
+        "helper_a_return_shape": "unknown",
+        "helper_b_return_shape": "unknown",
+        "parse_data_parameter_shapes": [],
+    }
+    if fields is None:
+        return unknown
+    if not isinstance(fields, list) or len(fields) > 100000:
+        raise ValueError("invalid_field_rows")
+    wanted = ("0x0600117a", "0x0600117b", "0x06001160")
+    by_token = {m["token"].lower(): m for m in methods
+                if m["token"].lower() in wanted}
+    result_fields = [f for f in fields
+                     if isinstance(f, dict)
+                     and isinstance(f.get("token"), str)
+                     and f["token"].lower() == "0x04000333"]
+    if len(result_fields) > 1:
+        raise ValueError("duplicate_result_field")
+    if len(result_fields) != 1 or not all(t in by_token for t in wanted):
+        return unknown
+    field_sig = result_fields[0].get("signature")
+    if not isinstance(field_sig, dict) or field_sig.get("parse_status") != "decoded":
+        return unknown
+    if field_sig.get("kind") != "field":
+        return unknown
+    field_type = field_sig.get("field_type")
+    if not isinstance(field_type, str) or not field_type:
+        return unknown
+    parsed = []
+    for token in wanted:
+        sig = by_token[token].get("signature")
+        if not isinstance(sig, dict) or sig.get("parse_status") != "decoded":
+            return unknown
+        if sig.get("kind") != "method":
+            return unknown
+        pts, ret = sig.get("parameter_types"), sig.get("return_type")
+        if (type(sig.get("parameter_count")) is not int or
+                not isinstance(pts, list) or
+                len(pts) != sig["parameter_count"] or
+                not all(isinstance(p, str) and p for p in pts) or
+                not isinstance(ret, str) or not ret):
+            return unknown
+        parsed.append((pts, ret))
+    (a_params, a_return), (b_params, b_return), (parse_params, parse_return) = parsed
+    compatible = (
+        len(a_params) == len(b_params) == 1
+        and a_params[0] == b_params[0] == field_type
+        and len(parse_params) == 2
+        and parse_params == [a_return, b_return]
+        and parse_return.strip().casefold() in ("void", "system.void")
+    )
+    def shape(raw):
+        if raw == "u1[]":
+            return "byte_array"
+        if re.fullmatch(r"class:[0-9]+\[\]", raw):
+            return "class_array"
+        if re.fullmatch(r"class:[0-9]+", raw):
+            return "class_reference"
+        if raw.strip().casefold() in ("void", "system.void"):
+            return "void"
+        return "other"
+    return {
+        "status": ("compatible_static_signatures" if compatible
+                   else "signature_mismatch"),
+        "helper_a_return_shape": shape(a_return),
+        "helper_b_return_shape": shape(b_return),
+        "parse_data_parameter_shapes": [shape(x) for x in parse_params],
     }
 
 
@@ -320,6 +399,8 @@ def audit(document):
         "inspection_scope": inspection_scope,
         "call_sites": sites,
         "structural_edges": relationships,
+        "typed_staging_alignment": _typed_staging_alignment(
+            methods, data.get("fields")),
         "method_signatures": {
             name: signatures.get(
                 _BODIES[name],
@@ -346,6 +427,9 @@ def audit(document):
             "The MethodSpec type argument is known from separate private IL evidence, not inferred here",
             "Decoded parameter count excludes any implicit instance receiver and does not establish argument meaning",
             "Return kind only distinguishes void from non-void; the underlying obfuscated type name stays private",
+            "Signatures may be decoded on normalized probe copies while method CIL remains malformed",
+            "Compatible static signatures do not prove reachability, parse success or OEM ECU acceptance",
+            "Null generic parameter count is unknown, not evidence of zero generic parameters",
             "No matching helper body or signature in a selected inventory does not prove the helper is absent",
             "Static CIL evidence is not VDASH ECU acceptance or an OEM CEM response",
         ],
