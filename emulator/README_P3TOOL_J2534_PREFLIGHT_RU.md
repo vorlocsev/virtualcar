@@ -22,6 +22,9 @@ Observed J2534 \`PassThruConnect\` combinations:
 | CAN_XON_XOFF LS | 268435457 / 0x10000001 | 0x20000600 | 125000 | ERR_INVALID_PROTOCOL_ID |
 
 These are **P3** client code paths, not proof of P2 CEM MY2009 compatibility.
+0x8004/0x8005 name optional J2534-2 pin-switching protocols. A later opt-in
+[configuration-only probe](README_CAN_PS_CONFIG_PROBE_RU.md) can allocate a
+quarantined 0x8004 channel; default behavior in this table stays unchanged.
 The reported flags have provider-specific semantics. Alias-converting
 0x8004/0x8005/0x10000001 to 5/6 would be misleading and is not implemented.
 
@@ -44,10 +47,11 @@ Each \`SET_CONFIG\` entry writes another fixed metadata record:
 The final field is \`1\` only for parameter \`DATA_RATE=1\`, which changes
 the virtual channel's baud. For the currently unimplemented parameters
 \`LOOP_BACK=3\`, \`BIT_SAMPLE_POINT=23\`, \`ISO15765_BS=30\`,
-\`ISO15765_STMIN=31\`, \`J1962_PINS=779\`, the call preserves old behavior:
+\`ISO15765_STMIN=31\`, \`J1962_PINS=32769 (0x8001)\`, the call preserves old behavior:
 returns success but does not implement the hardware/transport option;
 the metadata records \`applied=0\`. Unknown parameter values and IDs
-are zeroed before logging, not silently emitted.
+are zeroed before logging, not silently emitted. The old label J1962_PINS=779
+was an ID/value error: 779 (0x030B) is a pin-pair value, not the parameter ID.
 
 ## Safe post-session report (run inside Windows VMware)
 

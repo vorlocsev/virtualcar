@@ -1,0 +1,705 @@
+{
+  "format": "vdash-can-ps-d8-outcomes-runtime-summary-v1",
+  "date": "2026-11-03",
+  "synthetic_model_year": 2005,
+  "contains_payload_data": false,
+  "vmware_guest_tested": false,
+  "physical_j2534_tested": false,
+  "cem_identity_verified": false,
+  "normal_mode_predicate_verified": false,
+  "source": {
+    "pr": 42,
+    "head": "1a78b82c4c8c2ba6f12bb49a6cb2eb958da31028",
+    "ci_run": 41621035695,
+    "ci_merge_ref": "a98a9332cc3fdd30d1bd9fc79c01d464c57e4756",
+    "artifact_id": 13222683769,
+    "artifact_sha256": "6d9d1dd284c91826b4d7a7c5b96a5f2a4b500b2b46833e89f5dab5a165ce50c1",
+    "loaded_dll_sha256": "ab9494e47e8585f8d9ab9ec8ad84c65ca9f8d7d722af795a4758ed51d61f43c7",
+    "baseline_profile_sha256": "cca3fc41ad09381a2c6239313466afb5c4b52b421e8015bacc276c839b2af860",
+    "gui_sha256": "eed3f62e84dbaf295f9225c8b82f043bd25d61fea74209e4b5c31c8a2d843ea8",
+    "worker_sha256": "e35bf82258b84292cf87c6c6f90ab472d354424c13ec9d9ba73dd9299870773f",
+    "supervisor_sha256": "5fa798a85db353dfd03966f79ff84273e69b80c6e9199b4874452c3c2ff806e1",
+    "text_auditor_commit": "c0f6484f62f0cc78afb8c8b804dffd78f1363dce",
+    "text_auditor_sha256": "e38170b56ec60467f5ff64bd89b4353a425f532a707d81bae010070466139233"
+  },
+  "matched_control": {
+    "api_outcome_mask": 0,
+    "profile_sha256": "421eaa88bf47c2f5fde28aa48a713a89d3f126cd754d04f65af22b5a7322b246",
+    "direct_module_binding_verified": true,
+    "post_run_hashes_unchanged": {
+      "dll": true,
+      "profile": true,
+      "gui": true,
+      "worker": true
+    },
+    "capture": {
+      "text": {
+        "prefix_unchanged": true,
+        "suffix_sha256": "81cb5bfbcf793eea795a8cfeadaad8a567aeb380f75170fd17c4c1fa3022dd59",
+        "suffix_bytes": 31989,
+        "suffix_lines": 263
+      },
+      "backend": {
+        "prefix_unchanged": true,
+        "suffix_sha256": "edec5c3f43f3c5f671cca1b16397ae39a9b485143e9b6e9a57657a110957df0b",
+        "suffix_bytes": 8012,
+        "suffix_lines": 32
+      }
+    },
+    "report": "VDASH_CAN_PS_FILTER_OUTCOME_RUNTIME_20261103.md",
+    "comparison_scope": "first_complete_cycle_and_source_order_not_outcome_rates"
+  },
+  "cases": [
+    {
+      "api_outcome_mask": 2,
+      "profile_sha256": "7712c1df37952185ee74e8e2e9ac7010751bef20f1ca0283a2e3cdbd359c5edd",
+      "profile_one_character_difference_from_mask0_verified": true,
+      "direct_module_binding_verified": true,
+      "post_run_hashes_unchanged": {
+        "dll": true,
+        "profile": true,
+        "gui": true,
+        "worker": true
+      },
+      "runtime": {
+        "gui_file_version": "2.5.115.85",
+        "gui_invocations": 1,
+        "captured_native_process_count": 1,
+        "api_windows_lines": [
+          [
+            20,
+            152
+          ],
+          [
+            172,
+            262
+          ]
+        ],
+        "open_markers": 2,
+        "close_markers": 2,
+        "unfinished_api_sessions": 0,
+        "agent_refresh_cycles": 0,
+        "termination_reason": "worker_runtime_deadline",
+        "requested_worker_deadline_seconds": 90,
+        "requested_close_limit": 3,
+        "close_markers_observed_by_supervisor": 2,
+        "cleanup_remaining": {
+          "monitor": 0,
+          "frontend": 0,
+          "worker": 0
+        }
+      },
+      "capture": {
+        "text": {
+          "prefix_unchanged": true,
+          "suffix_sha256": "6612b062da28a1d75d0b4e9806178cc9f71b08ee560fa5fbbf47608dca1cc82c",
+          "suffix_bytes": 31913,
+          "suffix_lines": 262
+        },
+        "backend": {
+          "prefix_unchanged": true,
+          "suffix_sha256": "1c12b527fe0c275bcc46631e6cd52d3a878bcbb3ef4b95677cff307b09cb66cb",
+          "suffix_bytes": 7980,
+          "suffix_lines": 32
+        }
+      },
+      "connect": {
+        "attempts": 16,
+        "invalid_events": 0,
+        "modes": [
+          {
+            "baud_bps": "500000",
+            "count": 1,
+            "flags": "other",
+            "protocol": "CAN",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 5,
+            "flags": "other",
+            "protocol": "CAN_PS",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "500000",
+            "count": 4,
+            "flags": "other",
+            "protocol": "ISO15765",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "other",
+            "count": 6,
+            "flags": "other",
+            "protocol": "other",
+            "status": "invalid_protocol"
+          }
+        ],
+        "statuses": {
+          "invalid_protocol": 6,
+          "ok": 10
+        }
+      },
+      "can_ps_api_outcomes": {
+        "calls": 14,
+        "can_transmission_verified": false,
+        "capacity_errors": 0,
+        "categories": [
+          {
+            "baud_bps": "125000",
+            "count": 5,
+            "mask": 2,
+            "operation": "clear_periodic",
+            "outcome": "local_resource_operation",
+            "pins": "pins_3_11",
+            "shape": "none_or_outside_envelope",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 3,
+            "mask": 2,
+            "operation": "filter_registration",
+            "outcome": "rejected_not_transmitted",
+            "pins": "pins_3_11",
+            "shape": "PASS_ID_ONLY",
+            "status": "not_supported"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 5,
+            "mask": 2,
+            "operation": "mode_snapshot",
+            "outcome": "mode_snapshot",
+            "pins": "unselected",
+            "shape": "none_or_outside_envelope",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 3,
+            "mask": 2,
+            "operation": "periodic_registration",
+            "outcome": "rejected_not_transmitted",
+            "pins": "pins_3_11",
+            "shape": "exact_D8",
+            "status": "not_supported"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 3,
+            "mask": 2,
+            "operation": "write_call",
+            "outcome": "simulated_api_success_no_transport",
+            "pins": "pins_3_11",
+            "shape": "exact_D8",
+            "status": "ok"
+          }
+        ],
+        "ecu_response_verified": false,
+        "injected_success_calls": 3,
+        "invalid_events": 0,
+        "lifecycle_calls": 5,
+        "mode": "counterfactual_local_api_outcomes_only",
+        "mode_snapshots": 5,
+        "periodic_firing_observed": false,
+        "read_only_reference_approved": false,
+        "rejected_creation_calls": 6,
+        "state_correlation_performed": false
+      },
+      "rejected_can_ps_attempts": {
+        "calls": 3,
+        "categories": [
+          {
+            "count": 3,
+            "inspection": "inspected_raw_classic_can",
+            "message_protocol": "CAN_PS",
+            "origin": "periodic_registration_call",
+            "pins": "pins_3_11",
+            "shape": "D2_D8_unverified_prefix"
+          }
+        ],
+        "classification_scope": "lexical_request_shape_only",
+        "ecu_response_verified": false,
+        "hardware_pins_verified": false,
+        "invalid_events": 0,
+        "outcome": "rejected_not_transmitted",
+        "periodic_firing_observed": false,
+        "read_only_reference_approved": false,
+        "state_correlation_performed": false
+      },
+      "can_ps_rejected_setup": {
+        "classification_scope": "api_setup_argument_categories_only",
+        "filter_calls": 3,
+        "filters": [
+          {
+            "count": 1,
+            "flags": "both_extended",
+            "flow": "absent",
+            "mask": "zero",
+            "message_protocols": "both_CAN_PS",
+            "pattern": "zero",
+            "sizes": "both_id_only",
+            "type": "pass_filter"
+          },
+          {
+            "count": 2,
+            "flags": "both_zero",
+            "flow": "absent",
+            "mask": "other_redacted",
+            "message_protocols": "both_CAN_PS",
+            "pattern": "nonzero_11_bit_range",
+            "sizes": "both_id_only",
+            "type": "pass_filter"
+          }
+        ],
+        "hardware_pins_verified": false,
+        "invalid_filter_events": 0,
+        "invalid_periodic_events": 0,
+        "outcome": "rejected_not_registered",
+        "periodic": [
+          {
+            "count": 3,
+            "interval_check": "valid_catalog_interval",
+            "interval_ms": "1000",
+            "message_protocol": "CAN_PS"
+          }
+        ],
+        "periodic_firing_observed": false,
+        "periodic_registration_calls": 3,
+        "read_only_reference_approved": false,
+        "state_correlation_performed": false
+      },
+      "backend": {
+        "summary": {
+          "requests": 6,
+          "sessions": 2,
+          "invalid_lines": 0,
+          "statuses": {
+            "delivered": 2,
+            "unsupported": 2,
+            "unverified": 2
+          }
+        },
+        "events": 32,
+        "terminal_seen": 6,
+        "rx_queued": 4,
+        "rx_dequeued": 4,
+        "rx_dropped": 0,
+        "filter_dropped": 0,
+        "evidence_conflicts": 0,
+        "categories_and_order_equal_to_control_prefix": true,
+        "comparison_keys": [
+          "kind",
+          "channel",
+          "protocol",
+          "baud",
+          "route",
+          "reason",
+          "outcome"
+        ],
+        "comparison_is_byte_or_clock_identity": false
+      },
+      "text": {
+        "counts": {
+          "delivered": 2,
+          "unverified": 2
+        },
+        "parse_errors": {},
+        "obd_observation": {
+          "scope": "0902_on_7df_7e0_and_exact_18db33f1_3e80_only",
+          "vin_requests": 2,
+          "vin_delivered": 2,
+          "tester_present_requests": 2,
+          "recognized_d2_p3_probes": 0,
+          "client_result": "client_result_unknown",
+          "vehicle_identity_verified": false,
+          "filter_effect": "not_observed"
+        },
+        "observed_event_markers": {
+          "clear_rx": 19,
+          "close": 2,
+          "connect_result": 16,
+          "disconnect": 10,
+          "filter_start": 3,
+          "open": 2,
+          "rx_delivery_record": 4,
+          "set_config": 43,
+          "tx_record": 6
+        },
+        "rx_metadata": {
+          "checked_frames": 4,
+          "missing_frames": 0,
+          "invalid_frames": 0
+        },
+        "off_route_rx": 0
+      },
+      "restoration": {
+        "adapter_selection_restored": true,
+        "temporary_registration_removed": true,
+        "original_registration_unchanged": true
+      },
+      "ui": {
+        "communication_warning_observed": true,
+        "warning_absence_verified": false,
+        "home_notfound_connect_observed": false,
+        "ecu_list_observed": false,
+        "diagnostic_refresh_reset_security_programming_actions_performed": false
+      },
+      "observed_continuation": {
+        "periodic_registration_success": false,
+        "new_a6_write_attempt": false,
+        "a6_selector_observed": false,
+        "a6_transmitted": false,
+        "a6_ecu_response_observed": false,
+        "new_ps_read_after_outcome": false,
+        "first_cycle_clear_rx": 13,
+        "control_first_cycle_clear_rx": 13
+      }
+    },
+    {
+      "api_outcome_mask": 4,
+      "profile_sha256": "8022c3c02c7bb78e0507817b624b5431054c678994b7030f53a251af16b9417c",
+      "profile_one_character_difference_from_mask0_verified": true,
+      "direct_module_binding_verified": true,
+      "post_run_hashes_unchanged": {
+        "dll": true,
+        "profile": true,
+        "gui": true,
+        "worker": true
+      },
+      "runtime": {
+        "gui_file_version": "2.5.115.85",
+        "gui_invocations": 1,
+        "captured_native_process_count": 1,
+        "api_windows_lines": [
+          [
+            20,
+            161
+          ]
+        ],
+        "open_markers": 1,
+        "close_markers": 1,
+        "unfinished_api_sessions": 0,
+        "agent_refresh_cycles": 0,
+        "termination_reason": "worker_runtime_deadline",
+        "requested_worker_deadline_seconds": 90,
+        "requested_close_limit": 3,
+        "close_markers_observed_by_supervisor": 1,
+        "cleanup_remaining": {
+          "monitor": 0,
+          "frontend": 0,
+          "worker": 0
+        }
+      },
+      "capture": {
+        "text": {
+          "prefix_unchanged": true,
+          "suffix_sha256": "fb5f9b1e09cb29913e042394d529f7238c17978c672bdbe10c12382e788882b0",
+          "suffix_bytes": 19978,
+          "suffix_lines": 161
+        },
+        "backend": {
+          "prefix_unchanged": true,
+          "suffix_sha256": "2447a0535ea0fc4371dc9ab94c325dc16a9bf45740ec33a6c36570219d8c9053",
+          "suffix_bytes": 4006,
+          "suffix_lines": 16
+        }
+      },
+      "connect": {
+        "attempts": 9,
+        "invalid_events": 0,
+        "modes": [
+          {
+            "baud_bps": "500000",
+            "count": 1,
+            "flags": "other",
+            "protocol": "CAN",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 3,
+            "flags": "other",
+            "protocol": "CAN_PS",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "500000",
+            "count": 2,
+            "flags": "other",
+            "protocol": "ISO15765",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "other",
+            "count": 3,
+            "flags": "other",
+            "protocol": "other",
+            "status": "invalid_protocol"
+          }
+        ],
+        "statuses": {
+          "invalid_protocol": 3,
+          "ok": 6
+        }
+      },
+      "can_ps_api_outcomes": {
+        "calls": 11,
+        "can_transmission_verified": false,
+        "capacity_errors": 0,
+        "categories": [
+          {
+            "baud_bps": "125000",
+            "count": 3,
+            "mask": 4,
+            "operation": "clear_periodic",
+            "outcome": "local_resource_operation",
+            "pins": "pins_3_11",
+            "shape": "none_or_outside_envelope",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 4,
+            "mask": 4,
+            "operation": "filter_registration",
+            "outcome": "rejected_not_transmitted",
+            "pins": "pins_3_11",
+            "shape": "PASS_ID_ONLY",
+            "status": "not_supported"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 3,
+            "mask": 4,
+            "operation": "mode_snapshot",
+            "outcome": "mode_snapshot",
+            "pins": "unselected",
+            "shape": "none_or_outside_envelope",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 1,
+            "mask": 4,
+            "operation": "periodic_registration",
+            "outcome": "simulated_api_success_no_transport",
+            "pins": "pins_3_11",
+            "shape": "exact_D8",
+            "status": "ok"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 1,
+            "mask": 4,
+            "operation": "stop_filter",
+            "outcome": "local_handle_not_found",
+            "pins": "pins_3_11",
+            "shape": "none_or_outside_envelope",
+            "status": "invalid_filter_id"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 1,
+            "mask": 4,
+            "operation": "write_call",
+            "outcome": "rejected_not_transmitted",
+            "pins": "pins_3_11",
+            "shape": "exact_D8",
+            "status": "not_supported"
+          },
+          {
+            "baud_bps": "125000",
+            "count": 1,
+            "mask": 4,
+            "operation": "write_call",
+            "outcome": "rejected_not_transmitted",
+            "pins": "pins_3_11",
+            "shape": "none_or_outside_envelope",
+            "status": "not_supported"
+          }
+        ],
+        "ecu_response_verified": false,
+        "injected_success_calls": 1,
+        "invalid_events": 0,
+        "lifecycle_calls": 4,
+        "mode": "counterfactual_local_api_outcomes_only",
+        "mode_snapshots": 3,
+        "periodic_firing_observed": false,
+        "read_only_reference_approved": false,
+        "rejected_creation_calls": 6,
+        "state_correlation_performed": false
+      },
+      "rejected_can_ps_attempts": {
+        "calls": 2,
+        "categories": [
+          {
+            "count": 1,
+            "inspection": "inspected_raw_classic_can",
+            "message_protocol": "CAN_PS",
+            "origin": "write_call",
+            "pins": "pins_3_11",
+            "shape": "D2_40_A6"
+          },
+          {
+            "count": 1,
+            "inspection": "inspected_raw_classic_can",
+            "message_protocol": "CAN_PS",
+            "origin": "write_call",
+            "pins": "pins_3_11",
+            "shape": "D2_D8_unverified_prefix"
+          }
+        ],
+        "classification_scope": "lexical_request_shape_only",
+        "ecu_response_verified": false,
+        "hardware_pins_verified": false,
+        "invalid_events": 0,
+        "outcome": "rejected_not_transmitted",
+        "periodic_firing_observed": false,
+        "read_only_reference_approved": false,
+        "state_correlation_performed": false
+      },
+      "can_ps_rejected_setup": {
+        "classification_scope": "api_setup_argument_categories_only",
+        "filter_calls": 4,
+        "filters": [
+          {
+            "count": 1,
+            "flags": "both_extended",
+            "flow": "absent",
+            "mask": "other_redacted",
+            "message_protocols": "both_CAN_PS",
+            "pattern": "nonzero_11_bit_range",
+            "sizes": "both_id_only",
+            "type": "pass_filter"
+          },
+          {
+            "count": 1,
+            "flags": "both_extended",
+            "flow": "absent",
+            "mask": "zero",
+            "message_protocols": "both_CAN_PS",
+            "pattern": "zero",
+            "sizes": "both_id_only",
+            "type": "pass_filter"
+          },
+          {
+            "count": 2,
+            "flags": "both_zero",
+            "flow": "absent",
+            "mask": "other_redacted",
+            "message_protocols": "both_CAN_PS",
+            "pattern": "nonzero_11_bit_range",
+            "sizes": "both_id_only",
+            "type": "pass_filter"
+          }
+        ],
+        "hardware_pins_verified": false,
+        "invalid_filter_events": 0,
+        "invalid_periodic_events": 0,
+        "outcome": "rejected_not_registered",
+        "periodic": [],
+        "periodic_firing_observed": false,
+        "periodic_registration_calls": 0,
+        "read_only_reference_approved": false,
+        "state_correlation_performed": false
+      },
+      "backend": {
+        "summary": {
+          "requests": 3,
+          "sessions": 1,
+          "invalid_lines": 0,
+          "statuses": {
+            "delivered": 1,
+            "unsupported": 1,
+            "unverified": 1
+          }
+        },
+        "events": 16,
+        "terminal_seen": 3,
+        "rx_queued": 2,
+        "rx_dequeued": 2,
+        "rx_dropped": 0,
+        "filter_dropped": 0,
+        "evidence_conflicts": 0,
+        "categories_and_order_equal_to_control_prefix": true,
+        "comparison_keys": [
+          "kind",
+          "channel",
+          "protocol",
+          "baud",
+          "route",
+          "reason",
+          "outcome"
+        ],
+        "comparison_is_byte_or_clock_identity": false
+      },
+      "text": {
+        "counts": {
+          "delivered": 1,
+          "unverified": 1
+        },
+        "parse_errors": {},
+        "obd_observation": {
+          "scope": "0902_on_7df_7e0_and_exact_18db33f1_3e80_only",
+          "vin_requests": 1,
+          "vin_delivered": 1,
+          "tester_present_requests": 1,
+          "recognized_d2_p3_probes": 0,
+          "client_result": "client_result_unknown",
+          "vehicle_identity_verified": false,
+          "filter_effect": "not_observed"
+        },
+        "observed_event_markers": {
+          "clear_rx": 14,
+          "close": 1,
+          "connect_result": 9,
+          "disconnect": 6,
+          "filter_start": 2,
+          "open": 1,
+          "rx_delivery_record": 2,
+          "set_config": 25,
+          "tx_record": 3
+        },
+        "rx_metadata": {
+          "checked_frames": 2,
+          "missing_frames": 0,
+          "invalid_frames": 0
+        },
+        "off_route_rx": 0
+      },
+      "restoration": {
+        "adapter_selection_restored": true,
+        "temporary_registration_removed": true,
+        "original_registration_unchanged": true
+      },
+      "ui": {
+        "communication_warning_observed": false,
+        "warning_absence_verified": false,
+        "home_notfound_connect_observed": true,
+        "ecu_list_observed": false,
+        "diagnostic_refresh_reset_security_programming_actions_performed": false
+      },
+      "observed_continuation": {
+        "periodic_registration_success": true,
+        "new_a6_write_attempt": true,
+        "a6_selector_observed": false,
+        "a6_transmitted": false,
+        "a6_ecu_response_observed": false,
+        "new_ps_read_after_outcome": false,
+        "first_cycle_clear_rx": 14,
+        "control_first_cycle_clear_rx": 13
+      }
+    }
+  ],
+  "limitations": [
+    "One GUI invocation per condition; external client/service state not fully controlled.",
+    "API successes are local experiments without CAN transmission, periodic firing or ECU replies.",
+    "Mask4 has one complete API cycle; mask0 and mask2 have two. Whole-capture totals are not rates.",
+    "A6 selector operands were deliberately not logged; no selector value or response is inferred.",
+    "UI observations do not establish a native-worker predicate or SectorV normal-mode condition.",
+    "Raw logs, private profiles, account data, screenshots and proprietary binaries are not included."
+  ]
+}

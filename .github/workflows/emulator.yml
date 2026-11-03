@@ -80,10 +80,75 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
           python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-route-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-config-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'CAN_PS config audit failed' }
+          $configAudit = Get-Content -LiteralPath "$env:RUNNER_TEMP\can-ps-config-audit.json" -Raw | ConvertFrom-Json
+          if ($configAudit.can_ps_config_probe.events -ne 9 -or $configAudit.can_ps_config_probe.invalid_events -ne 0) { throw 'Unexpected native CAN_PS metadata' }
+          $rejected = $configAudit.rejected_can_ps_attempts
+          if ($rejected.calls -ne 2 -or $rejected.invalid_events -ne 0 -or $rejected.outcome -ne 'rejected_not_transmitted') { throw 'Unexpected native rejected CAN_PS calls' }
+          $attempt = @($rejected.categories | Where-Object origin -eq 'write_call')
+          if ($attempt.Count -ne 1 -or $attempt[0].count -ne 1 -or $attempt[0].origin -ne 'write_call' -or $attempt[0].pins -ne 'pins_3_11' -or $attempt[0].message_protocol -ne 'CAN_PS' -or $attempt[0].shape -ne 'D2_40_B9FB' -or $attempt[0].inspection -ne 'inspected_raw_classic_can') { throw 'Unexpected rejected CAN_PS classification' }
+          $periodAttempt = @($rejected.categories | Where-Object origin -eq 'periodic_registration_call')
+          if ($periodAttempt.Count -ne 1 -or $periodAttempt[0].count -ne 1 -or $periodAttempt[0].pins -ne 'pins_3_11' -or $periodAttempt[0].message_protocol -ne 'CAN_PS' -or $periodAttempt[0].shape -ne 'D2_D8_unverified_prefix' -or $periodAttempt[0].inspection -ne 'inspected_raw_classic_can') { throw 'Unexpected rejected periodic shape' }
+          $setup = $configAudit.can_ps_rejected_setup
+          if ($setup.filter_calls -ne 1 -or $setup.periodic_registration_calls -ne 1 -or $setup.invalid_filter_events -ne 0 -or $setup.invalid_periodic_events -ne 0) { throw 'Unexpected native CAN_PS setup counts' }
+          $filter = @($setup.filters)
+          if ($filter.Count -ne 1 -or $filter[0].type -ne 'pass_filter' -or $filter[0].message_protocols -ne 'both_CAN_PS' -or $filter[0].sizes -ne 'both_id_only' -or $filter[0].flags -ne 'both_extended' -or $filter[0].flow -ne 'absent' -or $filter[0].mask -ne 'id_29_bits' -or $filter[0].pattern -ne '29_bit_range') { throw 'Unexpected native rejected filter arguments' }
+          $period = @($setup.periodic)
+          if ($period.Count -ne 1 -or $period[0].message_protocol -ne 'CAN_PS' -or $period[0].interval_ms -ne '4000' -or $period[0].interval_check -ne 'valid_catalog_interval') { throw 'Unexpected native rejected periodic arguments' }
+      - name: Actual x86 isolated API-outcome matrix, no transport
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-api-outcome" -ApiOutcomeRegression
+          if ($LASTEXITCODE -ne 0) { throw 'Native API-outcome matrix failed' }
+          python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-api-outcome\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-api-outcome-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native API-outcome audit failed' }
+          $report = Get-Content -LiteralPath "$env:RUNNER_TEMP\can-ps-api-outcome-audit.json" -Raw | ConvertFrom-Json
+          $api = $report.can_ps_api_outcomes
+          if ($api.mode_snapshots -ne 9 -or $api.calls -ne 58 -or $api.invalid_events -ne 0 -or $api.injected_success_calls -ne 12 -or $api.rejected_creation_calls -ne 16 -or $api.lifecycle_calls -ne 30 -or $api.capacity_errors -ne 0) { throw 'Unexpected native API-outcome counts' }
+          if ($api.can_transmission_verified -or $api.ecu_response_verified -or $api.periodic_firing_observed -or $api.read_only_reference_approved) { throw 'API outcome misrepresented as transport evidence' }
+          foreach ($mode in 0..7) {
+            $expected = 0
+            foreach ($bit in 1,2,4) { if ($mode -band $bit) { $expected++ } }
+            $actual = [int](($api.categories | Where-Object { $_.mask -eq $mode -and $_.outcome -eq 'simulated_api_success_no_transport' } | Measure-Object -Property count -Sum).Sum)
+            if ($actual -ne $expected) { throw 'API bits were not independent' }
+          }
+      - name: Actual x86 rejected A6 selector probe, no transport
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-a6-selector" -A6SelectorRegression
+          if ($LASTEXITCODE -ne 0) { throw 'Native A6-selector regression failed' }
+          python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-a6-selector\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-a6-selector-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native A6-selector audit failed' }
+          $report = Get-Content -LiteralPath "$env:RUNNER_TEMP\can-ps-a6-selector-audit.json" -Raw | ConvertFrom-Json
+          $selectors = $report.can_ps_a6_selectors
+          if ($selectors.events -ne 8 -or $selectors.invalid_events -ne 0 -or $selectors.outcome -ne 'rejected_not_transmitted') { throw 'Unexpected A6-selector counts' }
+          if ($selectors.counts_are_additional_api_calls -or $selectors.state_correlation_performed -or $selectors.hardware_pins_verified -or $selectors.can_transmission_verified -or $selectors.ecu_response_verified -or $selectors.periodic_firing_observed -or $selectors.read_only_reference_approved -or $selectors.selector_semantics_verified) { throw 'A6 selector misrepresented as transport or ECU evidence' }
+          $categories = @($selectors.categories)
+          if ($categories.Count -ne 8) { throw 'Expected distinct selector/API-origin categories' }
+          foreach ($category in $categories) {
+            if ($category.count -ne 1 -or $category.origin -notin @('write_call','periodic_registration_call') -or $category.pins -ne 'pins_3_11' -or $category.baud_bps -ne '125000' -or $category.message_protocol -ne 'CAN_PS' -or $category.target -ne '0x40' -or $category.mask -ne 4 -or $category.status -ne 'not_supported') { throw 'Unexpected A6-selector route/API metadata' }
+          }
+          foreach ($selector in '1A02','1A04','D0D1','other_redacted') {
+            $selectorRows = @($categories | Where-Object selector -eq $selector)
+            if ($selectorRows.Count -ne 2 -or @($selectorRows.origin | Sort-Object -Unique).Count -ne 2 -or [int](($selectorRows | Measure-Object count -Sum).Sum) -ne 2) { throw 'A6 selector catalog/origin coverage failed' }
+          }
+          $legacy = $report.rejected_can_ps_attempts
+          if ($legacy.calls -ne 24 -or $legacy.invalid_events -ne 0 -or @($legacy.categories | Where-Object shape -ne 'D2_40_A6').Count -ne 0) { throw 'Selector records changed legacy rejected-call scope' }
+          $api = $report.can_ps_api_outcomes
+          if ($api.mode_snapshots -ne 3 -or $api.calls -ne 24 -or $api.invalid_events -ne 0 -or $api.injected_success_calls -ne 0 -or $api.rejected_creation_calls -ne 24 -or $api.lifecycle_calls -ne 0 -or $api.capacity_errors -ne 0) { throw 'A6 probe changed API outcomes' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
-          path: ${{ runner.temp }}/native-route-regression-audit.json
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/can-ps-config-audit.json
+            ${{ runner.temp }}/can-ps-api-outcome-audit.json
+            ${{ runner.temp }}/can-ps-a6-selector-audit.json
           if-no-files-found: error
 
 

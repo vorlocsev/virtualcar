@@ -1,0 +1,200 @@
+{
+  "format": "vdash-can-ps-probe-runtime-summary-v1",
+  "date": "2026-11-02",
+  "virtual_configuration_probe": true,
+  "synthetic_model_year": 2005,
+  "vmware_guest_tested": false,
+  "physical_j2534_tested": false,
+  "cem_identity_verified": false,
+  "source": {
+    "pr": 42,
+    "head": "8247a5948e9ec951c5df97913b27fde892f2a7d4",
+    "ci_run": 41486957920,
+    "ci_merge_ref": "dc4011a33be9ca46a1db21202f78872487d83555",
+    "artifact_sha256": "17118f1e228372e02ff5377277b1e92a7cecfb87712a2a632f927896214e0c85",
+    "dll_sha256": "682b8bc482011a7ff3f0584b4564e142d8f227c931a2de7e4ff602001595f601",
+    "profile_sha256": "cca3fc41ad09381a2c6239313466afb5c4b52b421e8015bacc276c839b2af860",
+    "gui_sha256": "bb9153650a736e3f03ca1a4cea265d6a5692fe1123729b3169d60f9614eea0f9",
+    "worker_sha256": "b29b7f5e90645c9b04a12d12578a154b6ee7441c7aab1865a5e19d31277fe1aa",
+    "text_auditor_commit": "c0f6484f62f0cc78afb8c8b804dffd78f1363dce",
+    "text_auditor_sha256": "e38170b56ec60467f5ff64bd89b4353a425f532a707d81bae010070466139233"
+  },
+  "runtime": {
+    "gui_file_version": "2.5.115.84",
+    "gui_invocations": 1,
+    "worker_count": 1,
+    "all_captured_workers_module_sampled": true,
+    "open_markers": 13,
+    "close_markers": 13,
+    "refresh_cycles": 0
+  },
+  "capture": {
+    "text": {
+      "prefix_unchanged": true,
+      "suffix_bytes": 151172,
+      "sha256": "43a8d25ab579670d62f03a4cccd534df75f9738e0f1dfedc18fefc53129089ae"
+    },
+    "backend": {
+      "prefix_unchanged": true,
+      "suffix_bytes": 52078,
+      "sha256": "6d330d328547614519fa3eac37c2c62a09cebc4a30b982624d90b00d38203596"
+    }
+  },
+  "connect": {
+    "attempts": 93,
+    "invalid_events": 0,
+    "modes": [
+      {
+        "baud_bps": "500000",
+        "count": 1,
+        "flags": "other",
+        "protocol": "CAN",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "125000",
+        "count": 27,
+        "flags": "other",
+        "protocol": "CAN_PS",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "500000",
+        "count": 26,
+        "flags": "other",
+        "protocol": "ISO15765",
+        "status": "ok"
+      },
+      {
+        "baud_bps": "other",
+        "count": 39,
+        "flags": "other",
+        "protocol": "other",
+        "status": "invalid_protocol"
+      }
+    ],
+    "statuses": {
+      "invalid_protocol": 39,
+      "ok": 54
+    }
+  },
+  "can_ps_config_probe": {
+    "events": 107,
+    "hardware_pins_verified": false,
+    "invalid_events": 0,
+    "mode": "configuration_only_no_transport",
+    "operations": [
+      {
+        "count": 27,
+        "operation": "channel_allocated",
+        "selection": "protocol_can_ps",
+        "status": "ok"
+      },
+      {
+        "count": 3,
+        "operation": "filter_rejected",
+        "selection": "none",
+        "status": "not_supported"
+      },
+      {
+        "count": 25,
+        "operation": "periodic_rejected",
+        "selection": "none",
+        "status": "not_supported"
+      },
+      {
+        "count": 27,
+        "operation": "set_pin_observation",
+        "selection": "pins_3_11",
+        "status": "ok"
+      },
+      {
+        "count": 25,
+        "operation": "write_rejected",
+        "selection": "none",
+        "status": "not_supported"
+      }
+    ],
+    "state_correlation_performed": false
+  },
+  "accepted_tx_scope": {
+    "count": 39,
+    "protocol": 6,
+    "baud_bps": 500000,
+    "shapes": {
+      "7DF:3E80": 13,
+      "7DF:0902": 13,
+      "18DB33F1:3E80": 13
+    },
+    "recognized_cem_probes": 0
+  },
+  "rejected_can_ps_writes": {
+    "calls": 25,
+    "payloads_captured": false,
+    "addresses_known": false,
+    "service_semantics": "unknown",
+    "backend_roots_created": false
+  },
+  "text": {
+    "transactions": 26,
+    "counts": {
+      "delivered": 13,
+      "unverified": 13
+    },
+    "parse_errors": {},
+    "vin_requests": 13,
+    "vin_delivered": 13,
+    "start_indications": 13,
+    "metadata_checked": 26,
+    "metadata_missing": 0,
+    "metadata_invalid": 0
+  },
+  "backend": {
+    "requests": 39,
+    "sessions": 13,
+    "invalid_lines": 0,
+    "statuses": {
+      "delivered": 13,
+      "unsupported": 13,
+      "unverified": 13
+    },
+    "terminal_seen": 39,
+    "evidence_conflicts": 0,
+    "rx_queued": 26,
+    "rx_dequeued": 26,
+    "rx_dropped": 0,
+    "filter_dropped": 0
+  },
+  "ui": {
+    "version": "2.5.115.84",
+    "brand": "VDASH 2.0 - Sponsored",
+    "displayed_model": "XC90",
+    "displayed_year": 2005,
+    "displayed_engine": "B8444S",
+    "displayed_platform": "P2",
+    "displayed_battery_v": 12.5,
+    "warning": "Some ECUs in the car are not able to communicate or are stuck.",
+    "ecu_view": "Live datalogging by ECU",
+    "ecu_list": "empty",
+    "gui_invocations": 1,
+    "manual_login": true,
+    "controlled_refresh_cycles": 0,
+    "reset_programming_security_actions": false
+  },
+  "restoration": {
+    "profile_unchanged": true,
+    "dll_unchanged": true,
+    "gui_unchanged": true,
+    "worker_file_unchanged": true,
+    "selection_restored": true,
+    "temporary_registration_removed": true,
+    "client_processes_closed": true
+  },
+  "limits": {
+    "hardware_pin_routing_verified": false,
+    "can_ps_transport_implemented": false,
+    "global_absence_of_cem_write_attempts_proven": false,
+    "warning_causal_link_verified": false,
+    "row_or_clock_join_between_logs": false
+  }
+}

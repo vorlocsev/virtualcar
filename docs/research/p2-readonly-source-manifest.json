@@ -1,5 +1,5 @@
 {
-  "reviewed_date": "2026-11-02",
+  "reviewed_date": "2026-11-03",
   "scope": "downloaded_public_sources_only",
   "raw_sources_committed": false,
   "files": [
@@ -620,6 +620,24 @@
       "retrieved_date": "2026-11-02",
       "publication_version": "321US04; exact publication date unknown",
       "classification": "official_client_documentation_not_vehicle_capture"
+    },
+    {
+      "name": "sardine_arduino_d8",
+      "url": "https://raw.githubusercontent.com/hackingvolvo/SardineCAN-Arduino/18e213ace887d045bc0ba7aa57e55d5f87123934/sardine.ino",
+      "bytes": 24916,
+      "sha256": "7d6925a063821935311171f4e56a147344737445254aa6061ef54aec6436478f",
+      "retrieved_at_utc": "2026-11-02T22:43:58.118446+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "18e213ace887d045bc0ba7aa57e55d5f87123934"
+    },
+    {
+      "name": "sardine_win32_d8_interface",
+      "url": "https://raw.githubusercontent.com/hackingvolvo/SardineCAN-Win32/b87e3974f8b93f0b8268b50c0af15c558dcc9b73/ARDUINO-DLL-COMM.txt",
+      "bytes": 4284,
+      "sha256": "ca98d1879e7d46c67e78a62a09c9ab7c9f76e545b8b73dd582375f6f7fe7fc82",
+      "retrieved_at_utc": "2026-11-02T22:43:58.672167+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "b87e3974f8b93f0b8268b50c0af15c558dcc9b73"
     }
   ],
   "initial_review_date": "2026-11-01"

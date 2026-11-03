@@ -2,11 +2,17 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
-    [Parameter(Mandatory=$true)][string]$OutputDirectory
+    [Parameter(Mandatory=$true)][string]$OutputDirectory,
+    [switch]$ApiOutcomeRegression,
+    [switch]$A6SelectorRegression
 )
 $ErrorActionPreference = 'Stop'
+if ($ApiOutcomeRegression -and $A6SelectorRegression) { throw 'Select only one isolated regression mode' }
 if ([IntPtr]::Size -ne 4) {
-    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory
+    $forward = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-DllPath',$DllPath,'-OutputDirectory',$OutputDirectory)
+    if ($ApiOutcomeRegression) { $forward += '-ApiOutcomeRegression' }
+    if ($A6SelectorRegression) { $forward += '-A6SelectorRegression' }
+    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" @forward
     exit $LASTEXITCODE
 }
 $dll = (Resolve-Path -LiteralPath $DllPath).Path
@@ -74,6 +80,17 @@ public static class NativeRouteCheck {
     static extern uint PassThruWriteMsgs(uint channel, ref Msg msg, ref uint count, uint timeout);
     [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruReadMsgs(uint channel, IntPtr msg, ref uint count, uint timeout);
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStartMsgFilter(uint channel, uint type, ref Msg mask, ref Msg pattern, IntPtr flow, ref uint filter);
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStartPeriodicMsg(uint channel, ref Msg msg, ref uint period, uint interval);
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStopMsgFilter(uint channel, uint filter);
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStopPeriodicMsg(uint channel, uint period);
+    [StructLayout(LayoutKind.Sequential)] struct ConfigList { public uint Count; public IntPtr Entries; }
+    [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruIoctl(uint channel, uint ioctl, ref ConfigList config, IntPtr output);
     static void Check(bool condition, string gate) { if (!condition) throw new Exception(gate); }
     static void Silent(uint channel, uint protocol, uint id, byte[] payload) {
         Msg msg = new Msg(); msg.ProtocolID=protocol; msg.DataSize=(uint)payload.Length+4;
@@ -89,6 +106,127 @@ public static class NativeRouteCheck {
         IntPtr buffer=Marshal.AllocHGlobal(bytes);
         try { uint count=128; Check(PassThruReadMsgs(channel,buffer,ref count,0)==16 && count==0,"Unexpected RX or READ128 failure"); }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+    public static void RunCanPsConfigProbe(bool enabled) {
+        uint device=0,channel=0;
+        Check(PassThruOpen(IntPtr.Zero,out device)==0,"PS Open failed");
+        IntPtr entry=Marshal.AllocHGlobal(8);
+        try {
+            uint status=PassThruConnect(device,0x8004,0x900,125000,out channel);
+            Check(status==(enabled ? 0u : 3u),"PS opt-in not respected");
+            if(!enabled) return;
+            ConfigList list=new ConfigList(); list.Count=1; list.Entries=entry;
+            Marshal.WriteInt32(entry,0,0x8001); Marshal.WriteInt32(entry,4,0);
+            Check(PassThruIoctl(channel,1,ref list,IntPtr.Zero)==0 && Marshal.ReadInt32(entry,4)==0,"PS initial hint wrong");
+            Marshal.WriteInt32(entry,4,0x030b);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==0,"PS SET hint failed");
+            Marshal.WriteInt32(entry,4,0);
+            Check(PassThruIoctl(channel,1,ref list,IntPtr.Zero)==0 && Marshal.ReadInt32(entry,4)==0x030b,"PS GET hint failed");
+            Marshal.WriteInt32(entry,4,0x060e);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==1,"PS rebind not rejected");
+            Check(PassThruIoctl(channel,1,ref list,IntPtr.Zero)==0 && Marshal.ReadInt32(entry,4)==0x030b,"PS rebind changed hint");
+            // SYNTHETIC B9FB envelope: classified before rejection, never transmitted.
+            Msg msg=new Msg(); msg.ProtocolID=0x8004; msg.DataSize=12; msg.TxFlags=0x100; msg.Data=new byte[4128];
+            Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xcb,0x40,0xb9,0xfb,0,0,0,0},msg.Data,12);
+            uint count=1;
+            Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==1 && count==0,"PS write was not blocked");
+            Msg mask=new Msg(); mask.ProtocolID=0x8004; mask.DataSize=4; mask.TxFlags=0x100; mask.Data=new byte[4128];
+            Array.Copy(new byte[]{0x1f,0xff,0xff,0xff},mask.Data,4);
+            Msg pattern=new Msg(); pattern.ProtocolID=0x8004; pattern.DataSize=4; pattern.TxFlags=0x100; pattern.Data=new byte[4128];
+            Array.Copy(new byte[]{0,0x80,0,3},pattern.Data,4);
+            uint filter=0xc0deface;
+            Check(PassThruStartMsgFilter(channel,1,ref mask,ref pattern,IntPtr.Zero,ref filter)==1 && filter==0xc0deface,"PS filter was not blocked");
+            Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xd8,0,0,0,0,0,0,0},msg.Data,12);
+            uint period=0xc0deface;
+            Check(PassThruStartPeriodicMsg(channel,ref msg,ref period,4000)==1 && period==0xc0deface,"PS periodic was not blocked");
+            Empty128(channel);
+            Console.WriteLine("PASS native CAN_PS configuration-only opt-in/roundtrip/rebind/write/RX checks");
+        } finally {
+            Marshal.FreeHGlobal(entry);
+            if(channel!=0) Check(PassThruDisconnect(channel)==0,"PS disconnect failed");
+            Check(PassThruClose(device)==0,"PS close failed");
+        }
+    }
+    // SYNTHETIC local API outcomes only: no CAN delivery or ECU acknowledgement.
+    public static void RunCanPsApiOutcome(uint mode, bool enabled) {
+        uint device=0,channel=0;
+        Check(PassThruOpen(IntPtr.Zero,out device)==0,"Outcome Open failed");
+        IntPtr entry=Marshal.AllocHGlobal(8);
+        try {
+            Check(PassThruConnect(device,0x8004,0x900,125000,out channel)==(enabled?0u:3u),"Outcome master switch failed");
+            if(!enabled) return;
+            ConfigList list=new ConfigList(); list.Count=1; list.Entries=entry;
+            Marshal.WriteInt32(entry,0,0x8001); Marshal.WriteInt32(entry,4,0x030b);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==0,"Outcome pins failed");
+            Msg mask=new Msg(); mask.ProtocolID=0x8004; mask.DataSize=4; mask.Data=new byte[4128];
+            Array.Copy(new byte[]{0xff,0xff,0xff,0xff},mask.Data,4);
+            Msg pattern=new Msg(); pattern.ProtocolID=0x8004; pattern.DataSize=4; pattern.Data=new byte[4128];
+            Array.Copy(new byte[]{0,0,7,0xe8},pattern.Data,4);
+            uint filter=0xc0deface;
+            Check(PassThruStartMsgFilter(channel,1,ref mask,ref pattern,IntPtr.Zero,ref filter)==((mode&1)!=0?0u:1u),"Outcome filter bit failed");
+            Check((mode&1)!=0 ? filter>0 && filter<0x80000000 : filter==0xc0deface,"Outcome filter output failed");
+            Msg msg=new Msg(); msg.ProtocolID=0x8004; msg.TxFlags=0x100; msg.DataSize=12; msg.Data=new byte[4128];
+            Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xd8,0,0,0,0,0,0,0},msg.Data,12);
+            uint count=1;
+            Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==((mode&2)!=0?0u:1u) && count==((mode&2)!=0?1u:0u),"Outcome write bit failed");
+            uint period=0xc0deface;
+            Check(PassThruStartPeriodicMsg(channel,ref msg,ref period,1000)==((mode&4)!=0?0u:1u),"Outcome periodic bit failed");
+            Check((mode&4)!=0 ? period>0 && period<0x80000000 : period==0xc0deface,"Outcome periodic output failed");
+            Empty128(channel);
+            if(mode==7) {
+                Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xcb,0x40,0xb9,0xfb,0,0,0,0},msg.Data,12);
+                count=1;
+                Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==1 && count==0,"Outcome allowed a general diagnostic write");
+                Empty128(channel);
+            }
+            // Cleanup must work after a DATA_RATE change, without enabling a transport.
+            Marshal.WriteInt32(entry,0,1); Marshal.WriteInt32(entry,4,500000);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==0,"Outcome baud update failed");
+            if((mode&1)!=0) {
+                Check(PassThruStopMsgFilter(channel,filter)==0,"Outcome StopFilter failed");
+                Check(PassThruStopMsgFilter(channel,filter)==22,"Outcome stale filter handle accepted");
+            }
+            if((mode&4)!=0) {
+                Check(PassThruStopPeriodicMsg(channel,period)==0,"Outcome StopPeriodic failed");
+                Check(PassThruStopPeriodicMsg(channel,period)==13,"Outcome stale periodic handle accepted");
+            }
+            Check(PassThruIoctl(channel,10,ref list,IntPtr.Zero)==0,"Outcome ClearFilter failed");
+            Check(PassThruIoctl(channel,9,ref list,IntPtr.Zero)==0,"Outcome ClearPeriodic failed");
+            Empty128(channel);
+            Console.WriteLine("PASS native API-outcome mask="+mode+"; local resources only, no transport");
+        } finally {
+            Marshal.FreeHGlobal(entry);
+            if(channel!=0) Check(PassThruDisconnect(channel)==0,"Outcome disconnect failed");
+            Check(PassThruClose(device)==0,"Outcome close failed");
+        }
+    }
+    // SYNTHETIC A6 selectors: rejected requests only, not accepted reads or replies.
+    public static void RunCanPsA6Selector(bool enabled) {
+        Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"Selector x86 ABI mismatch");
+        uint device=0,channel=0;
+        Check(PassThruOpen(IntPtr.Zero,out device)==0,"Selector Open failed");
+        IntPtr entry=Marshal.AllocHGlobal(8);
+        try {
+            Check(PassThruConnect(device,0x8004,0x900,125000,out channel)==0,"Selector PS connect failed");
+            ConfigList list=new ConfigList(); list.Count=1; list.Entries=entry;
+            Marshal.WriteInt32(entry,0,0x8001); Marshal.WriteInt32(entry,4,0x030b);
+            Check(PassThruIoctl(channel,2,ref list,IntPtr.Zero)==0,"Selector pins failed");
+            foreach(ushort selector in new ushort[]{0x1a02,0x1a04,0xd0d1,0xbeef}) {
+                Msg msg=new Msg(); msg.ProtocolID=0x8004; msg.TxFlags=0x100; msg.DataSize=12; msg.Data=new byte[4128];
+                Array.Copy(new byte[]{0,0x0f,0xff,0xfe,0xcd,0x40,0xa6,(byte)(selector>>8),(byte)selector,1,0,0},msg.Data,12);
+                uint count=1;
+                Check(PassThruWriteMsgs(channel,ref msg,ref count,0)==1 && count==0,"Selector Write was not rejected");
+                Empty128(channel);
+                uint period=0xc0deface;
+                Check(PassThruStartPeriodicMsg(channel,ref msg,ref period,1000)==1 && period==0xc0deface,"Selector periodic was not rejected");
+                Empty128(channel);
+            }
+            Console.WriteLine("PASS native A6 selector probe="+enabled+"; eight rejected calls, no RX");
+        } finally {
+            Marshal.FreeHGlobal(entry);
+            if(channel!=0) Check(PassThruDisconnect(channel)==0,"Selector disconnect failed");
+            Check(PassThruClose(device)==0,"Selector close failed");
+        }
     }
     public static void Run() {
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"x86 ABI mismatch");
@@ -135,10 +273,35 @@ public static class NativeRouteCheck {
 '@
     $source = $source.Replace('__ISOLATED_DLL__', $isolatedDll.Replace('"', '""'))
     Add-Type -TypeDefinition $source -Language CSharp
-    [NativeRouteCheck]::Run()
     $backend = Join-Path $directory 'VirtualCar/dev47-backend.jsonl'
-    if (-not (Test-Path -LiteralPath $backend)) { throw 'Native DLL produced no backend evidence' }
-    Write-Output 'Native calls passed. Verify the isolated backend with verify_native_routes.py.'
+    if ($A6SelectorRegression) {
+        $ini = Join-Path $directory 'virtualcar.ini'
+        foreach ($setting in '0','1','01') {
+            [IO.File]::WriteAllText($ini,$profile+"`r`nEnableCanPsConfigProbe=1`r`nCanPsApiOutcomeMask=4`r`nEnableCanPsA6SelectorProbe=$setting`r`n",[Text.Encoding]::ASCII)
+            [NativeRouteCheck]::RunCanPsA6Selector($setting -ceq '1')
+        }
+        if ((Test-Path -LiteralPath $backend) -and (Get-Item -LiteralPath $backend).Length -ne 0) { throw 'A6-selector regression produced backend traffic' }
+        Write-Output 'Native A6 selector off/on/malformed checks passed; no backend requests.'
+    } elseif ($ApiOutcomeRegression) {
+        $ini = Join-Path $directory 'virtualcar.ini'
+        [IO.File]::WriteAllText($ini,$profile+"`r`nEnableCanPsConfigProbe=0`r`nCanPsApiOutcomeMask=7`r`n",[Text.Encoding]::ASCII)
+        [NativeRouteCheck]::RunCanPsApiOutcome(0,$false)
+        foreach ($mode in 0..7) {
+            [IO.File]::WriteAllText($ini,$profile+"`r`nEnableCanPsConfigProbe=1`r`nCanPsApiOutcomeMask=$mode`r`n",[Text.Encoding]::ASCII)
+            [NativeRouteCheck]::RunCanPsApiOutcome($mode,$true)
+        }
+        [IO.File]::WriteAllText($ini,$profile+"`r`nEnableCanPsConfigProbe=1`r`nCanPsApiOutcomeMask=0x7`r`n",[Text.Encoding]::ASCII)
+        [NativeRouteCheck]::RunCanPsApiOutcome(0,$true)
+        if ((Test-Path -LiteralPath $backend) -and (Get-Item -LiteralPath $backend).Length -ne 0) { throw 'API-outcome regression produced backend traffic' }
+        Write-Output 'All eight native API-outcome masks passed; no backend requests.'
+    } else {
+        [NativeRouteCheck]::Run()
+        [NativeRouteCheck]::RunCanPsConfigProbe($false)
+        [IO.File]::AppendAllText((Join-Path $directory 'virtualcar.ini'), "`r`nEnableCanPsConfigProbe=1`r`n", [Text.Encoding]::ASCII)
+        [NativeRouteCheck]::RunCanPsConfigProbe($true)
+        if (-not (Test-Path -LiteralPath $backend)) { throw 'Native DLL produced no backend evidence' }
+        Write-Output 'Native calls passed. Verify the isolated backend with verify_native_routes.py.'
+    }
 } finally {
     $env:LOCALAPPDATA = $savedLocal
     $env:TEMP = $savedTemp
