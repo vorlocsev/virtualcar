@@ -186,6 +186,61 @@ reconstruct the `VddCommand.ResultData` → `DetectResult` → `Ecus`
 path. Static method data cannot prove VDASH accepted the virtual ECU. Do not
 fabricate CEM A3/A6/B9F0/B9FB/FC responses or infer normal-mode success.
 
+## Recovered ParseData inventory: evidence available without the original DLL
+
+A separate, private user-supplied `VDASH_Recovered_Methods_Inventory.json`
+can be inspected **without** requiring REA or an original DLL. This inventory
+reports details that earlier callsite-only research did not capture:
+
+| Recovered method token | Inventory summary (VDASH 2.5.115.79) |
+|---|---|
+| `0x0600132B` (Detect) | 1746 IL bytes; 511 decoded opcodes; 0 decoder issues; two `MethodSpec 0x2B000002` calls and two `0x06001359` calls |
+| `0x0600115D` (Execute) | 1073 IL bytes; 311 decoded opcodes; 0 issues; one direct `0x06001160` call |
+| `0x06001160` (ParseData) | 550 IL bytes; **171 decoded opcodes; 0 issues**; four `get_ResultData`, two `RaiseEvent`, one `set_DataHash`; one call each to `<ParseData>b__88_0` and `<ParseData>b__1` |
+
+These statements are **inventory metadata claims from the local recovered
+archive**, not a newly decompiled body, execution proof, or confirmation of
+successful CEM identification. A decoder reporting zero issues still does
+not prove the obfuscated control-flow interpretation.
+
+Run the new privacy-preserving offline inventory check from `emulator`,
+leaving the full inventory in a private directory:
+
+```powershell
+py -3 .\tools\audit_recovered_inventory.py `
+  (Join-Path $private 'VDASH_Recovered_Methods_Inventory.json') `
+  --output (Join-Path $private 'recovered-inventory-summary.json')
+```
+
+If the actual original **or** reconstructed DLL subsequently becomes
+available and REA has produced its full private member JSON, use a *new*
+output path and opt into material hash matching:
+
+```powershell
+py -3 .\tools\audit_recovered_inventory.py `
+  (Join-Path $private 'VDASH_Recovered_Methods_Inventory.json') `
+  --rea-members (Join-Path $private 'members-private.json') `
+  --output (Join-Path $private 'inventory-reconciled-summary.json')
+```
+
+The inventory records source ZIP and per-module source/recovered SHA-256,
+which are **not published** by either script. A matching REA artifact digest
+is reported as `matched_original_material` or
+`matched_recovered_material`; a mismatch fails closed. A match against
+the *original encrypted* DLL does **not** attest that MethodDef tokens in
+the normalized recovered DLL have the same alignment, and a match against
+the recovered DLL is not runtime acceptance evidence. This hash evidence
+is recorded provenance asserted by the original inventory file, not an
+independent new verification of the absent DLL. Do not paste private
+raw JSON, archive hashes, original IL, paths or VIN into GitHub.
+
+The dedicated inventory audit uses only known technical tokens and numeric
+call counts. It never exports user-supplied method names, source paths,
+digests, literal values or raw code. Eight synthetic tests cover the
+observed G2 shape, original/recovered hash paths, mismatch rejection,
+unknown methods, duplicate/malformed counters, sanitization and CLI
+overwrite safety.
+
 ## Provenance
 
 Implementation checks are based on REA's published
