@@ -6,6 +6,7 @@
 #include <string.h>
 static U32 tick=0;static I64 qpc_offset_us=0;
 static int test_can_ps_config_probe_ini=0;
+static U32 test_can_ps_api_outcome_ini=0;
 static char backend_lines[800000];static U32 backend_len=0;
 static int capture_connect_log=0;
 static char connect_log_lines[32000];static U32 connect_log_len=0;
@@ -67,6 +68,10 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
  if(strcmp(s,"Diagnostics")==0 && strcmp(k,"BackendTelemetryEnabled")==0)d="1";
  if(strcmp(s,"Diagnostics")==0 && strcmp(k,"EnableCanPsConfigProbe")==0)
     d=test_can_ps_config_probe_ini?"1":"0";
+ if(strcmp(s,"Diagnostics")==0 && strcmp(k,"CanPsApiOutcomeMode")==0){
+    static const char *modes[]={"0","1","2","3"};
+    d=modes[test_can_ps_api_outcome_ini<=3u?test_can_ps_api_outcome_ini:0u];
+ }
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrame0")==0)d="CC 40 7F B9 31 00 00 00";
  if(strcmp(s,"D2_50_B9F0")==0 && strcmp(k,"FrameCount")==0)d="3";
@@ -1020,6 +1025,74 @@ static void test_can_ps_rejected_setup(U32 *dev){
  puts("PASS: eight CAN_PS rejected-setup groups, bounded arguments and no registrations");
 }
 
+/* Isolated API-outcome A/B/C experiments. Success never sends bus data. */
+static void test_can_ps_api_outcome_modes(U32 *dev){
+ U32 mode,ps,fid,periodid,n,snapshot_backend;
+ U8 d8[8]={0xD8u,0,0,0,0,0,0,0};
+ for(mode=1u;mode<=3u;mode++){
+  SCONFIG pins={CONFIG_J1962_PINS,0x030Bu};
+  SCONFIG_LIST opts={1u,&pins};
+  PASSTHRU_MSG mask=frame(PROTO_CAN_PS,0x7FFu,0,0);
+  PASSTHRU_MSG pattern=frame(PROTO_CAN_PS,0x7E8u,0,0);
+  PASSTHRU_MSG message=frame(PROTO_CAN_PS,0x000FFFFEu,d8,8);
+  PASSTHRU_MSG readback={0};
+  REQUIRE(PassThruClose(*dev)==ERR_OK);
+  test_can_ps_config_probe_ini=1;test_can_ps_api_outcome_ini=mode;tick+=7;
+  REQUIRE(PassThruOpen(0,dev)==ERR_OK);
+  REQUIRE(g_can_ps_config_probe==1u&&g_can_ps_api_outcome_mode==mode);
+  REQUIRE(PassThruConnect(*dev,PROTO_CAN_PS,0x900u,125000u,&ps)==ERR_OK);
+  REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&opts,0)==ERR_OK);
+  REQUIRE(channel(ps)->can_ps_observed_pins==0x030Bu);
+  message.TxFlags=0x100u;
+  snapshot_backend=backend_len;
+  fid=0xC0DEFACEu;
+  if(mode==1u){
+   REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&fid)==ERR_OK);
+   REQUIRE(fid!=0xC0DEFACEu&&channel(ps)->filters_count==1u);
+   REQUIRE(PassThruStopMsgFilter(ps,fid)==ERR_OK);
+   REQUIRE(channel(ps)->filters_count==0u);
+   fid=0xC0DEFACEu;
+   REQUIRE(PassThruStartMsgFilter(ps,2u,&mask,&pattern,0,&fid)==ERR_NOT_SUPPORTED);
+   REQUIRE(fid==0xC0DEFACEu);
+  }else{
+   REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&fid)==ERR_NOT_SUPPORTED);
+   REQUIRE(fid==0xC0DEFACEu&&channel(ps)->filters_count==0u);
+  }
+  n=1u;
+  if(mode==2u){
+   REQUIRE(PassThruWriteMsgs(ps,&message,&n,0)==ERR_OK&&n==1u);
+   n=1u;message.Data[5]=1u;
+   REQUIRE(PassThruWriteMsgs(ps,&message,&n,0)==ERR_NOT_SUPPORTED&&n==0u);
+   message.Data[5]=0u;
+  }else{
+   REQUIRE(PassThruWriteMsgs(ps,&message,&n,0)==ERR_NOT_SUPPORTED&&n==0u);
+  }
+  periodid=0xC0DEFACEu;
+  if(mode==3u){
+   REQUIRE(PassThruStartPeriodicMsg(ps,&message,&periodid,1000u)==ERR_OK);
+   REQUIRE(periodid!=0xC0DEFACEu&&channel(ps)->periodic[0].used);
+   advance_test_us(2500000u);
+   pump_periodic(channel(ps));
+   REQUIRE(channel(ps)->count==0u);
+   REQUIRE(PassThruStopPeriodicMsg(ps,periodid)==ERR_OK);
+   REQUIRE(!channel(ps)->periodic[0].used);
+   periodid=0xC0DEFACEu;
+   REQUIRE(PassThruStartPeriodicMsg(ps,&message,&periodid,4000u)==ERR_NOT_SUPPORTED);
+   REQUIRE(periodid==0xC0DEFACEu);
+  }else{
+   REQUIRE(PassThruStartPeriodicMsg(ps,&message,&periodid,1000u)==ERR_NOT_SUPPORTED);
+   REQUIRE(periodid==0xC0DEFACEu);
+  }
+  n=1u;REQUIRE(PassThruReadMsgs(ps,&readback,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+  REQUIRE(channel(ps)->count==0u&&backend_len==snapshot_backend);
+ }
+ REQUIRE(PassThruClose(*dev)==ERR_OK);
+ test_can_ps_config_probe_ini=0;test_can_ps_api_outcome_ini=0;tick+=7;
+ REQUIRE(PassThruOpen(0,dev)==ERR_OK);
+ REQUIRE(g_can_ps_config_probe==0u&&g_can_ps_api_outcome_mode==0u);
+ puts("PASS: CAN_PS A/B/C API-only outcomes isolated without RX/backend");
+}
+
 static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
@@ -1033,6 +1106,7 @@ int main(){
  test_can_ps_config_probe(&dev);
  test_can_ps_rejected_attempts(&dev);
  test_can_ps_rejected_setup(&dev);
+ test_can_ps_api_outcome_modes(&dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
