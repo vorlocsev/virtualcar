@@ -94,11 +94,32 @@ artifact digest/MVID (where supplied). Its output includes **only**:
   original digest, MVID or path.
 - Two callsite groups with observed count, exact IL offset checks, and whether
   REA populated one consistent method name and declaring type, not the names.
+- Three independent structural links under `structural_edges`, each with
+  observed count and a strict one-site IL-offset match:
+  `Detect` (`0x0600132B`) `newobj 0x060011BB` at `IL_017F`
+  (`DetectResult` constructor); the same caller `newobj 0x0600126D`
+  at `IL_0268` (`Ecus` constructor); and
+  `VddCommand.Execute` (`0x0600115D`) `call 0x06001160` at `IL_025E`
+  (`ParseData`). These are grounded in the earlier **private static IL
+  excerpt** for VDASH 2.5.115.79, not in a currently available original DLL.
+  No raw IL or recovered method names are copied into the exported JSON.
 - Inspection status (`present`, `partial`, `absent`, `malformed` or
-  `not_inspected`) for five explicitly selected MethodDef tokens:
-  `Detect` `0x0600132B`, predicate `0x06001359`, `ParseData`
-  `0x06001160`, `DetectResult` constructor `0x060011BB`, and
-  `Ecus` constructor `0x0600126D`.
+  `not_inspected`) for six explicitly selected MethodDef tokens:
+  `Execute` `0x0600115D`, `Detect` `0x0600132B`, predicate
+  `0x06001359`, `ParseData` `0x06001160`, `DetectResult`
+  constructor `0x060011BB`, and `Ecus` constructor `0x0600126D`.
+
+**Interpretation of structural edges.** `newobj` in an obfuscated,
+control-flow-flattened method is a callsite anchor only. Its presence cannot
+prove object creation succeeded or that its source basic block is reachable.
+Likewise, `Execute → ParseData` is an observed static callsite, **not**
+proof that command data was accepted, `DetectResult` is populated or an ECU
+list appears in VDASH. An absent edge in a selected or partial REA inspection
+is `not observed`, not proof the instruction is absent from the DLL. These
+tokens and offsets are meaningful only when matched to the **same exact
+assembly build** as the saved IL excerpt. The available excerpt lacks a
+verified original binary SHA, so the tool reports exact local matches without
+automatically certifying version correspondence.
 
 The checker limits input size and method/edge rows, rejects malformed method
 tokens, mismatched identity and incomplete JSON structure, and refuses to
