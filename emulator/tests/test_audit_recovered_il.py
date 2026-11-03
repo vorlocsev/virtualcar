@@ -544,8 +544,8 @@ IL_0020 ret
             (0x01B4, "callvirt 0x0A0000DF System.EventHandler.Invoke"),
         ]
         return ("Frontend.Client.Core.dll: MethodDef 0x0600133D VddModel.PreDetect; "
-                + str(len(rows)) + " decoded opcodes\\n"
-                + "".join(f"IL_{offset:04X} {line}\\n" for offset, line in rows))
+                + str(len(rows)) + " decoded opcodes\n"
+                + "".join(f"IL_{offset:04X} {line}\n" for offset, line in rows))
 
     @staticmethod
     def _phase_detect_fixture():
@@ -569,13 +569,13 @@ IL_0020 ret
             (0x06A3, "callvirt 0x06001BE9 RefreshAvailability"),
         ]
         return ("Frontend.Client.Core.dll: MethodDef 0x0600132B VddModel.Detect; "
-                + str(len(rows)) + " decoded opcodes\\n"
-                + "".join(f"IL_{offset:04X} {line}\\n" for offset, line in rows))
+                + str(len(rows)) + " decoded opcodes\n"
+                + "".join(f"IL_{offset:04X} {line}\n" for offset, line in rows))
 
     @staticmethod
     def _phase_inv(source, token):
         import re
-        count = int(re.search(r"; (\\d+) decoded opcodes", source).group(1))
+        count = int(re.search(r"; (\d+) decoded opcodes", source).group(1))
         return {"selected_methods": [{
             "module": "Frontend.Client.Core.dll",
             "method_token": token, "decoded_instructions": count,
