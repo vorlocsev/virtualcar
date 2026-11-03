@@ -294,3 +294,49 @@ VDASH run. Static callsite evidence alone cannot pass that gate.
 ## Handoff
 
 Linked to issues #37 and #4 and PR #39. Only the read-only analysis script, synthetic tests and research documentation were added in this follow-up; no ECU behavior, fixtures or emulator responses changed. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
+
+
+## PreDetectDone vs OnDetectDone: two independent static phase anchors (2026-11-03)
+
+A new check of the saved, authorized **VDASH portable 2.5.115.79**
+`Frontend.Client.Core.dll` recovered CIL excerpts identified a separate
+pre-detection completion callback and four subsequent availability refresh
+calls within `Detect`. These facts are **source-location observations**,
+not proof that those branches executed in a given session.
+
+| Method | Exact MethodDef/IL site | What the source directly supports |
+| --- | --- | --- |
+| `VddModel.PreDetect` | `newobj 0x0600139D` at `IL_0195`, `set_PreDetectResult` at `IL_019A` | A `PreDetectResult` construction/store site receives existing model, dongle ID, and computed locals. The source does not establish fresh VIN transport. |
+| `VddModel.PreDetect` | `PreDetectDone` field `0x040003CC` at `IL_01A0`; guarded `brtrue.s +6` at `IL_01A6 → IL_01AE`; `EventHandler.Invoke` at `IL_01B4` | The recovered body contains an independently guarded pre-detect completion **event invocation** after the result-store site in printed IL. This does not prove the event fired or that the result contains a valid VIN. |
+| `VddModel.Detect` | `Ecus .ctor 0x0600126D` at `IL_0268`, `set_Ecus` at `IL_026D` | A separate ECU-model projection site depends on `DetectResult`, not directly on `PreDetectResult`. |
+| `VddModel.Detect` | `RefreshAvailability` at `IL_05D3`, `IL_061D`, `IL_064E`, `IL_06A3` | Four distinct methods on `Dim`, `Ecm`, `Icm`, `Phm` are called from **static callsites**. There is no proof of any module being accepted. |
+| `VddModel.Detect` | `OnDetectDone 0x06001343` at `IL_0633` | A different completion callback from the `PreDetectDone` event. |
+| `VddModel.Detect` | `set_DeviceAvailable 0x060012F7` at `IL_0685`, immediately preceded by `ldc.i4.1` | One site sets the device-availability property to true if executed. It is not evidence of ECU visibility or a verified vehicle identity. |
+
+**Critical caution:** The relative offsets of `OnDetectDone`,
+`RefreshAvailability` and `DeviceAvailable` are **not a temporal trace**.
+The method retains a control-flow-flattened switch graph. In particular,
+printed `OnDetectDone` occurs between some of the refresh sites, which
+must **not** be interpreted as an execution order. The exact implementations
+of `RefreshAvailability` and the UI predicate remain outside the selected
+recovered bodies.
+
+**Diagnostic implication (hypothesis only):** A vehicle label/VIN may
+appear after pre-detection independently of a populated ECU list. Even when
+a later `Ecus` object exists, module availability and UI projection could
+still be separate acceptance gates. A single new version-labelled read-only
+client run must distinguish pre-detect UI event, explicit Connect, J2534
+request/response delivery, command completion and a nonempty ECU list.
+
+Implementation: the existing `emulator/tools/audit_recovered_il.py` now
+reports six allowlisted static indicators (two event/result sites plus an
+aggregate phase flag; refresh-site count, DetectDone site, DeviceAvailable
+site plus combined ECU/UI indicator) under
+`recovered-il-evidence-audit-v6`. Eight synthetic mutation tests
+(#49–56) validate site offsets/tokens, guarded branch destination, four
+independent availability methods, incomplete sources and privacy.
+No original vendor body, decrypted code, personal VIN, CAN frame or
+authorized runtime trace is committed. No Virtual Car ECU protocol behavior
+or J2534 firmware shim has been changed. Tests are not proof of VDASH
+client acceptance or a real XC90 V8 MY2009 scan.
+
