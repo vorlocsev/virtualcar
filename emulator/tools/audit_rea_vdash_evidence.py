@@ -21,7 +21,18 @@ _SITES = {
     "methodspec_string_candidate": ("0x2b000002", "method-spec", (0x0124, 0x0423)),
     "opaque_predicate": ("0x06001359", "method-def", (0x0129, 0x0428)),
 }
+_STRUCTURAL_EDGES = {
+    # Source-grounded in the private, earlier recovered IL for 2.5.115.79.
+    # These anchors are not dynamic paths, constructor success, or ECU acceptance.
+    "detect_to_detect_result_ctor":
+        ("0x0600132b", "0x060011bb", "newobj", 0x017f),
+    "detect_to_ecus_ctor":
+        ("0x0600132b", "0x0600126d", "newobj", 0x0268),
+    "execute_to_parse_data":
+        ("0x0600115d", "0x06001160", "call", 0x025e),
+}
 _BODIES = {
+    "execute": "0x0600115d",
     "detect": "0x0600132b",
     "predicate": "0x06001359",
     "parse_data": "0x06001160",
@@ -95,14 +106,29 @@ def audit(document):
             raise ValueError("invalid_body_status")
         bodies[token] = status
     observed = {key: [] for key in _SITES}
+    structural = {key: [] for key in _STRUCTURAL_EDGES}
     for edge in edges:
         if not isinstance(edge, dict):
             raise ValueError("malformed_call_edge")
-        if str(edge.get("caller_token", "")).lower() != "0x0600132b":
+        caller = edge.get("caller_token")
+        if not _token(caller):
+            raise ValueError("malformed_caller_token")
+        if caller.lower() not in {"0x0600132b", "0x0600115d"}:
             continue
         target = edge.get("target_token")
         if not _token(target):
             raise ValueError("malformed_target_token")
+        for key, (expected_caller, expected_target, opcode, _) in _STRUCTURAL_EDGES.items():
+            if (caller.lower() == expected_caller and
+                    target.lower() == expected_target and
+                    edge.get("target_kind") == "method-def" and
+                    edge.get("opcode") == opcode):
+                offset = edge.get("il_offset")
+                if type(offset) is not int or offset < 0:
+                    raise ValueError("invalid_il_offset")
+                structural[key].append(offset)
+        if caller.lower() != "0x0600132b":
+            continue
         for key, (expected, kind, _) in _SITES.items():
             if target.lower() != expected:
                 continue
@@ -128,6 +154,13 @@ def audit(document):
             "exact_expected_sites": offsets == list(expected),
             "target_identity_resolved": bool(resolved),
         }
+    relationships = {}
+    for key, (_, _, _, expected_offset) in _STRUCTURAL_EDGES.items():
+        seen = sorted(structural[key])
+        relationships[key] = {
+            "observed_call_count": len(seen),
+            "exact_expected_site": seen == [expected_offset],
+        }
     return {
         "format": FORMAT,
         "contains_private_metadata": False,
@@ -135,6 +168,7 @@ def audit(document):
         "ecu_identity_verified": False,
         "assembly": identity,
         "call_sites": sites,
+        "structural_edges": relationships,
         "method_bodies": {
             name: {
                 "inspected": token in bodies,
@@ -145,6 +179,7 @@ def audit(document):
             "Tokens and IL offsets are valid only for the attested assembly build",
             "Unselected or missing methods are not proof of absent methods",
             "Resolved metadata names do not reveal predicate semantics or runtime reachability",
+            "newobj and call edges do not prove object construction succeeded, ParseData executed, or branches are reachable",
             "The MethodSpec type argument is known from separate private IL evidence, not inferred here",
             "Static CIL evidence is not VDASH ECU acceptance or an OEM CEM response",
         ],
