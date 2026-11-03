@@ -895,6 +895,33 @@ int main(){
    REQUIRE(p2_cem_e3_02_candidate(marker,1)==0);
   }
  }
+ /* Observer classifies A3, but never fabricates a positive E3 reply. */
+ const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
+ m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
+ REQUIRE(g_vehicle_bridge.inspected_tx>0);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ /* P2/P1 29-bit D2 B9 FB read-only replay fixture. */
+ REQUIRE(g_d2[0].frame_count==1);
+ const U8 synthetic[]={0xCC,0x40,0x7F,0xB9,0x31,0,0,0};
+ const U8 d2req[]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,d2req,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[0]==0x00&&r.Data[1]==0x80&&r.Data[2]==0x00&&r.Data[3]==0x03);
+ REQUIRE((r.RxStatus&CAN_29BIT_ID)==CAN_29BIT_ID);
+ REQUIRE(memcmp(r.Data+4,synthetic,8)==0);
+ /* Published D2 B9 F0 example uses response ID 0x01000003, three frames.
+    Frames are paced; they must NOT arrive all at once. */
+ REQUIRE(g_d2[3].frame_count==3);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
+ REQUIRE(g_vehicle_bridge.vehicle.b9fb_seen>=1);
+ const U8 d2f0[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
+ m=frame(PROTO_CAN,0x000FFFFE,d2f0,8);send(cid,&m);r=readmsg(cid);
+ REQUIRE(r.Data[0]==0x01 && r.Data[1]==0x00 && r.Data[2]==0x00 && r.Data[3]==0x03);
+ REQUIRE(r.Data[4]==0x8F && r.Data[5]==0x50 && r.Data[6]==0xF9 && r.Data[7]==0xF0);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x09);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x4C);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  /* Eight end-to-end A3/A6 routes: the J2534 API succeeds for TX
     but no E3/E6 response is synthesized. The terminal cause now distinguishes
     unsupported CAN bus from a missing verified response implementation. */
@@ -936,33 +963,6 @@ int main(){
   }
   REQUIRE(PassThruDisconnect(ls)==ERR_OK);
  }
- /* Observer classifies A3, but never fabricates a positive E3 reply. */
- const U8 a3_wire[]={0xCF,0x50,0xA3,0x02,0x03,0xA5,0xA5,0x00};
- m=frame(PROTO_CAN,0x000FFFFE,a3_wire,8);send(cid,&m);
- REQUIRE(g_vehicle_bridge.inspected_tx>0);
- REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
- n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
- /* P2/P1 29-bit D2 B9 FB read-only replay fixture. */
- REQUIRE(g_d2[0].frame_count==1);
- const U8 synthetic[]={0xCC,0x40,0x7F,0xB9,0x31,0,0,0};
- const U8 d2req[]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
- m=frame(PROTO_CAN,0x000FFFFE,d2req,8);send(cid,&m);r=readmsg(cid);
- REQUIRE(r.Data[0]==0x00&&r.Data[1]==0x80&&r.Data[2]==0x00&&r.Data[3]==0x03);
- REQUIRE((r.RxStatus&CAN_29BIT_ID)==CAN_29BIT_ID);
- REQUIRE(memcmp(r.Data+4,synthetic,8)==0);
- /* Published D2 B9 F0 example uses response ID 0x01000003, three frames.
-    Frames are paced; they must NOT arrive all at once. */
- REQUIRE(g_d2[3].frame_count==3);
- REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
- REQUIRE(g_vehicle_bridge.vehicle.b9fb_seen>=1);
- const U8 d2f0[]={0xCB,0x50,0xB9,0xF0,0,0,0,0};
- m=frame(PROTO_CAN,0x000FFFFE,d2f0,8);send(cid,&m);r=readmsg(cid);
- REQUIRE(r.Data[0]==0x01 && r.Data[1]==0x00 && r.Data[2]==0x00 && r.Data[3]==0x03);
- REQUIRE(r.Data[4]==0x8F && r.Data[5]==0x50 && r.Data[6]==0xF9 && r.Data[7]==0xF0);
- n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
- n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x09);
- n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,30)==ERR_OK);REQUIRE(r.Data[4]==0x4C);
- n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  /* Issue #4: A3/A6 are known CEM probes with NO validated response
     implementation. Nine read-only routing checks. The telemetry must not
     mistake them for arbitrary CAN IDs, missing B9 replay fixtures, or real
