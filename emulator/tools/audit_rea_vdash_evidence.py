@@ -81,10 +81,78 @@ def _identity(data):
     }
 
 
+
+
+def _inspection_scope(data, coverage):
+    """Report source bounds without exporting selected declaring-type names.
+
+    REA's method_rows is the examined zero-based MethodDef interval BEFORE
+    type selection. Missing method_rows is unknown, not all rows examined.
+    """
+    selection = data.get("selection")
+    if selection is None:
+        type_scope = "all_types"
+    elif (isinstance(selection, dict)
+          and isinstance(selection.get("type_names"), list)
+          and len(selection["type_names"]) > 0
+          and all(isinstance(n, str) and n for n in selection["type_names"])
+          and isinstance(selection.get("unmatched_type_names"), list)):
+        type_scope = "selected_types"
+    else:
+        raise ValueError("invalid_type_selection")
+    rows = data.get("method_rows")
+    if rows is None:
+        row_scope = "unreported"
+    elif isinstance(rows, dict):
+        coords = [rows.get(k) for k in ("offset", "count", "total")]
+        if (any(type(x) is not int or x < 0 for x in coords)
+                or coords[0] + coords[1] > coords[2]):
+            raise ValueError("invalid_method_row_scope")
+        row_scope = ("all_rows" if coords[0] == 0 and coords[1] == coords[2]
+                     else "page_only")
+    else:
+        raise ValueError("invalid_method_row_scope")
+    return {
+        "declaring_types": type_scope,
+        "method_rows": row_scope,
+        "all_members_examined": (coverage == "complete"
+                                and type_scope == "all_types"
+                                and row_scope == "all_rows"),
+    }
+
+
+def _cil_decode_attestation(body):
+    """Return only a bounded status, never an IL digest or instruction bytes.
+
+    A 'present' body is not on its own proof of a complete decoded CIL
+    instruction stream; all decode counters and its normalized digest must
+    be present and internally consistent.
+    """
+    fields = ("instruction_count", "decoded_instruction_count",
+              "truncated_instructions", "normalized_il_sha256", "issue")
+    if any(key not in body for key in fields):
+        return "unreported"
+    n, decoded, truncated = (body[key] for key in fields[:3])
+    if (any(type(v) is not int or v < 0 for v in (n, decoded, truncated))
+            or decoded > n):
+        raise ValueError("invalid_cil_decode_counts")
+    digest = body["normalized_il_sha256"]
+    if digest is not None and (not isinstance(digest, str)
+                               or not _SHA.fullmatch(digest)):
+        raise ValueError("invalid_normalized_il_digest")
+    issue = body["issue"]
+    if issue is not None and not isinstance(issue, str):
+        raise ValueError("invalid_cil_decode_issue")
+    if (body["status"] == "present" and truncated == 0 and
+            decoded == n and digest is not None and issue is None):
+        return "complete_decode_attested"
+    return "partial_or_unavailable"
+
 def audit(document):
     outer = _object(document, "document")
     data = _object(outer.get("normalized_result"), "complete_rea_result")
     identity = _identity(data)
+    inspection_scope = _inspection_scope(data, identity["coverage"])
     methods = data.get("methods")
     edges = data.get("call_edges")
     if not isinstance(methods, list) or not isinstance(edges, list):
@@ -92,6 +160,7 @@ def audit(document):
     if len(methods) > 100000 or len(edges) > 300000:
         raise ValueError("row_limit")
     bodies = {}
+    decodes = {}
     for method in methods:
         if not isinstance(method, dict) or not _token(method.get("token")):
             raise ValueError("malformed_method")
@@ -105,6 +174,7 @@ def audit(document):
         if status not in _STATUS:
             raise ValueError("invalid_body_status")
         bodies[token] = status
+        decodes[token] = _cil_decode_attestation(body)
     observed = {key: [] for key in _SITES}
     structural = {key: [] for key in _STRUCTURAL_EDGES}
     for edge in edges:
@@ -167,17 +237,21 @@ def audit(document):
         "client_acceptance_verified": False,
         "ecu_identity_verified": False,
         "assembly": identity,
+        "inspection_scope": inspection_scope,
         "call_sites": sites,
         "structural_edges": relationships,
         "method_bodies": {
             name: {
                 "inspected": token in bodies,
                 "status": bodies.get(token, "not_inspected"),
+                "cil_decode": decodes.get(token, "not_inspected"),
             } for name, token in _BODIES.items()
         },
         "limitations": [
             "Tokens and IL offsets are valid only for the attested assembly build",
             "Unselected or missing methods are not proof of absent methods",
+            "Complete CIL decode is a static parser property, not a reachable or executed method",
+            "Historical or paged REA member reports may not attest inspection of every method row",
             "Resolved metadata names do not reveal predicate semantics or runtime reachability",
             "newobj and call edges do not prove object construction succeeded, ParseData executed, or branches are reachable",
             "The MethodSpec type argument is known from separate private IL evidence, not inferred here",
