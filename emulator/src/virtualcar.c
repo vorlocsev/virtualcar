@@ -123,6 +123,9 @@ static char g_backend_path[512];
 static U32 g_backend_enabled=0;
 /* Configuration observation only: never a CAN_PS transport or ECU route. */
 static U32 g_can_ps_config_probe=0;
+/* Disabled by default: 1=filter API, 2=exact D8 write API, 3=D8 periodic API.
+   These modes NEVER transmit to a bus, schedule a firing or fabricate RX. */
+static U32 g_can_ps_api_outcome_mode=0;
 static U32 g_backend_serial=0;
 static U64 g_backend_session=0;
 static char g_host_name[48]="unknown.exe";
@@ -298,6 +301,11 @@ static void log_can_ps_probe(U32 channel_id,U32 operation,U32 value,U32 status){
     logline("J2534 CAN_PS config probe channel/operation/value/status (BE)",meta,16);
 }
 static int can_ps_probe_pins(U32 value){return value==0x030Bu||value==0x060Eu;}
+/* Mode and operation are fixed allowlist metadata, not wire evidence. */
+static void log_can_ps_api_outcome(U32 mode,U32 operation,U32 status){
+    U8 meta[12];u32_be(meta,mode);u32_be(meta+4,operation);u32_be(meta+8,status);
+    logline("J2534 CAN_PS API-only outcome mode/operation/status (BE)",meta,12);
+}
 /* These are lexical envelopes observed before an unchanged PS rejection,
    never accepted TX, ECU support, permission checks or backend routes. */
 static U32 can_ps_rejected_shape(const U8 *p,U32 size,U32 id){
@@ -347,6 +355,31 @@ static U32 can_ps_rejected_shape(const U8 *p,U32 size,U32 id){
         }
     }
     return 0u;
+}
+/* Exact observed CAN_PS D8 envelope. An accepted API call is NOT bus TX. */
+static int can_ps_outcome_d8(const CHANNEL *c,const PASSTHRU_MSG *m){
+    if(!c||c->protocol!=PROTO_CAN_PS||c->baud!=125000u||
+       c->can_ps_observed_pins!=0x030Bu||!m||
+       m->ProtocolID!=PROTO_CAN_PS||m->TxFlags!=0x100u||m->DataSize!=12u)return 0;
+    if(m->Data[0]!=0u||m->Data[1]!=0x0Fu||m->Data[2]!=0xFFu||m->Data[3]!=0xFEu)return 0;
+    return can_ps_rejected_shape(m->Data+4,8u,0x000FFFFEu)==42u;
+}
+/* Only the three observed ID-only PASS_FILTER envelope classes are eligible.
+   The filter handle is PS-local and never used to route a real CAN RX. */
+static int can_ps_outcome_filter(const CHANNEL *c,U32 type,
+                                const PASSTHRU_MSG *mask,const PASSTHRU_MSG *pattern,
+                                const PASSTHRU_MSG *flow){
+    if(!c||c->protocol!=PROTO_CAN_PS||c->baud!=125000u||
+       c->can_ps_observed_pins!=0x030Bu||type!=1u||flow||
+       mask->ProtocolID!=PROTO_CAN_PS||pattern->ProtocolID!=PROTO_CAN_PS||
+       mask->DataSize!=4u||pattern->DataSize!=4u||
+       mask->TxFlags!=pattern->TxFlags||
+       (mask->TxFlags!=0u&&mask->TxFlags!=0x100u))return 0;
+    /* A zero extended pattern is allowed, as observed in the 29-bit probe. */
+    {U32 id=((U32)pattern->Data[0]<<24)|((U32)pattern->Data[1]<<16)|
+             ((U32)pattern->Data[2]<<8)|(U32)pattern->Data[3];
+     if(id>0x1FFFFFFFu||(mask->TxFlags==0u&&id>0x7FFu))return 0;}
+    return 1;
 }
 static void log_can_ps_rejected_attempt(const CHANNEL *c,U32 origin,
                                       const PASSTHRU_MSG *msg,U32 count){
@@ -854,6 +887,8 @@ static void load_config(void) {
     g_profile_path[n]=0;str_append(g_profile_path,"virtualcar.ini",sizeof(g_profile_path));
     GetPrivateProfileStringA("Diagnostics","EnableCanPsConfigProbe","0",v,sizeof(v),g_profile_path);
     g_can_ps_config_probe=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","CanPsApiOutcomeMode","0",v,sizeof(v),g_profile_path);
+    {U32 mode=parse_num(v,0);g_can_ps_api_outcome_mode=(g_can_ps_config_probe&&mode>=1u&&mode<=3u)?mode:0u;}
     /* Explicit opt-in. The GUI can enable [Diagnostics] BackendTelemetryEnabled=1.
        The log location is stable across sessions but contains no private bytes. */
     g_backend_enabled=0;g_backend_path[0]=0;
@@ -1464,6 +1499,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
    polls ReadMsgs. Never spawn a background vehicle writer. */
 static void pump_periodic(CHANNEL *c){
     U32 i;U64 now=now_us();
+    /* API-only CAN_PS registrations must NEVER become simulator TX. */
+    if(c->protocol==PROTO_CAN_PS)return;
     for(i=0;i<MAX_PERIODIC;i++){
         PERIODIC *p=&c->periodic[i];
         if(!p->used || now<p->next_us || c->count>=MAX_QUEUE)continue;
@@ -1527,6 +1564,11 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(c->protocol==PROTO_CAN_PS){
+        if(g_can_ps_api_outcome_mode==2u&&*count==1u&&can_ps_outcome_d8(c,msgs)){
+            /* Return API success only. No TX context, queue, backend root or RX. */
+            log_can_ps_api_outcome(2u,4u,ERR_OK);
+            unlock_state();return error(ERR_OK);
+        }
         log_can_ps_rejected_attempt(c,1u,msgs,*count);
         *count=0;log_can_ps_probe(id,4u,0u,ERR_NOT_SUPPORTED);
         unlock_state();return error(ERR_NOT_SUPPORTED);
@@ -1637,6 +1679,16 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(c->protocol==PROTO_CAN_PS){
+        if(g_can_ps_api_outcome_mode==1u&&
+           can_ps_outcome_filter(c,type,mask,pattern,flow)){
+            FILTER *f;
+            if(c->filters_count>=MAX_FILTERS){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
+            f=&c->filters[c->filters_count++];f->id=g_filter_counter++;f->type=type;
+            bytes_copy(f->mask,mask->Data,4);bytes_copy(f->pattern,pattern->Data,4);
+            *filter_id=f->id;
+            log_can_ps_api_outcome(1u,5u,ERR_OK);
+            unlock_state();return error(ERR_OK);
+        }
         log_can_ps_rejected_filter(id,type,mask,pattern,flow);
         log_can_ps_probe(id,5u,0u,ERR_NOT_SUPPORTED);
         unlock_state();return error(ERR_NOT_SUPPORTED);
@@ -1671,6 +1723,18 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);
     if(c&&c->protocol==PROTO_CAN_PS){
+        if(g_can_ps_api_outcome_mode==3u&&interval==1000u&&
+           can_ps_outcome_d8(c,msg)){
+            PERIODIC *p;
+            for(i=0;i<MAX_PERIODIC;i++)if(!c->periodic[i].used)break;
+            if(i==MAX_PERIODIC){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
+            p=&c->periodic[i];bytes_zero(p,sizeof(*p));
+            p->used=1;p->id=g_periodic_counter++;p->interval_ms=interval;
+            /* Stored solely for StopPeriodicMsg; pump_periodic excludes CAN_PS. */
+            *period_id=p->id;
+            log_can_ps_api_outcome(3u,6u,ERR_OK);
+            unlock_state();return error(ERR_OK);
+        }
         log_can_ps_rejected_periodic(id,msg,interval);
         log_can_ps_rejected_attempt(c,2u,msg,1u);
         log_can_ps_probe(id,6u,0u,ERR_NOT_SUPPORTED);

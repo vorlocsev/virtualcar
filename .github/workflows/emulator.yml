@@ -1,7 +1,8 @@
 name: Virtual Car Emulator Windows x86
 on:
   push:
-    branches: [main]
+    # Isolated CI for draft #43. No release workflow is enabled on this branch.
+    branches: [main, experiment/can-ps-api-outcome-ab]
     paths: ["emulator/**", ".github/workflows/emulator.yml"]
   pull_request:
     branches: [main, development]
@@ -78,6 +79,9 @@ jobs:
           if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          # Distinct isolated directory, baseline audits remain unaffected.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_can_ps_api_outcome.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\can-ps-outcome-native"
+          if ($LASTEXITCODE -ne 0) { throw 'Native CAN_PS A/B/C API-only regression failed' }
           python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
           python emulator/tools/audit_j2534_connect.py "$env:RUNNER_TEMP\native-route-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\can-ps-config-audit.json"
@@ -96,6 +100,24 @@ jobs:
           if ($filter.Count -ne 1 -or $filter[0].type -ne 'pass_filter' -or $filter[0].message_protocols -ne 'both_CAN_PS' -or $filter[0].sizes -ne 'both_id_only' -or $filter[0].flags -ne 'both_extended' -or $filter[0].flow -ne 'absent' -or $filter[0].mask -ne 'id_29_bits' -or $filter[0].pattern -ne '29_bit_range') { throw 'Unexpected native rejected filter arguments' }
           $period = @($setup.periodic)
           if ($period.Count -ne 1 -or $period[0].message_protocol -ne 'CAN_PS' -or $period[0].interval_ms -ne '4000' -or $period[0].interval_check -ne 'valid_catalog_interval') { throw 'Unexpected native rejected periodic arguments' }
+      - name: Package synthetic CAN_PS A/B (no release)
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one tested x86 DLL' }
+          $output = Join-Path $env:RUNNER_TEMP 'can-ps-ab-artifacts'
+          New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
+          python emulator/tools/package_can_ps_ab.py --root emulator --dll $dll[0].FullName --out-dir $output --source-sha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw 'CAN_PS AB package validation failed' }
+          $archives = @(Get-ChildItem -LiteralPath $output -Filter '*.zip')
+          if ($archives.Count -ne 1) { throw 'Expected one four-mode LAB archive' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-CANPS-AB-${{ github.sha }}-Windows-x86-LAB
+          path: |
+            ${{ runner.temp }}/can-ps-ab-artifacts/*.zip
+            ${{ runner.temp }}/can-ps-ab-artifacts/*.sha256
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
