@@ -20,7 +20,13 @@ spec.loader.exec_module(tool)
 
 def case(gap_ms=490):
     # Last synthetic RX is at 1,032,000 microseconds.
-    return tx() + response() + tx(A3, at=1_032_000 + gap_ms * 1000)
+    # Native runner later sends an unconfigured LS125 B9FB request. The
+    # auditor must count that as one *unanswered* attempt, not as a second
+    # completed response or an error in the first HS500 B9FB.
+    a3_us = 1_032_000 + gap_ms * 1000
+    return (tx() + response() + tx(A3, at=a3_us)
+            + tx(bytes.fromhex("CB 40 B9 FB 00 00 00 00"),
+                 channel=2, baud=125000, at=a3_us + 50_000))
 
 
 def run(lines):
@@ -33,6 +39,7 @@ class NativeD2FollowupGateTests(unittest.TestCase):
         self.assertTrue(result["native_d2_followup_verified"])
         self.assertEqual(result["last_rx_to_first_next_tx_ms"], 490)
         self.assertEqual(result["b9fb_rx_frames"], 13)
+        self.assertEqual(result["other_unanswered_b9fb_attempts"], 1)
         self.assertEqual(result["b9fb_target"], "0x50")
         self.assertEqual(result["first_next_tx_target"], "0x50")
         self.assertTrue(result["first_next_tx_same_target"])
