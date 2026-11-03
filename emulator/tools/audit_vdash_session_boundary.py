@@ -38,6 +38,7 @@ def audit(ui, connect, discovery):
     if not isinstance(c, dict) or not isinstance(c.get("statuses"), dict):
         raise ValueError("connect_shape")
     attempts, ok = _count(c.get("attempts")), _count(c["statuses"].get("ok", 0))
+    invalid_connect = _count(c.get("invalid_events"))
     if len(c["statuses"]) > 20 or any(not isinstance(k, str) or len(k) > 40
              or _count(v) < 0 for k, v in c["statuses"].items()):
         raise ValueError("connect_status")
@@ -80,7 +81,8 @@ def audit(ui, connect, discovery):
             or _count(obd.get("recognized_d2_p3_probes")) != targeted):
         raise ValueError("discovery_totals")
     comparable = (ui["one_client_run_attested"] and ui["same_run_sources_attested"]
-                  and len(sessions) <= 1 and sum(errors.values()) == 0)
+                  and len(sessions) <= 1 and sum(errors.values()) == 0
+                  and invalid_connect == 0)
     if not comparable:
         focus = "no_cross_source_conclusion"
     elif ui["ecu_list"] == "nonempty":
@@ -89,6 +91,10 @@ def audit(ui, connect, discovery):
         focus = "explicit_connect_not_observed"
     elif ui.get("connect_pressed") is not True:
         focus = "unknown_connect_ui_action"
+    elif ui.get("connect_ui_finished") is False:
+        focus = "ui_connect_not_complete"
+    elif ui.get("connect_ui_finished") is None:
+        focus = "ui_connect_completion_unknown"
     elif attempts == 0:
         focus = "inspect_driver_or_missing_connect_log"
     elif ok == 0:
@@ -112,6 +118,7 @@ def audit(ui, connect, discovery):
         "cross_source_correlatable_by_attestation_only": comparable,
         "same_run_independently_verified": False,
         "j2534_connect_attempts": attempts, "j2534_connect_ok": ok,
+        "j2534_invalid_connect_records": invalid_connect,
         "discovery_session_count": len(sessions),
         "vin_transport_requests": vin_req, "vin_transport_deliveries": vin_rx,
         "recognized_oem_requests": targeted, "recognized_oem_deliveries": target_rx,
@@ -127,6 +134,8 @@ def audit(ui, connect, discovery):
             "OEM delivery does not prove ResultData or InitializeUnits executed.",
             "Missing observed OEM request does not prove no other transport or client path.",
             "The saved method excerpts lack InitializeUnits and RefreshAvailability bodies.",
+            "Incomplete UI Connect cannot prove that a completed ECU scan failed.",
+            "Malformed J2534 Connect metadata prevents reliable connection classification.",
         ],
     }
 

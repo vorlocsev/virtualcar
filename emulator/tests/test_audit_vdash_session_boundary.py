@@ -148,6 +148,63 @@ class VdashBoundaryTests(unittest.TestCase):
                 self.assertEqual(tool.main(argv), 2)
             self.assertNotIn(td, errors.getvalue())
 
+    def test_09_invalid_connect_metadata_blocks_classification(self):
+        conn = connect()
+        conn["connect"]["invalid_events"] = 1
+        r = tool.audit(ui(), conn, discovery(tx("OBD", "0902")))
+        self.assertFalse(r["cross_source_correlatable_by_attestation_only"])
+        self.assertEqual(r["research_focus"], "no_cross_source_conclusion")
+        self.assertEqual(r["j2534_invalid_connect_records"], 1)
+
+    def test_10_ui_connect_incomplete_not_ecu_rejection(self):
+        r = tool.audit(ui(connect_ui_finished=False), connect(),
+                       discovery(tx("OBD", "0902"), tx("D2", "B9FB")))
+        self.assertEqual(r["research_focus"], "ui_connect_not_complete")
+        self.assertEqual(r["recognized_oem_deliveries"], 1)
+        self.assertFalse(r["vdash_command_completion_verified"])
+
+    def test_11_unknown_ui_completion_not_accepted(self):
+        r = tool.audit(ui(connect_ui_finished=None), connect(),
+                       discovery(tx("OBD", "0902"), tx("D2", "B9FB")))
+        self.assertEqual(r["research_focus"], "ui_connect_completion_unknown")
+        self.assertIsNone(r["ui_connect_finished_reported"])
+
+    def test_12_completed_ui_connect_keeps_bounded_hypothesis(self):
+        r = tool.audit(ui(connect_ui_finished=True), connect(),
+                       discovery(tx("OBD", "0902"), tx("D2", "B9FB")))
+        self.assertEqual(r["research_focus"], "inspect_command_result_and_ui_projection")
+        self.assertFalse(r["initialize_units_execution_verified"])
+
+    def test_13_partial_or_negative_oem_not_delivery(self):
+        for status in ("partial_rx", "negative_response", "unverified"):
+            with self.subTest(status=status):
+                r = tool.audit(ui(), connect(), discovery(tx("D2", "B9FB", status)))
+                self.assertEqual(r["recognized_oem_requests"], 1)
+                self.assertEqual(r["recognized_oem_deliveries"], 0)
+                self.assertEqual(r["research_focus"], "more_client_transport_evidence_needed")
+
+    def test_14_invalid_connect_counter_type_rejected(self):
+        for value in (True, "1", -1, 20001):
+            conn = connect()
+            conn["connect"]["invalid_events"] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                tool.audit(ui(), conn, discovery())
+
+    def test_15_missing_invalid_connect_counter_rejected(self):
+        conn = connect()
+        del conn["connect"]["invalid_events"]
+        with self.assertRaises(ValueError):
+            tool.audit(ui(), conn, discovery())
+
+    def test_16_private_extensions_still_redacted(self):
+        a, b, c = ui(), connect(), discovery(tx("OBD", "0902"))
+        for item in (a, b, c):
+            item["unknown_private"] = "CUSTOMER_PRIVATE_VIN"
+        r = tool.audit(a, b, c)
+        self.assertNotIn("CUSTOMER_PRIVATE_VIN", json.dumps(r))
+        self.assertEqual(r["j2534_invalid_connect_records"], 0)
+        self.assertFalse(r["same_run_independently_verified"])
+
 
 if __name__ == "__main__":
     unittest.main()
