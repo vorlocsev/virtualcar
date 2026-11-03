@@ -67,6 +67,7 @@ class ReaStaticEvidenceTests(unittest.TestCase):
                 "observed_call_count": 2,
                 "exact_expected_sites": True,
                 "target_identity_resolved": True,
+                "decoded_caller_corroborated": False,
             })
         self.assertEqual(output["method_bodies"]["predicate"],
                          {"inspected": True, "status": "present", "cil_decode": "unreported"})
@@ -194,7 +195,8 @@ class ReaStaticEvidenceTests(unittest.TestCase):
         for item in report["structural_edges"].values():
             self.assertEqual(item,
                              {"observed_call_count": 1,
-                              "exact_expected_site": True})
+                              "exact_expected_site": True,
+                              "decoded_caller_corroborated": False})
         self.assertEqual(report["method_bodies"]["execute"],
                          {"inspected": True, "status": "present", "cil_decode": "unreported"})
         self.assertFalse(report["client_acceptance_verified"])
@@ -207,7 +209,8 @@ class ReaStaticEvidenceTests(unittest.TestCase):
         report = tool.audit(value)
         self.assertEqual(report["structural_edges"][
             "detect_to_detect_result_ctor"], {
-                "observed_call_count": 0, "exact_expected_site": False})
+                "observed_call_count": 0, "exact_expected_site": False,
+                "decoded_caller_corroborated": False})
         self.assertTrue(report["structural_edges"][
             "execute_to_parse_data"]["exact_expected_site"])
 
@@ -246,7 +249,8 @@ class ReaStaticEvidenceTests(unittest.TestCase):
         report = tool.audit(value)
         self.assertEqual(report["structural_edges"][
             "detect_to_detect_result_ctor"], {
-                "observed_call_count": 1, "exact_expected_site": False})
+                "observed_call_count": 1, "exact_expected_site": False,
+                "decoded_caller_corroborated": False})
 
     def test_15_duplicate_edge_does_not_count_as_exact(self):
         value = self._structural_fixture()
@@ -255,7 +259,8 @@ class ReaStaticEvidenceTests(unittest.TestCase):
         edges.append(dict(matching))
         report = tool.audit(value)
         self.assertEqual(report["structural_edges"]["execute_to_parse_data"], {
-            "observed_call_count": 2, "exact_expected_site": False})
+            "observed_call_count": 2, "exact_expected_site": False,
+                "decoded_caller_corroborated": False})
 
     def test_16_partial_scope_is_not_runtime_or_full_body_proof(self):
         value = self._structural_fixture()
@@ -282,6 +287,7 @@ class ReaStaticEvidenceTests(unittest.TestCase):
     @staticmethod
     def _page_fixture():
         value = fixture()
+        value["normalized_result"]["selection"] = None
         value["normalized_result"]["method_rows"] = {
             "offset": 0, "count": 8000, "total": 8000,
         }
@@ -407,6 +413,102 @@ class ReaStaticEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_normalized_il_digest"):
             tool.audit(value)
 
+
+
+    @staticmethod
+    def _complete_detect_body(value):
+        target = next(m for m in value["normalized_result"]["methods"]
+                      if m["token"] == "0x0600132b")
+        target["body"] = {
+            "status": "present", "instruction_count": 511,
+            "decoded_instruction_count": 511, "truncated_instructions": 0,
+            "normalized_il_sha256": "c" * 64, "issue": None,
+        }
+        return value
+
+    def test_25_absent_selection_field_remains_unreported(self):
+        value = self._page_fixture()
+        del value["normalized_result"]["selection"]
+        result = tool.audit(value)
+        self.assertEqual(result["inspection_scope"]["declaring_types"],
+                         "unreported")
+        self.assertFalse(result["inspection_scope"]["all_members_examined"])
+        self.assertTrue(result["call_sites"]["opaque_predicate"][
+            "exact_expected_sites"])
+
+    def test_26_explicit_null_selection_attests_all_types(self):
+        value = self._page_fixture()
+        result = tool.audit(value)["inspection_scope"]
+        self.assertEqual(result["declaring_types"], "all_types")
+        self.assertTrue(result["all_members_examined"])
+
+    def test_27_edges_without_detect_caller_row_not_corroborated(self):
+        value = fixture()
+        value["normalized_result"]["methods"] = [
+            m for m in value["normalized_result"]["methods"]
+            if m["token"] != "0x0600132b"]
+        result = tool.audit(value)
+        for entry in result["call_sites"].values():
+            self.assertTrue(entry["exact_expected_sites"])
+            self.assertFalse(entry["decoded_caller_corroborated"])
+        self.assertEqual(result["method_bodies"]["detect"]["status"],
+                         "not_inspected")
+
+    def test_28_present_detect_without_decode_attestation(self):
+        result = tool.audit(fixture())
+        self.assertTrue(all(not item["decoded_caller_corroborated"]
+                            for item in result["call_sites"].values()))
+        self.assertEqual(result["method_bodies"]["detect"]["cil_decode"],
+                         "unreported")
+
+    def test_29_complete_decoded_detect_corroborates_pair_sites(self):
+        value = self._complete_detect_body(fixture())
+        result = tool.audit(value)
+        for item in result["call_sites"].values():
+            self.assertTrue(item["decoded_caller_corroborated"])
+        self.assertEqual(result["method_bodies"]["detect"]["cil_decode"],
+                         "complete_decode_attested")
+        self.assertFalse(result["client_acceptance_verified"])
+
+    def test_30_partial_decode_prevents_false_corroboration(self):
+        value = self._complete_detect_body(fixture())
+        body = next(m for m in value["normalized_result"]["methods"]
+                    if m["token"] == "0x0600132b")["body"]
+        body["truncated_instructions"] = 1
+        body["decoded_instruction_count"] = 510
+        result = tool.audit(value)
+        self.assertFalse(result["call_sites"]["opaque_predicate"][
+            "decoded_caller_corroborated"])
+
+    def test_31_decoded_execute_only_correlates_execute_edge(self):
+        value = self._structural_fixture()
+        execute = next(m for m in value["normalized_result"]["methods"]
+                       if m["token"] == "0x0600115d")
+        execute["body"] = {
+            "status": "present", "instruction_count": 74,
+            "decoded_instruction_count": 74, "truncated_instructions": 0,
+            "normalized_il_sha256": "d" * 64, "issue": None,
+        }
+        report = tool.audit(value)
+        self.assertTrue(report["structural_edges"]["execute_to_parse_data"][
+            "decoded_caller_corroborated"])
+        self.assertFalse(report["structural_edges"]["detect_to_ecus_ctor"][
+            "decoded_caller_corroborated"])
+        self.assertFalse(report["call_sites"]["opaque_predicate"][
+            "decoded_caller_corroborated"])
+
+    def test_32_wrong_offset_stays_uncorroborated_with_complete_cil(self):
+        value = self._complete_detect_body(self._structural_fixture())
+        edges = value["normalized_result"]["call_edges"]
+        next(e for e in edges if e["target_token"] == "0x060011bb")[
+            "il_offset"] = 0x0180
+        report = tool.audit(value)
+        self.assertFalse(report["structural_edges"][
+            "detect_to_detect_result_ctor"]["decoded_caller_corroborated"])
+        self.assertTrue(report["structural_edges"][
+            "detect_to_ecus_ctor"]["decoded_caller_corroborated"])
+        self.assertNotIn("Private.Obfuscated", json.dumps(report))
+        self.assertFalse(report["ecu_identity_verified"])
 
 
 if __name__ == "__main__":
