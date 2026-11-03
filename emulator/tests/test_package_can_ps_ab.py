@@ -58,6 +58,8 @@ class CanPsABPackageTests(unittest.TestCase):
         tool_dir.mkdir()
         (tool_dir / "Set-VirtualCarAB.ps1").write_text(
             "#Requires -RunAsAdministrator\n# VirtualCar-CANPS-AB-v1\n", encoding="utf-8")
+        (tool_dir / "Test-VirtualCarAB.ps1").write_text(
+            "#Requires -Version 5.1\n# VirtualCarABPreflight\n", encoding="utf-8")
         (self.work / "virtualcar-p2.ini").write_text(BASE, encoding="utf-8")
         self.output = root / "artifacts"
         self.output.mkdir()
@@ -67,7 +69,7 @@ class CanPsABPackageTests(unittest.TestCase):
 
     def test_01_exact_four_mode_folders_and_allowlisted_files(self):
         with zipfile.ZipFile(self.build()) as z:
-            expected = {"BUILDINFO.json", "SHA256SUMS.txt", "README_RUN_RU.txt", "Set-VirtualCarAB.ps1"}
+            expected = {"BUILDINFO.json", "SHA256SUMS.txt", "README_RUN_RU.txt", "Set-VirtualCarAB.ps1", "Test-VirtualCarAB.ps1"}
             for mode, label in tool.MODES:
                 expected.add(label + "/virtualcar.ini")
                 expected.add(label + "/VirtualCarJ2534.dll")
