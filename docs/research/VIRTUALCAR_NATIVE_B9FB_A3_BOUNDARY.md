@@ -101,6 +101,10 @@ The new emulator/tools/verify_native_d2_followup.py runs
 audit_d2_followup_window.audit on the native text log itself and
 requires:
 - One completed B9FB CEM50 sequence with exactly 13 RX frames.
+- Exactly one later unanswered B9FB CEM40 attempt, already part of
+  the native test's explicit no-fixture check. This is recorded as
+  incomplete transport, not as a corrupted first B9FB or a second
+  delivered response. The separate backend gate validates its cause.
 - First next **app** TX is A3, target CEM50 on the same HS500
   channel, same bitrate and same source PID/log epoch.
 - The measured microsecond gap is finite and the 500ms/1000ms
