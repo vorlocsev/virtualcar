@@ -85,6 +85,7 @@ class RecoveredInventoryEvidenceTests(unittest.TestCase):
         self.assertEqual(result["methods"]["parse_data"], {
             "inventory_record": "reported",
             "il_bytes": 550, "decoded_instructions": 171, "decoder_issues": 0,
+            "entry_opcode_shape": "not_reported", "stub_status": "not_reported",
             "call_counts": {
                 "get_result_data_call": 4, "raise_event_call": 2,
                 "set_data_hash_call": 1, "parse_data_callback_88": 1,
@@ -179,6 +180,95 @@ class RecoveredInventoryEvidenceTests(unittest.TestCase):
             self.assertEqual(tool.main([str(original), "--output",
                                         str(invalid_out)]), 2)
             self.assertFalse(invalid_out.exists())
+
+
+    @staticmethod
+    def _observed_prefixes():
+        data = inventory()
+        prefixes = {
+            "0x0600132B": ["call", "dup", "ldc.i4.0", "call",
+                           "stloc.0", "ldc.i4", "ldc.i4", "xor"],
+            "0x0600115D": ["ldarg.0", "ldfld", "ldarg.0", "ldftn",
+                           "newobj", "call", "ldc.i4", "ldc.i4"],
+            "0x06001160": ["ldarg.1", "brtrue.s", "ldc.i4", "ldc.i4",
+                           "xor", "dup", "stloc.3", "ldc.i4.3"],
+        }
+        for row in data["selected_methods"]:
+            row["first_operations"] = prefixes[row["method_token"]]
+            row["return_only_stub"] = False
+        return data
+
+    def test_09_recorded_entry_shapes_are_sanitized(self):
+        result = tool.audit(self._observed_prefixes())
+        for name in ("detect", "execute", "parse_data"):
+            self.assertEqual(result["methods"][name]["entry_opcode_shape"],
+                             "expected_static_prefix_observed")
+            self.assertEqual(result["methods"][name]["stub_status"],
+                             "reported_non_stub")
+        self.assertFalse(result["client_ecu_acceptance_verified"])
+
+    def test_10_modified_parse_data_branch_is_not_matching(self):
+        data = self._observed_prefixes()
+        data["selected_methods"][2]["first_operations"][1] = "brfalse.s"
+        result = tool.audit(data)
+        self.assertEqual(result["methods"]["parse_data"]["entry_opcode_shape"],
+                         "different_or_incomplete_prefix")
+        self.assertEqual(result["methods"]["execute"]["entry_opcode_shape"],
+                         "expected_static_prefix_observed")
+
+    def test_11_missing_prefix_and_stub_are_unreported(self):
+        result = tool.audit(inventory())
+        self.assertEqual(result["methods"]["parse_data"]["entry_opcode_shape"],
+                         "not_reported")
+        self.assertEqual(result["methods"]["parse_data"]["stub_status"],
+                         "not_reported")
+
+    def test_12_stub_flag_is_observed_without_runtime_claim(self):
+        data = self._observed_prefixes()
+        data["selected_methods"][2]["return_only_stub"] = True
+        result = tool.audit(data)
+        self.assertEqual(result["methods"]["parse_data"]["stub_status"],
+                         "reported_stub")
+        self.assertFalse(result["client_ecu_acceptance_verified"])
+
+    def test_13_non_opcode_and_unbounded_prefix_rejected(self):
+        for bad in (PRIVATE, {"opcode": "ldarg.1"}, 15):
+            with self.subTest(value_type=type(bad).__name__):
+                data = self._observed_prefixes()
+                data["selected_methods"][2]["first_operations"] = [bad]
+                with self.assertRaisesRegex(ValueError, "invalid_first_operations"):
+                    tool.audit(data)
+        data = self._observed_prefixes()
+        data["selected_methods"][2]["first_operations"] = ["nop"] * 33
+        with self.assertRaisesRegex(ValueError, "invalid_first_operations"):
+            tool.audit(data)
+
+    def test_14_invalid_stub_flag_is_not_coerced(self):
+        for bad in (1, "false", [], {}):
+            with self.subTest(value_type=type(bad).__name__):
+                data = self._observed_prefixes()
+                data["selected_methods"][0]["return_only_stub"] = bad
+                with self.assertRaisesRegex(ValueError, "invalid_stub_flag"):
+                    tool.audit(data)
+
+    def test_15_private_opcode_sequence_never_leaves_summary(self):
+        result = tool.audit(self._observed_prefixes())
+        output = json.dumps(result)
+        for secret in (PRIVATE, "ldarg.1", "brtrue.s", RECOVERED):
+            self.assertNotIn(secret, output)
+        self.assertFalse(result["exact_original_il_body_available_here"])
+
+    def test_16_missing_selected_parse_data_is_not_absence(self):
+        data = self._observed_prefixes()
+        data["selected_methods"] = [
+            row for row in data["selected_methods"]
+            if row["method_token"] != "0x06001160"
+        ]
+        result = tool.audit(data)
+        self.assertEqual(result["methods"]["parse_data"],
+                         {"inventory_record": "not_reported", "call_counts": {}})
+        self.assertEqual(result["methods"]["execute"]["call_counts"],
+                         {"parse_data_call": 1})
 
 
 if __name__ == "__main__":
