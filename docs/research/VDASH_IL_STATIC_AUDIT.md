@@ -340,3 +340,28 @@ authorized runtime trace is committed. No Virtual Car ECU protocol behavior
 or J2534 firmware shim has been changed. Tests are not proof of VDASH
 client acceptance or a real XC90 V8 MY2009 scan.
 
+
+## DetectResult.Units, per-unit fields and LoaderResult: bounded G3 static audit (2026-11-03)
+
+**Evidence:** saved, user-authorized recovered CIL excerpt from *VDASH portable 2.5.115.79*, `Frontend.Client.Core.dll`, `VddModel.Detect` MethodDef `0x0600132B`. This version is not the VDASH 2.0 client used in historical virtual-J2534 VIN observations.
+
+### Newly distinguished source sites
+
+| IL site(s) | CIL calls/fields | Bounded meaning |
+| --- | --- | --- |
+| `02A4–02B4` | `get_DetectResult → get_Units → GetEnumerator → stloc.s 5` | First static enumerator-construction site. No proof its enumerator contains data. |
+| `030C–030E` | Unit-like local `6` → `get_Ecu` | An ECU property getter in a collection processing neighborhood; value and criteria unknown. |
+| `0415–0417` | The same printed local `6` → `get_HardwareNumber` | Hardware-number field can participate in the branch logic. Exact semantics of shared opaque predicate `0x06001359` still unknown. |
+| `04DF–04EF` | `get_DetectResult → get_Units → GetEnumerator → stloc.s 5` | **Second distinct source site** retrieving `Units`; flattened CFG does not prove two executed loops or temporal ordering. |
+| `0530–0539` | Enumerator `get_Current` → local object field `0x040003D3` | A current unit-like item is staged to a local field; its decoded CLR type is not independently proven. |
+| `0568–0583` | Current item, callback `0x06001387`, opaque generic MethodSpec `0x2B000023`, `set_LoaderResult` | A separate loader-result assignment motif. Neither the callback body, result type nor a successful load is established. |
+| `01E2–01E9` | Command `get_Session` → model field `0x040003AA` | Session is stored in the model at a distinct static site. It does not identify a J2534 channel, HTTP session, or ECU identity without further evidence. |
+
+**New distinction:** creating `Ecus` from `DetectResult`, enumerating `DetectResult.Units`, assigning `LoaderResult`, refreshing per-module availability, and updating UI are **different source operations**. These operations can be explained as separate potential G3/G4 failure gates, but cannot be asserted as a sequential runtime pipeline. A displayed vehicle or pre-existing engine label does not show which operations ran.
+
+**Negative evidence boundaries:** Neither enumerator site proves positive ECU data; the local `get_Ecu` or `get_HardwareNumber` does not prove a physical ECU was queried; `set_LoaderResult` does not prove loading succeeded; no documented D2 B9F0/B9FB/B9FC-to-property mapping exists in this excerpt. Missing static motifs from an incomplete inspection must not be labeled `ECU rejected`, `CEM absent`, `VIN invalid` or `timeout`.
+
+**Source checks:** The existing `emulator/tools/audit_recovered_il.py` gains seven allowlisted output facts (two-site count, ECU getter, hardware getter, current-item capture, loader assignment, independent session store and aggregate source-shape flag) under `recovered-il-evidence-audit-v7`. Eight synthetic tests (#57–64) mutate offsets, target tokens, current-item field, callback, independent session handling and privacy; no original proprietary CIL, customer VIN or production secrets are stored. The tests do not execute VDASH.
+
+**Next gating evidence:** obtain legally accessible original/recovered bodies for the constructors `0x060011BB/0x0600126D`, the four `RefreshAvailability` implementations, the `get_Ecu`/`get_HardwareNumber` property types, the loader callback `0x06001387` and the UI's `Model_DetectDone` predicate. In an isolated, read-only VDASH client session, independently record (1) source/version and selected driver, (2) fresh pre-detect vs cache, (3) explicit Connect, (4) J2534 TX/RX/filters with statuses, (5) command-completion milestone and (6) actual ECU list. No CEM A3/A6/B9FB positive response should be fabricated to pass these gates.
+
