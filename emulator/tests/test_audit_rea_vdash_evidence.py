@@ -166,5 +166,118 @@ class ReaStaticEvidenceTests(unittest.TestCase):
             self.assertFalse(broken.exists())
 
 
+    @staticmethod
+    def _structural_fixture():
+        # Synthetic graph shape, not a vendor IL body or an observed runtime path.
+        value = fixture()
+        edges = value["normalized_result"]["call_edges"]
+        edges.extend([
+            {**edge("0x060011bb", 0x017f, "method-def"),
+             "opcode": "newobj"},
+            {**edge("0x0600126d", 0x0268, "method-def"),
+             "opcode": "newobj"},
+            {**edge("0x06001160", 0x025e, "method-def"),
+             "caller_token": "0x0600115d"},
+        ])
+        value["normalized_result"]["methods"].append({
+            "token": "0x0600115d", "body": {"status": "present"}
+        })
+        return value
+
+    def test_09_three_expected_caller_callee_anchors(self):
+        report = tool.audit(self._structural_fixture())
+        self.assertEqual(set(report["structural_edges"]), {
+            "detect_to_detect_result_ctor",
+            "detect_to_ecus_ctor",
+            "execute_to_parse_data",
+        })
+        for item in report["structural_edges"].values():
+            self.assertEqual(item,
+                             {"observed_call_count": 1,
+                              "exact_expected_site": True})
+        self.assertEqual(report["method_bodies"]["execute"],
+                         {"inspected": True, "status": "present"})
+        self.assertFalse(report["client_acceptance_verified"])
+
+    def test_10_missing_detect_result_constructor_not_accepted(self):
+        value = self._structural_fixture()
+        value["normalized_result"]["call_edges"] = [
+            e for e in value["normalized_result"]["call_edges"]
+            if e["target_token"] != "0x060011bb"]
+        report = tool.audit(value)
+        self.assertEqual(report["structural_edges"][
+            "detect_to_detect_result_ctor"], {
+                "observed_call_count": 0, "exact_expected_site": False})
+        self.assertTrue(report["structural_edges"][
+            "execute_to_parse_data"]["exact_expected_site"])
+
+    def test_11_missing_execute_to_parse_data_not_accepted(self):
+        value = self._structural_fixture()
+        value["normalized_result"]["call_edges"] = [
+            e for e in value["normalized_result"]["call_edges"]
+            if e["target_token"] != "0x06001160"]
+        report = tool.audit(value)
+        self.assertFalse(report["structural_edges"][
+            "execute_to_parse_data"]["exact_expected_site"])
+
+    def test_12_wrong_caller_does_not_become_a_relationship(self):
+        value = self._structural_fixture()
+        for edge_record in value["normalized_result"]["call_edges"]:
+            if edge_record["target_token"] == "0x06001160":
+                edge_record["caller_token"] = "0x0600115c"
+        report = tool.audit(value)
+        self.assertEqual(report["structural_edges"]["execute_to_parse_data"][
+            "observed_call_count"], 0)
+
+    def test_13_wrong_opcode_rejects_constructor(self):
+        value = self._structural_fixture()
+        for edge_record in value["normalized_result"]["call_edges"]:
+            if edge_record["target_token"] == "0x0600126d":
+                edge_record["opcode"] = "call"
+        report = tool.audit(value)
+        self.assertEqual(report["structural_edges"]["detect_to_ecus_ctor"][
+            "observed_call_count"], 0)
+
+    def test_14_wrong_offset_keeps_edge_but_not_exact(self):
+        value = self._structural_fixture()
+        for edge_record in value["normalized_result"]["call_edges"]:
+            if edge_record["target_token"] == "0x060011bb":
+                edge_record["il_offset"] = 0x0180
+        report = tool.audit(value)
+        self.assertEqual(report["structural_edges"][
+            "detect_to_detect_result_ctor"], {
+                "observed_call_count": 1, "exact_expected_site": False})
+
+    def test_15_duplicate_edge_does_not_count_as_exact(self):
+        value = self._structural_fixture()
+        edges = value["normalized_result"]["call_edges"]
+        matching = next(e for e in edges if e["target_token"] == "0x06001160")
+        edges.append(dict(matching))
+        report = tool.audit(value)
+        self.assertEqual(report["structural_edges"]["execute_to_parse_data"], {
+            "observed_call_count": 2, "exact_expected_site": False})
+
+    def test_16_partial_scope_is_not_runtime_or_full_body_proof(self):
+        value = self._structural_fixture()
+        data = value["normalized_result"]
+        data["coverage"]["state"] = "partial"
+        data["methods"] = [
+            m for m in data["methods"] if m["token"] != "0x0600115d"]
+        data["call_edges"].append({
+            **edge("0x0600126d", 0x0456, "method-def"),
+            "caller_token": "0x0600115e",
+            "target_name": "PRIVATE_DO_NOT_EXPORT",
+        })
+        report = tool.audit(value)
+        self.assertEqual(report["assembly"]["coverage"], "partial")
+        self.assertEqual(report["method_bodies"]["execute"]["status"],
+                         "not_inspected")
+        self.assertFalse(report["client_acceptance_verified"])
+        self.assertFalse(report["ecu_identity_verified"])
+        self.assertNotIn("PRIVATE_DO_NOT_EXPORT", json.dumps(report))
+        self.assertIn("newobj and call edges do not prove",
+                      " ".join(report["limitations"]))
+
+
 if __name__ == "__main__":
     unittest.main()
