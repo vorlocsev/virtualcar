@@ -236,6 +236,61 @@ The non-executing audit script now reports only the **number of adjacent MethodS
 
 **Unblocked source requirement for stronger conclusions:** the matching recovered DLL/metadata (authorized local inspection only) must expose the MethodSpec table's underlying method token, signature, and corresponding `0x06001359` body. Only then can the expression be interpreted. Separately, body of `VddCommand.ParseData` and the `DetectResult/Ecus` constructors are needed to determine how a successful read-only command becomes a visible ECU. Do not fabricate CEM response blocks or borrow a donor's B9FB identity for an XC90 V8 MY2009.
 
+## Execute → ParseData: two unknown result wrappers at exact IL site (2026-11-03)
+
+A new private, independent comparison was performed against the locally
+retained recovered `VDASH_Recovered_Diagnostic_IL_Excerpts.txt` and its
+`.part2.txt`, plus the two halves of
+`VDASH_Recovered_Methods_Inventory.txt`. **This is a check of already
+recovered IL text**, not a fresh decompilation or a runtime VDASH trace.
+
+For the `VddCommand.Execute` MethodDef `0x0600115D`, a **single contiguous
+eight-instruction neighborhood** at fixed offsets is visible:
+
+| IL offset | Instruction | What can be observed |
+|---|---|---|
+| `0247` | `ldarg.0` | Instance reference loaded |
+| `0248` | `ldarg.0` | Instance reference loaded again |
+| `0249` | `ldfld 0x04000333` | Command `result` field read |
+| `024E` | `call 0x0600117A` | Unknown helper called |
+| `0253` | `ldarg.0` | Instance reference loaded |
+| `0254` | `ldfld 0x04000333` | Same `result` field read |
+| `0259` | `call 0x0600117B` | A second unknown helper called |
+| `025E` | `call 0x06001160` | `ParseData` called |
+
+The independently saved method inventory lists **one call to each** of
+`0x0600117A`, `0x0600117B`, and `0x06001160` in `Execute`. Thus
+both the recovered CIL neighborhood and the call-frequency inventory
+corroborate the *static staging sequence*.
+
+This says **nothing yet** about the two helper return types, meaning of
+their outputs, actual `ParseData` parameter types, reachability of the
+flattened control-flow path, successful completion, command result semantics
+or acceptance of a virtual ECU. In particular, the two unknown helpers
+could transform or interpret the `result` object in ways that are not
+available from this excerpt.
+
+The offline auditor `emulator/tools/audit_recovered_il.py` now has two
+independent allowlisted outputs:
+
+- `execute_parse_data_two_result_wrappers_exact_static_site`: true
+  only for all eight exact adjacent opcodes, tokens and IL offsets.
+- `execute_parse_data_wrappers_inventory`: reports
+  `three_single_calls_observed`, `counts_differ`,
+  `invalid_inventory` or `unreported` for the two helpers plus
+  `ParseData`. An absent call list is **unknown**, not negative evidence.
+
+Eight synthetic mutations test the exact instruction order, helpers,
+repeated result-field references, caller reference, offsets, presence
+and consistency of the call inventory, malformed counts and private
+symbol redaction. The repository contains no original proprietary IL text,
+VIN, DLL or private archive hashes.
+
+**Next G2 gate:** inspect the actual bodies/signatures of `0x0600117A`,
+`0x0600117B` and `ParseData` in a matching original or recovered DLL,
+then separately validate client-side command acceptance in a real read-only
+VDASH run. Static callsite evidence alone cannot pass that gate.
+
 ## Handoff
 
 Linked to issues #37 and #4 and PR #39. Only the read-only analysis script, synthetic tests and research documentation were added in this follow-up; no ECU behavior, fixtures or emulator responses changed. Original source artifacts remain private. Windows/VMware VDASH and physical J2534 were not run in this static-analysis step; neither ECU discovery nor model-year compatibility has been demonstrated. Do not merge to main or create a release.
