@@ -109,5 +109,19 @@ warning наблюдался, ECU list до deadline не проверен. Dire
 одним символом маски. В mask1 есть3 дополнительных CLEAR_RX после filters,
 но сохраняются те же100ms PS timeout/disconnect и обычный backend обмен.
 В обоих warning, ECU list не проверен; по одному invocation на условие.
-Количества повторов не сравниваются как outcome rates. Mask2/mask4 ещё
-требуют отдельных bounded run. CI не заменяет фактический UI outcome.
+Количества повторов не сравниваются как outcome rates.
+
+В [отдельных D8 runs mask2/mask4](../docs/research/VDASH_CAN_PS_D8_OUTCOMES_RUNTIME_20261103.md)
+на тех же DLL/GUI/worker, с direct module binding, mask2 дал3 локальных Write
+successes, но последующий periodic оставался rejected. Mask4 дал1 локальный
+periodic-registration success; затем появились CLEAR_RX, дополнительный
+rejected filter и rejected **D2_40_A6 Write**. После A6 нового Read нет,
+A6 не передан и ответа CEM нет. Selector operands logger не сохранял;
+значения1A04/1A02 и положительный ответ по аналогии не выводятся.
+
+Все отдельные0/1/2/4 условия проверены в bounded run; это по одному GUI
+invocation, с разным количеством полных API-циклов, не outcome rates.
+Mask2 warning наблюдался; mask4 Home NOTFOUND/CONNECT наблюдался, отсутствие
+warning не доказано. ECU list не проверен. Stop/restore/prefix integrity
+подтверждены. Следующий материал — точный A6 selector/условие клиента и
+совместимый read-only источник ответа. CI не заменяет фактический UI outcome.
