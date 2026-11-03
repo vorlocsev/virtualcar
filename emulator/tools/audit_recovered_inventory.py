@@ -62,7 +62,9 @@ def _build_binding(module, rea):
     ident = _object(d.get("identity_scope"), "rea_identity")
     module_info = _object(d.get("module"), "rea_module")
     actual = artifact.get("sha256")
-    if not _digest(actual) or module_info.get("name", "").casefold() != MODULE.casefold():
+    module_name = module_info.get("name")
+    if (not _digest(actual) or not isinstance(module_name, str)
+            or module_name.casefold() != MODULE.casefold()):
         raise ValueError("invalid_rea_assembly")
     if (ident.get("token_identity") != "build-local"
             or ident.get("requires_artifact_sha256") != actual):
