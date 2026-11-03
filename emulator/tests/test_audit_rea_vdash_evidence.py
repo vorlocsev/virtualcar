@@ -179,18 +179,24 @@ class ReaStaticEvidenceTests(unittest.TestCase):
              "opcode": "newobj"},
             {**edge("0x06001160", 0x025e, "method-def"),
              "caller_token": "0x0600115d"},
+            {**edge("0x0600117a", 0x024e, "method-def"),
+             "caller_token": "0x0600115d"},
+            {**edge("0x0600117b", 0x0259, "method-def"),
+             "caller_token": "0x0600115d"},
         ])
         value["normalized_result"]["methods"].append({
             "token": "0x0600115d", "body": {"status": "present"}
         })
         return value
 
-    def test_09_three_expected_caller_callee_anchors(self):
+    def test_09_five_expected_caller_callee_anchors(self):
         report = tool.audit(self._structural_fixture())
         self.assertEqual(set(report["structural_edges"]), {
             "detect_to_detect_result_ctor",
             "detect_to_ecus_ctor",
             "execute_to_parse_data",
+            "execute_to_result_helper_a",
+            "execute_to_result_helper_b",
         })
         for item in report["structural_edges"].values():
             self.assertEqual(item,
@@ -509,6 +515,150 @@ class ReaStaticEvidenceTests(unittest.TestCase):
             "detect_to_ecus_ctor"]["decoded_caller_corroborated"])
         self.assertNotIn("Private.Obfuscated", json.dumps(report))
         self.assertFalse(report["ecu_identity_verified"])
+
+
+    @staticmethod
+    def _signature_fixture():
+        value = ReaStaticEvidenceTests._structural_fixture()
+        methods = value["normalized_result"]["methods"]
+        def synthetic_method(token, parameter_types, returns):
+            return {
+                "token": token,
+                "body": {"status": "present"},
+                "name": PRIVATE,
+                "signature": {
+                    "kind": "method", "parse_status": "decoded",
+                    "raw_length": 12, "raw_sha256": "e" * 64,
+                    "calling_convention": "default",
+                    "generic_parameter_count": 0,
+                    "parameter_count": len(parameter_types),
+                    "return_type": returns,
+                    "parameter_types": parameter_types,
+                    "field_type": None, "issue": None,
+                    "private_binary_name": PRIVATE,
+                },
+            }
+        methods.extend([
+            synthetic_method("0x0600117a", ["VENDOR_PRIVATE_PARAMETER"],
+                             "VENDOR_PRIVATE_RETURN"),
+            synthetic_method("0x0600117b", ["VENDOR_PRIVATE_PARAMETER"],
+                             "System.Void"),
+        ])
+        parse = next(m for m in methods if m["token"] == "0x06001160")
+        parse["signature"] = synthetic_method(
+            "0x06001160", ["PRIVATE_1", "PRIVATE_2"], "void")["signature"]
+        return value
+
+    def test_33_private_helper_signatures_are_sanitized(self):
+        report = tool.audit(self._signature_fixture())
+        self.assertEqual(report["method_signatures"], {
+            "result_helper_a": {
+                "status": "decoded", "parameter_count": 1,
+                "generic_parameter_count": 0, "return_kind": "non_void",
+            },
+            "result_helper_b": {
+                "status": "decoded", "parameter_count": 1,
+                "generic_parameter_count": 0, "return_kind": "void",
+            },
+            "parse_data": {
+                "status": "decoded", "parameter_count": 2,
+                "generic_parameter_count": 0, "return_kind": "void",
+            },
+        })
+        dump = json.dumps(report)
+        for private in (PRIVATE, "VENDOR_PRIVATE_PARAMETER",
+                        "VENDOR_PRIVATE_RETURN", "PRIVATE_1", "PRIVATE_2",
+                        "e" * 64):
+            self.assertNotIn(private, dump)
+        self.assertFalse(report["client_acceptance_verified"])
+
+    def test_34_selected_type_missing_helpers_do_not_infer_absence(self):
+        value = fixture()
+        value["normalized_result"]["selection"] = {
+            "type_names": ["PRIVATE_DETECT_TYPE"],
+            "unmatched_type_names": [],
+        }
+        report = tool.audit(value)
+        self.assertEqual(report["method_signatures"]["result_helper_a"]["status"],
+                         "not_inspected")
+        self.assertEqual(report["method_signatures"]["result_helper_b"]["status"],
+                         "not_inspected")
+        self.assertEqual(report["method_signatures"]["parse_data"]["status"],
+                         "unreported")
+        self.assertFalse(report["inspection_scope"]["all_members_examined"])
+
+    def test_35_incomplete_signature_does_not_expose_partial_types(self):
+        value = self._signature_fixture()
+        raw = next(m for m in value["normalized_result"]["methods"]
+                   if m["token"] == "0x0600117a")["signature"]
+        raw.update({"parse_status": "partial", "return_type": PRIVATE,
+                    "parameter_count": None, "parameter_types": []})
+        output = tool.audit(value)["method_signatures"]["result_helper_a"]
+        self.assertEqual(output, {
+            "status": "partial", "parameter_count": None,
+            "generic_parameter_count": None, "return_kind": "unknown",
+        })
+
+    def test_36_malformed_signature_digest_fails_closed(self):
+        value = self._signature_fixture()
+        value["normalized_result"]["methods"][-1]["signature"][
+            "raw_sha256"] = PRIVATE
+        with self.assertRaisesRegex(ValueError, "invalid_signature_provenance"):
+            tool.audit(value)
+
+    def test_37_inconsistent_decoded_parameter_types_rejected(self):
+        value = self._signature_fixture()
+        raw = next(m for m in value["normalized_result"]["methods"]
+                   if m["token"] == "0x06001160")["signature"]
+        raw["parameter_count"] = 3
+        with self.assertRaisesRegex(ValueError, "invalid_decoded_method_signature"):
+            tool.audit(value)
+        raw["parameter_count"] = True
+        with self.assertRaisesRegex(ValueError, "invalid_decoded_method_signature"):
+            tool.audit(value)
+
+    def test_38_wrong_signature_kind_and_empty_return_rejected(self):
+        value = self._signature_fixture()
+        sig = value["normalized_result"]["methods"][-1]["signature"]
+        sig["kind"] = "field"
+        with self.assertRaisesRegex(ValueError, "invalid_decoded_method_signature"):
+            tool.audit(value)
+        sig["kind"] = "method"
+        sig["return_type"] = ""
+        with self.assertRaisesRegex(ValueError, "invalid_decoded_method_signature"):
+            tool.audit(value)
+
+    def test_39_helper_edge_offsets_must_match_exactly(self):
+        value = self._signature_fixture()
+        report = tool.audit(value)
+        for kind in ("execute_to_result_helper_a", "execute_to_result_helper_b"):
+            self.assertTrue(report["structural_edges"][kind]["exact_expected_site"])
+        next(e for e in value["normalized_result"]["call_edges"]
+             if e["target_token"] == "0x0600117b")["il_offset"] = 0x0260
+        changed = tool.audit(value)
+        self.assertTrue(changed["structural_edges"][
+            "execute_to_result_helper_a"]["exact_expected_site"])
+        self.assertFalse(changed["structural_edges"][
+            "execute_to_result_helper_b"]["exact_expected_site"])
+        self.assertFalse(changed["ecu_identity_verified"])
+
+    def test_40_signature_and_edge_do_not_establish_parse_data_success(self):
+        value = self._signature_fixture()
+        execute = next(m for m in value["normalized_result"]["methods"]
+                       if m["token"] == "0x0600115d")
+        execute["body"] = {
+            "status": "present", "instruction_count": 8,
+            "decoded_instruction_count": 8, "truncated_instructions": 0,
+            "normalized_il_sha256": "f" * 64, "issue": None,
+        }
+        report = tool.audit(value)
+        for name in ("execute_to_result_helper_a", "execute_to_result_helper_b",
+                     "execute_to_parse_data"):
+            self.assertTrue(report["structural_edges"][name][
+                "decoded_caller_corroborated"])
+        self.assertFalse(report["client_acceptance_verified"])
+        self.assertFalse(report["ecu_identity_verified"])
+        self.assertNotIn("VENDOR_PRIVATE_RETURN", json.dumps(report))
 
 
 if __name__ == "__main__":
