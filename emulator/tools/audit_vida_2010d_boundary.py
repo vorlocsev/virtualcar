@@ -91,8 +91,10 @@ def audit(source):
         # The extended three-bracket VIDA format is already audited by
         # audit_j2534_discovery.py. Do not guess which thread is the owner.
         if category.strip() not in ("J2534ChannelMana", "DiagConnection"):
+            ignore += 1
             continue
         if second.strip() != "VehCom":
+            ignore += 1
             continue
         now = _time(line)
         request = REQUEST.match(message)
