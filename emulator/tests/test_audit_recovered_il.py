@@ -423,6 +423,108 @@ IL_0020 ret
 
 
 
+    @staticmethod
+    def _execute_preparse_fixture(*, with_inventory=True):
+        # Synthetic isolated CIL, with offsets copied from the already
+        # independently recovered *structure*, not the proprietary body.
+        rows = [
+            "IL_0247 ldarg.0",
+            "IL_0248 ldarg.0",
+            "IL_0249 ldfld 0x04000333 result",
+            "IL_024E call 0x0600117A opaque_helper_a",
+            "IL_0253 ldarg.0",
+            "IL_0254 ldfld 0x04000333 result",
+            "IL_0259 call 0x0600117B opaque_helper_b",
+            "IL_025E call 0x06001160 ParseData",
+        ]
+        source = ("Frontend.Client.Core.dll: MethodDef 0x0600115D "
+                  "VddCommand.Execute; 8 decoded opcodes\n"
+                  + "\n".join(rows) + "\n")
+        inventory = inventory_for_single(source, "0x0600115D", 8)
+        if with_inventory:
+            inventory["selected_methods"][0]["calls"] = [
+                {"token": tok, "count": 1, "symbol": "PRIVATE_DONOR"}
+                for tok in ("0x0600117A", "0x0600117B", "0x06001160")
+            ]
+        return source, inventory
+
+    def test_41_exact_execute_result_field_staging_and_counts(self):
+        source, inventory = self._execute_preparse_fixture()
+        result = tool.audit(inventory, source)
+        self.assertTrue(result["evidence"][
+            "execute_parse_data_two_result_wrappers_exact_static_site"])
+        self.assertEqual(result["evidence"]["execute_parse_data_wrappers_inventory"],
+                         "three_single_calls_observed")
+        self.assertTrue(result["evidence"]["execute_calls_parse_data"])
+        self.assertFalse(result["evidence"]["detect_calls_create_command"])
+
+    def test_42_second_wrapper_token_substitution_rejected(self):
+        source, inventory = self._execute_preparse_fixture()
+        source = source.replace("0x0600117B", "0x0600117C")
+        result = tool.audit(inventory, source)["evidence"]
+        self.assertFalse(result[
+            "execute_parse_data_two_result_wrappers_exact_static_site"])
+        self.assertEqual(result["execute_parse_data_wrappers_inventory"],
+                         "three_single_calls_observed")
+
+    def test_43_wrappers_reversed_rejected(self):
+        source, inventory = self._execute_preparse_fixture()
+        source = source.replace("0x0600117A", "0x0600117Z")
+        source = source.replace("0x0600117B", "0x0600117A")
+        source = source.replace("0x0600117Z", "0x0600117B")
+        self.assertFalse(tool.audit(inventory, source)["evidence"][
+            "execute_parse_data_two_result_wrappers_exact_static_site"])
+
+    def test_44_different_result_field_rejected(self):
+        source, inventory = self._execute_preparse_fixture()
+        source = source.replace("IL_0254 ldfld 0x04000333",
+                                "IL_0254 ldfld 0x04000335")
+        self.assertFalse(tool.audit(inventory, source)["evidence"][
+            "execute_parse_data_two_result_wrappers_exact_static_site"])
+
+    def test_45_changed_il_offset_is_not_same_static_callsite(self):
+        source, inventory = self._execute_preparse_fixture()
+        source = source.replace("IL_0249", "IL_024A")
+        self.assertFalse(tool.audit(inventory, source)["evidence"][
+            "execute_parse_data_two_result_wrappers_exact_static_site"])
+
+    def test_46_missing_caller_this_staging_rejected(self):
+        source, inventory = self._execute_preparse_fixture()
+        source = source.replace("IL_0253 ldarg.0", "IL_0253 ldarg.1")
+        self.assertFalse(tool.audit(inventory, source)["evidence"][
+            "execute_parse_data_two_result_wrappers_exact_static_site"])
+
+    def test_47_missing_inventory_does_not_negate_source_shape(self):
+        source, inventory = self._execute_preparse_fixture(with_inventory=False)
+        report = tool.audit(inventory, source)["evidence"]
+        self.assertTrue(report[
+            "execute_parse_data_two_result_wrappers_exact_static_site"])
+        self.assertEqual(report["execute_parse_data_wrappers_inventory"],
+                         "unreported")
+        inventory["selected_methods"][0]["calls"] = [
+            {"token": "0x0600117A", "count": 1},
+            {"token": "0x0600117B", "count": 1},
+            {"token": "0x06001160", "count": 2},
+        ]
+        self.assertEqual(tool.audit(inventory, source)["evidence"][
+            "execute_parse_data_wrappers_inventory"], "counts_differ")
+
+    def test_48_malformed_counts_and_private_symbols_not_exported(self):
+        source, inventory = self._execute_preparse_fixture()
+        inventory["selected_methods"][0]["calls"][0]["count"] = "private"
+        result = tool.audit(inventory, source)
+        self.assertEqual(result["evidence"][
+            "execute_parse_data_wrappers_inventory"], "invalid_inventory")
+        inventory["selected_methods"][0]["calls"][0]["count"] = 1
+        report = tool.audit(inventory, source)
+        dumped = json.dumps(report)
+        self.assertNotIn("PRIVATE_DONOR", dumped)
+        self.assertNotIn("0x04000333", dumped)
+        self.assertNotIn("opaque_helper_a", dumped)
+        self.assertIn("Two unknown result-field wrappers before ParseData",
+                      " ".join(report["limitations"]))
+
+
 def inventory_for_single(source, token, count):
     # All fixtures are explicitly synthetic and isolated from real IL text.
     return {"selected_methods": [{
