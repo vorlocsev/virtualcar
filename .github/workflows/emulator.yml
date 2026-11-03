@@ -80,10 +80,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
           python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-b9fb-a3-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 test failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 backend evidence failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
-          path: ${{ runner.temp }}/native-route-regression-audit.json
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-audit.json
           if-no-files-found: error
 
 
