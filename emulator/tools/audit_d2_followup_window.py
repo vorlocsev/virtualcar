@@ -193,7 +193,13 @@ def audit(source):
             if raw is None or ctx is None or ctx[1] != 5:
                 errors["unattributed_or_invalid_rx"] += 1
                 continue
-            channel, _, _, baud, at = ctx
+            channel, _, rx_status, baud, at = ctx
+            # Native J2534 RxStatus can describe a TX echo/indication or
+            # an ISO-TP start indication. Neither is a reply from the ECU.
+            # CAN_29BIT_ID (0x100) is valid metadata, not an indication.
+            if rx_status & (0x01 | 0x02 | 0x08):
+                errors["rx_indication_not_ecu_frame"] += 1
+                continue
             current = s["active"].get(channel)
             if current is None or baud != current["baud"]:
                 continue
@@ -254,6 +260,7 @@ def audit(source):
             "An end-of-log, close, clear or disconnect is not proof of a timeout or 1000 ms silence.",
             "Within-window labels refer to the first logged TX, not proof that every bus frame was captured.",
             "Counters, allowlisted service labels and time gaps only; no VIN, CAN payload, paths or PID are exported.",
+            "RX records with J2534 TX_MSG_TYPE, START_OF_MESSAGE or TX_INDICATION status are excluded from ECU RX framing.",
         ],
         "client_acceptance_verified": False,
         "same_run_with_sectorv_client_verified": False,
