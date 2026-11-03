@@ -75,3 +75,38 @@ source-timestamped client/J2534 observation of post-B9FB A3 and the
 unmodified E3 or negative reply, including capture completeness and
 vehicle provenance. Without such a record, the accepted response
 predicate is unknown; CPU-only CI success proves only the classifier.
+
+
+## Follow-up: distinguish A3/A6 unsupported bus from missing response (same date)
+
+The native response handler emulator/src/virtualcar.c initially returned the
+same backend reason, unimplemented_probe, for a complete D2 CEM A3/A6 on
+*either* bitrate. This collapses two different questions:
+
+- **Recognized request on the expected P2 route:** CEM target 0x50 on
+  500000 baud, or target 0x40 on 125000 baud. The classification remains
+  unimplemented_probe/no_response because there is no validated positive
+  response fixture.
+- **Recognized request on a mismatched P2 route:** target 0x40 on 500000
+  baud, or target 0x50 on 125000 baud. The classification is now
+  unsupported_bus/no_response, even though the J2534 WriteMsgs call
+  itself can still succeed.
+
+This changes only the fixed-literal diagnostic backend reason. It does not
+change J2534 write return codes, emit or modify a CAN response, perform
+security access or claim any ECU authorization. Do not interpret
+unsupported_bus as proof a *physical* Volvo/DiCE would reject the same
+route: it is the explicitly configured Virtual Car P2 routing model.
+
+Eight native C regression cases call actual PassThruConnect,
+PassThruWriteMsgs and PassThruReadMsgs on separate 500k/125k channels for
+A3 and A6 on both targets. They assert exactly one terminal backend event
+with the expected reason, no response_generated event, and zero RX. The
+pre-existing classifier synthetic tests are also updated to distinguish
+unsupported_bus from unimplemented_probe when target 40 is sent over 500k.
+
+No primary SectorV Hardware success predicate or authenticated A3/E3 reply
+was found in currently available local GitHub sources and project files.
+Existing sanitized PR30 notes remain the only direct client observation:
+B9FB matching, then a Hardware A3 no-reply phase. Do not reclassify these
+two observations as the same failure or synthesize an E3 answer.
