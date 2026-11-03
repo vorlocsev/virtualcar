@@ -1140,10 +1140,20 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
        implementation from an arbitrary CAN ID or an absent B9 fixture.
        Never synthesize E3/E6, an ignition state, or a module identity. */
     if(cem_d2_probe_shape(data,len)){
+        /* Distinguish a mismatched P2 CEM bus from a correctly routed
+           request lacking a verified ECU response. Diagnostic metadata
+           only: neither case emits E3/E6 or alters the J2534 TX result. */
+        U32 expected_baud=data[1]==0x50u?500000u:125000u;
         backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
-        logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
-        backend_event(c,c->active_trace,"request_completed","CEM",
-                      "unimplemented_probe","no_response");
+        if(c->baud!=expected_baud) {
+            logline("P2 D2 CEM A3/A6: route/bus mismatch (no response)",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unsupported_bus","no_response");
+        } else {
+            logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unimplemented_probe","no_response");
+        }
         return 1;
     }
     if(len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
