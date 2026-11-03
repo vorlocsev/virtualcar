@@ -177,7 +177,7 @@ IL_0000 ret
         report = tool.audit(inventory_for_detect_shape(source), source)
         self.assertIn("Constructor/data-flow motifs do not establish runtime reachability",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
 
 
     @staticmethod
@@ -352,7 +352,7 @@ IL_0020 ret
         report = tool.audit(inventory_for_detect_shape(src), src)
         self.assertIn("Shared opaque predicate usage does not reveal equality or acceptance semantics",
                       report["limitations"])
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
         self.assertNotIn("hardware=real", json.dumps(report))
 
 
@@ -414,7 +414,7 @@ IL_0020 ret
     def test_40_summary_is_allowlisted_no_raw_bytes(self):
         src = self._string_methodspec_fixture()
         report = tool.audit(inventory_for_detect_shape(src), src)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
         self.assertNotIn("0x2B000002", json.dumps(report))
         self.assertNotIn(r"\x01\x0e", json.dumps(report))
         self.assertIn("MethodSpec<string> does not establish generic method return type or semantics",
@@ -645,13 +645,140 @@ IL_0020 ret
     def test_56_allowlist_and_incomplete_evidence_never_claim_client_acceptance(self):
         src = self._phase_detect_fixture() + "# PRIVATE-VIN-AND-CUSTOMER-PATH"
         report = tool.audit(self._phase_inv(src, "0x0600132B"), src)
-        self.assertEqual(report["format"], "recovered-il-evidence-audit-v6")
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
         self.assertNotIn("PRIVATE-VIN", json.dumps(report))
         self.assertIn("not proof of successful user-facing detection",
                       " ".join(report["limitations"]))
         self.assertIn("do not establish runtime ECU list contents",
                       " ".join(report["limitations"]))
         self.assertFalse(report["evidence"]["pre_detect_has_distinct_result_and_event_sites"])
+
+
+
+    @staticmethod
+    def _unit_projection_fixture():
+        # Synthetic isolated opcode/offset anchors, not a copied VDASH method.
+        rows = [
+            (0x01E2, "ldarg.0"), (0x01E3, "ldloc.1"),
+            (0x01E4, "callvirt 0x06001140 get_Session"),
+            (0x01E9, "stfld 0x040003AA session"),
+            (0x02A4, "ldarg.0"),
+            (0x02A5, "call 0x060012E8 get_DetectResult"),
+            (0x02AA, "callvirt 0x06001B99 get_Units"),
+            (0x02AF, "callvirt 0x0A00011A GetEnumerator"),
+            (0x02B4, "stloc.s 5"),
+            (0x030C, "ldloc.s 6"),
+            (0x030E, "callvirt 0x06001F8F get_Ecu"),
+            (0x0415, "ldloc.s 6"),
+            (0x0417, "callvirt 0x06001F95 get_HardwareNumber"),
+            (0x04DF, "ldarg.0"),
+            (0x04E0, "call 0x060012E8 get_DetectResult"),
+            (0x04E5, "callvirt 0x06001B99 get_Units"),
+            (0x04EA, "callvirt 0x0A00011A GetEnumerator"),
+            (0x04EF, "stloc.s 5"),
+            (0x0530, "ldloc.s 10"), (0x0532, "ldloca.s 5"),
+            (0x0534, "call 0x0A00011C get_Current"),
+            (0x0539, "stfld 0x040003D3 u"),
+            (0x0568, "ldloc.s 10"),
+            (0x056A, "ldfld 0x040003D3 u"),
+            (0x056F, "ldloc.s 9"), (0x0571, "ldloc.s 10"),
+            (0x0573, "ldftn 0x06001387 <Detect>b__0"),
+            (0x0579, "newobj 0x0A00011D .ctor"),
+            (0x057E, "call 0x2B000023 generic_call"),
+            (0x0583, "callvirt 0x06001F8E set_LoaderResult"),
+        ]
+        return ("Frontend.Client.Core.dll: MethodDef 0x0600132B VddModel.Detect; "
+                + str(len(rows)) + " decoded opcodes\n"
+                + "".join(f"IL_{offset:04X} {instruction}\n"
+                          for offset, instruction in rows))
+
+    def test_57_units_twice_and_loader_static_sites_present(self):
+        src = self._unit_projection_fixture()
+        e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+        self.assertEqual(e["detect_result_units_enumerator_static_site_count"], 2)
+        for field in (
+            "detect_unit_ecu_getter_exact_static_site",
+            "detect_unit_hardware_number_exact_static_site",
+            "detect_units_current_local_capture_exact_static_site",
+            "detect_unit_loader_result_exact_static_site",
+            "detect_stores_command_session_exact_static_site",
+            "detect_units_and_loader_static_shapes_complete",
+        ):
+            self.assertTrue(e[field], field)
+
+    def test_58_first_units_enumerator_corruption_independent(self):
+        src = self._unit_projection_fixture().replace(
+            "IL_02AA callvirt 0x06001B99", "IL_02AA callvirt 0x06001B98")
+        e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+        self.assertEqual(e["detect_result_units_enumerator_static_site_count"], 1)
+        self.assertFalse(e["detect_units_and_loader_static_shapes_complete"])
+        self.assertTrue(e["detect_unit_loader_result_exact_static_site"])
+
+    def test_59_second_units_enumerator_offset_corruption_independent(self):
+        src = self._unit_projection_fixture().replace(
+            "IL_04EA callvirt", "IL_04EB callvirt")
+        e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+        self.assertEqual(e["detect_result_units_enumerator_static_site_count"], 1)
+        self.assertFalse(e["detect_units_and_loader_static_shapes_complete"])
+
+    def test_60_ecu_and_hardware_getter_targets_are_distinct(self):
+        src = self._unit_projection_fixture()
+        e = tool.audit(self._phase_inv(
+            src.replace("0x06001F8F get_Ecu", "0x06001F90 get_Ecu"),
+            "0x0600132B"),
+            src.replace("0x06001F8F get_Ecu", "0x06001F90 get_Ecu"))["evidence"]
+        self.assertFalse(e["detect_unit_ecu_getter_exact_static_site"])
+        self.assertTrue(e["detect_unit_hardware_number_exact_static_site"])
+        swapped = src.replace(
+            "0x06001F95 get_HardwareNumber", "0x06001F94 get_HardwareNumber")
+        e = tool.audit(self._phase_inv(swapped, "0x0600132B"), swapped)["evidence"]
+        self.assertTrue(e["detect_unit_ecu_getter_exact_static_site"])
+        self.assertFalse(e["detect_unit_hardware_number_exact_static_site"])
+
+    def test_61_current_capture_requires_correct_storage_field(self):
+        src = self._unit_projection_fixture().replace(
+            "IL_0539 stfld 0x040003D3", "IL_0539 stfld 0x040003D4")
+        e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+        self.assertFalse(e["detect_units_current_local_capture_exact_static_site"])
+        self.assertTrue(e["detect_unit_loader_result_exact_static_site"])
+        self.assertFalse(e["detect_units_and_loader_static_shapes_complete"])
+
+    def test_62_loader_callback_and_setter_not_inferred_by_name(self):
+        original = self._unit_projection_fixture()
+        for before, after in (
+            ("IL_0573 ldftn 0x06001387", "IL_0573 ldftn 0x06001388"),
+            ("IL_0583 callvirt 0x06001F8E", "IL_0583 callvirt 0x06001F8F"),
+        ):
+            with self.subTest(before=before):
+                src = original.replace(before, after)
+                e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+                self.assertFalse(e["detect_unit_loader_result_exact_static_site"])
+                self.assertFalse(e["detect_units_and_loader_static_shapes_complete"])
+
+    def test_63_session_store_is_not_a_requirement_for_units_sites(self):
+        src = self._unit_projection_fixture().replace(
+            "IL_01E9 stfld 0x040003AA", "IL_01E9 stfld 0x040003AB")
+        e = tool.audit(self._phase_inv(src, "0x0600132B"), src)["evidence"]
+        self.assertFalse(e["detect_stores_command_session_exact_static_site"])
+        self.assertTrue(e["detect_units_and_loader_static_shapes_complete"])
+
+    def test_64_absent_source_and_privacy_preserve_unknown_acceptance(self):
+        original = self._unit_projection_fixture()
+        src = original + "# PRIVATE_VIN_AND_CREDENTIALS_SHOULD_STAY_PRIVATE\n"
+        report = tool.audit(self._phase_inv(src, "0x0600132B"), src)
+        dumped = json.dumps(report)
+        self.assertEqual(report["format"], "recovered-il-evidence-audit-v7")
+        self.assertNotIn("PRIVATE_VIN", dumped)
+        self.assertIn("not proof of two executed loops", " ".join(report["limitations"]))
+        self.assertIn("without authenticated identity or acceptance evidence",
+                      " ".join(report["limitations"]))
+        # Another selected method without an extracted Detect body yields
+        # unknown static sites, not a negative client or ECU result.
+        other = ("Frontend.Client.Core.dll: MethodDef 0x06001160 "
+                 "VddCommand.ParseData; 1 decoded opcodes\nIL_0000 ret\n")
+        r = tool.audit(self._phase_inv(other, "0x06001160"), other)
+        self.assertEqual(r["evidence"]["detect_result_units_enumerator_static_site_count"], 0)
+        self.assertFalse(r["evidence"]["detect_units_and_loader_static_shapes_complete"])
 
 
 def inventory_for_single(source, token, count):
