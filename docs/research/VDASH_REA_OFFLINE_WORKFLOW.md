@@ -128,7 +128,10 @@ assembly-wide coverage state from two **independent bounds**:
 
 - `selection.type_names`: an explicit `--type` selection. Missing
   `Execute` or `ParseData` in that subset is **not** evidence that the
-  corresponding MethodDef does not exist in the assembly.
+  corresponding MethodDef does not exist in the assembly. REA's current
+  full-inventory schema represents no selection as an explicit
+  `selection: null`. If this field is **omitted** by a historical or
+  transformed report, `declaring_types=unreported`, never `all_types`.
 - `method_rows.offset/count/total`: examined zero-based MethodDef rows
   **before** declaring-type filtering. If this is absent (historical reports)
   or names only a subset, the new `inspection_scope.method_rows` reports
@@ -144,6 +147,16 @@ verified match to the private VDASH 2.5.115.79 build, runtime reachability,
 or successful ECU enumeration. An exact callsite from a partial report
 remains an exact observation of the rows **returned**, not proof that the
 complete graph has been decoded.
+
+A second callsite gate now distinguishes an **edge row match**
+(`exact_expected_sites` or `exact_expected_site`) from a **decoded caller
+corroboration** (`decoded_caller_corroborated`). The latter is true only
+when the same exact caller's local CIL decode is attested complete and the
+expected call edge matches exactly. This does **not** prove that the
+control-flow-flattened branch can be reached, that `ParseData` completed,
+that `DetectResult.Ecus` was accepted, or that the recovered older IL
+belongs to the same DLL build. A selected/paged report can show call edges
+without a usable decoded caller, and will then report `false`.
 
 The `method_bodies[].cil_decode` field is separate from REA's body
 `status`. It returns `complete_decode_attested` only if the source
