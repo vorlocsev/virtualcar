@@ -69,11 +69,11 @@ class ReaStaticEvidenceTests(unittest.TestCase):
                 "target_identity_resolved": True,
             })
         self.assertEqual(output["method_bodies"]["predicate"],
-                         {"inspected": True, "status": "present"})
+                         {"inspected": True, "status": "present", "cil_decode": "unreported"})
         self.assertEqual(output["method_bodies"]["parse_data"],
-                         {"inspected": True, "status": "partial"})
+                         {"inspected": True, "status": "partial", "cil_decode": "unreported"})
         self.assertEqual(output["method_bodies"]["ecus_constructor"],
-                         {"inspected": False, "status": "not_inspected"})
+                         {"inspected": False, "status": "not_inspected", "cil_decode": "not_inspected"})
 
     def test_02_missing_edges_are_unknown_not_negative_evidence(self):
         source = fixture()
@@ -196,7 +196,7 @@ class ReaStaticEvidenceTests(unittest.TestCase):
                              {"observed_call_count": 1,
                               "exact_expected_site": True})
         self.assertEqual(report["method_bodies"]["execute"],
-                         {"inspected": True, "status": "present"})
+                         {"inspected": True, "status": "present", "cil_decode": "unreported"})
         self.assertFalse(report["client_acceptance_verified"])
 
     def test_10_missing_detect_result_constructor_not_accepted(self):
@@ -277,6 +277,136 @@ class ReaStaticEvidenceTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_DO_NOT_EXPORT", json.dumps(report))
         self.assertIn("newobj and call edges do not prove",
                       " ".join(report["limitations"]))
+
+
+    @staticmethod
+    def _page_fixture():
+        value = fixture()
+        value["normalized_result"]["method_rows"] = {
+            "offset": 0, "count": 8000, "total": 8000,
+        }
+        return value
+
+    def test_17_complete_rows_and_unselected_coverage_attested(self):
+        output = tool.audit(self._page_fixture())
+        self.assertEqual(output["inspection_scope"], {
+            "declaring_types": "all_types", "method_rows": "all_rows",
+            "all_members_examined": True,
+        })
+        self.assertFalse(output["client_acceptance_verified"])
+
+    def test_18_selected_type_does_not_prove_full_member_inspection(self):
+        value = self._page_fixture()
+        value["normalized_result"]["selection"] = {
+            "type_names": ["Private.Hidden.Type"],
+            "unmatched_type_names": [],
+        }
+        report = tool.audit(value)
+        self.assertEqual(report["inspection_scope"]["declaring_types"],
+                         "selected_types")
+        self.assertFalse(report["inspection_scope"]["all_members_examined"])
+        self.assertNotIn("Private.Hidden.Type", json.dumps(report))
+        self.assertTrue(report["call_sites"]["opaque_predicate"][
+            "exact_expected_sites"])
+
+    def test_19_method_row_window_does_not_prove_missing_caller(self):
+        value = self._page_fixture()
+        data = value["normalized_result"]
+        data["method_rows"] = {"offset": 100, "count": 200, "total": 8000}
+        data["methods"] = [m for m in data["methods"]
+                           if m["token"] == "0x0600132b"]
+        report = tool.audit(value)
+        self.assertEqual(report["inspection_scope"]["method_rows"], "page_only")
+        self.assertFalse(report["inspection_scope"]["all_members_examined"])
+        self.assertEqual(report["method_bodies"]["parse_data"]["status"],
+                         "not_inspected")
+
+    def test_20_historical_missing_row_scope_is_unknown(self):
+        value = fixture()
+        report = tool.audit(value)
+        self.assertEqual(report["inspection_scope"]["method_rows"], "unreported")
+        self.assertFalse(report["inspection_scope"]["all_members_examined"])
+        value["normalized_result"]["coverage"]["state"] = "partial"
+        value["normalized_result"]["method_rows"] = {
+            "offset": 0, "count": 500, "total": 500,
+        }
+        self.assertFalse(tool.audit(value)["inspection_scope"][
+            "all_members_examined"])
+
+    def test_21_all_cil_decode_facts_required_for_complete_attestation(self):
+        value = self._page_fixture()
+        parse_method = next(m for m in value["normalized_result"]["methods"]
+                            if m["token"] == "0x06001160")
+        parse_method["body"] = {
+            "status": "present", "instruction_count": 17,
+            "decoded_instruction_count": 17, "truncated_instructions": 0,
+            "normalized_il_sha256": "b" * 64, "issue": None,
+            "private_cil": "PRIVATE_IL_DO_NOT_EXPORT",
+        }
+        result = tool.audit(value)
+        self.assertEqual(result["method_bodies"]["parse_data"]["cil_decode"],
+                         "complete_decode_attested")
+        self.assertNotIn("PRIVATE_IL_DO_NOT_EXPORT", json.dumps(result))
+        self.assertFalse(result["ecu_identity_verified"])
+
+    def test_22_truncated_cil_and_parse_issues_are_not_complete(self):
+        value = self._page_fixture()
+        m = next(m for m in value["normalized_result"]["methods"]
+                 if m["token"] == "0x06001359")
+        m["body"] = {
+            "status": "present", "instruction_count": 30,
+            "decoded_instruction_count": 27, "truncated_instructions": 3,
+            "normalized_il_sha256": None, "issue": "partial",
+        }
+        self.assertEqual(tool.audit(value)["method_bodies"]["predicate"][
+            "cil_decode"], "partial_or_unavailable")
+        m["body"].update({
+            "decoded_instruction_count": 30,
+            "truncated_instructions": 0,
+            "normalized_il_sha256": "c" * 64,
+        })
+        self.assertEqual(tool.audit(value)["method_bodies"]["predicate"][
+            "cil_decode"], "partial_or_unavailable")
+
+    def test_23_invalid_row_and_cil_counters_rejected(self):
+        for rows in (
+            {"offset": 8000, "count": 1, "total": 8000},
+            {"offset": -1, "count": 1, "total": 8000},
+            {"offset": True, "count": 1, "total": 8000},
+        ):
+            with self.subTest(rows=rows):
+                value = fixture()
+                value["normalized_result"]["method_rows"] = rows
+                with self.assertRaisesRegex(ValueError, "invalid_method_row_scope"):
+                    tool.audit(value)
+        value = fixture()
+        value["normalized_result"]["methods"][0]["body"].update({
+            "instruction_count": 2, "decoded_instruction_count": 3,
+            "truncated_instructions": 0, "normalized_il_sha256": "b" * 64,
+            "issue": None,
+        })
+        with self.assertRaisesRegex(ValueError, "invalid_cil_decode_counts"):
+            tool.audit(value)
+
+    def test_24_invalid_selection_and_digest_rejected_without_content(self):
+        for selection in ({"type_names": [], "unmatched_type_names": []},
+                          {"type_names": "Private.Hidden", "unmatched_type_names": []},
+                          {"type_names": ["A"]},
+                          False):
+            with self.subTest(selection=str(type(selection))):
+                value = fixture()
+                value["normalized_result"]["selection"] = selection
+                with self.assertRaisesRegex(ValueError, "invalid_type_selection"):
+                    tool.audit(value)
+        value = fixture()
+        value["normalized_result"]["methods"][0]["body"].update({
+            "instruction_count": 1, "decoded_instruction_count": 1,
+            "truncated_instructions": 0, "normalized_il_sha256": "PRIVATE_HASH",
+            "issue": None,
+        })
+        with self.assertRaisesRegex(ValueError, "invalid_normalized_il_digest"):
+            tool.audit(value)
+
 
 
 if __name__ == "__main__":
