@@ -329,7 +329,7 @@ client run must distinguish pre-detect UI event, explicit Connect, J2534
 request/response delivery, command completion and a nonempty ECU list.
 
 Implementation: the existing `emulator/tools/audit_recovered_il.py` now
-reports six allowlisted static indicators (two event/result sites plus an
+reports seven allowlisted static indicators (two event/result sites plus an
 aggregate phase flag; refresh-site count, DetectDone site, DeviceAvailable
 site plus combined ECU/UI indicator) under
 `recovered-il-evidence-audit-v6`. Eight synthetic mutation tests
