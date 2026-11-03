@@ -292,6 +292,67 @@ def _one_shot_timer_shape(ops):
     return False
 
 
+def _execute_parse_data_staging(ops, offsets):
+    """Match the eight *adjacent* IL instructions at the recovered callsite.
+
+    This is a stack-value staging neighborhood, not a deobfuscated data
+    signature or proof of reachable execution. Both unknown wrappers receive
+    the command's `result` field; return values and ParseData argument types
+    cannot be established here.
+    """
+    expected = [
+        (0x0247, "ldarg.0", None),
+        (0x0248, "ldarg.0", None),
+        (0x0249, "ldfld", "0x04000333"),
+        (0x024E, "call", "0x0600117A"),
+        (0x0253, "ldarg.0", None),
+        (0x0254, "ldfld", "0x04000333"),
+        (0x0259, "call", "0x0600117B"),
+        (0x025E, "call", "0x06001160"),
+    ]
+    if len(ops) != len(offsets):
+        return False
+    for start in range(len(ops) - len(expected) + 1):
+        for index, (offset, opcode, token) in enumerate(expected):
+            observed_op, arg = ops[start + index]
+            if offsets[start + index] != offset or observed_op != opcode:
+                break
+            if token is not None and arg.split(maxsplit=1)[0].upper() != token.upper():
+                break
+        else:
+            return True
+    return False
+
+
+def _execute_staging_call_inventory(by_key):
+    """Independently check three call frequencies from private inventory.
+
+    Absent call inventory is unknown, not a negative finding. The inventory
+    carries no invocation ordering, parameter types or runtime evidence.
+    """
+    entry = by_key.get(KNOWN["execute"])
+    if entry is None or "calls" not in entry:
+        return "unreported"
+    calls = entry["calls"]
+    if not isinstance(calls, list):
+        return "invalid_inventory"
+    wanted = {"0x0600117A", "0x0600117B", "0x06001160"}
+    counted = {key: 0 for key in wanted}
+    for call in calls:
+        if not isinstance(call, dict):
+            return "invalid_inventory"
+        token, count = call.get("token"), call.get("count")
+        if not isinstance(token, str) or not TOKEN.fullmatch(token):
+            return "invalid_inventory"
+        if token.upper() in wanted:
+            if type(count) is not int or count < 0:
+                return "invalid_inventory"
+            counted[token.upper()] += count
+    return ("three_single_calls_observed"
+            if all(count == 1 for count in counted.values())
+            else "counts_differ")
+
+
 def audit(inventory, excerpts):
     selected = inventory.get("selected_methods")
     if not isinstance(selected, list) or not selected:
@@ -354,6 +415,11 @@ def audit(inventory, excerpts):
             **_shared_predicate_result_and_hardware(detect),
             **_string_methodspec_predicate_pairs(detect),
             "execute_calls_parse_data": _has_call(execute, "0x06001160"),
+            "execute_parse_data_two_result_wrappers_exact_static_site":
+                _execute_parse_data_staging(
+                    execute, blocks.get(KNOWN["execute"], {}).get("offsets", [])),
+            "execute_parse_data_wrappers_inventory":
+                _execute_staging_call_inventory(by_key),
             "execute_observed_status_numeric_comparisons": _status_values(execute),
             "execute_one_second_timer_shape": _one_shot_timer_shape(execute),
             **_model_shapes(detect),
@@ -366,6 +432,7 @@ def audit(inventory, excerpts):
             "Direct branch targets do not prove that source blocks are reachable",
             "Shared opaque predicate usage does not reveal equality or acceptance semantics",
             "MethodSpec<string> does not establish generic method return type or semantics",
+            "Two unknown result-field wrappers before ParseData do not reveal arguments or prove execution",
         ],
     }
 
