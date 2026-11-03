@@ -90,6 +90,16 @@ class FollowupWindowTests(unittest.TestCase):
         self.assertFalse(a["first_next_tx_same_channel"])
         self.assertFalse(a["first_next_tx_same_baud"])
 
+    def test_03_unattributed_tx_stays_unknown_not_silence(self):
+        lines = tx() + response()
+        lines += [marker("TX (app request) MALFORMED_PRIVATE_FRAME")]
+        record = tool.audit("\n".join(lines))["observations"][0]
+        self.assertEqual(record["followup_observation"], "next_tx_unattributed")
+        self.assertEqual(record["within_500_ms"], "timestamp_unverified")
+        self.assertEqual(record["within_1000_ms"], "timestamp_unverified")
+        self.assertEqual(record["first_next_tx_service"], "unclassified_unattributed_tx")
+        self.assertIsNone(record["last_rx_to_first_next_tx_ms"])
+
     def test_03_first_other_tx_precedes_later_a3(self):
         lines = tx() + response()
         lines += tx(bytes.fromhex("02 09 02 00 00 00 00 00"),

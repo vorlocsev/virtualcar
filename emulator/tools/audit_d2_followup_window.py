@@ -154,7 +154,15 @@ def audit(source):
             s["tx_ctx"] = None
             if raw is None or ctx is None or ctx[1] != 5:
                 errors["unattributed_or_invalid_tx"] += 1
-                # An unmatched TX is not proof of silence or a next request.
+                # A TX marker exists, but it cannot be correlated with a
+                # channel/timestamp. Never silently relabel it as "no TX".
+                for candidate in s["waiting"]:
+                    finalize(candidate, "next_tx_unattributed")
+                    result = results[-1]
+                    result["first_next_tx_service"] = "unclassified_unattributed_tx"
+                    result["within_500_ms"] = "timestamp_unverified"
+                    result["within_1000_ms"] = "timestamp_unverified"
+                s["waiting"].clear()
                 continue
             channel, protocol, flags, baud, at = ctx
             req = _request(raw)

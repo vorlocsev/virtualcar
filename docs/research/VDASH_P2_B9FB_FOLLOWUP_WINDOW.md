@@ -52,6 +52,10 @@ d2_a3_target_unknown, d2_b9f0, d2_b9fb, d2_b9fc, d2_a6,
 or other_or_unclassified_tx. A first unrelated TX takes precedence
 over any A3 later in the log; this avoids rewriting source chronology.
 The two timing windows concern only that first observed TX.
+If the native log contains a new app-TX marker but its required context
+is missing or malformed, the audit reports next_tx_unattributed and
+timestamp_unverified. Such a record is neither proven silence nor a
+measurable next request. No raw malformed data is exported.
 
 The 32-bit native time-us wraps around. Elapsed values are reported
 only up to 60 seconds; otherwise the clock is marked unverified.
