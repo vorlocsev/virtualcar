@@ -86,6 +86,8 @@ def audit(source):
                 if _gap(candidate["last_rx"], candidate["tx_time"]) is not None else None),
             "followup_observation": outcome,
             "first_next_tx_service": None,
+            "first_next_tx_target": None,
+            "first_next_tx_same_target": None,
             "first_next_tx_same_channel": None,
             "first_next_tx_same_baud": None,
             "last_rx_to_first_next_tx_ms": None,
@@ -99,6 +101,16 @@ def audit(source):
             request, channel, baud, timestamp = next_tx
             delta = _gap(timestamp, candidate["last_rx"])
             record["first_next_tx_service"] = _service_label(request)
+            # Output only the two known CEM routes. Unclassified/foreign
+            # targets are deliberately not copied from private app TX bytes.
+            next_target = (request[2] if request is not None
+                           and request[0] == "D2" and request[2] in (0x40, 0x50)
+                           else None)
+            record["first_next_tx_target"] = (
+                "0x%02X" % next_target if next_target is not None else None)
+            record["first_next_tx_same_target"] = (
+                next_target == candidate["target"]
+                if next_target is not None else None)
             record["first_next_tx_same_channel"] = channel == candidate["channel"]
             record["first_next_tx_same_baud"] = baud == candidate["baud"]
             record["last_rx_to_first_next_tx_ms"] = (
@@ -256,6 +268,7 @@ def audit(source):
             "Only source-local native TX/RX context timestamps are compared; no clocks are joined across files.",
             "A complete D2 envelope is transport evidence, not client acceptance of B9FB.",
             "The first next app TX may be on another channel; same-channel matching is reported separately.",
+            "Next D2 CEM target is exported only when 0x40 or 0x50; same-target is not an access or identity check.",
             "A3 request observation does not prove an E3 response or normal-mode preparation.",
             "An end-of-log, close, clear or disconnect is not proof of a timeout or 1000 ms silence.",
             "Within-window labels refer to the first logged TX, not proof that every bus frame was captured.",
