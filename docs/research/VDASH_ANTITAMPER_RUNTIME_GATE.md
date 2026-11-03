@@ -33,11 +33,13 @@ The overall shape closely **resembles ConfuserEx-style Normal anti-tamper**, whi
 
 ## G2 next gate: observe only whether loaded code changes
 
-A private, operator-side Windows PowerShell read-only probe compares 64 **code** bytes in the running **original** `Frontend.Client.Core.dll` image against the corresponding file bytes at seven source-grounded method RVAs:
+A private, operator-side Windows PowerShell read-only probe compares **up to 64 code bytes** in the running **original** `Frontend.Client.Core.dll` image against the corresponding original file bytes at seven source-grounded MethodDef RVAs. The sample length is capped by the distance to the **next distinct method RVA** (derived from the operator's real REA member report):
 
 - two plaintext loader candidates `0x06000001`, `0x0600000D`;
 - `0x0600117A`, `0x0600117B`, `ParseData 0x06001160`;
 - `VddModel.Detect 0x0600132B`, and predicate `0x06001359`.
+
+**Correction to runtime probe v1 (v2, 2026-11-03):** an independent audit of the private `Frontend.Client.Core.dll.members.json` showed that `0x0600117A` and `0x0600117B` are spaced only 20 bytes apart, and `0x06001359` shares its RVA with **71 other MethodDefs** (72 total aliases). Blind 64-byte windows from v1 overlapped adjacent methods and risked misattribution. In the revised **private v2 probe** the sample lengths are 64, 64, **20, 20**, 64, 64, **20** bytes for the seven listed targets. Each RVA/file offset was independently validated against the original PE sections and user-supplied REA token-to-RVA metadata. The v2 manifest includes `rva_alias_count` and `next_distinct_method_distance_bytes`. Returned `assessment=changed_shared_rva_unattributed` is explicitly **not evidence for the predicate alone**. Only the next distinct method RVA is used as the boundary; these short windows can still miss changes deeper in a method. No live VDASH process observation has yet been returned, and the Windows script has not been runtime-tested in VMware.
 
 The probe first verifies the exact original DLL SHA-256, uses `PROCESS_VM_READ | PROCESS_QUERY_INFORMATION`, and **does not** inject code, call any VDASH methods, launch VDASH, write into the target, or persist memory bytes. Its only output is a small private JSON containing `changed_vs_disk` and a *candidate* tiny/fat CIL header class for each sample. It must run on the **original** application image, never the metadata-probe normalized DLL copies. VMware snapshot and no physical J2534 recommended.
 
