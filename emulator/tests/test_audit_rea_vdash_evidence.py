@@ -661,5 +661,109 @@ class ReaStaticEvidenceTests(unittest.TestCase):
         self.assertNotIn("VENDOR_PRIVATE_RETURN", json.dumps(report))
 
 
+    @staticmethod
+    def _realistic_typed_probe_fixture():
+        # Synthetic types/counts shaped after *observed* private REA export,
+        # not copied proprietary code, method names or DLL.
+        value = ReaStaticEvidenceTests._signature_fixture()
+        m = {m["token"].lower(): m for m in value["normalized_result"]["methods"]}
+        for token in ("0x0600117a", "0x0600117b", "0x06001160"):
+            m[token]["signature"]["generic_parameter_count"] = None
+            m[token]["body"] = {"status": "malformed",
+                               "issue": "Unsupported method body header"}
+        m["0x0600117a"]["signature"].update({
+            "parameter_types": ["class:1349"], "return_type": "class:205[]",
+        })
+        m["0x0600117b"]["signature"].update({
+            "parameter_types": ["class:1349"], "return_type": "u1[]",
+        })
+        m["0x06001160"]["signature"].update({
+            "parameter_types": ["class:205[]", "u1[]"], "return_type": "void",
+        })
+        value["normalized_result"]["fields"] = [{
+            "token": "0x04000333",
+            "name": PRIVATE,
+            "signature": {"kind": "field", "parse_status": "decoded",
+                          "field_type": "class:1349", "issue": None},
+        }]
+        return value
+
+    def test_41_probe_style_null_generic_parameter_counts_accepted(self):
+        report = tool.audit(self._realistic_typed_probe_fixture())
+        for name in ("result_helper_a", "result_helper_b", "parse_data"):
+            self.assertEqual(report["method_signatures"][name]["status"],
+                             "decoded")
+            self.assertIsNone(report["method_signatures"][name][
+                "generic_parameter_count"])
+        self.assertFalse(report["client_acceptance_verified"])
+
+    def test_42_decoded_helper_return_shapes_match_parse_data(self):
+        report = tool.audit(self._realistic_typed_probe_fixture())
+        self.assertEqual(report["typed_staging_alignment"], {
+            "status": "compatible_static_signatures",
+            "helper_a_return_shape": "class_array",
+            "helper_b_return_shape": "byte_array",
+            "parse_data_parameter_shapes": ["class_array", "byte_array"],
+        })
+        self.assertEqual(report["method_bodies"]["parse_data"]["status"],
+                         "malformed")
+        self.assertFalse(report["ecu_identity_verified"])
+
+    def test_43_mismatched_result_field_never_attests_alignment(self):
+        v = self._realistic_typed_probe_fixture()
+        v["normalized_result"]["fields"][0]["signature"]["field_type"] = (
+            "class:1350")
+        report = tool.audit(v)
+        self.assertEqual(report["typed_staging_alignment"]["status"],
+                         "signature_mismatch")
+
+    def test_44_reversed_parse_data_parameters_not_compatible(self):
+        v = self._realistic_typed_probe_fixture()
+        parse_sig = next(m["signature"] for m in
+                         v["normalized_result"]["methods"]
+                         if m["token"] == "0x06001160")
+        parse_sig["parameter_types"] = ["u1[]", "class:205[]"]
+        self.assertEqual(tool.audit(v)["typed_staging_alignment"]["status"],
+                         "signature_mismatch")
+
+    def test_45_missing_field_is_unknown_not_negative(self):
+        v = self._realistic_typed_probe_fixture()
+        v["normalized_result"]["fields"] = []
+        report = tool.audit(v)
+        self.assertEqual(report["typed_staging_alignment"]["status"],
+                         "unreported")
+        v["normalized_result"].pop("fields")
+        self.assertEqual(tool.audit(v)["typed_staging_alignment"]["status"],
+                         "unreported")
+
+    def test_46_partial_helper_signature_is_unknown_not_compatible(self):
+        v = self._realistic_typed_probe_fixture()
+        method = next(m for m in v["normalized_result"]["methods"]
+                      if m["token"] == "0x0600117b")
+        method["signature"]["parse_status"] = "partial"
+        report = tool.audit(v)
+        self.assertEqual(report["typed_staging_alignment"]["status"],
+                         "unreported")
+        self.assertEqual(report["method_signatures"]["result_helper_b"][
+            "status"], "partial")
+
+    def test_47_duplicate_result_field_is_rejected(self):
+        v = self._realistic_typed_probe_fixture()
+        v["normalized_result"]["fields"].append(dict(
+            v["normalized_result"]["fields"][0]))
+        with self.assertRaisesRegex(ValueError, "duplicate_result_field"):
+            tool.audit(v)
+
+    def test_48_private_source_type_names_and_digests_not_exported(self):
+        v = self._realistic_typed_probe_fixture()
+        v["normalized_result"]["fields"][0]["name"] = PRIVATE
+        text = json.dumps(tool.audit(v))
+        for forbidden in (PRIVATE, "class:1349", "class:205", SHA, MVID,
+                          "u1[]", "0x04000333"):
+            self.assertNotIn(forbidden, text)
+        self.assertIn("compatible_static_signatures", text)
+        self.assertNotIn("PRIVATE_VIN", text)
+
+
 if __name__ == "__main__":
     unittest.main()
