@@ -336,7 +336,7 @@ def _execute_staging_call_inventory(by_key):
     calls = entry["calls"]
     if not isinstance(calls, list):
         return "invalid_inventory"
-    wanted = {"0x0600117A", "0x0600117B", "0x06001160"}
+    wanted = {"0x0600117a", "0x0600117b", "0x06001160"}
     counted = {key: 0 for key in wanted}
     for call in calls:
         if not isinstance(call, dict):
