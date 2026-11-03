@@ -89,14 +89,19 @@ def _inspection_scope(data, coverage):
     REA's method_rows is the examined zero-based MethodDef interval BEFORE
     type selection. Missing method_rows is unknown, not all rows examined.
     """
-    selection = data.get("selection")
-    if selection is None:
+    if "selection" not in data:
+        # Historical Evidence can omit the selection field altogether.
+        # Do not silently turn an undocumented scope into all types.
+        type_scope = "unreported"
+    elif data["selection"] is None:
         type_scope = "all_types"
-    elif (isinstance(selection, dict)
-          and isinstance(selection.get("type_names"), list)
-          and len(selection["type_names"]) > 0
-          and all(isinstance(n, str) and n for n in selection["type_names"])
-          and isinstance(selection.get("unmatched_type_names"), list)):
+    elif (isinstance(data["selection"], dict)
+          and isinstance(data["selection"].get("type_names"), list)
+          and len(data["selection"]["type_names"]) > 0
+          and all(isinstance(n, str) and n for n in data["selection"]["type_names"])
+          and isinstance(data["selection"].get("unmatched_type_names"), list)
+          and all(isinstance(n, str) and n
+                  for n in data["selection"]["unmatched_type_names"])):
         type_scope = "selected_types"
     else:
         raise ValueError("invalid_type_selection")
@@ -223,6 +228,12 @@ def audit(document):
             "observed_call_count": len(items),
             "exact_expected_sites": offsets == list(expected),
             "target_identity_resolved": bool(resolved),
+            # An edge row alone is not a complete method body. Strictly
+            # separate source callsite matching from decoded caller CIL.
+            "decoded_caller_corroborated": (
+                offsets == list(expected)
+                and decodes.get("0x0600132b") == "complete_decode_attested"
+            ),
         }
     relationships = {}
     for key, (_, _, _, expected_offset) in _STRUCTURAL_EDGES.items():
@@ -230,6 +241,11 @@ def audit(document):
         relationships[key] = {
             "observed_call_count": len(seen),
             "exact_expected_site": seen == [expected_offset],
+            "decoded_caller_corroborated": (
+                seen == [expected_offset]
+                and decodes.get(
+                    _STRUCTURAL_EDGES[key][0]) == "complete_decode_attested"
+            ),
         }
     return {
         "format": FORMAT,
@@ -252,6 +268,8 @@ def audit(document):
             "Unselected or missing methods are not proof of absent methods",
             "Complete CIL decode is a static parser property, not a reachable or executed method",
             "Historical or paged REA member reports may not attest inspection of every method row",
+            "Missing type selection metadata is unreported, not proof of all-types inspection",
+            "A matching call edge without decoded caller CIL is a report observation, not independently corroborated CIL",
             "Resolved metadata names do not reveal predicate semantics or runtime reachability",
             "newobj and call edges do not prove object construction succeeded, ParseData executed, or branches are reachable",
             "The MethodSpec type argument is known from separate private IL evidence, not inferred here",
