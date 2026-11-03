@@ -45,8 +45,16 @@ Local workflow:
 7. Remove only your LAB registration when finished; restore original
    client adapter selection. Do not overwrite the existing J2534 adapter.
 
-No scripts in this archive automatically change Windows registry settings.
-Use a separate backup/restore procedure for any manual registration.
+For optional registration run PowerShell as Administrator with an explicit mode:
+  .\Set-VirtualCarAB.ps1 -Mode CONTROL
+  .\Set-VirtualCarAB.ps1 -Mode A_FILTER
+  .\Set-VirtualCarAB.ps1 -Mode B_D8_WRITE
+  .\Set-VirtualCarAB.ps1 -Mode C_D8_PERIODIC
+  .\Set-VirtualCarAB.ps1 -Remove
+This script touches ONLY a dedicated 32-bit J2534 LAB entry, checks ownership
+and DLL digest, and refuses known active VDASH processes. It does not choose an
+adapter in VDASH, run VDASH, or touch other registered adapters.
+It never runs automatically. Registration requires explicit user action.
 Windows x86 and host CI tests are not VDASH GUI acceptance tests.
 """
 BASE_VEHICLE = """[Vehicle]
@@ -162,7 +170,13 @@ def create(root, dll_path, out_dir, source_sha):
     check_source_profile(src_profile.read_bytes())
     dll = dll_path.read_bytes()
     check_pe32(dll)
-    files = {}
+    register_script = root / "tools" / "Set-VirtualCarAB.ps1"
+    if not register_script.is_file() or register_script.is_symlink():
+        raise ValueError("lab_selector_not_regular")
+    script_data = register_script.read_bytes()
+    if b"VirtualCar-CANPS-AB-v1" not in script_data:
+        raise ValueError("invalid_lab_selector")
+    files = {"Set-VirtualCarAB.ps1": script_data}
     for mode, label in MODES:
         prefix = f"{label}/"
         files[prefix + "VirtualCarJ2534.dll"] = dll
