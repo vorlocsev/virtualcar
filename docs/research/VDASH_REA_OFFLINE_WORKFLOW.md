@@ -260,6 +260,53 @@ observed G2 shape, original/recovered hash paths, mismatch rejection,
 unknown methods, duplicate/malformed counters, sanitization and CLI
 overwrite safety.
 
+## Helper signatures and the remaining ParseData G2 gap
+
+The private recovered-method inventory for VDASH 2.5.115.79 records
+**calls** to MethodDef \`0x0600117A\` and \`0x0600117B\` from
+\`VddCommand.Execute\`, but has **no selected method-body entries** for
+either helper. It does contain a \`ParseData\` (\`0x06001160\`) row
+with counts only. The private recovered IL text places the two helper calls
+at \`IL_024E\` and \`IL_0259\`, followed by \`ParseData\` at \`IL_025E\`.
+This is a static call sequence, not proof the branch was executed.
+
+REA's public \`managedSignatureSchema\` can, for a locally inspected matching
+DLL, expose \`kind\`, \`parse_status\`, \`parameter_count\`,
+\`generic_parameter_count\`, \`return_type\` and \`parameter_types\`.
+The updated \`audit_rea_vdash_evidence.py\` checks those **three** method
+signatures without recording their actual type names in the sanitized
+report:
+
+- \`method_signatures.result_helper_a\`: \`0x0600117A\`
+- \`method_signatures.result_helper_b\`: \`0x0600117B\`
+- \`method_signatures.parse_data\`: \`0x06001160\`
+
+Every signature yields a constrained status: \`decoded\`, \`partial\`,
+\`unsupported\`, \`malformed\`, \`unreported\` (legacy row without a
+signature), or \`not_inspected\` (no matching selected method row).
+Only a valid, decoded method signature provides numeric \`parameter_count\`
+and \`generic_parameter_count\`, plus \`return_kind\` (\`void\`,
+\`non_void\` or \`unknown\`). A missing, malformed or partially parsed
+signature **cannot** be used to infer parameter or return types.
+The implicit instance receiver of a non-static method is not counted
+in \`parameter_count\`. Raw type names, signature digests and full
+parameters are never exported.
+
+The \`structural_edges\` report now also checks the exact
+\`Execute → helper_a\` and \`Execute → helper_b\` offsets in addition
+to \`Execute → ParseData\`. A match confirms a reported callsite
+in the inspected build; \`decoded_caller_corroborated\` additionally requires
+the complete decoded caller body, not runtime execution.
+
+**The signatures are not yet known.** Our fixtures use invented parameter
+and return types exclusively to test the sanitizer. Only the original or
+matching recovered \`Frontend.Client.Core.dll\` can supply actual REA
+signature evidence. Even complete signatures cannot, alone, establish
+the meaning of the helpers or VDASH command acceptance. The next step is
+to privately compare parameter and return metadata, then inspect the
+three method bodies to determine their data transformations. Do not
+convert the resulting types into synthetic OEM CEM replies.
+
 ## Provenance
 
 Implementation checks are based on REA's published
