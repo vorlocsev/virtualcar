@@ -444,6 +444,70 @@ def _detect_ui_availability_sites(ops, offsets):
     }
 
 
+
+def _detect_unit_projection_sites(ops, offsets):
+    """Audit bounded source sites, never assume a complete executed Units pass.
+
+    Even with all sites present, control flow may skip them or produce empty
+    collections. No unit identity, hardware value or loader response is exported.
+    """
+    enumerations = [
+        [(0x02A4, "ldarg.0", None),
+         (0x02A5, "call", "0x060012E8"),
+         (0x02AA, "callvirt", "0x06001B99"),
+         (0x02AF, "callvirt", "0x0A00011A"),
+         (0x02B4, "stloc.s", "5")],
+        [(0x04DF, "ldarg.0", None),
+         (0x04E0, "call", "0x060012E8"),
+         (0x04E5, "callvirt", "0x06001B99"),
+         (0x04EA, "callvirt", "0x0A00011A"),
+         (0x04EF, "stloc.s", "5")],
+    ]
+    enumeration_count = sum(
+        _exact_il_site(ops, offsets, site) for site in enumerations)
+    ecu = _exact_il_site(ops, offsets, [
+        (0x030C, "ldloc.s", "6"),
+        (0x030E, "callvirt", "0x06001F8F"),
+    ])
+    hardware = _exact_il_site(ops, offsets, [
+        (0x0415, "ldloc.s", "6"),
+        (0x0417, "callvirt", "0x06001F95"),
+    ])
+    current = _exact_il_site(ops, offsets, [
+        (0x0530, "ldloc.s", "10"),
+        (0x0532, "ldloca.s", "5"),
+        (0x0534, "call", "0x0A00011C"),
+        (0x0539, "stfld", "0x040003D3"),
+    ])
+    loader = _exact_il_site(ops, offsets, [
+        (0x0568, "ldloc.s", "10"),
+        (0x056A, "ldfld", "0x040003D3"),
+        (0x056F, "ldloc.s", "9"),
+        (0x0571, "ldloc.s", "10"),
+        (0x0573, "ldftn", "0x06001387"),
+        (0x0579, "newobj", "0x0A00011D"),
+        (0x057E, "call", "0x2B000023"),
+        (0x0583, "callvirt", "0x06001F8E"),
+    ])
+    session = _exact_il_site(ops, offsets, [
+        (0x01E2, "ldarg.0", None),
+        (0x01E3, "ldloc.1", None),
+        (0x01E4, "callvirt", "0x06001140"),
+        (0x01E9, "stfld", "0x040003AA"),
+    ])
+    return {
+        "detect_result_units_enumerator_static_site_count": enumeration_count,
+        "detect_unit_ecu_getter_exact_static_site": ecu,
+        "detect_unit_hardware_number_exact_static_site": hardware,
+        "detect_units_current_local_capture_exact_static_site": current,
+        "detect_unit_loader_result_exact_static_site": loader,
+        "detect_stores_command_session_exact_static_site": session,
+        "detect_units_and_loader_static_shapes_complete":
+            enumeration_count == 2 and ecu and hardware and current and loader,
+    }
+
+
+
 def audit(inventory, excerpts):
     selected = inventory.get("selected_methods")
     if not isinstance(selected, list) or not selected:
@@ -478,7 +542,7 @@ def audit(inventory, excerpts):
     detect_block = blocks.get(KNOWN["detect"], {})
     # Fixed schema, no raw strings, source path, VIN, PID or private methods.
     return {
-        "format": "recovered-il-evidence-audit-v6",
+        "format": "recovered-il-evidence-audit-v7",
         "selected_methods": len(tokens),
         "fully_extracted_excerpt_methods": len(blocks),
         "unexpanded_selected_methods": len(tokens - set(blocks)),
@@ -518,6 +582,8 @@ def audit(inventory, excerpts):
             **_model_shapes(detect),
             **_detect_ui_availability_sites(detect,
                 detect_block.get("offsets", [])),
+            **_detect_unit_projection_sites(detect,
+                detect_block.get("offsets", [])),
         },
         "limitations": [
             "Method references do not prove execution order in flattened CFG",
@@ -530,6 +596,8 @@ def audit(inventory, excerpts):
             "Two unknown result-field wrappers before ParseData do not reveal arguments or prove execution",
             "PreDetectDone and OnDetectDone are separate static sites, not proof of successful user-facing detection",
             "RefreshAvailability and DeviceAvailable sites do not establish runtime ECU list contents",
+            "Two Units enumeration sites are not proof of two executed loops, nonempty Units, or individual ECU reads",
+            "Unit hardware getters and LoaderResult assignment are static motifs without authenticated identity or acceptance evidence",
         ],
     }
 
