@@ -51,6 +51,9 @@ For optional registration run PowerShell as Administrator with an explicit mode:
   .\Set-VirtualCarAB.ps1 -Mode B_D8_WRITE
   .\Set-VirtualCarAB.ps1 -Mode C_D8_PERIODIC
   .\Set-VirtualCarAB.ps1 -Remove
+If VDASH does not connect, run .\Test-VirtualCarAB.ps1 in PowerShell 5.1.
+This read-only preflight checks the 32-bit registry, DLL SHA and J2534
+Open/Connect directly. It cannot prove that VDASH accepts the vehicle.
 This script touches ONLY a dedicated 32-bit J2534 LAB entry, checks ownership
 and DLL digest, and refuses known active VDASH processes. It does not choose an
 adapter in VDASH, run VDASH, or touch other registered adapters.
@@ -176,7 +179,14 @@ def create(root, dll_path, out_dir, source_sha):
     script_data = register_script.read_bytes()
     if b"VirtualCar-CANPS-AB-v1" not in script_data:
         raise ValueError("invalid_lab_selector")
-    files = {"Set-VirtualCarAB.ps1": script_data}
+    preflight_script = root / "tools" / "Test-VirtualCarAB.ps1"
+    if not preflight_script.is_file() or preflight_script.is_symlink():
+        raise ValueError("lab_preflight_not_regular")
+    preflight_bytes = preflight_script.read_bytes()
+    if b"VirtualCarABPreflight" not in preflight_bytes:
+        raise ValueError("invalid_lab_preflight")
+    files = {"Set-VirtualCarAB.ps1": script_data,
+             "Test-VirtualCarAB.ps1": preflight_bytes}
     for mode, label in MODES:
         prefix = f"{label}/"
         files[prefix + "VirtualCarJ2534.dll"] = dll
