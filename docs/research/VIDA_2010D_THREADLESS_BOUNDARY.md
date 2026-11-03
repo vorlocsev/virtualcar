@@ -85,3 +85,55 @@ different runs, and different failures**, not one causal trace.
 
 No new positive A3 reply is synthesized, no CEM logic is modified, and
 no claim of Volvo XC90 V8 MY2009 acceptance is made.
+
+## Legacy preflight call-order evidence (not a protocol requirement)
+
+The client-side VIDA2010D excerpt supplied in this conversation records the
+following order before the unsuccessful write to CEM target 0x40:
+
+1. PassThruConnect(88, 0x10000001, 0x20000100, 125000, 90)
+2. PassThruIoctl SET_CONFIG DATA_RATA=125000, LOOPBACK=0 BIT_SAMPLE_POINT=68
+3. PassThruIoctl SET_CONFIG CAN_XON_XOFF_STMIN=40
+4. Start J2534 message filter ID 0 on channel 90
+5. Start J2534 periodic message channelId: 90 pMsgId:0
+6. PassThruWriteMsgs(90, PASSTHRU_MSG, 1, 2000)
+7. ERR_DEVICE_NOT_CONNECTED (the write fails); a subsequent TX arrow dump
+   **does not** mean that the device transmitted the request.
+
+This records what VIDA logged, not proof of successful PassThruConnect,
+filter installation, actual periodic transmission, required D2 segmentation,
+or a normal preparation contract for all VIDA/DiCE versions.
+
+The older plain-text sample spells the bitrate label DATA_RATA. The audit
+also recognizes DATA_RATE as a spelling variant; neither spelling proves
+which underlying Ioctl parameter was accepted.
+
+The enhanced analyzer reports a nested per-attempt preflight structure:
+- fixed, source-order stage names (Connect, bitrate config, STmin config,
+  filter, periodic, WriteMsgs);
+- whether a logged filter/periodic/write channel equals the *declared*
+  Connect channel in the same chronological attempt;
+- whether declared bitrate config equals the preceding Connect bitrate;
+- exact comparison to the constants of **this one published sample**;
+- matches_published_sample_call_order, a strictly synthetic/order-only
+  indicator, not approval of a driver, vehicle or ECU result;
+- separate connect_success_verified/filter_effect_verified/
+  periodic_effect_verified fields, each always false.
+
+The analyzer never exports device ID, channel ID, host path, original raw
+frames, individual raw J2534 flags, or private adapter identities. All
+associations stay chronological, since the source lacks thread IDs and
+independent success return codes.
+
+Eight additional synthetic tests (09–16) check the full call order,
+out-of-order/missing STmin, channel mismatches, noncanonical flags/baud,
+both documented spellings, out-of-range IDs and private-data exclusion.
+The legacy trace is **not** bundled as a raw fixture.
+
+### Unresolved boundary
+
+The target read-only SectorV XC90 V8 MY2009 investigation still needs a
+comparable successful-client trace identifying which exact physical or
+virtual CEM response is consumed after B9FB. The historical DiCE device
+disconnect does not establish a B9FB parser fault. PR30's SectorV
+Hardware/A3 timeout remains a separate source and separate failure mode.
