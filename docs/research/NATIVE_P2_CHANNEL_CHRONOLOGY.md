@@ -147,3 +147,44 @@ of 0.520ms in run 41760184039 is a synthetic client/harness
 measurement. Even a successful cross-report check cannot
 establish the sequence or timing of historical SectorV run 188,
 nor identify the correct A3/E3 security access response.
+
+
+## v3 guard: unrelated app TX and RX-buffer reset
+
+A gap between the completed B9FB and a later A3 is not necessarily
+a direct transition, even on the same native channel. A complete
+J2534 text log can contain another application TX (OBD, D2 B9F0,
+or a different service) or a CLEAR_RX_BUFFER operation.
+
+The v3 source-local auditor now keeps internal, bounded markers for:
+- Any other recognized/unclassified **application TX** between
+  completed B9FB and the first later A3, including traffic from a
+  different channel in the same PID.
+- Any J2534 CLEAR_RX_BUFFER log event in that interval.
+
+Neither marker copies payload bytes, PID, host or source path into
+the public chronology. When present, the first candidate is marked
+intervening_other_app_tx or clear_rx_between_events and its
+same_channel_target_generation_verified value remains false.
+The whole-session outcome receives the equivalent explicit reason
+when the session has a unique B9FB/A3 pair.
+
+Events before the completed B9FB or after the selected first A3
+do not retroactively invalidate that candidate. A prior B9FB TX
+remains an independent barrier; channel generation and explicit
+disconnect checks are preserved from v2.
+
+This is a deliberately conservative ordering check. An app TX in
+between could be legitimate client behavior, but it prevents a
+claim that the A3 was the immediate next meaningful request.
+The separate followup-window auditor is still the authority on
+the **first next app TX**, not merely the first A3 service.
+
+Eight new synthetic tests cover OBD/D2 intermediary traffic,
+other channel TX, clear after and during B9FB, traffic before or
+after the pair, and a different PID whose traffic must not be
+spliced into the source process.
+
+The cross-report native CI gate uses v3 and must continue to pass
+unchanged synthetic x86 DLL evidence. It does not infer the
+real SectorV Hardware acceptance predicate or synthesize E3.
