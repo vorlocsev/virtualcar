@@ -20,7 +20,7 @@ MAX_BYTES = 4 * 1024 * 1024
 MAX_LINES = 45000
 MAX_EPOCHS = 128
 MAX_EVENTS = 1000
-FORMAT = "virtualcar-native-p2-channel-chronology-v2"
+FORMAT = "virtualcar-native-p2-channel-chronology-v3"
 TX_CONTEXT = "TX context channel/protocol/flags/baud/time-us (BE)"
 RX_CONTEXT = "RX context channel/protocol/status/baud/time-us (BE)"
 HEX12 = re.compile(r"^[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){11}$")
@@ -44,7 +44,7 @@ def _gap(after, before):
 def _state():
     return {
         "tx_ctx": None, "rx_ctx": None, "disconnect_ctx": None,
-        "channels": {}, "generations": {}, "events": [], "active": {}, "incomplete": 0,
+        "channels": {}, "generations": {}, "events": [], "active": {}, "barriers": [], "incomplete": 0,
         "process_sectorv": False, "source_error": False,
     }
 
@@ -70,6 +70,21 @@ def _event(state, kind, target, channel, baud, timestamp):
     }
     state["events"].append(item)
     return item
+
+
+def _barrier(state, kind):
+    if len(state["barriers"]) >= MAX_EVENTS:
+        raise ValueError("too_many_intervening_events")
+    state["barriers"].append((len(state["events"]), kind))
+
+
+def _between(state, before, after):
+    return next((kind for order, kind in state["barriers"]
+                 if before["order"] <= order < after["order"]), None)
+
+
+def _barrier_status(kind):
+    return "intervening_other_app_tx" if kind == "other_app_tx" else "clear_rx_between_events"
 
 
 def _first_completed_b9fb_a3(state):
@@ -104,6 +119,8 @@ def _first_completed_b9fb_a3(state):
            and completed["order"] < x["order"] < first["order"]
            for x in events):
         base["status"] = "intervening_b9fb_request"
+    elif _between(state, completed, first) is not None:
+        base["status"] = _barrier_status(_between(state, completed, first))
     elif first["_channel"] != completed["_channel"]:
         base["status"] = "different_channel"
     elif first["_generation"] != completed["_generation"]:
@@ -141,6 +158,8 @@ def _finish(state, reason):
         status = "a3_before_b9fb_request"
     elif a3[0]["order"] < complete[0]["order"]:
         status = "a3_during_b9fb_delivery"
+    elif _between(state, complete[0], a3[0]) is not None:
+        status = "a3_after_b9fb_" + _barrier_status(_between(state, complete[0], a3[0]))
     elif a3[0]["_channel"] != complete[0]["_channel"]:
         status = "a3_after_b9fb_different_channel"
     elif a3[0]["_generation"] != complete[0]["_generation"]:
@@ -270,8 +289,12 @@ def audit(source):
             channel, protocol, flags, baud, at = ctx
             req = _request(raw)
             if req is None or req[0] != "D2" or req[2] not in (0x40, 0x50):
+                _barrier(s, "other_app_tx")
                 continue
             service, target = req[1], req[2]
+            if service not in ("A3", "B9FB"):
+                _barrier(s, "other_app_tx")
+                continue
             # The observer treats TX as an attempted API write. Neither
             # WriteMsgs return code nor on-wire delivery is proven here.
             if service == "A3" and raw[4] >= 0xCA and raw[4] <= 0xCF:
@@ -325,6 +348,7 @@ def audit(source):
                 del s["active"][channel]
             continue
         if text.startswith("J2534 CLEAR_RX_BUFFER:"):
+            _barrier(s, "clear_rx")
             s["incomplete"] += len(s["active"])
             s["active"].clear()
             s["rx_ctx"] = None
