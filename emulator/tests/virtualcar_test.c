@@ -588,8 +588,18 @@ static void test_can_data_rate_change_isolation(U32 dev){
  n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
  REQUIRE(ca->d2_next_us==0 && ca->d2_trace==0);
  pump_d2(ca);REQUIRE(ca->count==0);
- /* 4. Switching channel a must not affect b's separate HS queue. */
+ /* 4. Switching channel a must not affect b's separate HS queue
+       or leave the read-only P2 observer believing it is still on HS. */
  REQUIRE(cb->baud==500000 && cb->d2_count==3 && cb->count==1);
+ {U32 found_a=0,found_b=0,k;
+  for(k=0;k<P2_BRIDGE_MAX_CHANNELS;k++){
+   p2_bridge_channel *obs=&g_vehicle_bridge.channels[k];
+   if(!obs->active)continue;
+   if(obs->id==a){REQUIRE(obs->baud==125000);found_a++;}
+   if(obs->id==b){REQUIRE(obs->baud==500000);found_b++;}
+  }
+  REQUIRE(found_a==1 && found_b==1);
+ }
  rx=readmsg(b);REQUIRE(rx.Data[4]==0x8F && rx.Data[5]==0x50);
  /* 5. CEM 0x50 HS request is silent on a after LS switch. */
  req=frame(PROTO_CAN,0x000FFFFE,cmd50,8);send(a,&req);
