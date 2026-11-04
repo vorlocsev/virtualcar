@@ -525,6 +525,81 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
 /* Eight unverified composite-profile laboratory replay gates. A correct
    D2 response from an imported mixed-origin INI is NOT verified XC90 CEM
    identity. Deliberate opt-in is always explicit, never inherited. */
+/* Eight CAN receive-filter regressions via the exported J2534 interface.
+   Prior builds accepted a five- or twelve-byte mask but matched ONLY
+   the CAN ID, incorrectly delivering frames with another payload.
+   All payloads below are generic synthetic bytes, not Volvo ECU data. */
+static void test_can_filter_mask_payload(U32 dev){
+ U32 cid=0,fid=0,n,initial_count;
+ PASSTHRU_MSG mask,pat,rx;
+ CHANNEL *c;
+ U8 ff=0xFF,match=0x62,match_hi=0x60,nibble=0xF0;
+ U8 good[]={0x62,0x10,0x20,0x30,0x40,0x50,0x60,0x70};
+ U8 bad[]={0x7A,0x10,0x20,0x30,0x40,0x50,0x60,0x70};
+ U8 wide_mask[]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+ U8 wide_extra[]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&cid)==ERR_OK);
+ c=channel(cid);REQUIRE(c!=NULL);
+ /* 1. Five-byte PASS pattern matches CAN ID AND first payload byte. */
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,&ff,1);
+ pat=frame(PROTO_CAN,0x72Eu,&match,1);
+ REQUIRE(PassThruStartMsgFilter(cid,1,&mask,&pat,0,&fid)==ERR_OK);
+ enqueue(c,0x72E,good,8);
+ rx=readmsg(cid);REQUIRE(rx.DataSize==12&&rx.Data[4]==0x62);
+ /* 2. The SAME response ID but the wrong first payload byte is denied. */
+ enqueue(c,0x72E,bad,8);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 3. Matching payload from another CAN ID is still denied. */
+ enqueue(c,0x7E8,good,8);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruStopMsgFilter(cid,fid)==ERR_OK);
+ /* 4. Five-byte BLOCK rejects matching ID+payload, not every same-ID RX. */
+ REQUIRE(PassThruStartMsgFilter(cid,2,&mask,&pat,0,&fid)==ERR_OK);
+ enqueue(c,0x72E,bad,8);rx=readmsg(cid);REQUIRE(rx.Data[4]==0x7A);
+ /* 5. Matching BLOCK payload is suppressed. */
+ enqueue(c,0x72E,good,8);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruStopMsgFilter(cid,fid)==ERR_OK);
+ /* 6. Partial payload masks compare only significant bits, not equality. */
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,&nibble,1);
+ pat=frame(PROTO_CAN,0x72Eu,&match_hi,1);
+ REQUIRE(PassThruStartMsgFilter(cid,1,&mask,&pat,0,&fid)==ERR_OK);
+ enqueue(c,0x72E,good,8);rx=readmsg(cid);REQUIRE(rx.Data[4]==0x62);
+ enqueue(c,0x72E,bad,8);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruStopMsgFilter(cid,fid)==ERR_OK);
+ /* 7. Twelve-byte PASS must check all eight data bytes and must not
+       read past shorter RX messages. */
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,wide_mask,8);
+ pat=frame(PROTO_CAN,0x72Eu,good,8);
+ REQUIRE(PassThruStartMsgFilter(cid,1,&mask,&pat,0,&fid)==ERR_OK);
+ enqueue(c,0x72E,good,1);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ enqueue(c,0x72E,bad,8);
+ n=1;REQUIRE(PassThruReadMsgs(cid,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ enqueue(c,0x72E,good,8);
+ rx=readmsg(cid);REQUIRE(rx.DataSize==12&&rx.Data[11]==0x70);
+ REQUIRE(PassThruStopMsgFilter(cid,fid)==ERR_OK);
+ /* 8. Inconsistent and oversized declared masks cannot silently be
+       reduced to a four-byte CAN-ID filter. Existing filter set stays. */
+ initial_count=c->filters_count;
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,&ff,1);
+ pat=frame(PROTO_CAN,0x72Eu,0,0);
+ REQUIRE(PassThruStartMsgFilter(cid,1,&mask,&pat,0,&fid)==ERR_INVALID_MSG);
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,wide_extra,9);
+ pat=frame(PROTO_CAN,0x72Eu,wide_extra,9);
+ REQUIRE(PassThruStartMsgFilter(cid,1,&mask,&pat,0,&fid)==ERR_INVALID_MSG);
+ REQUIRE(c->filters_count==initial_count);
+ /* Four-byte ID-only filters still work for legacy clients. */
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_CAN,0x72Eu,0,0);
+ REQUIRE(PassThruStartMsgFilter(cid,1,&mask,&pat,0,&fid)==ERR_OK);
+ enqueue(c,0x72E,bad,8);rx=readmsg(cid);REQUIRE(rx.Data[4]==0x7A);
+ REQUIRE(PassThruStopMsgFilter(cid,fid)==ERR_OK);
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+ puts("PASS: eight CAN ID+payload J2534 receive filter checks");
+}
+
 static void test_d2_unapproved_composite_replay_block(U32 dev){
  D2_PROFILE original[MAX_D2_FIXTURES];
  const char *tag="local_composite_unverified_trace_import";
@@ -628,6 +703,7 @@ static void test_d2_all_fixtures_baud_isolation(U32 dev){
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_can_filter_mask_payload(dev);
  test_d2_unapproved_composite_replay_block(dev);
  test_d2_all_fixtures_baud_isolation(dev);
  test_vmware_route_evidence(dev);
