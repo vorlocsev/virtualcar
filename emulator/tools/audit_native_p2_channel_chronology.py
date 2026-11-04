@@ -34,6 +34,16 @@ def _can12(text):
     return bytes.fromhex(source) if HEX12.fullmatch(source) else None
 
 
+def _native_message(text):
+    """Validate native J2534 byte records without exporting or decoding them."""
+    fields = text.strip().split()
+    if not 5 <= len(fields) <= 4096:
+        return None
+    if not all(re.fullmatch(r"[0-9a-fA-F]{2}", field) for field in fields):
+        return None
+    return bytes(int(field, 16) for field in fields)
+
+
 def _gap(after, before):
     if type(after) is not int or type(before) is not int:
         return None
@@ -339,14 +349,21 @@ def audit(source):
             s["tx_ctx"] = s["rx_ctx"] = None
             continue
         if text.startswith("TX (app request)"):
-            raw = _can12(text[len("TX (app request)"):])
+            raw = _native_message(text[len("TX (app request)"):])
             ctx = s["tx_ctx"]
             s["tx_ctx"] = None
-            if raw is None or ctx is None or ctx[1] != 5:
+            if (raw is None or ctx is None or ctx[1] not in (5, 6)
+                    or (ctx[1] == 5 and len(raw) > 12)):
                 errors["unattributed_or_bad_tx"] += 1
                 s["source_error"] = True
                 continue
             channel, protocol, flags, baud, at = ctx
+            if protocol != 5 or len(raw) != 12:
+                # Valid ISO15765/short-CAN app TX is not a malformed
+                # native record. It is an intervening application TX but
+                # cannot be mistaken for an eight-byte D2 CEM request.
+                _barrier(s, "other_app_tx")
+                continue
             req = _request(raw)
             if req is None or req[0] != "D2" or req[2] not in (0x40, 0x50):
                 _barrier(s, "other_app_tx")
@@ -380,14 +397,25 @@ def audit(source):
                     errors["b9fb_wrong_baud"] += 1
             continue
         if text.startswith("PassThruReadMsgs -> delivered"):
-            raw = _can12(text[len("PassThruReadMsgs -> delivered"):])
+            raw = _native_message(text[len("PassThruReadMsgs -> delivered"):])
             ctx = s["rx_ctx"]
             s["rx_ctx"] = None
-            if raw is None or ctx is None or ctx[1] != 5:
+            if (raw is None or ctx is None or ctx[1] not in (5, 6)
+                    or (ctx[1] == 5 and len(raw) > 12)):
                 errors["unattributed_or_bad_rx"] += 1
                 s["source_error"] = True
                 continue
             channel, protocol, rx_status, baud, at = ctx
+            if protocol == 6:
+                # P3's reassembled UDS RX may exceed 12 bytes. This
+                # D2-only chronology must neither parse it as B9FB nor
+                # report valid ISO15765 RX as corrupted source context.
+                continue
+            if len(raw) != 12:
+                if channel in s["active"]:
+                    errors["invalid_d2_rx_size"] += 1
+                    s["source_error"] = True
+                continue
             if rx_status & (0x01 | 0x02 | 0x08):
                 errors["rx_indication_not_ecu_frame"] += 1
                 continue
@@ -447,6 +475,7 @@ def audit(source):
             "A3 before B9FB does not imply a successful post-B9FB Hardware transition.",
             "The first later A3 is not necessarily the first app TX, an ECU reply, or proof of causality.",
             "A first later B9F0 event is request-only: neither a CEM response nor a parsed part number is established.",
+            "Valid ISO15765 and short-CAN TX/RX remain distinct from D2 frames and do not falsely invalidate native source context.",
             "A later B9FB request before the first later A3 invalidates pairing to the earlier completion.",
             "Native source-local timings do not join historical SectorV report clocks.",
             "App TX observed before J2534 WriteMsgs returns; TX success/on-wire delivery is not confirmed.",
