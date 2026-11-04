@@ -1426,6 +1426,13 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
+    /* Record the allocated channel alongside protocol and baud before the
+       successful Connect result. An aggregate Connect OK on another
+       channel must never be attributed to a CEM B9FB application TX.
+       This is local transport provenance, NOT a client identity proof. */
+    {U8 bound[16];u32_be(bound,i+1);u32_be(bound+4,protocol);
+     u32_be(bound+8,flags);u32_be(bound+12,baud);
+     logline("J2534 Connect bound channel/protocol/flags/baud (BE)",bound,16);}
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
 }
 EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
