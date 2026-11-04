@@ -39,6 +39,8 @@ jobs:
           objdump -p VirtualCarJ2534.dll | grep 'DLL Name: KERNEL32.dll'
       - name: Python fixture and profile tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Donor B9FB identity coherence (synthetic static profile only)
+        run: python3 tools/audit_p2_b9fb_coherence.py virtualcar-p2-b9fb-lab-vin.ini --expected-year 2009 --expected-type-code 275 --output b9fb-donor-coherence-safe.json
       - name: Go tests / vet
         run: cd control && go test ./... -count=1 && go vet ./...
       - name: Build Windows x86 GUI
@@ -57,6 +59,8 @@ jobs:
             emulator/tools/verify_native_routes.ps1
             emulator/tools/verify_native_routes.py
             emulator/tools/audit_backend_evidence.py
+            emulator/tools/audit_p2_b9fb_coherence.py
+            emulator/b9fb-donor-coherence-safe.json
             emulator/tools/prepare_p2_capture.py
             emulator/tools/audit_native_p2_channel_chronology.py
             emulator/tools/audit_d2_followup_window.py
