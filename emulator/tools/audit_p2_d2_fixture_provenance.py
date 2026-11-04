@@ -63,6 +63,8 @@ def _record(profile, name, target, opcode):
         "client_acceptance_verified": False,
         "application_checksum_verified": False,
         "source_authenticated": False,
+        "native_transport_observed_from_ini": False,
+        "replay_allowed_by_profile_gate": False,
     }
     if section is None:
         return result
@@ -138,6 +140,14 @@ def audit(source):
     rows = [_record(profile, *item) for item in SECTIONS]
     active = [r for r in rows if r["transport_framing_verified"]]
     raw_global = profile.get("P2", "FixtureProvenance", fallback="")
+    composite_tagged = raw_global == "local_composite_unverified_trace_import"
+    # Must match DLL's literal "1" requirement, not just any numeric alias.
+    explicit_opt_in = (
+        profile.get("P2", "AllowCompositeReplay", fallback="") == "1")
+    allowed_by_tag_gate = not composite_tagged or explicit_opt_in
+    for record in rows:
+        record["replay_allowed_by_profile_gate"] = bool(
+            record["transport_framing_verified"] and allowed_by_tag_gate)
     if raw_global == "local_composite_unverified_trace_import":
         global_claim = "local_composite_unverified"
     elif raw_global.startswith("historical_public_"):
@@ -179,6 +189,13 @@ def audit(source):
         "contains_payload_data": False,
         "profile_source_kind": "untrusted_local_ini",
         "global_provenance_claim": global_claim,
+        "composite_replay_tag_gate": {
+            "importer_composite_marker_observed": composite_tagged,
+            "explicit_lab_opt_in_observed": explicit_opt_in,
+            "stored_d2_fixtures_blocked_without_opt_in": (
+                composite_tagged and not explicit_opt_in and bool(active)),
+            "guard_is_source_label_check_not_vehicle_authentication": True,
+        },
         "active_fixture_count": len(active),
         "fixture_source_consistency_verified": False,
         "application_checksum_verified": False,
@@ -189,6 +206,8 @@ def audit(source):
         "source_warnings": warnings,
         "limitations": [
             "FixtureProvenance and FixtureSourceClass are plain INI labels, not trusted attestation.",
+            "Framing success describes INI bytes only; an unapproved composite marker disables runtime D2 replay in the DLL.",
+            "AllowCompositeReplay=1 explicitly permits laboratory replay, not authenticated CEM identity.",
             "A donor-style B9FB or B9F0 shape does not establish an XC90 V8 MY2009 identity.",
             "No interpretation of B9F0 hardware/software part numbers is authenticated.",
             "B9FC application-level checksum and unknown fields are not inferred.",
