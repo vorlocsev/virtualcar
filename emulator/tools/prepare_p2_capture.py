@@ -161,6 +161,10 @@ def prepare(source):
                 b9f0["post_positive_first_next_tx_service_counts"],
             "post_positive_first_next_tx_observed_count":
                 b9f0["post_positive_first_next_tx_observed_count"],
+            "post_positive_first_p3_response_status_counts":
+                b9f0["post_positive_first_p3_response_status_counts"],
+            "post_positive_first_p3_positive_transport_count":
+                b9f0["post_positive_first_p3_positive_transport_count"],
             "parser_error_counts": b9f0["parse_errors"],
             "client_acceptance_verified": False,
             "ecu_enumeration_verified": False,
@@ -184,6 +188,7 @@ def prepare(source):
             "B9F0 request order is audited separately from any matching B9F0 transport reply.",
             "A positive B9F0 echo and complete D2 framing do not verify part-number semantics, authentic ECU identity or client acceptance.",
             "A next application TX after B9F0 is not proof that the client enumerated any ECU.",
+            "P3 DID response transport is validated with the shared ISO-TP UDS checker and does not verify a client-side ECU list.",
             "A source process label is untrusted and is not executable attestation.",
             "Historical PR30/run188 reports cannot be merged with this log.",
             "Independent auditors must agree on positive B9FB completion count; A3 cross-check is restricted to one native epoch.",
