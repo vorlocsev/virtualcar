@@ -456,13 +456,21 @@ static void test_p3tool_j2534_preflight(U32 dev){
  REQUIRE(ls!=lsraw && lsraw!=raw && lsraw!=hs && channel(ls)->flags==0x20000000u);
  REQUIRE(channel(ls)->baud==125000 && channel(hs)->baud==500000);
  REQUIRE(strstr(connect_log_lines,"00 00 00 06 20 00 00 00 00 01 E8 48 00 00 00 00")!=NULL);
- /* 3: 0x8004 and 0x8005 are vendor-specific, not automatic aliases. */
+ /* 3: J2534-2 0x8004 and 0x8005 are independently allocated
+    switched-pin protocols, NOT aliases of fixed-pin v04.04 CAN.
+    Their logical channels remain unbound before SET_CONFIG J1962_PINS. */
  before=connect_log_lines+connect_log_len;
- REQUIRE(PassThruConnect(dev,0x8004u,0,125000,&failed)==ERR_INVALID_PROTOCOL_ID);
- REQUIRE(PassThruConnect(dev,0x8005u,0,125000,&failed)==ERR_INVALID_PROTOCOL_ID);
+ {U32 switched_can=0,switched_iso=0;
+  REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,125000,&switched_can)==ERR_OK);
+  REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,125000,&switched_iso)==ERR_OK);
+  REQUIRE(switched_can!=switched_iso && switched_can!=raw && switched_iso!=hs);
+  REQUIRE(channel(switched_can)->ps_pins==0 && channel(switched_iso)->ps_pins==0);
+  REQUIRE(PassThruDisconnect(switched_can)==ERR_OK);
+  REQUIRE(PassThruDisconnect(switched_iso)==ERR_OK);
+ }
  REQUIRE(failed==0xC0DEFACEu);
- REQUIRE(strstr(before,"00 00 80 04 00 00 00 00 00 01 E8 48 00 00 00 03")!=NULL);
- REQUIRE(strstr(before,"00 00 80 05 00 00 00 00 00 01 E8 48 00 00 00 03")!=NULL);
+ REQUIRE(strstr(before,"00 00 80 04 00 00 00 00 00 01 E8 48 00 00 00 00")!=NULL);
+ REQUIRE(strstr(before,"00 00 80 05 00 00 00 00 00 01 E8 48 00 00 00 00")!=NULL);
  /* 4: 0x10000001 is not rebranded as raw CAN even with published flags. */
  before=connect_log_lines+connect_log_len;
  REQUIRE(PassThruConnect(dev,0x10000001u,0x600u,500000,&failed)==ERR_INVALID_PROTOCOL_ID);
