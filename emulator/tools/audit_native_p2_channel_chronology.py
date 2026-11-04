@@ -44,7 +44,7 @@ def _gap(after, before):
 def _state():
     return {
         "tx_ctx": None, "rx_ctx": None, "disconnect_ctx": None,
-        "channels": {}, "events": [], "active": {}, "incomplete": 0,
+        "channels": {}, "generations": {}, "events": [], "active": {}, "incomplete": 0,
         "process_sectorv": False, "source_error": False,
     }
 
@@ -65,6 +65,7 @@ def _event(state, kind, target, channel, baud, timestamp):
         "channel": _alias(state, channel),
         "baud_bps": baud if baud in (125000, 500000) else None,
         "_channel": channel,
+        "_generation": state["generations"].get(channel, 0),
         "_time": timestamp,
     }
     state["events"].append(item)
@@ -89,8 +90,12 @@ def _finish(state, reason):
         status = "a3_during_b9fb_delivery"
     elif a3[0]["_channel"] != complete[0]["_channel"]:
         status = "a3_after_b9fb_different_channel"
+    elif a3[0]["_generation"] != complete[0]["_generation"]:
+        status = "a3_after_b9fb_channel_reused_after_disconnect"
     elif a3[0]["target"] != complete[0]["target"]:
         status = "a3_after_b9fb_different_target"
+    elif a3[0]["baud_bps"] != complete[0]["baud_bps"]:
+        status = "a3_after_b9fb_different_baud"
     else:
         status = "a3_after_b9fb_same_channel_and_target"
     delta = (
@@ -110,7 +115,8 @@ def _finish(state, reason):
         "b9fb_incomplete": (state["incomplete"] + len(state["active"])),
         "channel_metadata_complete": not state["source_error"],
         "last_rx_to_a3_ms": delta,
-        "same_channel_proven_for_observed_order": status == "a3_after_b9fb_same_channel_and_target",
+        "same_channel_proven_for_observed_order": status == "a3_after_b9fb_same_channel_and_target"
+        and not state["source_error"],
         "events": [{
             k: x[k] for k in ("order", "kind", "target", "channel", "baud_bps")
         } for x in state["events"]],
@@ -187,11 +193,14 @@ def audit(source):
                 if channel in s["active"]:
                     s["incomplete"] += 1
                     del s["active"][channel]
+                s["generations"][channel] = s["generations"].get(channel, 0) + 1
             else:
                 # Ambiguous disconnect means future attribution needs a
                 # fresh connection epoch, not a fabricated channel match.
                 s["incomplete"] += len(s["active"])
                 s["active"].clear()
+                for ch in s["channels"]:
+                    s["generations"][ch] = s["generations"].get(ch, 0) + 1
                 s["source_error"] = True
             s["disconnect_ctx"] = None
             s["tx_ctx"] = s["rx_ctx"] = None
