@@ -210,6 +210,9 @@ def main():
     # An old global provenance value must NOT survive this composition.
     # These fields describe untrusted local import workflow only.
     cfg.set('P2','FixtureProvenance','local_composite_unverified_trace_import')
+    # An inherited 1 is especially dangerous when the new B9 reply belongs
+    # to a different donor. A fresh output MUST require deliberate re-opt-in.
+    cfg.set('P2','AllowCompositeReplay','0')
     if args.lab_vin:
         if not cfg.has_section('Vehicle'): cfg.add_section('Vehicle')
         cfg.set('Vehicle','VIN',args.lab_vin)
