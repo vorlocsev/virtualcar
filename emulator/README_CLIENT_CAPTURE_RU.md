@@ -29,6 +29,54 @@
    Клиент x64 может не обнаружить 32-битный J2534.
    Для обработки журналов должен быть установлен Python 3.
 
+## Контролируемое сравнение A/B/C (рекомендуется)
+
+Чтобы найти, на каком ответе SectorV/VDASH прекращает обнаружение,
+используйте **три разных сеанса с одним клиентом**. Перед сменой
+профиля обязательно закройте диагностический клиент и VirtualCarControl.
+
+Профили лежат в `profiles/`:
+
+- **A_NoD2**: нет B9FB/B9F0, проверка подключения и запросов.
+- **B_PublicB9FB**: 13 кадров B9FB исторического XC70 с заменённым
+  лабораторным VIN. **Не XC90 V8 MY2009**.
+- **C_MixedB9FB_B9F0**: B9FB + B9F0 из разных опубликованных примеров.
+  Происхождение одного автомобиля **не доказано**. По умолчанию ответ
+  заблокирован, для исследования нужен отдельный `-EnableCompositeReplay`.
+
+Для теста A (PowerShell без прав администратора):
+
+    & .\scripts\Select-P2ClientTrialProfile.ps1 -Variant A_NoD2 -IConfirmClientsClosed
+    $session = "$env:USERPROFILE\Desktop\VirtualCar-A-001"
+    & .\scripts\Capture-P2ClientRun.ps1 -Phase Begin -SessionDirectory $session
+
+Затем **вручную** запустите SectorV или VDASH, выберите виртуальный
+J2534, выполните только чтение и закройте программу. После закрытия:
+
+    & .\scripts\Capture-P2ClientRun.ps1 -Phase Finish -SessionDirectory $session -IConfirmClientClosed
+
+Повторите для B с `-Variant B_PublicB9FB` и дополнительным
+`-IUnderstandExperimentalDonorData`, используя новый каталог
+`VirtualCar-B-001`. При необходимости проведите C:
+
+    & .\scripts\Select-P2ClientTrialProfile.ps1 -Variant C_MixedB9FB_B9F0 -IConfirmClientsClosed -IUnderstandExperimentalDonorData -EnableCompositeReplay
+
+Для C также используйте **новый** каталог `VirtualCar-C-001`.
+Никогда не переключайте профиль между Begin и Finish одного запуска.
+
+Когда готовы два или три каталога, сравните только безопасные JSON:
+
+    python .\tools\compare_p2_client_trials.py --a "$env:USERPROFILE\Desktop\VirtualCar-A-001\SAFE-JSON-REPORTS\client-boundary.json" --b "$env:USERPROFILE\Desktop\VirtualCar-B-001\SAFE-JSON-REPORTS\client-boundary.json" --output "$env:USERPROFILE\Desktop\VirtualCar-trial-comparison.json"
+
+Если есть C, добавьте `--c` с аналогичным путём к его
+`client-boundary.json`. Сравнение показывает только изменения
+транспортных этапов, а **не факт принятия автомобиля клиентом**.
+
+Резервные копии исходного INI сохраняются локально в
+`%LOCALAPPDATA%\VirtualCar\TrialProfileBackups`; **не публикуйте** их.
+
+Подробности: `docs/research/P2_CLIENT_TRIAL_ABC_RU.md`.
+
 ## Запуск одного теста
 
 Не меняйте INI и не переустанавливайте DLL во время одного теста.
