@@ -68,7 +68,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class NativeP2P3Handoff {
     const string Library=@"__ISOLATED_DLL__";
-    const bool CompositeLocked=__COMPOSITE_LOCKED__;
+    static readonly bool CompositeLocked=__COMPOSITE_LOCKED__;
     [StructLayout(LayoutKind.Sequential)]
     public struct Msg {
         public uint ProtocolID,RxStatus,TxFlags,Timestamp,DataSize,ExtraDataIndex;
