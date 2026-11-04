@@ -95,10 +95,18 @@ def validate_response(frames, target, opcode):
         base=0x10 if first[0]==0x97 else 0x08
         counter=1
         prev_subblock=False
+        # Only an observed 0x5x sub-block boundary followed by a
+        # repeated 8F positive echo links the 97/1x header family to
+        # the 4x last-frame family. A bare 97 -> 11 -> 4F is not a
+        # verified complete P2 reply. P1 2007 V50 captures use 97/1x
+        # but do not establish that crossover for an XC90 V8.
+        observed_transport_bridge=False
         for i, (_,frame) in enumerate(frames[1:],1):
             head=frame[0]
             if 0x48<=head<=0x4F:
                 if i!=len(frames)-1:raise ValueError('Early D2 final frame')
+                if base==0x10 and not observed_transport_bridge:
+                    raise ValueError('Unverified 97-to-4x final without D2 sub-block bridge')
                 return
             if (head&0xF8)==0x50:
                 if i==len(frames)-1:raise ValueError('Incomplete D2 sub-block')
@@ -106,6 +114,7 @@ def validate_response(frames, target, opcode):
                 continue
             if prev_subblock and head==0x8F and frame[1:4]==bytes([target,0xF9,opcode]):
                 prev_subblock=False
+                observed_transport_bridge=True
                 continue
             prev_subblock=False
             if head!=(base|counter):
