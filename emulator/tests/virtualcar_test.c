@@ -845,6 +845,51 @@ int main(){
   REQUIRE(strstr(begin,"\"data\"")==NULL);
   n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  }
+ /* Eight B9 request-provenance checks: source-local backend probe
+    labels must match the actual CB-only B9 handler, NOT guessed CA/CF
+    request shapes. This is metadata-only; CAN replies stay unchanged. */
+ {
+  static const struct {
+   U8 prefix,target,opcode;U32 id,length;
+   const char *probe;p2_cem_request request;
+  } cases[]={
+   {0xCB,0x50,0xFB,0x000FFFFE,8,"D2_50_B9FB",P2_CEM_B9FB},
+   {0xCB,0x40,0xFB,0x000FFFFE,8,"D2_40_B9FB",P2_CEM_B9FB},
+   {0xCB,0x50,0xF0,0x000FFFFE,8,"D2_50_B9F0",P2_CEM_B9F0},
+   {0xCB,0x40,0xFC,0x000FFFFE,8,"D2_40_B9FC",P2_CEM_B9FC},
+   {0xCA,0x50,0xFB,0x000FFFFE,8,0,P2_CEM_UNKNOWN},
+   {0xCF,0x50,0xFB,0x000FFFFE,8,0,P2_CEM_UNKNOWN},
+   {0xCB,0x50,0xFB,0x000FFFFE,3,0,P2_CEM_UNKNOWN},
+   {0xCB,0x50,0xFB,0x00000555,8,0,P2_CEM_NOT_D2}
+  };
+  U32 ix;
+  for(ix=0;ix<sizeof(cases)/sizeof(cases[0]);ix++){
+   U8 req[8]={0xCB,0x50,0xB9,0xFB,0,0,0,0};
+   p2_cem_result classified;
+   const char *probe;
+   req[0]=cases[ix].prefix;req[1]=cases[ix].target;req[3]=cases[ix].opcode;
+   m=frame(PROTO_CAN,cases[ix].id,req,cases[ix].length);
+   probe=backend_probe_name(channel(cid),&m);
+   REQUIRE((probe && cases[ix].probe && strcmp(probe,cases[ix].probe)==0) ||
+           (!probe && !cases[ix].probe));
+   classified=p2_cem_classify(cases[ix].id,
+              cases[ix].target==0x40u?125000u:500000u,req,cases[ix].length);
+   REQUIRE(classified.request==cases[ix].request);
+  }
+  /* A rejected CA/CF B9 shape must not be counted as a recognized
+     B9FB read, generate an ECU frame, or claim client acceptance. */
+  for(ix=0;ix<2;ix++){
+   const U8 malformed[8]={0xCA,0x50,0xB9,0xFB,0,0,0,0};
+   U8 req[8];const char *start;U32 got=1;
+   memcpy(req,malformed,8);req[0]=ix?0xCFu:0xCAu;
+   m=frame(PROTO_CAN,0x000FFFFEu,req,8);
+   start=backend_lines+backend_len;send(cid,&m);
+   REQUIRE(event_count_since(start,"\"kind\":\"probe_classified\"")==0);
+   REQUIRE(terminal_for(start,last_tx_request(start),
+                        "unhandled_request","no_response")==1);
+   REQUIRE(PassThruReadMsgs(cid,&r,&got,0)==ERR_BUFFER_EMPTY&&got==0);
+  }
+ }
  /* Eight A3 security-service observation checks: an apparent six-byte
     match with a shorter D2 declared length is NOT an exact SectorV shape.
     None of these checks sends an A3 or generates a positive E3 response. */
