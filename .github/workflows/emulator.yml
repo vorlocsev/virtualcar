@@ -70,6 +70,7 @@ jobs:
             emulator/tools/prepare_p2_client_run.py
             emulator/samples/p2-client-ui-observation.template.json
             emulator/scripts/diagnose.ps1
+            emulator/scripts/Capture-P2ClientRun.ps1
             emulator/tools/audit_j2534_connect.py
             emulator/tools/audit_j2534_discovery.py
             emulator/tools/import_p2_trace.py
@@ -90,6 +91,16 @@ jobs:
       - name: Actual x86 DLL route regression in an isolated synthetic profile
         shell: pwsh
         run: |
+          # Validate PowerShell syntax before packaging a user-facing
+          # read-only script. No registry edits or user-client launches.
+          $parseTokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath emulator/scripts/Capture-P2ClientRun.ps1).Path,
+            [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            throw 'Two-phase client capture PowerShell syntax gate failed'
+          }
           $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
           if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
