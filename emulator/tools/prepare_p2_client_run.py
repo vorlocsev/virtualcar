@@ -155,6 +155,13 @@ def prepare(source, ui=None):
     p2_summary = p2["capture-summary.json"] if p2 is not None else None
     f0 = (p2_summary["b9f0_native_transport_audit"]
           if p2_summary is not None else None)
+    direct_b9fb_b9f0 = (
+        p2_summary["b9fb_to_b9f0_same_epoch_positive_binding"]
+        if p2_summary is not None else None)
+    direct_positive_b9f0 = bool(
+        direct_b9fb_b9f0 is not None
+        and direct_b9fb_b9f0[
+            "positive_b9f0_transport_bound_to_direct_first_read"] is True)
     native_clean = bool(
         single_process_source and lifecycle["single_closed_device_cycle_verified"]
         and p2_summary is not None
@@ -211,6 +218,8 @@ def prepare(source, ui=None):
         focus = "no_b9f0_request_after_b9fb"
     elif not b9f0_positive:
         focus = "no_positive_b9f0_transport"
+    elif not direct_positive_b9f0:
+        focus = "b9fb_b9f0_positive_transport_not_directly_bound"
     elif not p3_after_f0:
         focus = "no_first_p3_read_after_positive_b9f0"
     elif not p3_positive:
@@ -242,6 +251,10 @@ def prepare(source, ui=None):
         "native_p2_single_closed_epoch": native_clean,
         "b9fb_positive_transport_count": b9fb_done,
         "b9f0_positive_transport_count": b9f0_positive,
+        "direct_b9fb_b9f0_positive_transport_bound": direct_positive_b9f0,
+        "direct_b9fb_b9f0_binding_status": (
+            direct_b9fb_b9f0["status"] if direct_b9fb_b9f0 is not None
+            else "not_comparable"),
         "first_p3_after_b9f0_observed_count": p3_after_f0,
         "first_p3_positive_transport_count": p3_positive,
         "reported_client": ui["client"] if ui is not None else "unreported",
