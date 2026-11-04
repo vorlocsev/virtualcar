@@ -533,6 +533,94 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
    Existing untouched synthetic channels remain permissive for the lab;
    an explicit CLEAR is an operator instruction to block NEW RX until
    a matching PASS filter is installed. */
+/* Eight CAN DATA_RATE transition regressions.  A new 125/500k bus
+   must not inherit a previously staged D2 reply, old queued RX or
+   unfinished ISO-TP CFs.  No genuine Volvo identifiers are used. */
+static void test_can_data_rate_change_isolation(U32 dev){
+ U32 a=0,b=0,pass=0,n;
+ CHANNEL *ca,*cb;
+ D2_PROFILE saved50=g_d2[2],saved40=g_d2[0];
+ PASSTHRU_MSG req,rx,mask,pat;
+ const U8 cmd50[8]={0xCB,0x50,0xB9,0xFB,0,0,0,0};
+ const U8 cmd40[8]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
+ const U8 data[8]={0x4C,0x41,0x42,0,0,0,0,0};
+ const U8 u22[8]={3,0x22,0xF1,0x90,0,0,0,0};
+ const U8 flow[8]={0x30,0,0,0,0,0,0,0};
+ SCONFIG speed={1,500000};SCONFIG_LIST cfg={1,&speed};
+ U8 d2first[8]={0x8F,0x50,0xF9,0xFB,0,1,2,3};
+ U8 d2middle[8]={0x09,4,5,6,7,8,9,10};
+ U8 d2last[8]={0x4C,11,12,13,14,15,16,17};
+ U8 lsnegative[8]={0xCC,0x40,0x7F,0xB9,0x31,0,0,0};
+ memset(&g_d2[2],0,sizeof(D2_PROFILE));
+ g_d2[2].target=0x50;g_d2[2].subcommand=0xFB;
+ g_d2[2].response_id=0x01200003u;g_d2[2].baud=500000;
+ g_d2[2].frame_count=3;
+ memcpy(g_d2[2].frame[0],d2first,8);
+ memcpy(g_d2[2].frame[1],d2middle,8);
+ memcpy(g_d2[2].frame[2],d2last,8);
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ memset(&g_d2[0],0,sizeof(D2_PROFILE));
+ g_d2[0].target=0x40;g_d2[0].subcommand=0xFB;
+ g_d2[0].response_id=0x00800003u;g_d2[0].baud=125000;
+ g_d2[0].frame_count=1;memcpy(g_d2[0].frame[0],lsnegative,8);
+ REQUIRE(validate_d2_fixture(&g_d2[0]));
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0x800,500000,&a)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0x800,500000,&b)==ERR_OK);
+ ca=channel(a);cb=channel(b);REQUIRE(ca && cb);
+ /* Use a permissive explicit PASS to prove filters survive DATA_RATE. */
+ mask=frame(PROTO_CAN,0,0,0);pat=mask;
+ REQUIRE(PassThruStartMsgFilter(a,1,&mask,&pat,0,&pass)==ERR_OK);
+ /* 1. Same DATA_RATE leaves staged D2 and queued first frame intact. */
+ req=frame(PROTO_CAN,0x000FFFFE,cmd50,8);send(a,&req);
+ REQUIRE(ca->d2_count==3 && ca->count==1);
+ REQUIRE(PassThruIoctl(a,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(ca->d2_count==3 && ca->count==1 && ca->baud==500000);
+ /* 2. Switching to LS cancels queued D2 plus unrelated old-HS RX. */
+ enqueue(ca,0x555u,data,8);REQUIRE(ca->count==2);
+ req=frame(PROTO_CAN,0x000FFFFE,cmd50,8);send(b,&req);
+ REQUIRE(cb->count==1 && cb->d2_count==3);
+ speed.Value=125000;
+ REQUIRE(PassThruIoctl(a,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(ca->count==0 && ca->d2_count==0 && ca->d2_pos==0);
+ REQUIRE(ca->baud==125000 && ca->filters_count==1);
+ /* 3. Neither a stale already queued D2 frame nor the scheduled tail
+       may leak after switching the channel to the other network. */
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(ca->d2_next_us==0 && ca->d2_trace==0);
+ pump_d2(ca);REQUIRE(ca->count==0);
+ /* 4. Switching channel a must not affect b's separate HS queue. */
+ REQUIRE(cb->baud==500000 && cb->d2_count==3 && cb->count==1);
+ rx=readmsg(b);REQUIRE(rx.Data[4]==0x8F && rx.Data[5]==0x50);
+ /* 5. CEM 0x50 HS request is silent on a after LS switch. */
+ req=frame(PROTO_CAN,0x000FFFFE,cmd50,8);send(a,&req);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 6. The newly selected LS bus may return only its configured 0x40
+       synthetic negative fixture, not an old HS B9FB continuation. */
+ req=frame(PROTO_CAN,0x000FFFFE,cmd40,8);send(a,&req);
+ rx=readmsg(a);REQUIRE(rx.Data[4]==0xCC && rx.Data[5]==0x40);
+ /* 7. Changing back to HS allows a fresh, correctly routed B9FB. */
+ speed.Value=500000;
+ REQUIRE(PassThruIoctl(a,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ req=frame(PROTO_CAN,0x000FFFFE,cmd50,8);send(a,&req);
+ rx=readmsg(a);REQUIRE(rx.Data[4]==0x8F && rx.Data[7]==0xFB);
+ /* 8. Old CAN ISO-TP CF state is also cancelled on a genuine rate
+       change. An FC arriving on the new network releases nothing. */
+ REQUIRE(PassThruIoctl(a,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ req=frame(PROTO_CAN,0x7E0,u22,8);send(a,&req);
+ REQUIRE(ca->count>=1 && ca->pending_len>0);
+ speed.Value=125000;
+ REQUIRE(PassThruIoctl(a,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(ca->count==0 && ca->pending_len==0 &&
+         ca->pending_cf_active==0 && ca->pending_trace==0);
+ req=frame(PROTO_CAN,0x7E0,flow,8);send(a,&req);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruStopMsgFilter(a,pass)==ERR_OK);
+ REQUIRE(PassThruDisconnect(b)==ERR_OK);
+ REQUIRE(PassThruDisconnect(a)==ERR_OK);
+ g_d2[2]=saved50;g_d2[0]=saved40;
+ puts("PASS: eight CAN DATA_RATE staged D2 and old-bus RX isolation checks");
+}
+
 static void test_can_explicit_clear_filter_lifecycle(U32 dev){
  U32 a=0,b=0,reopened=0,pass_id=0,block_id=0,stale_id=0,n;
  PASSTHRU_MSG mask,pattern,rx;
@@ -774,6 +862,7 @@ static void test_d2_all_fixtures_baud_isolation(U32 dev){
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_can_data_rate_change_isolation(dev);
  test_can_explicit_clear_filter_lifecycle(dev);
  test_can_filter_mask_payload(dev);
  test_d2_unapproved_composite_replay_block(dev);
