@@ -20,7 +20,7 @@ MAX_BYTES = 4 * 1024 * 1024
 MAX_LINES = 45000
 MAX_EPOCHS = 128
 MAX_EVENTS = 1000
-FORMAT = "virtualcar-native-p2-channel-chronology-v1"
+FORMAT = "virtualcar-native-p2-channel-chronology-v2"
 TX_CONTEXT = "TX context channel/protocol/flags/baud/time-us (BE)"
 RX_CONTEXT = "RX context channel/protocol/status/baud/time-us (BE)"
 HEX12 = re.compile(r"^[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){11}$")
@@ -72,6 +72,59 @@ def _event(state, kind, target, channel, baud, timestamp):
     return item
 
 
+def _first_completed_b9fb_a3(state):
+    """First A3 after first complete B9FB in *native source order* only.
+
+    This is the first observed A3, NOT necessarily the next app TX. A
+    second B9FB TX before that A3 blocks pairing. All channel and time
+    metadata stays private except the safely rounded delta in milliseconds.
+    """
+    events = state["events"]
+    completions = [x for x in events if x["kind"] == "b9fb_rx_complete"]
+    base = {
+        "status": "no_completed_b9fb_observed",
+        "b9fb_completion_order": None,
+        "first_later_a3_order": None,
+        "last_b9fb_rx_to_first_later_a3_ms": None,
+        "same_channel_target_generation_verified": False,
+        "client_acceptance_verified": False,
+    }
+    if not completions:
+        return base
+    completed = completions[0]
+    base["b9fb_completion_order"] = completed["order"]
+    candidates = [x for x in events
+                  if x["kind"] == "a3_tx" and x["order"] > completed["order"]]
+    if not candidates:
+        base["status"] = "no_later_a3_observed"
+        return base
+    first = candidates[0]
+    base["first_later_a3_order"] = first["order"]
+    if any(x["kind"] == "b9fb_tx"
+           and completed["order"] < x["order"] < first["order"]
+           for x in events):
+        base["status"] = "intervening_b9fb_request"
+    elif first["_channel"] != completed["_channel"]:
+        base["status"] = "different_channel"
+    elif first["_generation"] != completed["_generation"]:
+        base["status"] = "channel_reused_after_disconnect"
+    elif first["target"] != completed["target"]:
+        base["status"] = "different_target"
+    elif first["baud_bps"] != completed["baud_bps"]:
+        base["status"] = "different_baud"
+    elif state["source_error"]:
+        base["status"] = "source_context_incomplete"
+    else:
+        delta = _gap(first["_time"], completed["_time"])
+        if delta is None:
+            base["status"] = "timestamp_unverified"
+        else:
+            base["status"] = "same_channel_target_timed"
+            base["last_b9fb_rx_to_first_later_a3_ms"] = delta
+            base["same_channel_target_generation_verified"] = True
+    return base
+
+
 def _finish(state, reason):
     if not state["events"]:
         return None
@@ -113,6 +166,7 @@ def _finish(state, reason):
         "b9fb_requested": len(b9fb),
         "a3_requested": len(a3),
         "b9fb_incomplete": (state["incomplete"] + len(state["active"])),
+        "first_completed_b9fb_to_later_a3": _first_completed_b9fb_a3(state),
         "channel_metadata_complete": not state["source_error"],
         "last_rx_to_a3_ms": delta,
         "same_channel_proven_for_observed_order": status == "a3_after_b9fb_same_channel_and_target"
@@ -293,6 +347,8 @@ def audit(source):
         "limitations": [
             "Per-PID session and channel alias are native log observations, not proof of ECU authorization.",
             "A3 before B9FB does not imply a successful post-B9FB Hardware transition.",
+            "The first later A3 is not necessarily the first app TX, an ECU reply, or proof of causality.",
+            "A later B9FB request before the first later A3 invalidates pairing to the earlier completion.",
             "Native source-local timings do not join historical SectorV report clocks.",
             "App TX observed before J2534 WriteMsgs returns; TX success/on-wire delivery is not confirmed.",
             "Client process name in a log header is untrusted metadata, not independent executable attestation.",
