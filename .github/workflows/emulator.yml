@@ -93,6 +93,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 test failed' }
           python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-b9fb-a3-audit.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 backend evidence failed' }
+          # Independent x86 process and profile: historical donor-derived
+          # LAB INI, with a synthetic VIN. Compare all 104 response bytes
+          # against the selected configured fixture, not only D2 controls.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-donor-b9fb-regression" -FixtureProfile emulator/virtualcar-p2-b9fb-lab-vin.ini
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB byte-for-byte replay failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-donor-b9fb-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-donor-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB backend audit failed' }
           # This raw log remains inside the temporary isolated test directory.
           # Only the allowlisted timing report is uploaded as an artifact.
           python emulator/tools/verify_native_d2_followup.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-b9fb-a3-timing.json"
@@ -112,6 +119,7 @@ jobs:
           path: |
             ${{ runner.temp }}/native-route-regression-audit.json
             ${{ runner.temp }}/native-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-donor-b9fb-a3-audit.json
             ${{ runner.temp }}/native-b9fb-a3-timing.json
             ${{ runner.temp }}/native-p2-channel-chronology.json
             ${{ runner.temp }}/native-first-a3-correlation.json
