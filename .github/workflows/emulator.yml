@@ -144,6 +144,25 @@ jobs:
           # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
           if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          # Re-run compiled x86 DLL in a NEW isolated process with the
+          # importer's unverified mixed-source marker and explicit lock.
+          # B9FB/B9F0 must remain silent; synthetic independent P3 still
+          # answers. Raw logs remain private in RUNNER_TEMP.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-composite-locked" -CompositeLocked
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unapproved composite D2 replay guard failed' }
+          $lockedNative = "$env:RUNNER_TEMP\native-composite-locked\SectorVVirtualCar.log"
+          if (-not (Select-String -LiteralPath $lockedNative -SimpleMatch 'P2 unapproved composite D2 fixtures disabled (count, BE)' -Quiet)) {
+            throw 'Native DLL did not report blocking composite D2 fixture replay'
+          }
+          python emulator/tools/prepare_p2_client_run.py $lockedNative --output-dir "$env:RUNNER_TEMP\native-composite-locked-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 composite-locked safe report preparation failed' }
+          $lockedBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-composite-locked-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($lockedBoundary.b9fb_positive_transport_count -ne 0 -or
+              $lockedBoundary.b9f0_positive_transport_count -ne 0 -or
+              $lockedBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $false -or
+              $lockedBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Composite-locked native DLL fabricated D2 transport or ECU acceptance'
+          }
           python emulator/tools/verify_native_p2_p3_handoff.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-p3-handoff-gate.json"
           if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
           python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
@@ -210,6 +229,7 @@ jobs:
             ${{ runner.temp }}/native-p2-p3-handoff-gate.json
             ${{ runner.temp }}/p2-p3-handoff-safe/*.json
             ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/native-composite-locked-safe/*.json
             ${{ runner.temp }}/p2-no-new-native-safe/*.json
           if-no-files-found: error
 
