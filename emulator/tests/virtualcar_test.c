@@ -529,6 +529,77 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
    Prior builds accepted a five- or twelve-byte mask but matched ONLY
    the CAN ID, incorrectly delivering frames with another payload.
    All payloads below are generic synthetic bytes, not Volvo ECU data. */
+/* Eight J2534 04.04 explicit CAN CLEAR_MSG_FILTERS state checks.
+   Existing untouched synthetic channels remain permissive for the lab;
+   an explicit CLEAR is an operator instruction to block NEW RX until
+   a matching PASS filter is installed. */
+static void test_can_explicit_clear_filter_lifecycle(U32 dev){
+ U32 a=0,b=0,reopened=0,pass_id=0,block_id=0,stale_id=0,n;
+ PASSTHRU_MSG mask,pattern,first,rx;
+ const U8 accepted[8]={0x62,0x01,0,0,0,0,0,0};
+ const U8 other[8]={0x7F,0x01,0,0,0,0,0,0};
+ CHANNEL *ca,*cb;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&a)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&b)==ERR_OK);
+ ca=channel(a);cb=channel(b);REQUIRE(ca!=NULL && cb!=NULL);
+ /* 1. Preserve historical untouched, filterless CAN lab RX. */
+ enqueue(ca,0x72E,accepted,8);
+ rx=readmsg(a);REQUIRE(rx.Data[4]==0x62);
+ /* 2. CLEAR on a channel with no filters blocks subsequent RX. */
+ REQUIRE(PassThruIoctl(a,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ REQUIRE(ca->explicit_can_filters_cleared==1 && ca->filters_count==0);
+ enqueue(ca,0x72E,accepted,8);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 3. Another CAN channel is unaffected by channel a's CLEAR. */
+ enqueue(cb,0x72E,accepted,8);
+ rx=readmsg(b);REQUIRE(rx.Data[4]==0x62);
+ REQUIRE(cb->explicit_can_filters_cleared==0);
+ /* 4. A new PASS filter reopens only its matching RX route. */
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+ pattern=frame(PROTO_CAN,0x72Eu,0,0);
+ REQUIRE(PassThruStartMsgFilter(a,1,&mask,&pattern,0,&pass_id)==ERR_OK);
+ enqueue(ca,0x7E8,accepted,8);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ enqueue(ca,0x72E,accepted,8);rx=readmsg(a);REQUIRE(rx.Data[4]==0x62);
+ /* 5. A BLOCK filter still overrides the active PASS filter. */
+ {U8 check_byte=0xFF,first_byte=0x62;
+  PASSTHRU_MSG m=frame(PROTO_CAN,0xFFFFFFFFu,&check_byte,1);
+  PASSTHRU_MSG p=frame(PROTO_CAN,0x72Eu,&first_byte,1);
+  REQUIRE(PassThruStartMsgFilter(a,2,&m,&p,0,&block_id)==ERR_OK);}
+ enqueue(ca,0x72E,accepted,8);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ enqueue(ca,0x72E,other,8);rx=readmsg(a);REQUIRE(rx.Data[4]==0x7F);
+ /* 6. With PASS stopped, a remaining BLOCK filter is not permission
+       to receive other frames after explicit CLEAR. */
+ REQUIRE(PassThruStopMsgFilter(a,pass_id)==ERR_OK);
+ enqueue(ca,0x72E,other,8);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruStopMsgFilter(a,block_id)==ERR_OK);
+ enqueue(ca,0x72E,other,8);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 7. CLEAR invalidates filter handles, but does NOT discard
+       frames queued before it (CLEAR_RX_BUFFER does that). */
+ REQUIRE(PassThruStartMsgFilter(a,1,&mask,&pattern,0,&stale_id)==ERR_OK);
+ enqueue(ca,0x72E,accepted,8);
+ REQUIRE(PassThruIoctl(a,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(a,stale_id)==ERR_INVALID_FILTER_ID);
+ rx=readmsg(a);REQUIRE(rx.Data[4]==0x62);
+ enqueue(ca,0x72E,other,8);
+ n=1;REQUIRE(PassThruReadMsgs(a,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 8. Disconnect/reconnect resets filter state on recycled slot,
+       retaining legacy lab defaults for the fresh connection. */
+ REQUIRE(PassThruDisconnect(a)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&reopened)==ERR_OK);
+ REQUIRE(reopened==a);
+ ca=channel(reopened);
+ REQUIRE(ca->explicit_can_filters_cleared==0 && ca->filters_count==0);
+ enqueue(ca,0x72E,other,8);
+ rx=readmsg(reopened);REQUIRE(rx.Data[4]==0x7F);
+ REQUIRE(PassThruDisconnect(reopened)==ERR_OK);
+ REQUIRE(PassThruDisconnect(b)==ERR_OK);
+ puts("PASS: eight CAN explicit CLEAR_MSG_FILTERS lifecycle checks");
+}
+
 static void test_can_filter_mask_payload(U32 dev){
  U32 cid=0,fid=0,n,initial_count;
  PASSTHRU_MSG mask,pat,rx;
@@ -703,6 +774,7 @@ static void test_d2_all_fixtures_baud_isolation(U32 dev){
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_can_explicit_clear_filter_lifecycle(dev);
  test_can_filter_mask_payload(dev);
  test_d2_unapproved_composite_replay_block(dev);
  test_d2_all_fixtures_baud_isolation(dev);
