@@ -23,6 +23,14 @@ UI_FORMAT = "virtualcar-p2-client-ui-observation-v1"
 MAX_BYTES = 4 * 1024 * 1024
 OUTPUTS = ("connect-summary.json", "client-boundary.json")
 CLIENTS = frozenset(("sectorv", "vdash_2_0", "vdash_2_5_115_79", "other"))
+# The DLL logs the host executable's basename, not its signed identity.
+# Deliberately recognize only observed/explicitly supported names.
+NATIVE_LABEL = re.compile(r"^\[PID=[0-9A-Fa-f]{8} ([^\]\r\n]{1,96})\] ")
+KNOWN_NATIVE_HOSTS = {
+    "sectorv.exe": "sectorv",
+    "vdash.exe": "vdash",
+    "vdash2.exe": "vdash",
+}
 ECU_LIST = frozenset(("unknown", "empty", "nonempty"))
 VIN_STATE = frozenset(("unknown", "visible", "not_visible"))
 ALLOWED_UI_KEYS = frozenset((
@@ -47,6 +55,39 @@ def _ui(document):
     if type(document["same_run_operator_attested"]) is not bool:
         raise ValueError("invalid_ui_attestation")
     return document
+
+
+def _native_client_family(lines):
+    """Classify only allowlisted host *labels* without exporting filenames.
+
+    A filename printed by the virtual DLL is not a cryptographic or OS-level
+    process attestation. Unknown VDASH build names stay unclassified.
+    """
+    labels = set()
+    for line in lines:
+        match = NATIVE_LABEL.match(line)
+        if match is not None:
+            labels.add(match.group(1).casefold())
+            if len(labels) > 1:
+                return "multiple_untrusted_executable_labels"
+    if not labels:
+        return "no_native_executable_label"
+    return KNOWN_NATIVE_HOSTS.get(next(iter(labels)), "unclassified_executable")
+
+
+def _client_label_comparison(ui, native_family):
+    if ui is None:
+        return "no_operator_client_reported"
+    if ui["client"] == "other":
+        return "operator_client_unspecified"
+    if native_family == "multiple_untrusted_executable_labels":
+        return "native_executable_labels_conflict"
+    if native_family in ("unclassified_executable", "no_native_executable_label"):
+        return "native_executable_unclassified"
+    requested = "sectorv" if ui["client"] == "sectorv" else "vdash"
+    if requested != native_family:
+        return "operator_client_conflicts_with_native_label"
+    return "operator_client_matches_untrusted_native_label"
 
 
 def _category(tx):
@@ -95,6 +136,8 @@ def prepare(source, ui=None):
         if (m := PREFIX.fullmatch(line.rstrip("\r\n"))) is not None
     }
     single_process_source = len(native_processes) == 1
+    native_family = _native_client_family(lines)
+    label_comparison = _client_label_comparison(ui, native_family)
     lifecycle = audit_lifecycle(source)
     connect = audit_connect(lines)
     discovery = audit_discovery(lines, include_obd=True)
@@ -146,6 +189,14 @@ def prepare(source, ui=None):
         focus = "multiple_native_j2534_device_cycles"
     elif not lifecycle["single_closed_device_cycle_verified"]:
         focus = "incomplete_or_invalid_native_j2534_device_cycle"
+    elif (ui is not None and ui["same_run_operator_attested"]
+          and label_comparison == "operator_client_conflicts_with_native_label"):
+        focus = "operator_client_native_executable_label_mismatch"
+    elif (ui is not None and ui["same_run_operator_attested"]
+          and label_comparison in (
+              "native_executable_unclassified",
+              "native_executable_labels_conflict")):
+        focus = "native_client_executable_label_unverified"
     elif connect_attempts == 0:
         focus = "no_virtual_adapter_connect_attempt_observed"
     elif connect_ok == 0:
@@ -176,6 +227,9 @@ def prepare(source, ui=None):
         "raw_log_exported": False, "client_run_executed_by_tool": False,
         "native_log_diagnostic_scope": "one_supplied_local_file",
         "single_native_process_label_observed": single_process_source,
+        "native_executable_label_family": native_family,
+        "operator_client_native_label_comparison": label_comparison,
+        "native_executable_identity_verified": False,
         "native_device_lifecycle": lifecycle,
         "connect_attempts": connect_attempts,
         "connect_succeeded": connect_ok,
@@ -203,6 +257,8 @@ def prepare(source, ui=None):
         "diagnostic_focus": focus,
         "limitations": [
             "J2534 native log and operator UI observation have no independently shared authenticated run ID.",
+            "A native host executable basename is untrusted and never proves which signed application called J2534.",
+            "Unrecognized native executable names are not guessed as SectorV or a particular VDASH build.",
             "A positive native B9FB, B9F0 or P3 transport does not establish diagnostic-client acceptance.",
             "One source PID can contain multiple PassThruOpen/PassThruClose cycles; their traffic is not one device session.",
             "UI list state is an operator report, not independently verified ECU identity.",
