@@ -157,6 +157,22 @@ jobs:
               $clientBoundary.client_ecu_inventory_verified -ne $false) {
             throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
           }
+          # A real compiled x86 DLL log with NO further appends must
+          # yield an explicit absence-of-new-evidence report, not a claim
+          # that SectorV ran or that any CEM identification was attempted.
+          $completedNative = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $oldLength = (Get-Item -LiteralPath $completedNative).Length
+          $oldSha = (Get-FileHash -LiteralPath $completedNative -Algorithm SHA256).Hash.ToLowerInvariant()
+          python emulator/tools/prepare_p2_client_run.py $completedNative --offset-bytes $oldLength --prefix-sha256 $oldSha --allow-empty-append --output-dir "$env:RUNNER_TEMP\p2-no-new-native-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'No-new-native-records safe reporter failed' }
+          $negative = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $negativeFiles = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe" -File)
+          if ($negative.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+              $negative.new_native_records_observed -ne $false -or
+              $negative.client_ecu_inventory_verified -ne $false -or
+              $negativeFiles.Count -ne 2) {
+            throw 'No-new-native-records report fabricated client discovery evidence'
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
@@ -171,6 +187,7 @@ jobs:
             ${{ runner.temp }}/native-p2-p3-handoff-gate.json
             ${{ runner.temp }}/p2-p3-handoff-safe/*.json
             ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/p2-no-new-native-safe/*.json
           if-no-files-found: error
 
 
