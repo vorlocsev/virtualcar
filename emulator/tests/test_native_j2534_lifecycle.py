@@ -101,7 +101,9 @@ class NativeDeviceLifecycleTests(unittest.TestCase):
                          "single_closed_device_cycle")
         self.assertEqual(note["diagnostic_focus"],
                          "operator_reports_nonempty_ecu_list_identity_unverified")
-        bad = capture.prepare(session() + "\n" + OPEN + "\n" + CLOSE, ui(
+        bad = capture.prepare(
+            session() + "\n" + marker("PassThruOpen -> device 1", host="SectorV.exe")
+            + "\n" + marker("PassThruClose", host="SectorV.exe"), ui(
             ecu_list="nonempty", same_run_operator_attested=True))
         blocked = bad["client-boundary.json"]
         self.assertEqual(blocked["diagnostic_focus"],
