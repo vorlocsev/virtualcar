@@ -12,6 +12,7 @@ import sys
 
 from audit_d2_followup_window import audit as audit_followup
 from audit_native_p2_channel_chronology import audit as audit_chronology
+from audit_native_b9f0_response import audit as audit_b9f0
 
 MAX_INPUT_BYTES = 4 * 1024 * 1024
 OUTPUT_FILES = ("channel-chronology.json", "b9fb-followup.json",
@@ -123,6 +124,7 @@ def prepare(source):
         raise ValueError("source_size_exceeded")
     chronology = audit_chronology(source)
     followup = audit_followup(source)
+    b9f0 = audit_b9f0(source)
     epochs = chronology["epochs"]
     if not epochs or not any(e["events"] for e in epochs):
         raise ValueError("no_native_p2_events")
@@ -151,6 +153,14 @@ def prepare(source):
         "sectorv_process_label_observed_unverified": known_process,
         "a3_requests_observed": a3_count,
         "b9f0_requests_observed": b9f0_count,
+        "b9f0_native_transport_audit": {
+            "request_count": b9f0["request_count"],
+            "status_counts": b9f0["status_counts"],
+            "positive_echo_transport_observed": b9f0["any_positive_transport_observed"],
+            "parser_error_counts": b9f0["parse_errors"],
+            "client_acceptance_verified": False,
+            "part_number_decoded": False,
+        },
         "b9fb_requests_observed": b9fb_count,
         "b9fb_transport_completions_observed": completed,
         "cross_audit_consistency": agreement,
@@ -166,7 +176,8 @@ def prepare(source):
         "limitations": [
             "A log ending at EOF without PassThruClose is an incomplete capture.",
             "Same-channel TX/RX events do not establish B9FB semantic acceptance.",
-            "B9F0 requests are checked in source order only; no B9F0 CEM response, part number or client result is verified.",
+            "B9F0 request order is audited separately from any matching B9F0 transport reply.",
+            "A positive B9F0 echo and complete D2 framing do not verify part-number semantics, authentic ECU identity or client acceptance.",
             "A source process label is untrusted and is not executable attestation.",
             "Historical PR30/run188 reports cannot be merged with this log.",
             "Independent auditors must agree on positive B9FB completion count; A3 cross-check is restricted to one native epoch.",
