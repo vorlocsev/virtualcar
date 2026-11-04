@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory=$true)][string]$DllPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [switch]$CompositeLocked,
-    [switch]$PayloadFilterProbe
+    [switch]$PayloadFilterProbe,
+    [switch]$BaudSwitchProbe
 )
 $ErrorActionPreference = 'Stop'
 if ([IntPtr]::Size -ne 4) {
@@ -15,6 +16,7 @@ if ([IntPtr]::Size -ne 4) {
                  '-OutputDirectory', $OutputDirectory)
     if ($CompositeLocked) { $forward += '-CompositeLocked' }
     if ($PayloadFilterProbe) { $forward += '-PayloadFilterProbe' }
+    if ($BaudSwitchProbe) { $forward += '-BaudSwitchProbe' }
     & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" @forward
     if ($LASTEXITCODE -ne 0) { throw 'Isolated x86 handoff process failed' }
     exit 0
@@ -72,6 +74,16 @@ public static class NativeP2P3Handoff {
     const string Library=@"__ISOLATED_DLL__";
     static readonly bool CompositeLocked=__COMPOSITE_LOCKED__;
     static readonly bool PayloadFilterProbe=__PAYLOAD_FILTER_PROBE__;
+    static readonly bool BaudSwitchProbe=__BAUD_SWITCH_PROBE__;
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ConfigItem {
+        public uint Parameter,Value;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ConfigList {
+        public uint NumOfParams;
+        public IntPtr ConfigPtr;
+    }
     [StructLayout(LayoutKind.Sequential)]
     public struct Msg {
         public uint ProtocolID,RxStatus,TxFlags,Timestamp,DataSize,ExtraDataIndex;
@@ -104,6 +116,10 @@ public static class NativeP2P3Handoff {
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruIoctl(uint channel,uint ioctl,
                                     IntPtr input,IntPtr output);
+    [DllImport(Library,EntryPoint="PassThruIoctl",
+               CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruIoctlConfig(uint channel,uint ioctl,
+                                          ref ConfigList config,IntPtr output);
 
     static void Check(bool pass,string gate) {
         if(!pass)throw new InvalidOperationException(gate);
@@ -158,6 +174,38 @@ public static class NativeP2P3Handoff {
             uint result=PassThruReadMsgs(can,mem,ref count,wait);
             Check(result==9 && count==0,reason);
         } finally { Marshal.FreeHGlobal(mem); }
+    }
+    static void ChangeCanRate(uint channel,uint rate) {
+        IntPtr one=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(ConfigItem)));
+        try {
+            ConfigItem item=new ConfigItem {Parameter=1, Value=rate};
+            Marshal.StructureToPtr(item,one,false);
+            ConfigList list=new ConfigList {NumOfParams=1, ConfigPtr=one};
+            Check(PassThruIoctlConfig(channel,2,ref list,IntPtr.Zero)==0,
+                  "Native CAN SET_CONFIG DATA_RATE rejected");
+        } finally {Marshal.FreeHGlobal(one);}
+    }
+    static void VerifyBaudSwitch(uint d2,uint p3) {
+        byte[] b9fb=new byte[]{0xCB,0x50,0xB9,0xFB,0,0,0,0};
+        // The first D2 frame is ALREADY queued and another twelve are
+        // staged. Switching to LS must suppress both kinds of old-bus RX.
+        Write(d2,5,0x000FFFFEu,b9fb);
+        ChangeCanRate(d2,125000);
+        RequireNoRxFor(d2,240,
+              "Old HS B9FB leaked after CAN DATA_RATE was switched to LS");
+        // Separate ISO15765 channel must remain usable during the change.
+        Write(p3,6,0x726u,new byte[]{0x22,0xF1,0x14});
+        Msg iso=Read(p3,6,0x72Eu,300);
+        Check(iso.DataSize>=7 && iso.Data[4]==0x62 &&
+              iso.Data[5]==0xF1 && iso.Data[6]==0x14,
+              "Independent P3 channel affected by D2 CAN speed change");
+        ChangeCanRate(d2,500000);
+        Write(d2,5,0x000FFFFEu,b9fb);
+        Msg fresh=Read(d2,5,0x01200003u,300);
+        Check(fresh.Data[4]==0x8F && fresh.Data[5]==0x50 &&
+              fresh.Data[6]==0xF9 && fresh.Data[7]==0xFB,
+              "Fresh HS B9FB did not restart after returning to 500k");
+        Console.WriteLine("PASS: native x86 J2534 CAN DATA_RATE cancels queued/staged D2 without cross-channel loss");
     }
     static void VerifyPayloadFilters(uint can) {
         byte[] request=new byte[]{0xCB,0x50,0xB9,0xF0,0,0,0,0};
@@ -245,6 +293,10 @@ public static class NativeP2P3Handoff {
                 VerifyPayloadFilters(d2);
                 return;
             }
+            if(BaudSwitchProbe) {
+                VerifyBaudSwitch(d2,p3);
+                return;
+            }
             Write(d2,5,0x000FFFFE,new byte[]{0xCB,0x50,0xB9,0xFB,0,0,0,0});
             Console.WriteLine("PASS 3/8: B9FB request accepted by native DLL");
             byte[] controls=new byte[]{0x8F,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,
@@ -311,6 +363,8 @@ public static class NativeP2P3Handoff {
                             $(if ($CompositeLocked) { 'true' } else { 'false' }))
     $source=$source.Replace('__PAYLOAD_FILTER_PROBE__',
                             $(if ($PayloadFilterProbe) { 'true' } else { 'false' }))
+    $source=$source.Replace('__BAUD_SWITCH_PROBE__',
+                            $(if ($BaudSwitchProbe) { 'true' } else { 'false' }))
     Add-Type -TypeDefinition $source -Language CSharp
     [NativeP2P3Handoff]::Run()
     $nativeLog=Join-Path $directory 'SectorVVirtualCar.log'
@@ -319,6 +373,8 @@ public static class NativeP2P3Handoff {
     }
     if ($PayloadFilterProbe) {
         Write-Output 'PASS: isolated compiled x86 J2534 CAN PASS/BLOCK payload mask probe'
+    } elseif ($BaudSwitchProbe) {
+        Write-Output 'PASS: isolated x86 J2534 CAN 125/500k DATA_RATE old-bus response isolation probe'
     } elseif ($CompositeLocked) {
         Write-Output 'PASS: unapproved mixed-origin x86 D2 silent; independent synthetic P3 read remains available'
     } else {
