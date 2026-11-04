@@ -31,6 +31,7 @@ SCRIPT_MODULES = (
     "audit_native_p2_channel_chronology",
     "audit_native_b9f0_response",
     "audit_native_j2534_lifecycle",
+    "audit_native_connect_b9fb_channel",
     "audit_d2_followup_window",
     "audit_j2534_connect",
     "audit_j2534_discovery",
