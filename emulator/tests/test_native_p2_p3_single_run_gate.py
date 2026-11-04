@@ -16,11 +16,23 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import verify_native_p2_p3_handoff as tool
-from test_audit_d2_followup_window import D2FB, marker, response, tx, rx
+from test_audit_d2_followup_window import D2FB, marker, response, tx, rx, words
 from test_native_b9f0_response import F0, NEG, f0_response
-from test_native_b9f0_first_p3_response import p3_tx, p3_rx
+from test_native_b9f0_first_p3_response import p3_rx
 
 LAB = bytes.fromhex("62 F1 14") + b"VCARLAB0000000000"
+
+
+def p3_tx(*, channel=2, protocol=6, at=1_202_000):
+    """The real x86 lab's F114 request, not the unrelated F190 test helper."""
+    if protocol != 6:
+        raise ValueError("lab_uses_iso15765_only")
+    return [
+        marker("TX context channel/protocol/flags/baud/time-us (BE)",
+               words(channel, protocol, 0, 500000, at)),
+        marker("TX (app request)",
+               (0x726).to_bytes(4, "big") + bytes.fromhex("22 F1 14")),
+    ]
 
 
 def parts():
