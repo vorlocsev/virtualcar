@@ -19,7 +19,8 @@ Set-StrictMode -Version 2.0
 
 $fmt = 'virtualcar-private-native-client-capture-state-v1'
 $dll = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\VirtualCarJ2534.dll'))
-# DLL reads the sibling virtualcar.ini at PassThruOpen.
+# The DLL loads this sidecar INI at PassThruOpen. A modified profile
+# invalidates comparisons of one client's diagnostic behavior.
 $profile = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\virtualcar.ini'))
 $stateName = 'PRIVATE-DO-NOT-SHARE'
 $folder = [IO.Path]::GetFullPath($SessionDirectory)
@@ -163,60 +164,8 @@ if ($state.format -ne $fmt -or
     $state.before_bytes -lt 0 -or
     $state.before_bytes -gt 67108864 -or
     $state.before_sha256 -notmatch '^[a-f0-9]{64}$' -or
-    $state.dll_sha256 -notmatch '^[a-f0-9]{64}
-    [string]::IsNullOrWhiteSpace([string]$state.native_log_path)) {
-    throw 'Invalid private Begin state'
-}
-if ((Get-Sha256 $dll) -ne $state.dll_sha256) {
-    throw 'Virtual J2534 DLL changed between Begin and Finish'
-}
-if (-not [IO.File]::Exists([string]$state.native_log_path)) {
-    throw 'No appended native J2534 log exists'
-}
-$call = @('-3', $pythonTool, [string]$state.native_log_path,
-          '--offset-bytes', [string]$state.before_bytes,
-          '--prefix-sha256', [string]$state.before_sha256,
-          '--output-dir', $safeFolder)
-if ($UiObservation) {
-    if (-not (Test-Path -LiteralPath $UiObservation -PathType Leaf)) {
-        throw 'Operator UI observation JSON is missing'
-    }
-    $call += @('--ui', [IO.Path]::GetFullPath($UiObservation))
-}
-& py @call
-if ($LASTEXITCODE -ne 0) {
-    throw 'Client evidence capture failed closed: output not verified'
-}
-Write-Host 'PASS: only sanitized JSON files were created in SAFE-JSON-REPORTS.'
-Write-Host 'Review safe JSON files before sharing. Client acceptance is NOT verified.'
- -or
-    $state.profile_sha256 -notmatch '^[a-f0-9]{64}
-    [string]::IsNullOrWhiteSpace([string]$state.native_log_path)) {
-    throw 'Invalid private Begin state'
-}
-if ((Get-Sha256 $dll) -ne $state.dll_sha256) {
-    throw 'Virtual J2534 DLL changed between Begin and Finish'
-}
-if (-not [IO.File]::Exists([string]$state.native_log_path)) {
-    throw 'No appended native J2534 log exists'
-}
-$call = @('-3', $pythonTool, [string]$state.native_log_path,
-          '--offset-bytes', [string]$state.before_bytes,
-          '--prefix-sha256', [string]$state.before_sha256,
-          '--output-dir', $safeFolder)
-if ($UiObservation) {
-    if (-not (Test-Path -LiteralPath $UiObservation -PathType Leaf)) {
-        throw 'Operator UI observation JSON is missing'
-    }
-    $call += @('--ui', [IO.Path]::GetFullPath($UiObservation))
-}
-& py @call
-if ($LASTEXITCODE -ne 0) {
-    throw 'Client evidence capture failed closed: output not verified'
-}
-Write-Host 'PASS: only sanitized JSON files were created in SAFE-JSON-REPORTS.'
-Write-Host 'Review safe JSON files before sharing. Client acceptance is NOT verified.'
- -or
+    $state.dll_sha256 -notmatch '^[a-f0-9]{64}$' -or
+    $state.profile_sha256 -notmatch '^[a-f0-9]{64}$' -or
     [string]::IsNullOrWhiteSpace([string]$state.native_log_path)) {
     throw 'Invalid private Begin state'
 }
