@@ -63,6 +63,47 @@ only that frame and allows 0x09 and 0x4C. The probe uses a synthetic
 INI and no OEM ECU, real VIN or proprietary client. Its raw log is not
 uploaded.
 
+## Explicit CAN CLEAR_MSG_FILTERS lifecycle
+
+The default after `PassThruConnect` remains **permissive on an untouched
+filterless synthetic CAN channel** for compatibility with existing
+laboratory test clients. This is a conscious deviation from the strict
+J2534 v04.04 *initial* filterless behavior and must not be interpreted as
+full compliance.
+
+However, after the diagnostic client explicitly calls
+`PassThruIoctl(channel, CLEAR_MSG_FILTERS)` on a CAN channel, the
+emulator now follows the standard's **no NEW RX until a PASS filter is
+installed** behavior. This is a sticky per-channel condition until
+`PassThruDisconnect`. The following rules are verified:
+
+- CLEAR on an initially empty filter set is still meaningful: it makes
+  the channel stop enqueueing new CAN messages.
+- A matching PASS_FILTER restores delivery of only matching messages.
+  A BLOCK_FILTER may further suppress matching CAN data.
+- Removing the last PASS_FILTER returns the explicitly cleared channel
+  to the blocked state, even if a BLOCK_FILTER remains.
+- CLEAR invalidates existing FilterIDs; old IDs cannot be stopped later.
+  It does not retroactively discard already-queued RX messages.
+  CLEAR_RX_BUFFER remains the explicit queue removal operation.
+- Clearing one CAN channel does not change a second channel's filters.
+  Disconnecting and reopening a channel resets this specific laboratory
+  compatibility state.
+- ISO15765 filtering and FLOW_CONTROL remain unchanged. No claim of
+  strict initial no-filter behavior, extended ISO-TP addressing or
+  full SAE conformance is made.
+
+Eight host C regression groups exercise explicit clearing, matching
+PASS, BLOCK precedence, stop, stale FilterIDs, preserved queued frames,
+cross-channel isolation and reconnect. The native Windows x86
+`-PayloadFilterProbe` also uses the **compiled J2534 DLL** to ensure
+that CLEAR blocks a subsequent synthetic B9F0 reply, PASS restores a
+filtered first frame and Stop blocks new replies again.
+
+Specification references: SAE J2534-1 revision DEC2004 §7.3.10
+(CLEAR_MSG_FILTERS), and the public v04.04 API description at
+https://www.scandoc.org/en/develop/j2534/pt_ioctl.html .
+
 ## Evidence boundary
 
 Matching J2534 filter semantics does not prove SectorV/VDASH saw,
