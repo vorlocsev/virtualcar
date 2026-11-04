@@ -221,9 +221,8 @@ def prepare(source, ui=None):
         focus = "invalid_native_source_or_connect_metadata"
     elif not single_process_source:
         focus = "multiple_or_missing_native_process_scopes"
-    elif lifecycle["status"] == "multiple_closed_device_cycles":
-        focus = "multiple_native_j2534_device_cycles"
-    elif not lifecycle["single_closed_device_cycle_verified"]:
+    elif lifecycle["status"] not in (
+            "single_closed_device_cycle", "multiple_closed_device_cycles"):
         focus = "incomplete_or_invalid_native_j2534_device_cycle"
     elif (ui is not None and ui["same_run_operator_attested"]
           and label_comparison == "operator_client_conflicts_with_native_label"):
@@ -239,6 +238,11 @@ def prepare(source, ui=None):
         focus = "virtual_adapter_connect_failed"
     elif not has_d2_b9fb:
         focus = "no_native_b9fb_request_observed"
+    elif lifecycle["status"] == "multiple_closed_device_cycles":
+        # Multiple valid device cycles invalidate a single-epoch handoff
+        # but must not mask the earlier, more actionable no-Connect or
+        # no-B9FB failure boundary of a real client.
+        focus = "multiple_native_j2534_device_cycles"
     elif not connect_binding["one_b9fb_bound_to_prior_successful_channel_connect"]:
         focus = "b9fb_channel_connect_provenance_missing_or_invalid"
     elif not native_clean:
@@ -281,6 +285,10 @@ def prepare(source, ui=None):
         "native_b9fb_connect_channel_binding": connect_binding,
         "connect_attempts": connect_attempts,
         "connect_succeeded": connect_ok,
+        "connect_invalid_protocol_attempts": (
+            connect["connect"]["statuses"].get("invalid_protocol", 0)),
+        "connect_has_unsupported_protocols": (
+            connect["connect"]["statuses"].get("invalid_protocol", 0) > 0),
         "obd_vin_requests": obd["vin_requests"],
         "obd_vin_transport_deliveries": obd["vin_delivered"],
         "transport_family_counts": _counts(rows),
@@ -313,6 +321,7 @@ def prepare(source, ui=None):
             "Unrecognized native executable names are not guessed as SectorV or a particular VDASH build.",
             "A positive native B9FB, B9F0 or P3 transport does not establish diagnostic-client acceptance.",
             "One source PID can contain multiple PassThruOpen/PassThruClose cycles; their traffic is not one device session.",
+            "Multiple correctly closed device cycles do not by themselves explain why Connect or B9FB was absent; preserve the earliest observable no-Connect/no-B9FB boundary.",
             "Aggregate Connect OK cannot be assigned to B9FB unless native successful Connect explicitly names the same channel, protocol and baud before application TX.",
             "UI list state is an operator report, not independently verified ECU identity.",
             "A UI ECU list requires an explicitly selected virtual adapter, completed scan, same-run attestation and a matching untrusted executable label before limited operator attribution.",
