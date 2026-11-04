@@ -64,6 +64,12 @@ $chosen = $profile.ToString()
 if ($FixtureProfile) {
     $sourcePath = (Resolve-Path -LiteralPath $FixtureProfile).Path
     $chosen = [IO.File]::ReadAllText($sourcePath, [Text.Encoding]::UTF8)
+    if ($chosen -match '(?im)^\s*\[Diagnostics\]\s*$') {
+        throw 'Lab fixture must not override native evidence logging'
+    }
+    # The repository donor INI is immutable; append telemetry only to
+    # this isolated test copy to enable the backend lifecycle audit.
+    $chosen += "`r`n[Diagnostics]`r`nBackendTelemetryEnabled=1`r`n"
 }
 if ($chosen -notmatch '(?im)^\s*StrictRouting\s*=\s*1\s*$' -or
     $chosen -notmatch '(?im)^\s*B9FBFrameCount\s*=\s*13\s*$' -or
