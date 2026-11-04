@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Privacy-bounded chronology of a *native* Virtual Car J2534 P2 session.
+
+Uses the real TX/RX channel IDs *internally* to avoid inventing the
+channel binding missing from historic SectorV dev8/dev10 reports.
+Exports only per-session channel aliases, fixed event types and timing.
+A native log records J2534 API observations, never a client parser verdict.
+"""
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import sys
+
+from audit_j2534_discovery import PREFIX, _context, _request
+from import_p2_trace import validate_response
+
+MAX_BYTES = 4 * 1024 * 1024
+MAX_LINES = 45000
+MAX_EPOCHS = 128
+MAX_EVENTS = 1000
+FORMAT = "virtualcar-native-p2-channel-chronology-v1"
+TX_CONTEXT = "TX context channel/protocol/flags/baud/time-us (BE)"
+RX_CONTEXT = "RX context channel/protocol/status/baud/time-us (BE)"
+HEX12 = re.compile(r"^[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){11}$")
+HEX4 = re.compile(r"^[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){3}$")
+RESPONSE_IDS = {0x50: (0x01000003, 0x01200003), 0x40: (0x00800003,)}
+EXPECTED_BAUD = {0x50: 500000, 0x40: 125000}
+
+
+def _can12(text):
+    source = text.strip()
+    return bytes.fromhex(source) if HEX12.fullmatch(source) else None
+
+
+def _gap(after, before):
+    if type(after) is not int or type(before) is not int:
+        return None
+    delta = (after - before) % (1 << 32)
+    return round(delta / 1000, 3) if delta <= 60000000 else None
+
+
+def _state():
+    return {
+        "tx_ctx": None, "rx_ctx": None, "disconnect_ctx": None,
+        "channels": {}, "events": [], "active": {}, "incomplete": 0,
+        "process_sectorv": False, "source_error": False,
+    }
+
+
+def _alias(state, channel):
+    if channel not in state["channels"]:
+        state["channels"][channel] = "ch" + str(len(state["channels"]) + 1)
+    return state["channels"][channel]
+
+
+def _event(state, kind, target, channel, baud, timestamp):
+    if len(state["events"]) >= MAX_EVENTS:
+        raise ValueError("too_many_events")
+    item = {
+        "order": len(state["events"]) + 1,
+        "kind": kind,
+        "target": "0x%02X" % target,
+        "channel": _alias(state, channel),
+        "baud_bps": baud if baud in (125000, 500000) else None,
+        "_channel": channel,
+        "_time": timestamp,
+    }
+    state["events"].append(item)
+    return item
+
+
+def _finish(state, reason):
+    if not state["events"]:
+        return None
+    complete = [x for x in state["events"] if x["kind"] == "b9fb_rx_complete"]
+    a3 = [x for x in state["events"] if x["kind"] == "a3_tx"]
+    b9fb = [x for x in state["events"] if x["kind"] == "b9fb_tx"]
+    if not a3:
+        status = "no_a3_observed"
+    elif not complete:
+        status = "no_completed_b9fb_observed"
+    elif len(a3) != 1 or len(complete) != 1 or len(b9fb) != 1:
+        status = "multiple_candidates_no_unique_pairing"
+    elif a3[0]["order"] < b9fb[0]["order"]:
+        status = "a3_before_b9fb_request"
+    elif a3[0]["order"] < complete[0]["order"]:
+        status = "a3_during_b9fb_delivery"
+    elif a3[0]["_channel"] != complete[0]["_channel"]:
+        status = "a3_after_b9fb_different_channel"
+    elif a3[0]["target"] != complete[0]["target"]:
+        status = "a3_after_b9fb_different_target"
+    else:
+        status = "a3_after_b9fb_same_channel_and_target"
+    delta = (
+        _gap(a3[0]["_time"], complete[0]["_time"])
+        if status.startswith("a3_after_b9fb_") and len(a3) == len(complete) == 1
+        else None
+    )
+    return {
+        "outcome": status,
+        "boundary": reason,
+        "observed_process_label": (
+            "sectorv_exe_in_native_log" if state["process_sectorv"]
+            else "other_or_unverified_process"),
+        "b9fb_completed": len(complete),
+        "b9fb_requested": len(b9fb),
+        "a3_requested": len(a3),
+        "b9fb_incomplete": (state["incomplete"] + len(state["active"])),
+        "channel_metadata_complete": not state["source_error"],
+        "last_rx_to_a3_ms": delta,
+        "same_channel_proven_for_observed_order": status == "a3_after_b9fb_same_channel_and_target",
+        "events": [{
+            k: x[k] for k in ("order", "kind", "target", "channel", "baud_bps")
+        } for x in state["events"]],
+        "client_b9fb_acceptance_verified": False,
+        "a3_security_access_verified": False,
+    }
+
+
+def audit(source):
+    if not isinstance(source, str) or len(source.encode("utf-8")) > MAX_BYTES:
+        raise ValueError("invalid_source_size")
+    lines = source.splitlines()
+    if len(lines) > MAX_LINES:
+        raise ValueError("too_many_lines")
+    scopes = {}
+    results = []
+    errors = Counter()
+
+    def end(pid, reason):
+        state = scopes.pop(pid, None)
+        if state is not None:
+            candidate = _finish(state, reason)
+            if candidate is not None:
+                results.append(candidate)
+                if len(results) > MAX_EPOCHS:
+                    raise ValueError("too_many_epochs")
+
+    for line in lines:
+        if "=== SECTORV VIRTUALCAR SESSION " in line:
+            for pid in list(scopes):
+                end(pid, "explicit_session_marker")
+            continue
+        m = PREFIX.fullmatch(line.rstrip("\r\n"))
+        if not m:
+            continue
+        pid, text = m.groups()
+        # The PID and hostname are scope keys only; neither is exported.
+        if text in ("VirtualCar DLL initialized (v0.3.6.6 extended configuration DID)",
+                    "PassThruOpen -> device 1"):
+            end(pid, "new_native_session")
+            scopes[pid] = _state()
+            if " SectorV.exe] " in line:
+                scopes[pid]["process_sectorv"] = True
+            continue
+        if text == "PassThruClose":
+            end(pid, "passthru_close")
+            continue
+        s = scopes.setdefault(pid, _state())
+        if " SectorV.exe] " in line:
+            s["process_sectorv"] = True
+
+        if text.startswith("TX context "):
+            s["tx_ctx"] = _context(text, TX_CONTEXT, strict=True)
+            if s["tx_ctx"] is None:
+                errors["invalid_tx_context"] += 1
+                s["source_error"] = True
+            continue
+        if text.startswith("RX context "):
+            s["rx_ctx"] = _context(text, RX_CONTEXT, strict=True)
+            if s["rx_ctx"] is None:
+                errors["invalid_rx_context"] += 1
+                s["source_error"] = True
+            continue
+        if text.startswith("PassThruDisconnect channel (BE)"):
+            raw = text.split("(BE)", 1)[1].strip()
+            s["disconnect_ctx"] = int.from_bytes(bytes.fromhex(raw), "big") if HEX4.fullmatch(raw) else None
+            if s["disconnect_ctx"] is None:
+                errors["invalid_disconnect_context"] += 1
+                s["source_error"] = True
+            continue
+        if text == "PassThruDisconnect":
+            channel = s["disconnect_ctx"]
+            if channel is not None:
+                if channel in s["active"]:
+                    s["incomplete"] += 1
+                    del s["active"][channel]
+            else:
+                # Ambiguous disconnect means future attribution needs a
+                # fresh connection epoch, not a fabricated channel match.
+                s["incomplete"] += len(s["active"])
+                s["active"].clear()
+                s["source_error"] = True
+            s["disconnect_ctx"] = None
+            s["tx_ctx"] = s["rx_ctx"] = None
+            continue
+        if text.startswith("TX (app request)"):
+            raw = _can12(text[len("TX (app request)"):])
+            ctx = s["tx_ctx"]
+            s["tx_ctx"] = None
+            if raw is None or ctx is None or ctx[1] != 5:
+                errors["unattributed_or_bad_tx"] += 1
+                s["source_error"] = True
+                continue
+            channel, protocol, flags, baud, at = ctx
+            req = _request(raw)
+            if req is None or req[0] != "D2" or req[2] not in (0x40, 0x50):
+                continue
+            service, target = req[1], req[2]
+            # The observer treats TX as an attempted API write. Neither
+            # WriteMsgs return code nor on-wire delivery is proven here.
+            if service == "A3" and raw[4] >= 0xCA and raw[4] <= 0xCF:
+                _event(s, "a3_tx", target, channel, baud, at)
+            if service == "B9FB" and raw[4] == 0xCB:
+                if channel in s["active"]:
+                    s["incomplete"] += 1
+                _event(s, "b9fb_tx", target, channel, baud, at)
+                if baud == EXPECTED_BAUD[target]:
+                    s["active"][channel] = {
+                        "target": target, "baud": baud, "frames": [],
+                    }
+                else:
+                    s["active"].pop(channel, None)
+                    errors["b9fb_wrong_baud"] += 1
+            continue
+        if text.startswith("PassThruReadMsgs -> delivered"):
+            raw = _can12(text[len("PassThruReadMsgs -> delivered"):])
+            ctx = s["rx_ctx"]
+            s["rx_ctx"] = None
+            if raw is None or ctx is None or ctx[1] != 5:
+                errors["unattributed_or_bad_rx"] += 1
+                s["source_error"] = True
+                continue
+            channel, protocol, rx_status, baud, at = ctx
+            if rx_status & (0x01 | 0x02 | 0x08):
+                errors["rx_indication_not_ecu_frame"] += 1
+                continue
+            active = s["active"].get(channel)
+            if active is None or active["baud"] != baud:
+                continue
+            can_id = int.from_bytes(raw[:4], "big")
+            if can_id not in RESPONSE_IDS[active["target"]]:
+                errors["unrelated_rx_on_b9fb_channel"] += 1
+                continue
+            active["frames"].append((can_id, raw[4:]))
+            if len(active["frames"]) > 64:
+                s["incomplete"] += 1
+                del s["active"][channel]
+                continue
+            control = raw[4]
+            if 0x48 <= control <= 0x4F or (control & 0xF8) == 0xC8:
+                try:
+                    validate_response(active["frames"], active["target"], 0xFB)
+                except ValueError:
+                    s["incomplete"] += 1
+                    errors["invalid_b9fb_frame_sequence"] += 1
+                else:
+                    _event(s, "b9fb_rx_complete", active["target"],
+                           channel, baud, at)
+                del s["active"][channel]
+            continue
+        if text.startswith("J2534 CLEAR_RX_BUFFER:"):
+            s["incomplete"] += len(s["active"])
+            s["active"].clear()
+            s["rx_ctx"] = None
+
+    for pid in list(scopes):
+        end(pid, "end_of_log")
+    return {
+        "format": FORMAT,
+        "read_only": True,
+        "source": "virtualcar_native_j2534_text",
+        "epochs_with_events": len(results),
+        "outcome_counts": dict(sorted(Counter(x["outcome"] for x in results).items())),
+        "epochs": results,
+        "parse_events": dict(sorted(errors.items())),
+        "tx_channel_binding_from_native_context": True,
+        "contains_payload_data": False,
+        "client_b9fb_acceptance_verified": False,
+        "a3_security_access_verified": False,
+        "xc90_v8_my2009_verified": False,
+        "limitations": [
+            "Per-PID session and channel alias are native log observations, not proof of ECU authorization.",
+            "A3 before B9FB does not imply a successful post-B9FB Hardware transition.",
+            "Native source-local timings do not join historical SectorV report clocks.",
+            "App TX observed before J2534 WriteMsgs returns; TX success/on-wire delivery is not confirmed.",
+            "Client process name in a log header is untrusted metadata, not independent executable attestation.",
+            "No real VIN, CAN bytes, PID, executable name, source file or private operand is exported.",
+        ],
+    }
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("source", type=Path)
+    p.add_argument("--output", required=True, type=Path)
+    args = p.parse_args(argv)
+    try:
+        if args.source.resolve() == args.output.resolve():
+            raise ValueError("same_file")
+        if args.source.stat().st_size > MAX_BYTES:
+            raise ValueError("source_too_large")
+        result = audit(args.source.read_text(encoding="utf-8-sig", errors="replace"))
+        with args.output.open("x", encoding="utf-8") as stream:
+            json.dump(result, stream, indent=2, ensure_ascii=False, sort_keys=True)
+            stream.write("\n")
+    except (OSError, ValueError, UnicodeError):
+        print("Native P2 channel chronology audit rejected source/output",
+              file=sys.stderr)
+        return 2
+    print("PASS: native P2 channel chronology audited; ECU acceptance unknown")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
