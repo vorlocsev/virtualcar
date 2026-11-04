@@ -91,6 +91,8 @@ jobs:
           # Preserve only anonymized J2534 channel aliases, never the raw trace.
           python emulator/tools/audit_native_p2_channel_chronology.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-channel-chronology.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native P2 channel chronology audit failed' }
+          python emulator/tools/verify_native_p2_first_a3.py "$env:RUNNER_TEMP\native-p2-channel-chronology.json" "$env:RUNNER_TEMP\native-b9fb-a3-timing.json" --output "$env:RUNNER_TEMP\native-first-a3-correlation.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native first-A3 cross-report correlation failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
@@ -99,6 +101,7 @@ jobs:
             ${{ runner.temp }}/native-b9fb-a3-audit.json
             ${{ runner.temp }}/native-b9fb-a3-timing.json
             ${{ runner.temp }}/native-p2-channel-chronology.json
+            ${{ runner.temp }}/native-first-a3-correlation.json
           if-no-files-found: error
 
 
