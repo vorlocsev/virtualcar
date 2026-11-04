@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 
 from audit_j2534_connect import audit as audit_connect
-from audit_j2534_discovery import audit as audit_discovery
+from audit_j2534_discovery import audit as audit_discovery, PREFIX
 from prepare_p2_capture import prepare as prepare_p2
 
 FORMAT = "virtualcar-p2-client-capture-boundary-v1"
@@ -84,6 +84,14 @@ def prepare(source, ui=None):
     if ui is not None:
         ui = _ui(ui)
     lines = source.splitlines()
+    # Native source and operator UI have no trusted common session token.
+    # Multiple PID labels in a single source file must NOT be treated as
+    # evidence of one connected client's complete J2534 exchange.
+    native_processes = {
+        m.group(1) for line in lines
+        if (m := PREFIX.fullmatch(line.rstrip("\r\n"))) is not None
+    }
+    single_process_source = len(native_processes) == 1
     connect = audit_connect(lines)
     discovery = audit_discovery(lines, include_obd=True)
     rows = discovery["transactions"]
@@ -101,7 +109,7 @@ def prepare(source, ui=None):
     f0 = (p2_summary["b9f0_native_transport_audit"]
           if p2_summary is not None else None)
     native_clean = bool(
-        p2_summary is not None
+        single_process_source and p2_summary is not None
         and p2_summary["native_epochs"] == 1
         and p2_summary["all_native_epochs_closed"] is True
         and p2_summary["native_tx_rx_context_complete"] is True
@@ -127,6 +135,8 @@ def prepare(source, ui=None):
                   or connect["connect"]["invalid_events"] > 0)
     if any_errors:
         focus = "invalid_native_source_or_connect_metadata"
+    elif not single_process_source:
+        focus = "multiple_or_missing_native_process_scopes"
     elif connect_attempts == 0:
         focus = "no_virtual_adapter_connect_attempt_observed"
     elif connect_ok == 0:
@@ -156,6 +166,7 @@ def prepare(source, ui=None):
         "format": FORMAT, "read_only": True, "contains_payload_data": False,
         "raw_log_exported": False, "client_run_executed_by_tool": False,
         "native_log_diagnostic_scope": "one_supplied_local_file",
+        "single_native_process_label_observed": single_process_source,
         "connect_attempts": connect_attempts,
         "connect_succeeded": connect_ok,
         "obd_vin_requests": obd["vin_requests"],
