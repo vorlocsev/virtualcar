@@ -1280,6 +1280,7 @@ int main(){
     Use 21 D2 frames for 145-byte stream (echo + 142-byte configuration).
     This test is NOT evidence of a real B9FC response CAN identifier. */
  D2_PROFILE fc_fixture={0};fc_fixture.target=0x50;fc_fixture.subcommand=0xFC;
+ fc_fixture.baud=500000u; /* HS fixture must declare its actual bus. */
  fc_fixture.response_id=0x01200003;fc_fixture.frame_count=21;
  U8 fc_stream[145]={0};fc_stream[0]=0x50;fc_stream[1]=0xF9;fc_stream[2]=0xFC;
  fc_stream[3]=0x8C;
