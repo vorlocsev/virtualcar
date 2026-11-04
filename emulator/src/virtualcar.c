@@ -149,7 +149,9 @@ typedef struct {
 static D2_PROFILE g_d2[MAX_D2_FIXTURES];
 
 typedef struct { U32 id,interval_ms; U64 next_us; PASSTHRU_MSG msg; int used; } PERIODIC;
-typedef struct { U32 id,type; U8 mask[4],pattern[4]; } FILTER;
+/* CAN PASS/BLOCK masks may cover the CAN ID plus up to eight data bytes.
+   ISO15765 FLOW_CONTROL filters remain matched on the CAN header only. */
+typedef struct { U32 id,type,length; U8 mask[12],pattern[12]; } FILTER;
 /* A recorded abort has to survive queued First/Consecutive Frames.
    At most MAX_QUEUE different aborted requests can have queued frames. */
 #define BACKEND_ABORT_FC_OVERFLOW 1u
@@ -962,12 +964,21 @@ static CHANNEL *channel(U32 id){U32 i;for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used
 /* Apply installed CAN/ISO pass and block masks to simulated incoming IDs.
    Historical compatibility: channels without filters still pass, as before.
    A strict no-filter default remains future work since GUI self-tests rely on it. */
-static int filter_allows(const CHANNEL *c,U32 response_id) {
+static int filter_allows(const CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
     U8 idbytes[4];U32 i,j;int has_pass=0,matched_pass=0;
     u32_be(idbytes,response_id);
     for(i=0;i<c->filters_count;i++){
-        const FILTER *f=&c->filters[i];int matched=1;
-        for(j=0;j<4;j++)if((idbytes[j]&f->mask[j])!=(f->pattern[j]&f->mask[j])){matched=0;break;}
+        const FILTER *f=&c->filters[i];
+        /* FLOW_CONTROL is a receive-ID matcher. PASS/BLOCK on CAN
+           can also match payload bytes. Do not compare an ISO-TP
+           reassembled payload as if it were an extended CAN address. */
+        U32 checked=f->type==3?4:f->length;
+        int matched=(checked<=len+4);
+        for(j=0;matched&&j<checked;j++){
+            U8 value=j<4?idbytes[j]:payload[j-4];
+            if((value&f->mask[j])!=(f->pattern[j]&f->mask[j]))
+                matched=0;
+        }
         if(f->type==2 && matched)return 0;
         if(f->type==1 || f->type==3){has_pass=1;if(matched)matched_pass=1;}
     }
@@ -982,7 +993,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
         backend_note_drop(c,c->active_trace,cause);
         return;
     }
-    if(!filter_allows(c,response_id)){
+    if(!filter_allows(c,response_id,payload,len)){
         backend_event(c,c->active_trace,"filter_drop","UNKNOWN","filter_reject","unknown");
         backend_note_drop(c,c->active_trace,BACKEND_DROP_FILTER_REJECT);
         U8 idbytes[4];u32_be(idbytes,response_id);
@@ -1547,12 +1558,20 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
-    if(mask->DataSize<4||pattern->DataSize<4){unlock_state();return error(ERR_INVALID_MSG);}
+    /* The filter data begins at the four CAN-ID bytes. For CAN
+       PASS/BLOCK it may include up to eight payload bytes. Never
+       silently accept unequal lengths then compare just the ID. */
+    if(mask->DataSize<4||mask->DataSize>12||
+       pattern->DataSize!=mask->DataSize){
+        unlock_state();return error(ERR_INVALID_MSG);
+    }
     if(c->filters_count>=MAX_FILTERS){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     *filter_id=g_filter_counter++;
     {
         FILTER *f=&c->filters[c->filters_count++];f->id=*filter_id;f->type=type;
-        bytes_copy(f->mask,mask->Data,4);bytes_copy(f->pattern,pattern->Data,4);
+        f->length=mask->DataSize;
+        bytes_copy(f->mask,mask->Data,f->length);
+        bytes_copy(f->pattern,pattern->Data,f->length);
     }
     {U8 descriptor[8];u32_be(descriptor,type);u32_be(descriptor+4,*filter_id);
      logline("PassThruStartMsgFilter type / id (BE)",descriptor,8);}
