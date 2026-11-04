@@ -42,7 +42,7 @@ function Get-Machine([string]$path) {
         if ($reader.ReadUInt16() -ne 0x5A4D) { throw 'Invalid DLL MZ header' }
         [void]$file.Seek(0x3C,[IO.SeekOrigin]::Begin)
         $offset = $reader.ReadInt32()
-        if ($offset -lt 64 -or $offset -gt $file.Length-6) {
+        if ($offset -lt 64 -or $offset -gt ($file.Length - 6)) {
             throw 'Invalid DLL PE offset'
         }
         [void]$file.Seek($offset,[IO.SeekOrigin]::Begin)
@@ -126,7 +126,7 @@ if ($Phase -eq 'Begin') {
         dll_sha256 = Get-Sha256 $dll
     }
     [IO.File]::WriteAllText($statePath,($state | ConvertTo-Json -Depth 3),
-                            (New-Object Text.UTF8Encoding($false)))
+                            ([Text.UTF8Encoding]::new($false)))
     Write-Host 'PASS: registered x86 DLL and private native-log baseline verified'
     Write-Host 'Now start ONE diagnostic client manually, read only; close it afterwards.'
     Write-Host 'Then invoke this script with -Phase Finish -IConfirmClientClosed.'
