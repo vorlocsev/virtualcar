@@ -1132,6 +1132,15 @@ int main(){
  };
  for(U32 z=0;z<5;z++)memcpy(synthetic_series.frame[z],series_frame[z],8);
  REQUIRE(validate_d2_fixture(&synthetic_series));
+ /* The captured P1 97/11.. family cannot be assumed to end with a
+    bare P2 4x final without the observed VIDA 5x + repeated 8F
+    sub-block bridge. Otherwise incomplete foreign captures could
+    masquerade as a complete P2 B9FB reply. */
+ {D2_PROFILE unbridged=synthetic_series;
+  unbridged.frame_count=3;
+  memcpy(unbridged.frame[2],series_frame[4],8);
+  REQUIRE(!validate_d2_fixture(&unbridged));
+ }
  synthetic_series.frame[1][0]=0x12;REQUIRE(!validate_d2_fixture(&synthetic_series));
  synthetic_series.frame[1][0]=0x11;
  synthetic_series.frame[4][0]=0x55;REQUIRE(!validate_d2_fixture(&synthetic_series));
