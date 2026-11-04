@@ -41,7 +41,21 @@ def _elapsed(after, before):
 
 def _scope():
     return {"tx": None, "rx": None, "disconnect": None, "clear": None,
-            "active": {}}
+            "active": {}, "waiting": []}
+
+
+def _next_app_tx_label(req):
+    """Allowlisted request family only, never private DID or raw operands."""
+    if req is None:
+        return "other_or_unclassified_tx"
+    route, service, target, _ = req
+    if route == "D2" and service in ("B9F0", "B9FB", "B9FC", "A3", "A6"):
+        return "d2_" + service.lower()
+    if route == "P3" and service.startswith("22"):
+        return "p3_read_data_by_identifier"
+    if route == "P3":
+        return "p3_other"
+    return "other_or_unclassified_tx"
 
 
 def audit(source):
@@ -51,6 +65,30 @@ def audit(source):
     if len(lines) > MAX_LINES:
         raise ValueError("too_many_lines")
     scopes, records, errors = {}, [], Counter()
+
+    def stop_waiting(state, reason, channel=None):
+        """Close observed post-positive windows at explicit native boundaries."""
+        remaining = []
+        for record, source_channel, source_baud, rx_at in state["waiting"]:
+            if channel is None or source_channel == channel:
+                record["first_next_app_tx_observation"] = reason
+            else:
+                remaining.append((record, source_channel, source_baud, rx_at))
+        state["waiting"] = remaining
+
+    def observe_next_tx(state, req, channel=None, baud=None, at=None):
+        """First later application TX in the same PID/native log epoch."""
+        for record, source_channel, source_baud, rx_at in state["waiting"]:
+            if channel is None:
+                record["first_next_app_tx_observation"] = "next_tx_unattributed"
+                record["first_next_app_tx_service"] = "unattributed_app_tx"
+            else:
+                record["first_next_app_tx_observation"] = "first_next_tx_observed"
+                record["first_next_app_tx_service"] = _next_app_tx_label(req)
+                record["first_next_app_tx_same_channel"] = channel == source_channel
+                record["first_next_app_tx_same_baud"] = baud == source_baud
+                record["last_b9f0_rx_to_first_next_tx_ms"] = _elapsed(at, rx_at)
+        state["waiting"].clear()
 
     def finish(state, channel, reason, terminal=None):
         candidate = state["active"].pop(channel, None)
@@ -84,7 +122,19 @@ def audit(source):
             "part_number_decoded": False,
             "vehicle_identity_verified": False,
             "client_acceptance_verified": False,
+            "ecu_enumeration_verified": False,
+            "first_next_app_tx_observation": "no_next_tx_observed",
+            "first_next_app_tx_service": None,
+            "first_next_app_tx_same_channel": None,
+            "first_next_app_tx_same_baud": None,
+            "last_b9f0_rx_to_first_next_tx_ms": None,
         })
+        if status == "positive_transport_complete":
+            # Only a proven terminal RX opens a post-B9F0 observation.
+            # Keep state-local channel/baud/timestamp private.
+            record = records[-1]
+            state["waiting"].append((
+                record, channel, candidate["baud"], candidate["last_rx_time"]))
         if len(records) > MAX_RECORDS:
             raise ValueError("too_many_b9f0_records")
 
@@ -97,6 +147,7 @@ def audit(source):
     for line in lines:
         if "=== SECTORV VIRTUALCAR SESSION " in line:
             for state in scopes.values():
+                stop_waiting(state, "session_marker_before_next_tx")
                 finish_all(state, "explicit_session_marker")
             scopes.clear()
             continue
@@ -106,6 +157,8 @@ def audit(source):
         pid, text = match.groups()
         state = scopes.setdefault(pid, _scope())
         if text in ("PassThruOpen -> device 1", "PassThruClose"):
+            stop_waiting(state, "open_before_next_tx" if text.startswith(
+                "PassThruOpen") else "close_before_next_tx")
             finish_all(state, "open_boundary" if text.startswith("PassThruOpen")
                        else "close_boundary")
             continue
@@ -119,8 +172,10 @@ def audit(source):
             channel = state["disconnect"]
             if channel is None:
                 errors["unattributed_disconnect"] += 1
+                stop_waiting(state, "unattributed_disconnect_before_next_tx")
                 finish_all(state, "unattributed_disconnect")
             else:
+                stop_waiting(state, "disconnect_before_next_tx", channel)
                 finish(state, channel, "channel_disconnect")
                 state["tx"] = state["rx"] = None
                 state["disconnect"] = state["clear"] = None
@@ -133,8 +188,11 @@ def audit(source):
         if text.startswith("J2534 CLEAR_RX_BUFFER:"):
             if state["clear"] is None:
                 errors["unattributed_clear"] += 1
+                stop_waiting(state, "unattributed_clear_before_next_tx")
                 finish_all(state, "unattributed_clear")
             else:
+                stop_waiting(state, "rx_buffer_clear_before_next_tx",
+                             state["clear"][0])
                 finish(state, state["clear"][0], "rx_buffer_clear")
                 state["tx"] = state["rx"] = state["clear"] = None
             continue
@@ -155,12 +213,14 @@ def audit(source):
             state["tx"] = None
             if ctx is None or raw is None or ctx[1] != 5:
                 errors["unattributed_or_invalid_tx"] += 1
+                observe_next_tx(state, None)
                 finish_all(state, "unattributed_app_tx")
                 continue
             channel, _, _, baud, at = ctx
+            req = _request(raw)
+            observe_next_tx(state, req, channel, baud, at)
             # The next TX on this channel ends the preceding response window.
             finish(state, channel, "superseded_by_app_tx")
-            req = _request(raw)
             if (req is None or req[0] != "D2" or req[1] != "B9F0"
                     or req[2] not in RESPONSE_IDS or raw[4] != 0xCB):
                 continue
@@ -232,8 +292,14 @@ def audit(source):
                 errors["invalid_timeout_context"] += 1
 
     for state in scopes.values():
+        stop_waiting(state, "end_of_log_no_next_tx_observed")
         finish_all(state, "end_of_log")
     counts = Counter(item["status"] for item in records)
+    post_positive = [item for item in records
+                     if item["positive_echo_transport_complete"]]
+    next_services = Counter(
+        item["first_next_app_tx_service"] or "no_classified_next_tx"
+        for item in post_positive)
     return {
         "format": FORMAT,
         "read_only": True,
@@ -243,15 +309,22 @@ def audit(source):
         "observations": records,
         "parse_errors": dict(sorted(errors.items())),
         "contains_payload_data": False,
-        "any_positive_transport_observed": any(
-            item["positive_echo_transport_complete"] for item in records),
+        "any_positive_transport_observed": bool(post_positive),
+        "post_positive_first_next_tx_service_counts": dict(sorted(
+            next_services.items())),
+        "post_positive_first_next_tx_observed_count": sum(
+            item["first_next_app_tx_observation"] == "first_next_tx_observed"
+            for item in post_positive),
         "b9f0_identity_verified": False,
+        "ecu_enumeration_verified": False,
         "client_acceptance_verified": False,
         "limitations": [
             "Only matching native CAN route, channel and D2 framing are checked.",
             "A positive B9F0 echo does not prove vehicle identity or part-number semantics.",
             "No native request record proves PassThruWriteMsgs success or physical transmission.",
             "A negative B9 service reply is not a positive B9F0 response.",
+            "A later application TX after positive B9F0 is a request observation, not a client parse verdict or ECU inventory proof.",
+            "The first later TX is attributed only within one native PID and uninterrupted source session.",
             "Neither diagnostic client acceptance nor genuine XC90 V8 MY2009 identity is established.",
             "No VIN, part number, PID, host, timestamp raw bytes, CAN payload, or private source path is exported.",
         ],
