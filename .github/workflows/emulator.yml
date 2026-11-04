@@ -126,6 +126,49 @@ jobs:
               [ref]$tokenStream, [ref]$parserErrors) | Out-Null
             if ($parserErrors.Count -gt 0) { throw 'Packaged Windows script syntax invalid' }
           }
+      - name: Smoke-test packaged Begin and Finish using ephemeral Registry32 adapter
+        shell: pwsh
+        run: |
+          # Disposable GitHub-hosted Windows runner only, with no real
+          # diagnostic client and no native ECU. The installed key belongs
+          # exclusively to the virtual adapter and is removed in finally.
+          $root = (Resolve-Path -LiteralPath native-input).Path
+          $keyName = 'SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car'
+          $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            [Microsoft.Win32.RegistryView]::Registry32)
+          try {
+            $existing = $base.OpenSubKey($keyName, $false)
+            if ($null -ne $existing) {
+              $existing.Close()
+              throw 'Unexpected existing virtual adapter registry entry on disposable runner'
+            }
+          } finally { $base.Close() }
+          $previousTemp = $env:TEMP
+          $privateTemp = Join-Path $env:RUNNER_TEMP 'p2-private-empty-log'
+          [void][IO.Directory]::CreateDirectory($privateTemp)
+          $env:TEMP = $privateTemp
+          $session = Join-Path $env:RUNNER_TEMP 'p2-packaged-begin-finish-test'
+          try {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1')
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged virtual J2534 registration failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Begin -SessionDirectory $session
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Begin failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Finish -SessionDirectory $session -IConfirmClientClosed
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Finish failed' }
+            $safe = Join-Path $session 'SAFE-JSON-REPORTS'
+            $files = @(Get-ChildItem -LiteralPath $safe -File)
+            $note = Get-Content -LiteralPath (Join-Path $safe 'client-boundary.json') -Raw | ConvertFrom-Json
+            if ($files.Count -ne 2 -or
+                $note.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+                $note.new_native_records_observed -ne $false -or
+                $note.client_ecu_inventory_verified -ne $false) {
+              throw 'Packaged Begin-Finish no-log result misclassified real client acceptance'
+            }
+          } finally {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\uninstall.ps1')
+            $env:TEMP = $previousTemp
+          }
       - name: Actual x86 DLL route regression in an isolated synthetic profile
         shell: pwsh
         run: |
