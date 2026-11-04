@@ -1668,7 +1668,36 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
+                if(s->Parameter==1 && c->baud!=s->Value){
+                    /* A 125/500 kbit/s CAN switch invalidates all queued
+                       frames and staged D2/ISO-TP replies from the OLD bus.
+                       Otherwise a delayed B9FB tail or pending CF could
+                       appear after the client changed CAN networks.
+                       Keep other J2534 channels and installed RX filters
+                       untouched. Never report discarded RX as delivered. */
+                    if(c->protocol==PROTO_CAN){
+                        U8 transition[12];U32 k,now_tick=GetTickCount();
+                        u32_be(transition,id);
+                        u32_be(transition+4,c->baud);
+                        u32_be(transition+8,s->Value);
+                        backend_cancel_channel(c,"data_rate_changed",0);
+                        c->r=c->w=c->count=0;
+                        c->d2_count=c->d2_pos=0;c->d2_trace=0;
+                        c->d2_next_us=0;c->d2_response_id=0;
+                        c->pending_len=c->pending_pos=0;
+                        c->pending_id=c->pending_request_id=0;
+                        c->pending_trace=0;
+                        c->pending_next_us=0;c->pending_stmin_us=0;
+                        c->pending_cf_active=c->pending_cf_credit=0;
+                        bytes_zero(c->queue_d2_gen,sizeof(c->queue_d2_gen));
+                        c->passive_next_tick=now_tick+g_passive_period_ms;
+                        for(k=0;k<MAX_PASSIVE_TRACES;k++)
+                            c->trace_next_tick[k]=now_tick+g_trace[k].period_ms+(k%4)*3u;
+                        logline("CAN DATA_RATE changed: old-bus RX cancelled (channel/old/new BE)",
+                                transition,12);
+                    }
+                    c->baud=s->Value;
+                }
                 log_set_config(id,s->Parameter,s->Value);
             }
             if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
