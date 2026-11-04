@@ -226,6 +226,7 @@ def prepare(source, ui=None):
         "format": FORMAT, "read_only": True, "contains_payload_data": False,
         "raw_log_exported": False, "client_run_executed_by_tool": False,
         "native_log_diagnostic_scope": "one_supplied_local_file",
+        "new_native_records_observed": bool(source),
         "single_native_process_label_observed": single_process_source,
         "native_executable_label_family": native_family,
         "operator_client_native_label_comparison": label_comparison,
@@ -277,7 +278,28 @@ def prepare(source, ui=None):
     return reports
 
 
-def _read_private_suffix(path, offset, expected_prefix):
+def _no_new_native_reports(ui):
+    """Publish absence of newly observed records, never a client verdict.
+
+    Even when Begin/Finish successfully checked an unchanged native log,
+    absence cannot distinguish a client not started, adapter not selected,
+    DLL not loaded, a different TEMP directory, or a logging failure.
+    """
+    reports = prepare("", ui=ui)
+    limited = {name: reports[name] for name in OUTPUTS}
+    note = limited["client-boundary.json"]
+    note["diagnostic_focus"] = "no_new_native_j2534_records_observed"
+    note["native_log_diagnostic_scope"] = "verified_begin_finish_no_new_bytes"
+    note["native_p2_report_status"] = "unavailable_no_new_native_records"
+    note["native_p2_single_closed_epoch"] = False
+    note["new_native_records_observed"] = False
+    note["limitations"].append(
+        "No appended J2534 bytes: client execution, adapter selection, DLL load, "
+        "log path and logging operation cannot be independently inferred.")
+    return limited
+
+
+def _read_private_suffix(path, offset, expected_prefix, allow_empty=False):
     """Read only newly appended native bytes; reject rotation or truncation.
 
     The historical prefix digest never leaves the private caller state.
@@ -288,8 +310,14 @@ def _read_private_suffix(path, offset, expected_prefix):
     if (not isinstance(expected_prefix, str) or
             re.fullmatch(r"[0-9a-fA-F]{64}", expected_prefix) is None):
         raise ValueError("invalid_original_digest")
+    if not path.is_file():
+        if (allow_empty and offset == 0
+                and expected_prefix.lower() == hashlib.sha256(b"").hexdigest()
+                and not path.exists()):
+            return None
+        raise ValueError("native_log_unavailable_or_not_file")
     stat = path.stat()
-    if stat.st_size <= offset or stat.st_size - offset > MAX_BYTES:
+    if stat.st_size < offset or stat.st_size - offset > MAX_BYTES:
         raise ValueError("no_bounded_appended_session")
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -302,6 +330,10 @@ def _read_private_suffix(path, offset, expected_prefix):
             unread -= len(block)
         if digest.hexdigest() != expected_prefix.lower():
             raise ValueError("old_log_prefix_changed")
+        if stat.st_size == offset:
+            if allow_empty:
+                return None
+            raise ValueError("no_appended_native_records")
         # This DLL writes complete CRLF-terminated native log lines. If
         # the prior file ended mid-line, appending creates a synthetic
         # merged entry and cannot be source-attributed safely.
@@ -332,6 +364,9 @@ def main(argv=None):
                    help="Private pre-client file length; checks only appended bytes")
     p.add_argument("--prefix-sha256", default=None,
                    help="Private SHA256 of the exact pre-client byte prefix")
+    p.add_argument("--allow-empty-append", action="store_true",
+                   help="For a verified Begin/Finish snapshot only: export a "
+                        "negative-evidence report if no new J2534 bytes exist")
     p.add_argument("--output-dir", type=Path, required=True,
                    help="New directory; existing output is never overwritten")
     args = p.parse_args(argv)
@@ -346,6 +381,8 @@ def main(argv=None):
             raise ValueError("overlapping_paths")
         if (args.offset_bytes is None) != (args.prefix_sha256 is None):
             raise ValueError("offset_and_digest_required_together")
+        if args.allow_empty_append and args.offset_bytes is None:
+            raise ValueError("empty_append_requires_private_begin_snapshot")
         if args.offset_bytes is None and args.native_log.stat().st_size > MAX_BYTES:
             raise ValueError("input_too_large")
         if args.ui is not None and args.ui.stat().st_size > 4096:
@@ -356,11 +393,13 @@ def main(argv=None):
         # suffix may bypass the whole-file size limit. The caller must
         # have recorded byte offset + digest before launching the client.
         source = (_read_private_suffix(args.native_log, args.offset_bytes,
-                                      args.prefix_sha256)
+                                      args.prefix_sha256,
+                                      allow_empty=args.allow_empty_append)
                   if args.offset_bytes is not None
                   else args.native_log.read_text(encoding="utf-8-sig",
                                                 errors="replace"))
-        reports = prepare(source, ui=ui)
+        reports = (_no_new_native_reports(ui) if source is None
+                   else prepare(source, ui=ui))
         output = {name: json.dumps(value, indent=2, sort_keys=True,
                                    ensure_ascii=False) + "\n"
                   for name, value in reports.items()}
@@ -384,7 +423,7 @@ def main(argv=None):
                 pass
         print("Private client capture rejected; details withheld", file=sys.stderr)
         return 2
-    print("PASS: read-only sanitized client-session boundary; ECU acceptance unknown")
+    print("PASS: sanitized client-session boundary or explicit no-new-J2534-evidence report; ECU acceptance unknown")
     return 0
 
 
