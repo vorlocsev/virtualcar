@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Prepare a private, read-only client-session diagnostic bundle.
+
+Run AFTER closing an authorized SectorV/VDASH read-only client session.
+This tool does not run a client, execute a DLL or infer ECU acceptance.
+The native J2534 log is kept private; only allowlisted JSON is exported.
+"""
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import sys
+
+from audit_j2534_connect import audit as audit_connect
+from audit_j2534_discovery import audit as audit_discovery
+from prepare_p2_capture import prepare as prepare_p2
+
+FORMAT = "virtualcar-p2-client-capture-boundary-v1"
+UI_FORMAT = "virtualcar-p2-client-ui-observation-v1"
+MAX_BYTES = 4 * 1024 * 1024
+OUTPUTS = ("connect-summary.json", "client-boundary.json")
+CLIENTS = frozenset(("sectorv", "vdash_2_0", "vdash_2_5_115_79", "other"))
+ECU_LIST = frozenset(("unknown", "empty", "nonempty"))
+VIN_STATE = frozenset(("unknown", "visible", "not_visible"))
+ALLOWED_UI_KEYS = frozenset((
+    "format", "client", "virtual_adapter_selected",
+    "scan_finished", "vin_display", "ecu_list",
+    "same_run_operator_attested",
+))
+
+
+def _ui(document):
+    """Reject unknown fields rather than accidentally exporting secrets."""
+    if not isinstance(document, dict) or set(document) != ALLOWED_UI_KEYS:
+        raise ValueError("invalid_ui_fields")
+    if (document["format"] != UI_FORMAT
+            or document["client"] not in CLIENTS
+            or document["ecu_list"] not in ECU_LIST
+            or document["vin_display"] not in VIN_STATE):
+        raise ValueError("invalid_ui_enums")
+    for key in ("virtual_adapter_selected", "scan_finished"):
+        if document[key] is not None and type(document[key]) is not bool:
+            raise ValueError("invalid_ui_milestone")
+    if type(document["same_run_operator_attested"]) is not bool:
+        raise ValueError("invalid_ui_attestation")
+    return document
+
+
+def _category(tx):
+    # Do not export UDS DIDs, RX identifiers, timestamps or process labels.
+    route, service = tx.get("route"), tx.get("service")
+    if route == "OBD":
+        return "obd_vin_request" if service == "0902" else "other_obd"
+    if route == "D2":
+        return ("d2_b9fb" if service == "B9FB" else
+                "d2_b9f0" if service == "B9F0" else
+                "d2_other")
+    if route == "P3":
+        return "p3_did_read" if isinstance(service, str) and service.startswith("22") else "p3_other"
+    return "unclassified"
+
+
+def _counts(records):
+    counts = Counter()
+    for row in records:
+        if not isinstance(row, dict):
+            raise ValueError("invalid_discovery_row")
+        family = _category(row)
+        status = row.get("status")
+        if status not in ("delivered", "unverified", "unsupported", "no_fixture",
+                          "partial_rx", "negative_response", "timeout"):
+            status = "other"
+        counts[(family, status)] += 1
+    # A fixed allowlist of category labels, no raw CAN value or private DID.
+    return [
+        {"family": family, "transport_status": status, "count": count}
+        for (family, status), count in sorted(counts.items())
+    ]
+
+
+def prepare(source, ui=None):
+    if not isinstance(source, str) or len(source.encode("utf-8")) > MAX_BYTES:
+        raise ValueError("invalid_native_source_size")
+    if ui is not None:
+        ui = _ui(ui)
+    lines = source.splitlines()
+    connect = audit_connect(lines)
+    discovery = audit_discovery(lines, include_obd=True)
+    rows = discovery["transactions"]
+    obd = discovery["obd_observation"]
+    p2 = None
+    p2_problem = None
+    # A missing B9FB is a meaningful failure boundary and MUST still yield
+    # a connection/discovery report, rather than rejecting all diagnostics.
+    try:
+        p2 = prepare_p2(source)
+    except ValueError:
+        p2_problem = "native_p2_evidence_not_comparable"
+
+    p2_summary = p2["capture-summary.json"] if p2 is not None else None
+    f0 = (p2_summary["b9f0_native_transport_audit"]
+          if p2_summary is not None else None)
+    native_clean = bool(
+        p2_summary is not None
+        and p2_summary["native_epochs"] == 1
+        and p2_summary["all_native_epochs_closed"] is True
+        and p2_summary["native_tx_rx_context_complete"] is True
+        and not p2_summary["native_chronology_parse_errors"]
+        and not p2_summary["native_followup_parse_errors"]
+        and not f0["parser_error_counts"])
+    requested = [row for row in rows if row.get("route") in ("D2", "P3")]
+    has_d2_b9fb = any(row.get("route") == "D2"
+                      and row.get("service") == "B9FB" for row in requested)
+    has_d2_b9f0 = any(row.get("route") == "D2"
+                      and row.get("service") == "B9F0" for row in requested)
+    b9fb_done = (p2_summary["b9fb_transport_completions_observed"]
+                  if p2_summary is not None else 0)
+    b9f0_positive = (f0["status_counts"].get("positive_transport_complete", 0)
+                      if f0 is not None else 0)
+    p3_after_f0 = (f0["post_positive_first_next_tx_service_counts"].get(
+        "p3_read_data_by_identifier", 0) if f0 is not None else 0)
+    p3_positive = (f0["post_positive_first_p3_positive_transport_count"]
+                   if f0 is not None else 0)
+    connect_attempts = connect["connect"]["attempts"]
+    connect_ok = connect["connect"]["statuses"].get("ok", 0)
+    any_errors = (bool(discovery["parse_errors"])
+                  or connect["connect"]["invalid_events"] > 0)
+    if any_errors:
+        focus = "invalid_native_source_or_connect_metadata"
+    elif connect_attempts == 0:
+        focus = "no_virtual_adapter_connect_attempt_observed"
+    elif connect_ok == 0:
+        focus = "virtual_adapter_connect_failed"
+    elif not has_d2_b9fb:
+        focus = "no_native_b9fb_request_observed"
+    elif not native_clean:
+        focus = "native_p2_source_incomplete_or_unverifiable"
+    elif not b9fb_done:
+        focus = "b9fb_no_completed_positive_transport"
+    elif not has_d2_b9f0:
+        focus = "no_b9f0_request_after_b9fb"
+    elif not b9f0_positive:
+        focus = "no_positive_b9f0_transport"
+    elif not p3_after_f0:
+        focus = "no_first_p3_read_after_positive_b9f0"
+    elif not p3_positive:
+        focus = "first_p3_did_read_has_no_positive_transport"
+    elif ui is not None and ui["same_run_operator_attested"] and ui["ecu_list"] == "empty":
+        focus = "transport_positive_but_operator_reports_empty_ecu_list"
+    elif ui is not None and ui["same_run_operator_attested"] and ui["ecu_list"] == "nonempty":
+        focus = "operator_reports_nonempty_ecu_list_identity_unverified"
+    else:
+        focus = "native_transport_positive_client_ui_result_unknown"
+
+    note = {
+        "format": FORMAT, "read_only": True, "contains_payload_data": False,
+        "raw_log_exported": False, "client_run_executed_by_tool": False,
+        "native_log_diagnostic_scope": "one_supplied_local_file",
+        "connect_attempts": connect_attempts,
+        "connect_succeeded": connect_ok,
+        "obd_vin_requests": obd["vin_requests"],
+        "obd_vin_transport_deliveries": obd["vin_delivered"],
+        "transport_family_counts": _counts(rows),
+        "native_p2_report_status": (
+            "available" if p2 is not None else p2_problem),
+        "native_p2_single_closed_epoch": native_clean,
+        "b9fb_positive_transport_count": b9fb_done,
+        "b9f0_positive_transport_count": b9f0_positive,
+        "first_p3_after_b9f0_observed_count": p3_after_f0,
+        "first_p3_positive_transport_count": p3_positive,
+        "reported_client": ui["client"] if ui is not None else "unreported",
+        "ui_vin_display_reported": ui["vin_display"] if ui is not None else "unknown",
+        "ui_ecu_list_reported": ui["ecu_list"] if ui is not None else "unknown",
+        "ui_scan_finished_reported": ui["scan_finished"] if ui is not None else None,
+        "ui_adapter_selected_reported": ui["virtual_adapter_selected"] if ui is not None else None,
+        "same_run_operator_attested": (ui["same_run_operator_attested"]
+                                       if ui is not None else False),
+        "same_run_independently_verified": False,
+        "client_ecu_inventory_verified": False,
+        "vehicle_identity_verified": False,
+        "xc90_v8_my2009_verified": False,
+        "diagnostic_focus": focus,
+        "limitations": [
+            "J2534 native log and operator UI observation have no independently shared authenticated run ID.",
+            "A positive native B9FB, B9F0 or P3 transport does not establish diagnostic-client acceptance.",
+            "UI list state is an operator report, not independently verified ECU identity.",
+            "No VIN, DID, hardware identifiers, process ID, client account, raw CAN bytes or source path is exported.",
+            "The source may stop before B9FB, in which case the P2 report is not invented.",
+        ],
+    }
+    reports = {
+        "connect-summary.json": connect,
+        "client-boundary.json": note,
+    }
+    if p2 is not None:
+        # Reuse the unchanged strict three native, private source-local
+        # reports instead of recreating/softening the cross-audit evidence.
+        reports.update(p2)
+    return reports
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("native_log", type=Path)
+    p.add_argument("--ui", type=Path, default=None,
+                   help="Optional operator-only enum observation file")
+    p.add_argument("--output-dir", type=Path, required=True,
+                   help="New directory; existing output is never overwritten")
+    args = p.parse_args(argv)
+    created = []
+    made = False
+    try:
+        sources = [args.native_log.resolve()]
+        if args.ui is not None:
+            sources.append(args.ui.resolve())
+        target = args.output_dir.resolve()
+        if len(set(sources)) != len(sources) or target in sources:
+            raise ValueError("overlapping_paths")
+        if args.native_log.stat().st_size > MAX_BYTES:
+            raise ValueError("input_too_large")
+        if args.ui is not None and args.ui.stat().st_size > 4096:
+            raise ValueError("ui_too_large")
+        ui = (json.loads(args.ui.read_text(encoding="utf-8-sig"))
+              if args.ui is not None else None)
+        reports = prepare(args.native_log.read_text(encoding="utf-8-sig",
+                                                    errors="replace"), ui=ui)
+        output = {name: json.dumps(value, indent=2, sort_keys=True,
+                                   ensure_ascii=False) + "\n"
+                  for name, value in reports.items()}
+        args.output_dir.mkdir(mode=0o700, parents=False, exist_ok=False)
+        made = True
+        for name in sorted(output):
+            path = args.output_dir / name
+            with path.open("x", encoding="utf-8") as f:
+                created.append(path)
+                f.write(output[name])
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError):
+        for path in created:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        if made:
+            try:
+                args.output_dir.rmdir()
+            except OSError:
+                pass
+        print("Private client capture rejected; details withheld", file=sys.stderr)
+        return 2
+    print("PASS: read-only sanitized client-session boundary; ECU acceptance unknown")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
