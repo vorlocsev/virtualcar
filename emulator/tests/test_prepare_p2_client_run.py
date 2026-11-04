@@ -22,6 +22,8 @@ from test_native_p2_p3_single_run_gate import p3_tx
 P3_POS = bytes.fromhex("62 F1 14 41")
 GOOD_CONNECT = [
     marker("PassThruOpen -> device 1"),
+    marker("J2534 Connect bound channel/protocol/flags/baud (BE)",
+           words(1, 5, 0x800, 500000)),
     marker("J2534 Connect result protocol/flags/baud/status (BE)",
            words(5, 0x800, 500000, 0)),
 ]
