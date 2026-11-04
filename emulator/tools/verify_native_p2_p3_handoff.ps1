@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [switch]$CompositeLocked,
     [switch]$PayloadFilterProbe,
-    [switch]$BaudSwitchProbe
+    [switch]$BaudSwitchProbe,
+    [switch]$SwitchedPinProbe
 )
 $ErrorActionPreference = 'Stop'
 if ([IntPtr]::Size -ne 4) {
@@ -17,6 +18,7 @@ if ([IntPtr]::Size -ne 4) {
     if ($CompositeLocked) { $forward += '-CompositeLocked' }
     if ($PayloadFilterProbe) { $forward += '-PayloadFilterProbe' }
     if ($BaudSwitchProbe) { $forward += '-BaudSwitchProbe' }
+    if ($SwitchedPinProbe) { $forward += '-SwitchedPinProbe' }
     & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" @forward
     if ($LASTEXITCODE -ne 0) { throw 'Isolated x86 handoff process failed' }
     exit 0
@@ -75,6 +77,7 @@ public static class NativeP2P3Handoff {
     static readonly bool CompositeLocked=__COMPOSITE_LOCKED__;
     static readonly bool PayloadFilterProbe=__PAYLOAD_FILTER_PROBE__;
     static readonly bool BaudSwitchProbe=__BAUD_SWITCH_PROBE__;
+    static readonly bool SwitchedPinProbe=__SWITCHED_PIN_PROBE__;
     [StructLayout(LayoutKind.Sequential)]
     public struct ConfigItem {
         public uint Parameter,Value;
@@ -184,6 +187,63 @@ public static class NativeP2P3Handoff {
             Check(PassThruIoctlConfig(channel,2,ref list,IntPtr.Zero)==0,
                   "Native CAN SET_CONFIG DATA_RATE rejected");
         } finally {Marshal.FreeHGlobal(one);}
+    }
+    static void ConfigurePins(uint channel,uint pins) {
+        IntPtr one=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(ConfigItem)));
+        try {
+            ConfigItem item=new ConfigItem {Parameter=0x8001u,Value=pins};
+            Marshal.StructureToPtr(item,one,false);
+            ConfigList list=new ConfigList {NumOfParams=1,ConfigPtr=one};
+            Check(PassThruIoctlConfig(channel,2,ref list,IntPtr.Zero)==0,
+                  "Native PS J1962_PINS SET_CONFIG rejected");
+        } finally {Marshal.FreeHGlobal(one);}
+    }
+    static void VerifySwitchedPins(uint device,uint standardIso) {
+        uint psCan=0,psIso=0,bad=0;
+        byte[] b9fb=new byte[]{0xCB,0x50,0xB9,0xFB,0,0,0,0};
+        Check(PassThruConnect(device,0x8004u,0,500000,out psCan)==0 && psCan!=0,
+              "Native J2534-2 CAN_PS Connect failed");
+        try {
+            Msg unbound=Request(0x8004u,0x000FFFFEu,b9fb);
+            uint one=1;
+            Check(PassThruWriteMsgs(psCan,ref unbound,ref one,0)==8 && one==0,
+                  "Native unpinned CAN_PS channel leaked TX");
+            ConfigurePins(psCan,0x060Eu);
+            Write(psCan,0x8004u,0x000FFFFEu,b9fb);
+            Msg first=Read(psCan,0x8004u,0x01200003u,300);
+            Check(first.Data[4]==0x8F && first.Data[7]==0xFB,
+                  "Native HS CAN_PS B9FB transport mismatch");
+            ConfigurePins(psCan,0x030Bu);
+            RequireNoRxFor(psCan,200,
+                  "Native PS pin rebind leaked old HS CEM response");
+            ChangeCanRate(psCan,125000);
+            Write(psCan,0x8004u,0x000FFFFEu,b9fb);
+            RequireNoRxFor(psCan,110,
+                  "Native LS 3/11 channel fabricated an HS CEM reply");
+            ChangeCanRate(psCan,500000);
+            ConfigurePins(psCan,0x060Eu);
+            Write(psCan,0x8004u,0x000FFFFEu,b9fb);
+            Msg fresh=Read(psCan,0x8004u,0x01200003u,300);
+            Check(fresh.Data[4]==0x8F,
+                  "Native CAN_PS did not allow a fresh bound HS B9FB");
+            Check(PassThruConnect(device,0x8005u,0,500000,out psIso)==0 && psIso!=0,
+                  "Native J2534-2 ISO15765_PS Connect failed");
+            ConfigurePins(psIso,0x060Eu);
+            Write(psIso,0x8005u,0x726u,new byte[]{0x22,0xF1,0x14});
+            Msg iso=Read(psIso,0x8005u,0x72Eu,300);
+            Check(iso.Data[4]==0x62 && iso.Data[5]==0xF1 && iso.Data[6]==0x14,
+                  "Native ISO15765_PS F114 synthetic response mismatch");
+            Check(PassThruConnect(device,0x10000001u,0,500000,out bad)==3,
+                  "Unsupported vendor-specific protocol was silently aliased");
+            Write(standardIso,6,0x726u,new byte[]{0x22,0xF1,0x14});
+            Msg independent=Read(standardIso,6,0x72Eu,300);
+            Check(independent.Data[4]==0x62,
+                  "Existing ISO15765 channel affected by PS pin routing");
+            Console.WriteLine("PASS: native x86 J2534-2 CAN_PS/ISO15765_PS explicit pins and isolation");
+        } finally {
+            if(psIso!=0)Check(PassThruDisconnect(psIso)==0,"PS ISO disconnect failed");
+            Check(PassThruDisconnect(psCan)==0,"PS CAN disconnect failed");
+        }
     }
     static void VerifyBaudSwitch(uint d2,uint p3) {
         byte[] b9fb=new byte[]{0xCB,0x50,0xB9,0xFB,0,0,0,0};
@@ -297,6 +357,10 @@ public static class NativeP2P3Handoff {
                 VerifyBaudSwitch(d2,p3);
                 return;
             }
+            if(SwitchedPinProbe) {
+                VerifySwitchedPins(device,p3);
+                return;
+            }
             Write(d2,5,0x000FFFFE,new byte[]{0xCB,0x50,0xB9,0xFB,0,0,0,0});
             Console.WriteLine("PASS 3/8: B9FB request accepted by native DLL");
             byte[] controls=new byte[]{0x8F,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,
@@ -365,6 +429,8 @@ public static class NativeP2P3Handoff {
                             $(if ($PayloadFilterProbe) { 'true' } else { 'false' }))
     $source=$source.Replace('__BAUD_SWITCH_PROBE__',
                             $(if ($BaudSwitchProbe) { 'true' } else { 'false' }))
+    $source=$source.Replace('__SWITCHED_PIN_PROBE__',
+                            $(if ($SwitchedPinProbe) { 'true' } else { 'false' }))
     Add-Type -TypeDefinition $source -Language CSharp
     [NativeP2P3Handoff]::Run()
     $nativeLog=Join-Path $directory 'SectorVVirtualCar.log'
@@ -375,6 +441,8 @@ public static class NativeP2P3Handoff {
         Write-Output 'PASS: isolated compiled x86 J2534 CAN PASS/BLOCK payload mask probe'
     } elseif ($BaudSwitchProbe) {
         Write-Output 'PASS: isolated x86 J2534 CAN 125/500k DATA_RATE old-bus response isolation probe'
+    } elseif ($SwitchedPinProbe) {
+        Write-Output 'PASS: isolated native x86 J2534-2 PS pin-binding and channel-isolation probe'
     } elseif ($CompositeLocked) {
         Write-Output 'PASS: unapproved mixed-origin x86 D2 silent; independent synthetic P3 read remains available'
     } else {
