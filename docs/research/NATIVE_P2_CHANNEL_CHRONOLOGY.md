@@ -98,3 +98,52 @@ The following remain unverified by the evidence available now:
 
 No Virtual Car release is created, PR #39 stays Draft and the
 core CEM response path is unchanged.
+
+
+## First later A3 without collapsing the full native session
+
+The full synthetic native x86 audit in CI run 41760184039 contains
+two B9FB requests (one complete, one deliberately unanswered) and
+three separate A3 requests. A correct whole-session chronology is
+therefore multiple_candidates_no_unique_pairing; this does not
+invalidate a narrower **first-later-A3 observation** after the first
+completed B9FB.
+
+The v2 chronology report now includes first_completed_b9fb_to_later_a3:
+
+- The first completed B9FB event in a single PID/native epoch is
+  considered independently of overall session ambiguity.
+- Select only the first **A3 request** occurring later in source
+  order. It is NOT necessarily the first *application TX*: the
+  independent followup audit is still needed to prove that.
+- A second B9FB TX between the completed event and that A3,
+  different channel, changed channel generation after Disconnect,
+  different CEM target, different baud, corrupted native context,
+  or unverifiable source-local clock prevents a matched/timed
+  correlation.
+- Only when all checks pass does the v2 report mark status
+  same_channel_target_timed, with source event order numbers
+  and the source-clock gap in milliseconds.
+- The report continues to expose the previous conservative
+  whole-session outcome and never claims ECU access or client
+  VIN acceptance.
+
+New emulator/tools/verify_native_p2_first_a3.py compares the
+two already-redacted native outputs: the whole-channel chronology
+and the independent first-next-TX timing audit. It requires their
+first-A3 timing and channel/target results to agree, while
+explicitly retaining whole-session ambiguity. A fixed, allowlisted
+correlation JSON is produced; no raw native trace is uploaded.
+
+Eight synthetic regression groups test a full multirequest session,
+A3-before-B9FB, A3 during delivery, different channel/target,
+channel reuse and intervening B9FB, malformed metadata and
+clock bound, agreement of two independent sanitized reports,
+tampering detection and output no-overwrite. These checks run
+in the existing Windows x86 CI.
+
+**Evidence boundary:** the previous native DLL-only measurement
+of 0.520ms in run 41760184039 is a synthetic client/harness
+measurement. Even a successful cross-report check cannot
+establish the sequence or timing of historical SectorV run 188,
+nor identify the correct A3/E3 security access response.
