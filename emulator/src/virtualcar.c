@@ -167,6 +167,7 @@ typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
     FILTER filters[MAX_FILTERS]; U32 filters_count;
+    U32 explicit_can_filters_cleared; /* sticky until channel disconnect */
     U32 passive_next_tick;
     U32 trace_next_tick[MAX_PASSIVE_TRACES];
     U64 d2_next_us;
@@ -966,6 +967,11 @@ static CHANNEL *channel(U32 id){U32 i;for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used
    A strict no-filter default remains future work since GUI self-tests rely on it. */
 static int filter_allows(const CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
     U8 idbytes[4];U32 i,j;int has_pass=0,matched_pass=0;
+    /* Historical untouched CAN channels allow unfiltered synthetic RX.
+       Explicit CLEAR_MSG_FILTERS is different: J2534 specifies that
+       no NEW RX frames are queued until a PASS_FILTER is added. */
+    if(c->protocol==PROTO_CAN && c->explicit_can_filters_cleared &&
+       c->filters_count==0)return 0;
     u32_be(idbytes,response_id);
     for(i=0;i<c->filters_count;i++){
         const FILTER *f=&c->filters[i];
@@ -982,6 +988,8 @@ static int filter_allows(const CHANNEL *c,U32 response_id,const U8 *payload,U32 
         if(f->type==2 && matched)return 0;
         if(f->type==1 || f->type==3){has_pass=1;if(matched)matched_pass=1;}
     }
+    if(c->protocol==PROTO_CAN && c->explicit_can_filters_cleared && !has_pass)
+        return 0;
     return !has_pass || matched_pass;
 }
 static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,U32 status) {
@@ -1644,7 +1652,13 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
          logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 CLEAR_RX_BUFFER: queued and staged D2 dropped",0,0);
         unlock_state();return error(ERR_OK);}
-    if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
+    if(ioctl==IO_CLEAR_MSG_FILTERS){
+        c->filters_count=0;
+        if(c->protocol==PROTO_CAN)c->explicit_can_filters_cleared=1;
+        /* Do not erase already queued responses: CLEAR_MSG_FILTERS
+           controls filtering of subsequent incoming frames. */
+        unlock_state();return error(ERR_OK);
+    }
     if(ioctl==IO_CLEAR_PERIODIC_MSGS){bytes_zero(c->periodic,sizeof(c->periodic));unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
