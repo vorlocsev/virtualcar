@@ -24,6 +24,13 @@ REQUIRED_RUNTIME = (
     "tools/prepare_p2_client_run.py",
     "docs/research/P2_REAL_CLIENT_CAPTURE_WORKFLOW_RU.md",
     "README_CLIENT_CAPTURE_RU.md",
+    "scripts/Select-P2ClientTrialProfile.ps1",
+    "profiles/p2-trial-00-no-d2.ini",
+    "profiles/p2-trial-01-public-b9fb-only.ini",
+    "profiles/p2-trial-02-mixed-b9fb-b9f0-locked.ini",
+    "tools/compare_p2_client_trials.py",
+    "tools/audit_p2_d2_fixture_provenance.py",
+    "docs/research/P2_CLIENT_TRIAL_ABC_RU.md",
 )
 SCRIPT_MODULES = (
     "prepare_p2_client_run",
@@ -134,9 +141,47 @@ def audit(folder):
             not all(k in quickstart for k in (
                 "install.ps1", "Capture-P2ClientRun.ps1", "SectorV", "VDASH"))):
         raise ValueError("incomplete_operator_runbook")
+    # 9. Explicit A/B/C variants differ ONLY in source-labeled D2 fields;
+    #    the mixed donor replay must remain locked in distributed file.
+    from configparser import ConfigParser
+    profiles = []
+    for basename in (
+            "p2-trial-00-no-d2.ini",
+            "p2-trial-01-public-b9fb-only.ini",
+            "p2-trial-02-mixed-b9fb-b9f0-locked.ini"):
+        ini = folder / "profiles" / basename
+        p = ConfigParser(interpolation=None)
+        p.read_string(ini.read_text(encoding="utf-8-sig"))
+        profiles.append(p)
+    if (len({tuple(p["Vehicle"].items()) for p in profiles}) != 1
+            or len({tuple(p["ECU0"].items()) for p in profiles}) != 1
+            or len({tuple(p["ECU1"].items()) for p in profiles}) != 1
+            or [p.getint("D2_50", "B9FBFrameCount")
+                for p in profiles] != [0, 13, 13]
+            or profiles[2].getint("D2_50_B9F0", "FrameCount") != 3
+            or profiles[2].get("P2", "FixtureProvenance") !=
+            "local_composite_unverified_trace_import"
+            or profiles[2].get("P2", "AllowCompositeReplay") != "0"):
+        raise ValueError("unsafe_or_noncomparable_trial_profiles")
+    selector = (folder / "scripts/Select-P2ClientTrialProfile.ps1"
+                ).read_text(encoding="utf-8-sig")
+    comparator = (folder / "tools/compare_p2_client_trials.py"
+                  ).read_text(encoding="utf-8-sig")
+    compile(ast.parse(comparator), "compare_p2_client_trials.py", "exec")
+    if (not all(k in selector for k in
+                ("IConfirmClientsClosed", "IUnderstandExperimentalDonorData",
+                 "EnableCompositeReplay", "TrialProfileBackups"))
+            or "Start-Process" in selector):
+        raise ValueError("trial_selector_may_not_be_offline_or_explicit")
+    trial_guide = (folder / "docs/research/P2_CLIENT_TRIAL_ABC_RU.md"
+                   ).read_text(encoding="utf-8-sig")
+    if not all(k in trial_guide for k in
+               ("A_NoD2", "B_PublicB9FB", "C_MixedB9FB_B9F0",
+                "SAFE-JSON-REPORTS")):
+        raise ValueError("trial_guide_missing_safety_boundaries")
     return {
         "status": "offline_lab_distribution_structure_valid",
-        "checks_passed": 8,
+        "checks_passed": 9,
         "script_modules_present": len(visited),
         "source_checkout_required_for_runtime": False,
         "client_executed": False,
@@ -156,7 +201,7 @@ def main(argv=None):
         print("FAIL: extracted client lab distribution does not pass "
               "offline readiness checks", file=sys.stderr)
         return 2
-    print("PASS: 8/8 offline LAB ZIP layout and dependencies; "
+    print("PASS: 9/9 offline LAB ZIP layout, A/B/C safety and dependencies; "
           "no proprietary client acceptance implied")
     return 0
 
