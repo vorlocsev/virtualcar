@@ -32,7 +32,10 @@ The first TX can be on another channel: it remains an observation rather
 than being mistaken for a same-channel identity continuation. An unrelated
 TX takes precedence over any later recognized P3 request. ISO-TP Flow
 Control on a recognized P3 or OBD route is transport-only and is not counted
-as a fresh app TX or permitted to supersede an active request. A response
+as a fresh app TX or permitted to supersede an active request.
+This FC exclusion is limited to classic CAN and valid FC PCI bytes
+0x30/0x31/0x32; a raw ISO15765 J2534 UDS service 0x3E 0x80
+(TesterPresent) is still an application TX, not a Flow Control. A response
 observation ending at PassThruClose, EOF, explicit session marker,
 disconnect or CLEAR_RX_BUFFER does not prove a client timeout or silence.
 
