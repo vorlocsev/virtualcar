@@ -256,6 +256,29 @@ jobs:
               $connectBound.vehicle_identity_verified -ne $false) {
             throw 'Compiled x86 J2534 Connect channel did not precede B9FB on the same mode'
           }
+          # Adversarial modification of the *compiled DLL's actual lab*
+          # log: append another syntactically closed Open/Close cycle
+          # with the same native process label. One PID is not one
+          # device session, so B9FB Connect evidence must fail closed.
+          $nativeLog = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $duplicateLog = "$env:RUNNER_TEMP\native-reused-device-private.log"
+          Copy-Item -LiteralPath $nativeLog -Destination $duplicateLog
+          $opened = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruOpen -> device 1' | Select-Object -First 1).Line
+          $closed = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruClose' | Select-Object -Last 1).Line
+          if (-not $opened -or -not $closed) {
+            throw 'Compiled native log missing device cycle markers'
+          }
+          [IO.File]::AppendAllText($duplicateLog, "`r`n$opened`r`n$closed`r`n")
+          python emulator/tools/prepare_p2_client_run.py $duplicateLog --output-dir "$env:RUNNER_TEMP\native-multi-cycle-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Adversarial second-device-cycle safe report failed' }
+          $multi = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-multi-cycle-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($multi.native_b9fb_connect_channel_binding.status -ne 'multiple_native_device_cycles' -or
+              $multi.native_b9fb_connect_channel_binding.one_b9fb_bound_to_prior_successful_channel_connect -ne $false -or
+              $multi.native_b9fb_connect_channel_binding.native_device_open_count -ne 2 -or
+              $multi.diagnostic_focus -ne 'multiple_native_j2534_device_cycles' -or
+              $multi.client_ecu_inventory_verified -ne $false) {
+            throw 'Two device cycles in one PID incorrectly attributed B9FB Connect evidence'
+          }
           # An untrusted UI note about a NONEMPTY ECU list must NOT
           # override an explicitly unfinished scan, even when the
           # compiled DLL emits a full positive B9FB/B9F0/P3 chain.
@@ -335,6 +358,7 @@ jobs:
             ${{ runner.temp }}/native-p2-p3-handoff-gate.json
             ${{ runner.temp }}/p2-p3-handoff-safe/*.json
             ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/native-multi-cycle-safe/*.json
             ${{ runner.temp }}/p2-unfinished-client-safe/*.json
             ${{ runner.temp }}/native-composite-locked-safe/*.json
             ${{ runner.temp }}/p2-no-new-native-safe/*.json
