@@ -16,6 +16,7 @@ import sys
 from audit_j2534_connect import audit as audit_connect
 from audit_j2534_discovery import audit as audit_discovery, PREFIX
 from audit_native_j2534_lifecycle import audit as audit_lifecycle
+from audit_native_connect_b9fb_channel import audit as audit_connect_binding
 from prepare_p2_capture import prepare as prepare_p2
 
 FORMAT = "virtualcar-p2-client-capture-boundary-v1"
@@ -166,6 +167,7 @@ def prepare(source, ui=None):
     label_comparison = _client_label_comparison(ui, native_family)
     operator_gate = _operator_inventory_gate(ui, label_comparison)
     lifecycle = audit_lifecycle(source)
+    connect_binding = audit_connect_binding(source)
     connect = audit_connect(lines)
     discovery = audit_discovery(lines, include_obd=True)
     rows = discovery["transactions"]
@@ -237,6 +239,8 @@ def prepare(source, ui=None):
         focus = "virtual_adapter_connect_failed"
     elif not has_d2_b9fb:
         focus = "no_native_b9fb_request_observed"
+    elif not connect_binding["one_b9fb_bound_to_prior_successful_channel_connect"]:
+        focus = "b9fb_channel_connect_provenance_missing_or_invalid"
     elif not native_clean:
         focus = "native_p2_source_incomplete_or_unverifiable"
     elif not b9fb_done:
@@ -274,6 +278,7 @@ def prepare(source, ui=None):
             and ui is not None and ui["ecu_list"] != "unknown"),
         "native_executable_identity_verified": False,
         "native_device_lifecycle": lifecycle,
+        "native_b9fb_connect_channel_binding": connect_binding,
         "connect_attempts": connect_attempts,
         "connect_succeeded": connect_ok,
         "obd_vin_requests": obd["vin_requests"],
@@ -308,6 +313,7 @@ def prepare(source, ui=None):
             "Unrecognized native executable names are not guessed as SectorV or a particular VDASH build.",
             "A positive native B9FB, B9F0 or P3 transport does not establish diagnostic-client acceptance.",
             "One source PID can contain multiple PassThruOpen/PassThruClose cycles; their traffic is not one device session.",
+            "Aggregate Connect OK cannot be assigned to B9FB unless native successful Connect explicitly names the same channel, protocol and baud before application TX.",
             "UI list state is an operator report, not independently verified ECU identity.",
             "A UI ECU list requires an explicitly selected virtual adapter, completed scan, same-run attestation and a matching untrusted executable label before limited operator attribution.",
             "False or unknown adapter selection and scan completion never establish a finished diagnostic scan.",
