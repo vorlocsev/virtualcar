@@ -116,14 +116,14 @@ class P2D2FixtureSourceTests(unittest.TestCase):
             text = output.read_text(encoding="utf-8")
             self.assertIn("FixtureProvenance = local_composite_unverified_trace_import",
                           text)
-            self.assertIn("FixtureSourceClass = local_redacted_unverified", text)
+            self.assertIn("FixtureSourceClass = local_redaction_attempt_unverified", text)
             self.assertNotIn("FixtureProvenance = historical_public_", text)
             summary = tool.audit(text)
             self.assertEqual(summary["active_fixture_count"], 2)
             self.assertEqual(summary["global_provenance_claim"],
                              "local_composite_unverified")
             self.assertEqual(row(summary, "B9F0")["source_class"],
-                             "local_redacted_unverified")
+                             "local_redaction_attempt_unverified")
             self.assertEqual(row(summary, "B9FB")["source_class"],
                              "section_undeclared")
             self.assertIn("multi_section_sources_not_proven_same_donor",
