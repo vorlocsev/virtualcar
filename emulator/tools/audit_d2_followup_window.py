@@ -33,6 +33,16 @@ def _can12(data):
     return bytes.fromhex(data)
 
 
+def _native_message(text):
+    """Allow valid variable-sized native TX/RX, with D2 framing checked separately."""
+    values = text.strip().split()
+    if not 5 <= len(values) <= 4096:
+        return None
+    if not all(re.fullmatch(r"[0-9a-fA-F]{2}", val) for val in values):
+        return None
+    return bytes(int(val, 16) for val in values)
+
+
 def _gap(after, before):
     if not isinstance(after, int) or not isinstance(before, int):
         return None
@@ -197,10 +207,11 @@ def audit(source):
             continue
 
         if text.startswith("TX (app request)"):
-            raw = _can12(text[len("TX (app request)"):])
+            raw = _native_message(text[len("TX (app request)"):])
             ctx = s["tx_ctx"]
             s["tx_ctx"] = None
-            if raw is None or ctx is None or ctx[1] != 5:
+            if (raw is None or ctx is None or ctx[1] not in (5, 6)
+                    or (ctx[1] == 5 and len(raw) > 12)):
                 errors["unattributed_or_invalid_tx"] += 1
                 # A TX marker exists, but it cannot be correlated with a
                 # channel/timestamp. Never silently relabel it as "no TX".
@@ -221,7 +232,8 @@ def audit(source):
             old = s["active"].pop(channel, None)
             if old is not None:
                 incomplete += 1
-            if (req and req[0] == "D2" and req[1] == "B9FB"
+            if (protocol == 5 and len(raw) == 12
+                    and req and req[0] == "D2" and req[1] == "B9FB"
                     and req[2] in RESPONSE_IDS and
                     baud == (125000 if req[2] == 0x40 else 500000)):
                 if sum(len(value["active"]) + len(value["waiting"])
@@ -235,13 +247,22 @@ def audit(source):
             continue
 
         if text.startswith("PassThruReadMsgs -> delivered"):
-            raw = _can12(text[len("PassThruReadMsgs -> delivered"):])
+            raw = _native_message(text[len("PassThruReadMsgs -> delivered"):])
             ctx = s["rx_ctx"]
             s["rx_ctx"] = None
-            if raw is None or ctx is None or ctx[1] != 5:
+            if (raw is None or ctx is None or ctx[1] not in (5, 6)
+                    or (ctx[1] == 5 and len(raw) > 12)):
                 errors["unattributed_or_invalid_rx"] += 1
                 continue
-            channel, _, rx_status, baud, at = ctx
+            channel, protocol, rx_status, baud, at = ctx
+            if protocol == 6:
+                # A valid variable-length ISO15765 P3 response is not a
+                # malformed D2 8-byte CAN frame and cannot finish B9FB.
+                continue
+            if len(raw) != 12:
+                if channel in s["active"]:
+                    errors["invalid_d2_rx_size"] += 1
+                continue
             # Native J2534 RxStatus can describe a TX echo/indication or
             # an ISO-TP start indication. Neither is a reply from the ECU.
             # CAN_29BIT_ID (0x100) is valid metadata, not an indication.
@@ -311,6 +332,7 @@ def audit(source):
             "Within-window labels refer to the first logged TX, not proof that every bus frame was captured.",
             "Counters, allowlisted service labels and time gaps only; no VIN, CAN payload, paths or PID are exported.",
             "RX records with J2534 TX_MSG_TYPE, START_OF_MESSAGE or TX_INDICATION status are excluded from ECU RX framing.",
+            "Valid ISO15765 and shorter classic CAN records are not counted as malformed native contexts; only full 8-byte CAN D2 frames can complete B9FB.",
         ],
         "client_acceptance_verified": False,
         "same_run_with_sectorv_client_verified": False,
