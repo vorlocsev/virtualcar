@@ -151,6 +151,9 @@ jobs:
               $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
               $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
               $clientBoundary.native_p2_single_closed_epoch -ne $true -or
+              $clientBoundary.native_executable_label_family -ne 'unclassified_executable' -or
+              $clientBoundary.operator_client_native_label_comparison -ne 'no_operator_client_reported' -or
+              $clientBoundary.native_executable_identity_verified -ne $false -or
               $clientBoundary.client_ecu_inventory_verified -ne $false) {
             throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
           }
