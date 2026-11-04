@@ -119,6 +119,74 @@ def _cross_audit(chronology, followup):
     }
 
 
+
+def _bind_b9fb_b9f0_positive(chronology, followup, b9f0, agreement):
+    """Join independent B9FB order and B9F0 RX transport without ECU claims.
+
+    B9F0's standalone positive count is NEVER enough. The first later
+    B9F0 must be the direct same-channel/target/baud application request
+    after exactly one completed B9FB, in one closed native epoch, with
+    exactly one independently matched positive B9F0 transport response.
+    All per-PID data, CAN bytes and exact timestamps stay private.
+    """
+    epochs = chronology["epochs"]
+    records = b9f0["observations"]
+    if b9f0["request_count"] != len(records):
+        raise ValueError("independent_b9f0_records_disagree")
+    result = {
+        "status": "not_comparable",
+        "direct_b9fb_to_b9f0_request_cross_audit_verified": False,
+        "positive_b9f0_transport_bound_to_direct_first_read": False,
+        "genuine_cem_identity_verified": False,
+        "application_checksum_verified": False,
+        "client_b9f0_acceptance_verified": False,
+        "ecu_inventory_verified": False,
+        "limitations": [
+            "A single positive B9F0 frame count does not prove it follows the completed B9FB.",
+            "B9FB and B9F0 are joined only by one closed native epoch and independently checked request chronology.",
+            "B9F0 positive D2 transport does not prove a part number, VIN match, ECU acceptance or genuine Volvo hardware.",
+        ],
+    }
+    if len(epochs) != 1:
+        result["status"] = "multiple_or_missing_native_epochs"
+        return result
+    epoch = epochs[0]
+    if epoch["boundary"] != "passthru_close":
+        result["status"] = "native_epoch_not_closed"
+        return result
+    if (not epoch["channel_metadata_complete"]
+            or chronology["parse_events"] or followup["parse_errors"]
+            or b9f0["parse_errors"]):
+        result["status"] = "source_context_or_transport_invalid"
+        return result
+    if (epoch["b9fb_completed"] != 1
+            or followup["completed_b9fb_count"] != 1):
+        result["status"] = "not_exactly_one_completed_b9fb"
+        return result
+    if agreement["first_b9f0_cross_audit_status"] != (
+            "first_b9f0_same_channel_target_clock_agrees"):
+        result["status"] = "no_independent_direct_first_b9f0_request_pair"
+        return result
+    result["direct_b9fb_to_b9f0_request_cross_audit_verified"] = True
+    if (epoch["b9f0_requests_observed"] != 1
+            or b9f0["request_count"] != 1):
+        result["status"] = "multiple_or_unmatched_b9f0_requests"
+        return result
+    candidate = records[0]
+    first = followup["observations"][0]
+    if candidate["target"] != first["first_next_tx_target"]:
+        result["status"] = "b9f0_response_target_disagrees_with_direct_request"
+        return result
+    if (candidate["status"] == "positive_transport_complete"
+            and candidate["positive_echo_transport_complete"] is True):
+        result["status"] = "direct_positive_b9f0_transport_same_native_epoch"
+        result["positive_b9f0_transport_bound_to_direct_first_read"] = True
+    elif candidate["status"] == "negative_b9_service_reply":
+        result["status"] = "direct_negative_b9f0_service_reply"
+    else:
+        result["status"] = "direct_b9f0_transport_incomplete_or_unverified"
+    return result
+
 def prepare(source):
     if not isinstance(source, str) or len(source.encode("utf-8")) > MAX_INPUT_BYTES:
         raise ValueError("source_size_exceeded")
@@ -129,6 +197,8 @@ def prepare(source):
     if not epochs or not any(e["events"] for e in epochs):
         raise ValueError("no_native_p2_events")
     agreement = _cross_audit(chronology, followup)
+    b9fb_b9f0_binding = _bind_b9fb_b9f0_positive(
+        chronology, followup, b9f0, agreement)
     # A truncated log is still diagnostic evidence, just not evidence
     # of a completed capture. Do NOT silently upgrade EOF to PassThruClose.
     all_closed = all(e["boundary"] == "passthru_close" for e in epochs)
@@ -173,6 +243,7 @@ def prepare(source):
         "b9fb_requests_observed": b9fb_count,
         "b9fb_transport_completions_observed": completed,
         "cross_audit_consistency": agreement,
+        "b9fb_to_b9f0_same_epoch_positive_binding": b9fb_b9f0_binding,
         "chronology_outcomes": dict(chronology["outcome_counts"]),
         "native_chronology_parse_errors": dict(chronology["parse_events"]),
         "native_followup_parse_errors": dict(followup["parse_errors"]),
@@ -186,6 +257,7 @@ def prepare(source):
             "A log ending at EOF without PassThruClose is an incomplete capture.",
             "Same-channel TX/RX events do not establish B9FB semantic acceptance.",
             "B9F0 request order is audited separately from any matching B9F0 transport reply.",
+            "The new first-B9FB-to-B9F0 positive binding requires both independent order and B9F0 RX transport audits to agree in one closed epoch.",
             "A positive B9F0 echo and complete D2 framing do not verify part-number semantics, authentic ECU identity or client acceptance.",
             "A next application TX after B9F0 is not proof that the client enumerated any ECU.",
             "P3 DID response transport is validated with the shared ISO-TP UDS checker and does not verify a client-side ECU list.",
