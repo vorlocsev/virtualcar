@@ -205,11 +205,23 @@ def main():
     cfg.optionxform=str
     cfg.read(args.profile,encoding='utf-8')
     if not cfg.has_section('P2'):cfg.add_section('P2')
+    # A new read-only trace replaces at least one section, but the other
+    # sections may still be inherited from an unrelated historical source.
+    # An old global provenance value must NOT survive this composition.
+    # These fields describe untrusted local import workflow only.
+    cfg.set('P2','FixtureProvenance','local_composite_unverified_trace_import')
     if args.lab_vin:
         if not cfg.has_section('Vehicle'): cfg.add_section('Vehicle')
         cfg.set('Vehicle','VIN',args.lab_vin)
     section=f'D2_{args.target}' if opcode==0xFB else f'D2_{args.target}_B9{args.opcode}'
     if not cfg.has_section(section):cfg.add_section(section)
+    source_class=('local_private_raw_unverified' if args.keep_identifiers else
+                  'local_synthetic_vin_unverified' if args.lab_vin else
+                  'local_redacted_unverified')
+    cfg.set(section,'FixtureSourceClass',source_class)
+    cfg.set(section,'FixtureIdentityVerified','0')
+    cfg.set(section,'FixtureApplicationIntegrity','unknown')
+    cfg.set(section,'FixtureSingleClientRunVerified','0')
     cfg.set(section,'ResponseId',f'{can_id:08X}')
     for key in list(cfg[section]):
         if re.fullmatch(r'(B9FBFrame|Frame)[0-9A-F]{1,2}',key):cfg.remove_option(section,key)
@@ -224,6 +236,7 @@ def main():
         with args.output.open('x',encoding='utf-8') as f: cfg.write(f)
     except OSError:
         a.error('Unable to create new output; existing files are never overwritten')
+    print('Provenance: local unverified import; any inherited fixtures remain unverified composite data.')
     print(f'Imported: CEM 0x{target:02X} B9{opcode:02X}, {len(frames)} frames, RX CAN ID 0x{can_id:08X}')
     print(f'Wrote local P2 profile to {args.output}')
 
