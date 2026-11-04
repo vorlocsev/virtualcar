@@ -27,7 +27,8 @@ GOOD_CONNECT = [
 ]
 
 
-def session(*, include_b9fb=True, include_b9f0=True, include_p3=True):
+def session(*, include_b9fb=True, include_b9f0=True, include_p3=True,
+            native_label="SectorV.exe"):
     lines = GOOD_CONNECT[:]
     if include_b9fb:
         lines += tx(D2FB, at=1_000_000) + response(first=1_020_000)
@@ -37,7 +38,9 @@ def session(*, include_b9fb=True, include_b9f0=True, include_p3=True):
         lines += p3_tx(channel=2, protocol=6, at=1_202_000)
         lines += p3_rx(P3_POS, channel=2, protocol=6, at=1_222_000)
     lines += [marker("PassThruClose")]
-    return "\n".join(lines)
+    # The native logger records the basename of its host executable.
+    # All other data in these transport fixtures remain synthetic.
+    return "\n".join(lines).replace("PRIVATE_CLIENT", native_label)
 
 
 def ui(**changes):
@@ -80,7 +83,7 @@ class ClientCapturePreparationTests(unittest.TestCase):
         self.assertFalse(note["xc90_v8_my2009_verified"])
 
     def test_03_reported_empty_ui_suggests_check_client_projection(self):
-        note = tool.prepare(session(), ui(
+        note = tool.prepare(session(native_label="VDASH.exe"), ui(
             client="vdash_2_0", ecu_list="empty",
             same_run_operator_attested=True))["client-boundary.json"]
         self.assertEqual(note["diagnostic_focus"],
