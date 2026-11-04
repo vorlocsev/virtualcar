@@ -131,6 +131,28 @@ def validate_response(frames, target, opcode):
             raise ValueError('Wrong D2 single-frame service/opcode echo')
 
 
+
+def select_complete_response(groups, target, opcode):
+    """Choose the longest individually valid D2 attempt, never concatenate runs.
+
+    A truncated or contaminated attempt may contain more RX frames than a
+    completed reply. Raw length alone must not override transport validation.
+    Ties retain the first valid capture to keep selection deterministic.
+    This proves framing only, not vehicle identity or client acceptance.
+    """
+    best = None
+    for frames in groups:
+        try:
+            validate_response(frames, target, opcode)
+        except ValueError:
+            continue
+        if best is None or len(frames) > len(best):
+            best = frames
+    if best is None:
+        raise ValueError('No complete D2 response passes transport validation')
+    return best
+
+
 def set_lab_vin(frames, vin):
     """Replace a previously masked VIN with an explicitly synthetic lab VIN."""
     if not re.fullmatch(r'[A-HJ-NPR-Z0-9]{17}', vin):
@@ -161,9 +183,8 @@ def main():
     groups=sessions(args.log.read_text(encoding='utf-8',errors='replace').splitlines(),target,opcode)
     if not groups:
         a.error('No matching D2 CEM request with recorded responses was found')
-    frames=max(groups,key=len)
     try:
-        validate_response(frames, target, opcode)
+        frames=select_complete_response(groups, target, opcode)
     except ValueError as exc:
         a.error(str(exc))
     can_id=frames[0][0]
