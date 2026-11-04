@@ -435,11 +435,14 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
         target=p[1]==0x40u?0u:1u;
         return d2_labels[target][p[2]==0xA3u?0u:1u];
     }
-    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && n>=3 &&
-       (p[0]==0xCBu||p[0]==0xCFu||p[0]==0xCAu) &&
-       (p[1]==0x40u||p[1]==0x50u)){
+    /* Keep B9 probe evidence aligned with process_d2: only CB
+       declares a complete target/B9/subcommand request. CA lacks
+       the subcommand; CF is not handled by the B9 replay route.
+       Neither form should be mislabeled as a supported B9 read. */
+    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && n>=4 &&
+       p[0]==0xCBu && (p[1]==0x40u||p[1]==0x50u)){
         target=p[1]==0x40u?0u:1u;
-        if(p[2]!=0xB9u||n<4)return 0;
+        if(p[2]!=0xB9u)return 0;
         if(p[3]==0xF0u)return d2_labels[target][2];
         if(p[3]==0xFBu)return d2_labels[target][3];
         if(p[3]==0xFCu)return d2_labels[target][4];
