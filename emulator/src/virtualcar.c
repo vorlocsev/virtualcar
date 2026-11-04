@@ -1697,6 +1697,10 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
                                 transition,12);
                     }
                     c->baud=s->Value;
+                    /* Mirror the new speed in the read-only P2 observer.
+                       Otherwise its channel table keeps the OLD network,
+                       misclassifying perfectly valid later CEM requests. */
+                    p2_bridge_connect(&g_vehicle_bridge,id,c->protocol,c->baud);
                 }
                 log_set_config(id,s->Parameter,s->Value);
             }
