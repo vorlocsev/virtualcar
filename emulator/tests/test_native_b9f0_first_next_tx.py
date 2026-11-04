@@ -90,6 +90,22 @@ class PostB9F0RequestTransitionTests(unittest.TestCase):
                          "p3_read_data_by_identifier")
         self.assertEqual(after_fc["last_b9f0_rx_to_first_next_tx_ms"], 88)
         self.assertEqual(data["post_positive_first_next_tx_observed_count"], 1)
+        # The raw UDS 3E 80 TesterPresent on ISO15765 is NOT an
+        # ISO-TP FC, despite sharing the high nibble 0x3.
+        tester = [
+            marker(tool.TX_CTX, words(2, 6, 0, 500000, 1_115_000)),
+            marker("TX (app request)",
+                   (0x18DA50F1).to_bytes(4, "big") +
+                   bytes.fromhex("3E 80")),
+        ]
+        after_tester, _ = first(b9f0_complete()
+                                + tester
+                                + tx(P3, can=0x726, at=1_130_000))
+        self.assertEqual(after_tester["first_next_app_tx_observation"],
+                         "first_next_tx_observed")
+        self.assertEqual(after_tester["first_next_app_tx_service"],
+                         "other_or_unclassified_tx")
+        self.assertEqual(after_tester["last_b9f0_rx_to_first_next_tx_ms"], 73)
 
     def test_05_per_channel_disconnect_and_clear_are_boundaries(self):
         other, _ = first(b9f0_complete() + disconnect(2)
