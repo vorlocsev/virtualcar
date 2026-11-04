@@ -188,3 +188,47 @@ spliced into the source process.
 The cross-report native CI gate uses v3 and must continue to pass
 unchanged synthetic x86 DLL evidence. It does not infer the
 real SectorV Hardware acceptance predicate or synthesize E3.
+
+
+## One-command local SectorV capture report preparation
+
+Added emulator/tools/prepare_p2_capture.py to simplify the next
+consented, read-only experiment. The operator supplies one PRIVATE
+native SectorVVirtualCar.log path and chooses a NEW output directory.
+The script reads a maximum 4 MiB source and produces:
+
+- channel-chronology.json: channel-aware A3/B9FB order, with
+  anonymized channel aliases and explicit connection boundaries.
+- b9fb-followup.json: first observed app TX after each completed
+  B9FB, if such an RX completion exists.
+- capture-summary.json: fixed allowlisted counts, parsing status,
+  and whether all observed native epochs reached PassThruClose.
+
+From the repository root in Windows PowerShell:
+
+    py -3 .\emulator\tools\prepare_p2_capture.py "C:\your-private-folder\SectorVVirtualCar.log" --output-dir "$env:TEMP\vc-sectorv-safe-review"
+
+The output directory must NOT exist beforehand. The script refuses
+overwriting it or copying the raw log. The private source is never
+changed. Three JSON outputs are computed in memory and written
+only after both source audits succeed. No P2 transactions means
+the request is refused. Partial captures may still be summarized,
+with missing transport completion explicitly reported.
+Review the sanitized output locally before sharing.
+
+An EOF boundary is different from PassThruClose.
+all_native_epochs_closed=false means at least one observed native
+epoch lacks a visible close. Even when true,
+safe_to_infer_complete_client_session always remains false:
+J2534 Close does not prove SectorV accepted VIN or Hardware.
+
+Eight tests in emulator/tests/test_prepare_p2_capture.py check
+closed session, truncated EOF, A3-before-B9FB, incomplete
+13-frame transport, distinct PIDs, malformed TX context, privacy
+non-disclosure, and CLI no-overwrite/source preservation.
+
+For a future real SectorV capture, keep the original .log private.
+Share only the three sanitized JSON reports after inspection.
+The script does not invoke SectorV or VMware, touch physical
+hardware, synthesize ECU replies, decode protected data or
+modify CEM configuration.
