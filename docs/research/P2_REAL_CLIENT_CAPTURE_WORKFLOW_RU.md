@@ -52,6 +52,43 @@ Registry32/PassThruSupport.04.04 указывает **точно на эту DLL
 проверяет известные имена процессов, но не может доказать отсутствие
 другого клиента или подлинность видимого ECU.
 
+### Как отмечать результат интерфейса без ложного обнаружения ECU
+
+В `samples/p2-client-ui-observation.template.json` оставлены безопасные
+значения `unknown`, `null` и `false`. Для конкретной проверки вручную
+заполните **только** предусмотренные поля, без VIN, серийных номеров,
+скриншотов и путей:
+
+- `client`: `sectorv`, `vdash_2_0`, `vdash_2_5_115_79` или
+  `other` (если клиент не определён);
+- `virtual_adapter_selected=true` **только** если выбор адаптера
+  Virtual Car действительно подтверждён в UI;
+- `scan_finished=true` **только** если завершилось именно
+  обнаружение/чтение блоков, а не просто появилось окно программы;
+- `ecu_list`: `empty`, `nonempty` или `unknown`;
+- `same_run_operator_attested=true` только при личном наблюдении
+  интерфейса **в этом же запуске**.
+
+Если сканирование не закончилось, пишите `scan_finished=false`;
+если неизвестно, `null`. Не заменяйте неизвестные значения на
+успешные только потому, что DLL доставила B9FB/B9F0/P3.
+
+В обезличенном `client-boundary.json` поле
+`operator_inventory_observation_gate` объясняет, чего не хватает
+для **ограниченной атрибуции наблюдения оператора**:
+`virtual_adapter_not_selected`, `virtual_adapter_selection_unknown`,
+`client_scan_not_finished`, `client_scan_completion_unknown`,
+`operator_not_attested_same_run`, `operator_client_unspecified` или
+`client_native_label_not_consistent`.
+
+Только `completed_scan_operator_report_only` позволяет интерпретировать
+отмеченный `ecu_list` как результат завершённого сканирования по
+наблюдению оператора. Даже в этом случае
+`client_ecu_inventory_verified=false` и
+`same_run_independently_verified=false`: совпавшее имя процесса не
+аутентифицирует бинарный файл, а наличие списка не подтверждает
+настоящий XC90 V8 MY2009.
+
 Внутри каталога сеанса будут:
 
 - `SAFE-JSON-REPORTS`: **только** проверенные обезличенные JSON
