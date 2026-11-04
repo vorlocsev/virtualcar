@@ -1009,14 +1009,20 @@ int main(){
  REQUIRE(g_vehicle_bridge.inspected_tx>0);
  REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==2);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
- /* P2/P1 29-bit D2 B9 FB read-only replay fixture. */
+ /* P2/P1 29-bit D2 B9 FB fixture belongs on CEM40 LS/125k.
+    This historic regression previously transmitted on the current HS/500k
+    channel, relying on the retired StrictRouting=0 bypass. */
  REQUIRE(g_d2[0].frame_count==1);
  const U8 synthetic[]={0xCC,0x40,0x7F,0xB9,0x31,0,0,0};
  const U8 d2req[]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
- m=frame(PROTO_CAN,0x000FFFFE,d2req,8);send(cid,&m);r=readmsg(cid);
- REQUIRE(r.Data[0]==0x00&&r.Data[1]==0x80&&r.Data[2]==0x00&&r.Data[3]==0x03);
- REQUIRE((r.RxStatus&CAN_29BIT_ID)==CAN_29BIT_ID);
- REQUIRE(memcmp(r.Data+4,synthetic,8)==0);
+ {U32 ls_d2=0;
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000,&ls_d2)==ERR_OK);
+  m=frame(PROTO_CAN,0x000FFFFE,d2req,8);send(ls_d2,&m);r=readmsg(ls_d2);
+  REQUIRE(r.Data[0]==0x00&&r.Data[1]==0x80&&r.Data[2]==0x00&&r.Data[3]==0x03);
+  REQUIRE((r.RxStatus&CAN_29BIT_ID)==CAN_29BIT_ID);
+  REQUIRE(memcmp(r.Data+4,synthetic,8)==0);
+  REQUIRE(PassThruDisconnect(ls_d2)==ERR_OK);
+ }
  /* Published D2 B9 F0 example uses response ID 0x01000003, three frames.
     Frames are paced; they must NOT arrive all at once. */
  REQUIRE(g_d2[3].frame_count==3);
