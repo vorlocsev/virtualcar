@@ -35,10 +35,13 @@ def _cross_audit(chronology, followup):
 
     status = "not_comparable"
     gap = None
+    b9f0_status = "not_comparable"
+    b9f0_gap = None
     if len(chronology["epochs"]) == 1 and chrono_completed == 1:
         epoch = chronology["epochs"][0]
         if not epoch["channel_metadata_complete"] or chronology["parse_events"] or followup["parse_errors"]:
             status = "source_context_incomplete"
+            b9f0_status = "source_context_incomplete"
         else:
             candidate = epoch["first_completed_b9fb_to_later_a3"]
             first = followup["observations"][0]
@@ -72,10 +75,45 @@ def _cross_audit(chronology, followup):
                 gap = b
             else:
                 status = "no_verified_direct_first_a3_pair"
+
+            # Cross-check the *first* later B9F0 read request independently
+            # from A3. It must be the first app TX, not simply a B9F0
+            # observed later in a different request window.
+            f0 = epoch["first_completed_b9fb_to_later_b9f0"]
+            same_first_b9f0 = (
+                first["followup_observation"] == "first_next_tx_observed"
+                and first["first_next_tx_service"] == "d2_b9f0"
+                and first["first_next_tx_same_channel"] is True
+                and first["first_next_tx_same_target"] is True
+                and first["first_next_tx_same_baud"] is True)
+            timed_f0 = (f0["status"] == "same_channel_target_timed"
+                        and f0["same_channel_target_generation_verified"] is True)
+            if timed_f0 and not same_first_b9f0:
+                raise ValueError("independent_b9fb_b9f0_correlation_disagrees")
+            if same_first_b9f0 and not timed_f0:
+                if f0["status"] not in (
+                    "clear_rx_between_events",
+                    "channel_reused_after_disconnect",
+                    "source_context_incomplete"):
+                    raise ValueError("independent_b9fb_b9f0_correlation_disagrees")
+                b9f0_status = "native_barrier_blocks_direct_b9f0_pair"
+            elif timed_f0:
+                a = f0["last_b9fb_rx_to_first_later_b9f0_ms"]
+                b = first["last_rx_to_first_next_tx_ms"]
+                if (type(a) not in (float, int) or type(b) not in (float, int)
+                        or a < 0 or b < 0 or abs(a - b) > 0.001):
+                    raise ValueError("independent_b9fb_b9f0_clocks_disagree")
+                b9f0_status = "first_b9f0_same_channel_target_clock_agrees"
+                b9f0_gap = b
+            else:
+                b9f0_status = "no_verified_direct_first_b9f0_pair"
     return {
         "transport_completion_count_agrees": True,
         "first_a3_cross_audit_status": status,
         "first_a3_gap_ms_when_cross_verified": gap,
+        "first_b9f0_cross_audit_status": b9f0_status,
+        "first_b9f0_gap_ms_when_cross_verified": b9f0_gap,
+        "b9f0_response_verified": False,
         "client_acceptance_verified": False,
     }
 
@@ -97,6 +135,7 @@ def prepare(source):
     known_process = any(e["observed_process_label"]
                         == "sectorv_exe_in_native_log" for e in epochs)
     a3_count = sum(e["a3_requested"] for e in epochs)
+    b9f0_count = sum(e["b9f0_requests_observed"] for e in epochs)
     b9fb_count = sum(e["b9fb_requested"] for e in epochs)
     completed = sum(e["b9fb_completed"] for e in epochs)
     summary = {
@@ -111,6 +150,7 @@ def prepare(source):
         "native_tx_rx_context_complete": native_context_complete,
         "sectorv_process_label_observed_unverified": known_process,
         "a3_requests_observed": a3_count,
+        "b9f0_requests_observed": b9f0_count,
         "b9fb_requests_observed": b9fb_count,
         "b9fb_transport_completions_observed": completed,
         "cross_audit_consistency": agreement,
@@ -121,10 +161,12 @@ def prepare(source):
         "same_run_with_sectorv_client_verified": False,
         "xc90_v8_my2009_verified": False,
         "a3_security_access_verified": False,
+        "b9f0_response_verified": False,
         "safe_to_infer_complete_client_session": False,
         "limitations": [
             "A log ending at EOF without PassThruClose is an incomplete capture.",
             "Same-channel TX/RX events do not establish B9FB semantic acceptance.",
+            "B9F0 requests are checked in source order only; no B9F0 CEM response, part number or client result is verified.",
             "A source process label is untrusted and is not executable attestation.",
             "Historical PR30/run188 reports cannot be merged with this log.",
             "Independent auditors must agree on positive B9FB completion count; A3 cross-check is restricted to one native epoch.",
