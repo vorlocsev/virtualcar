@@ -31,7 +31,10 @@ p2_cem_result p2_cem_classify(uint32_t tx_can_id,uint32_t bitrate,
      r.matched_full_shape=(uint8_t)(p[0]==0xCFu && n==8u &&
                                      bytes_equal(p+2,shape,6u));
      r.request=r.matched_full_shape?P2_CEM_A3_SHAPE:P2_CEM_A3_OTHER;
-  } else if(service==0xB9u && n>=4u) {
+  } else if(service==0xB9u && n>=4u && p[0]==0xCBu) {
+     /* Keep the observer's known B9 labels aligned with the only
+        read replay shape implemented by process_d2. CA declares
+        too few significant bytes; CF B9 reads are not implemented. */
      switch(p[3]) {
        case 0xE0u:r.request=P2_CEM_B9E0;break;
        case 0xF0u:r.request=P2_CEM_B9F0;break;
