@@ -4,11 +4,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
-    [Parameter(Mandatory=$true)][string]$OutputDirectory
+    [Parameter(Mandatory=$true)][string]$OutputDirectory,
+    [switch]$CompositeLocked
 )
 $ErrorActionPreference = 'Stop'
 if ([IntPtr]::Size -ne 4) {
-    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory
+    $forward = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                 $PSCommandPath, '-DllPath', $DllPath,
+                 '-OutputDirectory', $OutputDirectory)
+    if ($CompositeLocked) { $forward += '-CompositeLocked' }
+    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" @forward
     if ($LASTEXITCODE -ne 0) { throw 'Isolated x86 handoff process failed' }
     exit 0
 }
@@ -31,7 +36,13 @@ foreach ($line in @(
     '[P2]', 'StrictRouting=1', 'ReplaySpacingMs=1',
     '[D2_40]', 'B9FBFrameCount=0',
     '[D2_50]', 'ResponseId=01200003', 'B9FBFrameCount=13'
-)) { [void]$profile.AppendLine($line) }
+)) {
+    if ($CompositeLocked -and $line -eq '[D2_40]') {
+        [void]$profile.AppendLine('FixtureProvenance=local_composite_unverified_trace_import')
+        [void]$profile.AppendLine('AllowCompositeReplay=0')
+    }
+    [void]$profile.AppendLine($line)
+}
 $controls = @('8F','09','0A','0B','0C','0D','0E','0F','08','09','0A','0B','4F')
 for ($i=0; $i -lt $controls.Count; $i++) {
     $octets = if ($i -eq 0) { '8F 50 F9 FB 57 00 00 00' }
@@ -57,6 +68,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class NativeP2P3Handoff {
     const string Library=@"__ISOLATED_DLL__";
+    const bool CompositeLocked=__COMPOSITE_LOCKED__;
     [StructLayout(LayoutKind.Sequential)]
     public struct Msg {
         public uint ProtocolID,RxStatus,TxFlags,Timestamp,DataSize,ExtraDataIndex;
@@ -119,6 +131,15 @@ public static class NativeP2P3Handoff {
             return msg;
         } finally {Marshal.FreeHGlobal(mem);}
     }
+    static void CheckNoRx(uint channel,string source) {
+        IntPtr mem=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+        try {
+            uint count=1;
+            uint result=PassThruReadMsgs(channel,mem,ref count,0);
+            Check(result==16 && count==0,
+                  "Unapproved composite replay emitted "+source);
+        } finally {Marshal.FreeHGlobal(mem);}
+    }
     public static void Run() {
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,
               "Native x86 J2534 ABI mismatch");
@@ -143,7 +164,9 @@ public static class NativeP2P3Handoff {
             Console.WriteLine("PASS 3/8: B9FB request accepted by native DLL");
             byte[] controls=new byte[]{0x8F,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,
                                          0x0F,0x08,0x09,0x0A,0x0B,0x4F};
-            for(int i=0;i<controls.Length;i++) {
+            if(CompositeLocked) {
+                CheckNoRx(d2,"B9FB");
+            } else for(int i=0;i<controls.Length;i++) {
                 Msg result=Read(d2,5,0x01200003,300);
                 Check(result.DataSize==12 && result.ExtraDataIndex==12 &&
                       (result.RxStatus & 0x100)!=0 &&
@@ -153,10 +176,14 @@ public static class NativeP2P3Handoff {
                     Check(result.Data[5]==0x50 && result.Data[6]==0xF9 &&
                           result.Data[7]==0xFB, "Wrong B9FB echo");
             }
-            Console.WriteLine("PASS 4/8: 13 synthetic B9FB frames delivered");
+            Console.WriteLine(CompositeLocked
+                ? "PASS 4/8: imported mixed-origin B9FB safely suppressed"
+                : "PASS 4/8: 13 synthetic B9FB frames delivered");
             Write(d2,5,0x000FFFFE,new byte[]{0xCB,0x50,0xB9,0xF0,0,0,0,0});
             byte[] b9f0=new byte[]{0x8F,0x09,0x4C};
-            for(int i=0;i<3;i++) {
+            if(CompositeLocked) {
+                CheckNoRx(d2,"B9F0");
+            } else for(int i=0;i<3;i++) {
                 Msg result=Read(d2,5,0x01000003,300);
                 Check(result.DataSize==12 && result.ExtraDataIndex==12 &&
                       result.Data[4]==b9f0[i], "Wrong B9F0 frame");
@@ -164,7 +191,9 @@ public static class NativeP2P3Handoff {
                     Check(result.Data[5]==0x50 && result.Data[6]==0xF9 &&
                           result.Data[7]==0xF0, "Wrong B9F0 echo");
             }
-            Console.WriteLine("PASS 5/8: 3 synthetic B9F0 frames delivered");
+            Console.WriteLine(CompositeLocked
+                ? "PASS 5/8: imported mixed-origin B9F0 safely suppressed"
+                : "PASS 5/8: 3 synthetic B9F0 frames delivered");
             Write(p3,6,0x726,new byte[]{0x22,0xF1,0x14});
             Console.WriteLine("PASS 6/8: later P3 F114 read on same native process");
             Msg uds=Read(p3,6,0x72E,300);
@@ -193,13 +222,19 @@ public static class NativeP2P3Handoff {
 }
 '@
     $source=$source.Replace('__ISOLATED_DLL__',$isolatedDll.Replace('"','""'))
+    $source=$source.Replace('__COMPOSITE_LOCKED__',
+                            $(if ($CompositeLocked) { 'true' } else { 'false' }))
     Add-Type -TypeDefinition $source -Language CSharp
     [NativeP2P3Handoff]::Run()
     $nativeLog=Join-Path $directory 'SectorVVirtualCar.log'
     if (-not (Test-Path -LiteralPath $nativeLog)) {
         throw 'Isolated same-process native J2534 log not created'
     }
-    Write-Output 'PASS: one-process x86 B9FB/B9F0/P3 native lab, no real diagnostic client'
+    if ($CompositeLocked) {
+        Write-Output 'PASS: unapproved mixed-origin x86 D2 silent; independent synthetic P3 read remains available'
+    } else {
+        Write-Output 'PASS: one-process x86 B9FB/B9F0/P3 native lab, no real diagnostic client'
+    }
 } finally {
     $env:LOCALAPPDATA=$savedLocal; $env:TEMP=$savedTemp; $env:TMP=$savedTmp
 }
