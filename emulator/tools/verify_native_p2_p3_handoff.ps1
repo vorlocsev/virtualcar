@@ -101,6 +101,9 @@ public static class NativeP2P3Handoff {
        ref Msg mask,ref Msg pattern,IntPtr flow,out uint filterId);
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruStopMsgFilter(uint channel,uint filterId);
+    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruIoctl(uint channel,uint ioctl,
+                                    IntPtr input,IntPtr output);
 
     static void Check(bool pass,string gate) {
         if(!pass)throw new InvalidOperationException(gate);
@@ -148,6 +151,14 @@ public static class NativeP2P3Handoff {
                   "Unapproved composite replay emitted "+source);
         } finally {Marshal.FreeHGlobal(mem);}
     }
+    static void RequireNoRxFor(uint can,uint wait,string reason) {
+        IntPtr mem=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+        try {
+            uint count=1;
+            uint result=PassThruReadMsgs(can,mem,ref count,wait);
+            Check(result==9 && count==0,reason);
+        } finally { Marshal.FreeHGlobal(mem); }
+    }
     static void VerifyPayloadFilters(uint can) {
         byte[] request=new byte[]{0xCB,0x50,0xB9,0xF0,0,0,0,0};
         Msg mask=Request(5,0xFFFFFFFFu,new byte[]{0xFF});
@@ -187,6 +198,28 @@ public static class NativeP2P3Handoff {
                   "Native BLOCK filter removal failed");
         }
         Console.WriteLine("PASS: native x86 J2534 5-byte CAN PASS/BLOCK ID-and-payload filters");
+        // CLEAR_MSG_FILTERS must block *new* CAN RX even on a channel
+        // that previously worked with no filters in the synthetic lab.
+        Check(PassThruIoctl(can,10,IntPtr.Zero,IntPtr.Zero)==0,
+              "Native CAN CLEAR_MSG_FILTERS failed");
+        Write(can,5,0x000FFFFEu,request);
+        RequireNoRxFor(can,240,
+              "Native CAN filter CLEAR leaked synthetic B9F0 response");
+        Check(PassThruStartMsgFilter(can,1,ref mask,ref pat,
+                                     IntPtr.Zero,out fid)==0,
+              "Native CAN PASS reinstall after CLEAR failed");
+        Write(can,5,0x000FFFFEu,request);
+        Msg restored=Read(can,5,0x01000003u,300);
+        Check(restored.Data[4]==0x8F,
+              "Native CAN PASS reinstall did not restore first-frame RX");
+        RequireNoRxFor(can,240,
+              "Native CAN PASS reinstall leaked nonmatching same-ID frames");
+        Check(PassThruStopMsgFilter(can,fid)==0,
+              "Native CAN filter removal after CLEAR failed");
+        Write(can,5,0x000FFFFEu,request);
+        RequireNoRxFor(can,240,
+              "Native CAN removal of last PASS restarted unfiltered RX");
+        Console.WriteLine("PASS: native x86 J2534 CLEAR_MSG_FILTERS / re-PASS / stop lifecycle");
     }
     public static void Run() {
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,
