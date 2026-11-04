@@ -339,6 +339,12 @@ def audit(source):
             if 0x48 <= control <= 0x4F or (control & 0xF8) == 0xC8:
                 try:
                     validate_response(active["frames"], active["target"], 0xFB)
+                    # The transport validator intentionally allows a D2 B9
+                    # negative reply. This audit must not count a negative
+                    # one-frame service reply as a completed positive B9FB.
+                    first = active["frames"][0][1]
+                    if first[1:4] != bytes((active["target"], 0xF9, 0xFB)):
+                        raise ValueError("nonpositive_b9fb_echo")
                 except ValueError:
                     s["incomplete"] += 1
                     errors["invalid_b9fb_frame_sequence"] += 1
