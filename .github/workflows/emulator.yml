@@ -53,6 +53,7 @@ jobs:
         run: |
           mkdir -p docs/research
           cp ../docs/research/P2_REAL_CLIENT_CAPTURE_WORKFLOW_RU.md docs/research/P2_REAL_CLIENT_CAPTURE_WORKFLOW_RU.md
+          cp ../docs/research/P2_CLIENT_TRIAL_ABC_RU.md docs/research/P2_CLIENT_TRIAL_ABC_RU.md
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-${{ github.sha }}-Windows-x86-LAB
@@ -66,6 +67,12 @@ jobs:
             emulator/README_NATIVE_ROUTE_CHECK_RU.md
             emulator/README_CLIENT_CAPTURE_RU.md
             emulator/docs/research/P2_REAL_CLIENT_CAPTURE_WORKFLOW_RU.md
+            emulator/docs/research/P2_CLIENT_TRIAL_ABC_RU.md
+            emulator/profiles/p2-trial-00-no-d2.ini
+            emulator/profiles/p2-trial-01-public-b9fb-only.ini
+            emulator/profiles/p2-trial-02-mixed-b9fb-b9f0-locked.ini
+            emulator/scripts/Select-P2ClientTrialProfile.ps1
+            emulator/tools/compare_p2_client_trials.py
             emulator/scripts/install.ps1
             emulator/scripts/uninstall.ps1
             emulator/tools/verify_client_lab_bundle.py
@@ -115,7 +122,8 @@ jobs:
               'scripts/install.ps1',
               'scripts/uninstall.ps1',
               'scripts/diagnose.ps1',
-              'scripts/Capture-P2ClientRun.ps1')) {
+              'scripts/Capture-P2ClientRun.ps1',
+              'scripts/Select-P2ClientTrialProfile.ps1')) {
             $file = Join-Path 'native-input' $relative
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
               throw 'Required packaged script missing'
@@ -126,6 +134,1292 @@ jobs:
               (Resolve-Path -LiteralPath $file).Path,
               [ref]$tokenStream, [ref]$parserErrors) | Out-Null
             if ($parserErrors.Count -gt 0) { throw 'Packaged Windows script syntax invalid' }
+          }
+      - name: Smoke-test packaged A/B/C profile selection without starting diagnostic client
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path -LiteralPath native-input).Path
+          $sidecar = Join-Path $root 'virtualcar.ini'
+          $baseline = [IO.File]::ReadAllBytes($sidecar)
+          $selector = Join-Path $root 'scripts/Select-P2ClientTrialProfile.ps1'
+          try {
+            & $selector -Variant A_NoD2 -IConfirmClientsClosed
+            $a = Get-Content -LiteralPath $sidecar -Raw
+            if ($a -notmatch '(?m)^B9FBFrameCount=0
+        run: |
+          # Disposable GitHub-hosted Windows runner only, with no real
+          # diagnostic client and no native ECU. The installed key belongs
+          # exclusively to the virtual adapter and is removed in finally.
+          $root = (Resolve-Path -LiteralPath native-input).Path
+          $keyName = 'SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car'
+          $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            [Microsoft.Win32.RegistryView]::Registry32)
+          try {
+            $existing = $base.OpenSubKey($keyName, $false)
+            if ($null -ne $existing) {
+              $existing.Close()
+              throw 'Unexpected existing virtual adapter registry entry on disposable runner'
+            }
+          } finally { $base.Close() }
+          $previousTemp = $env:TEMP
+          $privateTemp = Join-Path $env:RUNNER_TEMP 'p2-private-empty-log'
+          [void][IO.Directory]::CreateDirectory($privateTemp)
+          $env:TEMP = $privateTemp
+          $session = Join-Path $env:RUNNER_TEMP 'p2-packaged-begin-finish-test'
+          try {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1')
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged virtual J2534 registration failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Begin -SessionDirectory $session
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Begin failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Finish -SessionDirectory $session -IConfirmClientClosed
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Finish failed' }
+            $safe = Join-Path $session 'SAFE-JSON-REPORTS'
+            $files = @(Get-ChildItem -LiteralPath $safe -File)
+            $note = Get-Content -LiteralPath (Join-Path $safe 'client-boundary.json') -Raw | ConvertFrom-Json
+            if ($files.Count -ne 2 -or
+                $note.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+                $note.new_native_records_observed -ne $false -or
+                $note.client_ecu_inventory_verified -ne $false) {
+              throw 'Packaged Begin-Finish no-log result misclassified real client acceptance'
+            }
+          } finally {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\uninstall.ps1')
+            $env:TEMP = $previousTemp
+          }
+      - name: Actual x86 DLL route regression in an isolated synthetic profile
+        shell: pwsh
+        run: |
+          # Validate PowerShell syntax before packaging a user-facing
+          # read-only script. No registry edits or user-client launches.
+          $parseTokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath emulator/scripts/Capture-P2ClientRun.ps1).Path,
+            [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            throw 'Two-phase client capture PowerShell syntax gate failed'
+          }
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-b9fb-a3-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 test failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 backend evidence failed' }
+          # Independent x86 process and profile: historical donor-derived
+          # LAB INI, with a synthetic VIN. Compare all 104 response bytes
+          # against the selected configured fixture, not only D2 controls.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-donor-b9fb-regression" -FixtureProfile emulator/virtualcar-p2-b9fb-lab-vin.ini
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB byte-for-byte replay failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-donor-b9fb-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-donor-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB backend audit failed' }
+          # This raw log remains inside the temporary isolated test directory.
+          # Only the allowlisted timing report is uploaded as an artifact.
+          python emulator/tools/verify_native_d2_followup.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-b9fb-a3-timing.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 source-local timing audit failed' }
+          # Preserve only anonymized J2534 channel aliases, never the raw trace.
+          python emulator/tools/audit_native_p2_channel_chronology.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-channel-chronology.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native P2 channel chronology audit failed' }
+          python emulator/tools/verify_native_p2_first_a3.py "$env:RUNNER_TEMP\native-p2-channel-chronology.json" "$env:RUNNER_TEMP\native-b9fb-a3-timing.json" --output "$env:RUNNER_TEMP\native-first-a3-correlation.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native first-A3 cross-report correlation failed' }
+          # Generate three sanitized reports from the SAME raw native log.
+          # The source log stays in RUNNER_TEMP and is never uploaded.
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-synthetic-capture-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Private-native capture preparation failed' }
+          # One x86 DLL process performs the entire synthetic D2 B9FB -> B9F0
+          # -> ISO15765 P3 F114 read. This is NOT a SectorV/VDASH client.
+          # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
+          if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          # A separate real x86 DLL process verifies that full CAN filter
+          # masks distinguish the same response ID by the first data byte.
+          # It is NOT a client or a donor capture; do not upload raw log.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-payload-filter" -PayloadFilterProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN PASS/BLOCK payload-filter check failed' }
+          # A second independently loaded compiled x86 DLL instance
+          # tests live CAN 500k -> 125k -> 500k DATA_RATE transition.
+          # Old queued/staged B9FB must vanish while a separate ISO P3
+          # channel continues to respond. No real diagnostic client.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-baud-switch" -BaudSwitchProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN DATA_RATE old-bus isolation failed' }
+          if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\native-can-baud-switch\SectorVVirtualCar.log" -SimpleMatch -Pattern 'CAN DATA_RATE changed: old-bus RX cancelled' -Quiet)) {
+            throw 'Compiled native DLL did not record old-bus cancellation'
+          }
+          # Re-run compiled x86 DLL in a NEW isolated process with the
+          # importer's unverified mixed-source marker and explicit lock.
+          # B9FB/B9F0 must remain silent; synthetic independent P3 still
+          # answers. Raw logs remain private in RUNNER_TEMP.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-composite-locked" -CompositeLocked
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unapproved composite D2 replay guard failed' }
+          $lockedNative = "$env:RUNNER_TEMP\native-composite-locked\SectorVVirtualCar.log"
+          if (-not (Select-String -LiteralPath $lockedNative -SimpleMatch 'P2 unapproved composite D2 fixtures disabled (count, BE)' -Quiet)) {
+            throw 'Native DLL did not report blocking composite D2 fixture replay'
+          }
+          python emulator/tools/prepare_p2_client_run.py $lockedNative --output-dir "$env:RUNNER_TEMP\native-composite-locked-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 composite-locked safe report preparation failed' }
+          $lockedBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-composite-locked-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($lockedBoundary.b9fb_positive_transport_count -ne 0 -or
+              $lockedBoundary.b9f0_positive_transport_count -ne 0 -or
+              $lockedBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $false -or
+              $lockedBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Composite-locked native DLL fabricated D2 transport or ECU acceptance'
+          }
+          python emulator/tools/verify_native_p2_p3_handoff.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-p3-handoff-gate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 native source redaction failed' }
+          # Exercise the actual user-facing client capture report against
+          # compiled x86 native DLL traffic. This remains a synthetic harness,
+          # not an execution of SectorV or VDASH.
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
+          $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $connectBound = $clientBoundary.native_b9fb_connect_channel_binding
+          if ($connectBound.status -ne 'one_b9fb_bound_to_prior_successful_channel_connect' -or
+              $connectBound.one_b9fb_bound_to_prior_successful_channel_connect -ne $true -or
+              $connectBound.b9fb_request_count -ne 1 -or
+              $connectBound.connect_success_count -lt 2 -or
+              $connectBound.client_accepted_b9fb_verified -ne $false -or
+              $connectBound.vehicle_identity_verified -ne $false) {
+            throw 'Compiled x86 J2534 Connect channel did not precede B9FB on the same mode'
+          }
+          # Adversarial modification of the *compiled DLL's actual lab*
+          # log: append another syntactically closed Open/Close cycle
+          # with the same native process label. One PID is not one
+          # device session, so B9FB Connect evidence must fail closed.
+          $nativeLog = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $duplicateLog = "$env:RUNNER_TEMP\native-reused-device-private.log"
+          Copy-Item -LiteralPath $nativeLog -Destination $duplicateLog
+          $opened = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruOpen -> device 1' | Select-Object -First 1).Line
+          $closed = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruClose' | Select-Object -Last 1).Line
+          if (-not $opened -or -not $closed) {
+            throw 'Compiled native log missing device cycle markers'
+          }
+          [IO.File]::AppendAllText($duplicateLog, "`r`n$opened`r`n$closed`r`n")
+          python emulator/tools/prepare_p2_client_run.py $duplicateLog --output-dir "$env:RUNNER_TEMP\native-multi-cycle-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Adversarial second-device-cycle safe report failed' }
+          $multi = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-multi-cycle-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($multi.native_b9fb_connect_channel_binding.status -ne 'multiple_native_device_cycles' -or
+              $multi.native_b9fb_connect_channel_binding.one_b9fb_bound_to_prior_successful_channel_connect -ne $false -or
+              $multi.native_b9fb_connect_channel_binding.native_device_open_count -ne 2 -or
+              $multi.diagnostic_focus -ne 'multiple_native_j2534_device_cycles' -or
+              $multi.client_ecu_inventory_verified -ne $false) {
+            throw 'Two device cycles in one PID incorrectly attributed B9FB Connect evidence'
+          }
+          # An untrusted UI note about a NONEMPTY ECU list must NOT
+          # override an explicitly unfinished scan, even when the
+          # compiled DLL emits a full positive B9FB/B9F0/P3 chain.
+          # The native host is PowerShell, not the proprietary client.
+          $unfinishedUi = Join-Path $env:RUNNER_TEMP 'p2-unfinished-operator.json'
+          @{
+            format = 'virtualcar-p2-client-ui-observation-v1'
+            client = 'sectorv'
+            virtual_adapter_selected = $true
+            scan_finished = $false
+            vin_display = 'visible'
+            ecu_list = 'nonempty'
+            same_run_operator_attested = $true
+          } | ConvertTo-Json -Compress | Set-Content -LiteralPath $unfinishedUi -Encoding utf8
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --ui $unfinishedUi --output-dir "$env:RUNNER_TEMP\p2-unfinished-client-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unfinished UI capture failed' }
+          $unfinished = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-unfinished-client-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($unfinished.operator_inventory_observation_gate -ne 'client_scan_not_finished' -or
+              $unfinished.operator_ecu_list_attributable_to_completed_scan -ne $false -or
+              $unfinished.client_ecu_inventory_verified -ne $false -or
+              $unfinished.first_p3_positive_transport_count -ne 1) {
+            throw 'Native x86 incomplete client scan incorrectly credited with ECU inventory'
+          }
+          # The compiled x86 DLL must bind its direct B9FB->B9F0 request
+          # to the positive B9F0 RX in the SAME closed native epoch.
+          # This is transport evidence, not acceptance by SectorV/VDASH.
+          $nativeSummary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-handoff-safe\capture-summary.json" -Raw | ConvertFrom-Json
+          $binding = $nativeSummary.b9fb_to_b9f0_same_epoch_positive_binding
+          if ($binding.status -ne 'direct_positive_b9f0_transport_same_native_epoch' -or
+              $binding.direct_b9fb_to_b9f0_request_cross_audit_verified -ne $true -or
+              $binding.positive_b9f0_transport_bound_to_direct_first_read -ne $true -or
+              $binding.genuine_cem_identity_verified -ne $false -or
+              $binding.client_b9f0_acceptance_verified -ne $false) {
+            throw 'Native x86 direct B9FB-B9F0 positive transport binding gate failed'
+          }
+          if ($clientBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $true -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client-boundary direct B9FB-B9F0 attribution failed'
+          }
+          if ($clientBoundary.native_device_lifecycle.status -ne 'single_closed_device_cycle' -or
+              $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
+              $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
+              $clientBoundary.native_p2_single_closed_epoch -ne $true -or
+              $clientBoundary.native_executable_label_family -ne 'unclassified_executable' -or
+              $clientBoundary.operator_client_native_label_comparison -ne 'no_operator_client_reported' -or
+              $clientBoundary.native_executable_identity_verified -ne $false -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
+          }
+          # A real compiled x86 DLL log with NO further appends must
+          # yield an explicit absence-of-new-evidence report, not a claim
+          # that SectorV ran or that any CEM identification was attempted.
+          $completedNative = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $oldLength = (Get-Item -LiteralPath $completedNative).Length
+          $oldSha = (Get-FileHash -LiteralPath $completedNative -Algorithm SHA256).Hash.ToLowerInvariant()
+          python emulator/tools/prepare_p2_client_run.py $completedNative --offset-bytes $oldLength --prefix-sha256 $oldSha --allow-empty-append --output-dir "$env:RUNNER_TEMP\p2-no-new-native-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'No-new-native-records safe reporter failed' }
+          $negative = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $negativeFiles = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe" -File)
+          if ($negative.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+              $negative.new_native_records_observed -ne $false -or
+              $negative.client_ecu_inventory_verified -ne $false -or
+              $negativeFiles.Count -ne 2) {
+            throw 'No-new-native-records report fabricated client discovery evidence'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-native-route-audit-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-donor-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-timing.json
+            ${{ runner.temp }}/native-p2-channel-chronology.json
+            ${{ runner.temp }}/native-first-a3-correlation.json
+            ${{ runner.temp }}/p2-synthetic-capture-safe/*.json
+            ${{ runner.temp }}/native-p2-p3-handoff-gate.json
+            ${{ runner.temp }}/p2-p3-handoff-safe/*.json
+            ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/native-multi-cycle-safe/*.json
+            ${{ runner.temp }}/p2-unfinished-client-safe/*.json
+            ${{ runner.temp }}/native-composite-locked-safe/*.json
+            ${{ runner.temp }}/p2-no-new-native-safe/*.json
+          if-no-files-found: error
+
+
+) { throw 'A was not an empty CEM fixture' }
+            & $selector -Variant B_PublicB9FB -IConfirmClientsClosed -IUnderstandExperimentalDonorData
+            $b = Get-Content -LiteralPath $sidecar -Raw
+            if ($b -notmatch '(?m)^B9FBFrameCount=13
+        run: |
+          # Disposable GitHub-hosted Windows runner only, with no real
+          # diagnostic client and no native ECU. The installed key belongs
+          # exclusively to the virtual adapter and is removed in finally.
+          $root = (Resolve-Path -LiteralPath native-input).Path
+          $keyName = 'SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car'
+          $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            [Microsoft.Win32.RegistryView]::Registry32)
+          try {
+            $existing = $base.OpenSubKey($keyName, $false)
+            if ($null -ne $existing) {
+              $existing.Close()
+              throw 'Unexpected existing virtual adapter registry entry on disposable runner'
+            }
+          } finally { $base.Close() }
+          $previousTemp = $env:TEMP
+          $privateTemp = Join-Path $env:RUNNER_TEMP 'p2-private-empty-log'
+          [void][IO.Directory]::CreateDirectory($privateTemp)
+          $env:TEMP = $privateTemp
+          $session = Join-Path $env:RUNNER_TEMP 'p2-packaged-begin-finish-test'
+          try {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1')
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged virtual J2534 registration failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Begin -SessionDirectory $session
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Begin failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Finish -SessionDirectory $session -IConfirmClientClosed
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Finish failed' }
+            $safe = Join-Path $session 'SAFE-JSON-REPORTS'
+            $files = @(Get-ChildItem -LiteralPath $safe -File)
+            $note = Get-Content -LiteralPath (Join-Path $safe 'client-boundary.json') -Raw | ConvertFrom-Json
+            if ($files.Count -ne 2 -or
+                $note.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+                $note.new_native_records_observed -ne $false -or
+                $note.client_ecu_inventory_verified -ne $false) {
+              throw 'Packaged Begin-Finish no-log result misclassified real client acceptance'
+            }
+          } finally {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\uninstall.ps1')
+            $env:TEMP = $previousTemp
+          }
+      - name: Actual x86 DLL route regression in an isolated synthetic profile
+        shell: pwsh
+        run: |
+          # Validate PowerShell syntax before packaging a user-facing
+          # read-only script. No registry edits or user-client launches.
+          $parseTokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath emulator/scripts/Capture-P2ClientRun.ps1).Path,
+            [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            throw 'Two-phase client capture PowerShell syntax gate failed'
+          }
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-b9fb-a3-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 test failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 backend evidence failed' }
+          # Independent x86 process and profile: historical donor-derived
+          # LAB INI, with a synthetic VIN. Compare all 104 response bytes
+          # against the selected configured fixture, not only D2 controls.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-donor-b9fb-regression" -FixtureProfile emulator/virtualcar-p2-b9fb-lab-vin.ini
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB byte-for-byte replay failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-donor-b9fb-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-donor-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB backend audit failed' }
+          # This raw log remains inside the temporary isolated test directory.
+          # Only the allowlisted timing report is uploaded as an artifact.
+          python emulator/tools/verify_native_d2_followup.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-b9fb-a3-timing.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 source-local timing audit failed' }
+          # Preserve only anonymized J2534 channel aliases, never the raw trace.
+          python emulator/tools/audit_native_p2_channel_chronology.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-channel-chronology.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native P2 channel chronology audit failed' }
+          python emulator/tools/verify_native_p2_first_a3.py "$env:RUNNER_TEMP\native-p2-channel-chronology.json" "$env:RUNNER_TEMP\native-b9fb-a3-timing.json" --output "$env:RUNNER_TEMP\native-first-a3-correlation.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native first-A3 cross-report correlation failed' }
+          # Generate three sanitized reports from the SAME raw native log.
+          # The source log stays in RUNNER_TEMP and is never uploaded.
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-synthetic-capture-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Private-native capture preparation failed' }
+          # One x86 DLL process performs the entire synthetic D2 B9FB -> B9F0
+          # -> ISO15765 P3 F114 read. This is NOT a SectorV/VDASH client.
+          # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
+          if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          # A separate real x86 DLL process verifies that full CAN filter
+          # masks distinguish the same response ID by the first data byte.
+          # It is NOT a client or a donor capture; do not upload raw log.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-payload-filter" -PayloadFilterProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN PASS/BLOCK payload-filter check failed' }
+          # A second independently loaded compiled x86 DLL instance
+          # tests live CAN 500k -> 125k -> 500k DATA_RATE transition.
+          # Old queued/staged B9FB must vanish while a separate ISO P3
+          # channel continues to respond. No real diagnostic client.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-baud-switch" -BaudSwitchProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN DATA_RATE old-bus isolation failed' }
+          if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\native-can-baud-switch\SectorVVirtualCar.log" -SimpleMatch -Pattern 'CAN DATA_RATE changed: old-bus RX cancelled' -Quiet)) {
+            throw 'Compiled native DLL did not record old-bus cancellation'
+          }
+          # Re-run compiled x86 DLL in a NEW isolated process with the
+          # importer's unverified mixed-source marker and explicit lock.
+          # B9FB/B9F0 must remain silent; synthetic independent P3 still
+          # answers. Raw logs remain private in RUNNER_TEMP.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-composite-locked" -CompositeLocked
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unapproved composite D2 replay guard failed' }
+          $lockedNative = "$env:RUNNER_TEMP\native-composite-locked\SectorVVirtualCar.log"
+          if (-not (Select-String -LiteralPath $lockedNative -SimpleMatch 'P2 unapproved composite D2 fixtures disabled (count, BE)' -Quiet)) {
+            throw 'Native DLL did not report blocking composite D2 fixture replay'
+          }
+          python emulator/tools/prepare_p2_client_run.py $lockedNative --output-dir "$env:RUNNER_TEMP\native-composite-locked-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 composite-locked safe report preparation failed' }
+          $lockedBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-composite-locked-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($lockedBoundary.b9fb_positive_transport_count -ne 0 -or
+              $lockedBoundary.b9f0_positive_transport_count -ne 0 -or
+              $lockedBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $false -or
+              $lockedBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Composite-locked native DLL fabricated D2 transport or ECU acceptance'
+          }
+          python emulator/tools/verify_native_p2_p3_handoff.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-p3-handoff-gate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 native source redaction failed' }
+          # Exercise the actual user-facing client capture report against
+          # compiled x86 native DLL traffic. This remains a synthetic harness,
+          # not an execution of SectorV or VDASH.
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
+          $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $connectBound = $clientBoundary.native_b9fb_connect_channel_binding
+          if ($connectBound.status -ne 'one_b9fb_bound_to_prior_successful_channel_connect' -or
+              $connectBound.one_b9fb_bound_to_prior_successful_channel_connect -ne $true -or
+              $connectBound.b9fb_request_count -ne 1 -or
+              $connectBound.connect_success_count -lt 2 -or
+              $connectBound.client_accepted_b9fb_verified -ne $false -or
+              $connectBound.vehicle_identity_verified -ne $false) {
+            throw 'Compiled x86 J2534 Connect channel did not precede B9FB on the same mode'
+          }
+          # Adversarial modification of the *compiled DLL's actual lab*
+          # log: append another syntactically closed Open/Close cycle
+          # with the same native process label. One PID is not one
+          # device session, so B9FB Connect evidence must fail closed.
+          $nativeLog = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $duplicateLog = "$env:RUNNER_TEMP\native-reused-device-private.log"
+          Copy-Item -LiteralPath $nativeLog -Destination $duplicateLog
+          $opened = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruOpen -> device 1' | Select-Object -First 1).Line
+          $closed = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruClose' | Select-Object -Last 1).Line
+          if (-not $opened -or -not $closed) {
+            throw 'Compiled native log missing device cycle markers'
+          }
+          [IO.File]::AppendAllText($duplicateLog, "`r`n$opened`r`n$closed`r`n")
+          python emulator/tools/prepare_p2_client_run.py $duplicateLog --output-dir "$env:RUNNER_TEMP\native-multi-cycle-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Adversarial second-device-cycle safe report failed' }
+          $multi = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-multi-cycle-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($multi.native_b9fb_connect_channel_binding.status -ne 'multiple_native_device_cycles' -or
+              $multi.native_b9fb_connect_channel_binding.one_b9fb_bound_to_prior_successful_channel_connect -ne $false -or
+              $multi.native_b9fb_connect_channel_binding.native_device_open_count -ne 2 -or
+              $multi.diagnostic_focus -ne 'multiple_native_j2534_device_cycles' -or
+              $multi.client_ecu_inventory_verified -ne $false) {
+            throw 'Two device cycles in one PID incorrectly attributed B9FB Connect evidence'
+          }
+          # An untrusted UI note about a NONEMPTY ECU list must NOT
+          # override an explicitly unfinished scan, even when the
+          # compiled DLL emits a full positive B9FB/B9F0/P3 chain.
+          # The native host is PowerShell, not the proprietary client.
+          $unfinishedUi = Join-Path $env:RUNNER_TEMP 'p2-unfinished-operator.json'
+          @{
+            format = 'virtualcar-p2-client-ui-observation-v1'
+            client = 'sectorv'
+            virtual_adapter_selected = $true
+            scan_finished = $false
+            vin_display = 'visible'
+            ecu_list = 'nonempty'
+            same_run_operator_attested = $true
+          } | ConvertTo-Json -Compress | Set-Content -LiteralPath $unfinishedUi -Encoding utf8
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --ui $unfinishedUi --output-dir "$env:RUNNER_TEMP\p2-unfinished-client-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unfinished UI capture failed' }
+          $unfinished = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-unfinished-client-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($unfinished.operator_inventory_observation_gate -ne 'client_scan_not_finished' -or
+              $unfinished.operator_ecu_list_attributable_to_completed_scan -ne $false -or
+              $unfinished.client_ecu_inventory_verified -ne $false -or
+              $unfinished.first_p3_positive_transport_count -ne 1) {
+            throw 'Native x86 incomplete client scan incorrectly credited with ECU inventory'
+          }
+          # The compiled x86 DLL must bind its direct B9FB->B9F0 request
+          # to the positive B9F0 RX in the SAME closed native epoch.
+          # This is transport evidence, not acceptance by SectorV/VDASH.
+          $nativeSummary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-handoff-safe\capture-summary.json" -Raw | ConvertFrom-Json
+          $binding = $nativeSummary.b9fb_to_b9f0_same_epoch_positive_binding
+          if ($binding.status -ne 'direct_positive_b9f0_transport_same_native_epoch' -or
+              $binding.direct_b9fb_to_b9f0_request_cross_audit_verified -ne $true -or
+              $binding.positive_b9f0_transport_bound_to_direct_first_read -ne $true -or
+              $binding.genuine_cem_identity_verified -ne $false -or
+              $binding.client_b9f0_acceptance_verified -ne $false) {
+            throw 'Native x86 direct B9FB-B9F0 positive transport binding gate failed'
+          }
+          if ($clientBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $true -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client-boundary direct B9FB-B9F0 attribution failed'
+          }
+          if ($clientBoundary.native_device_lifecycle.status -ne 'single_closed_device_cycle' -or
+              $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
+              $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
+              $clientBoundary.native_p2_single_closed_epoch -ne $true -or
+              $clientBoundary.native_executable_label_family -ne 'unclassified_executable' -or
+              $clientBoundary.operator_client_native_label_comparison -ne 'no_operator_client_reported' -or
+              $clientBoundary.native_executable_identity_verified -ne $false -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
+          }
+          # A real compiled x86 DLL log with NO further appends must
+          # yield an explicit absence-of-new-evidence report, not a claim
+          # that SectorV ran or that any CEM identification was attempted.
+          $completedNative = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $oldLength = (Get-Item -LiteralPath $completedNative).Length
+          $oldSha = (Get-FileHash -LiteralPath $completedNative -Algorithm SHA256).Hash.ToLowerInvariant()
+          python emulator/tools/prepare_p2_client_run.py $completedNative --offset-bytes $oldLength --prefix-sha256 $oldSha --allow-empty-append --output-dir "$env:RUNNER_TEMP\p2-no-new-native-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'No-new-native-records safe reporter failed' }
+          $negative = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $negativeFiles = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe" -File)
+          if ($negative.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+              $negative.new_native_records_observed -ne $false -or
+              $negative.client_ecu_inventory_verified -ne $false -or
+              $negativeFiles.Count -ne 2) {
+            throw 'No-new-native-records report fabricated client discovery evidence'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-native-route-audit-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-donor-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-timing.json
+            ${{ runner.temp }}/native-p2-channel-chronology.json
+            ${{ runner.temp }}/native-first-a3-correlation.json
+            ${{ runner.temp }}/p2-synthetic-capture-safe/*.json
+            ${{ runner.temp }}/native-p2-p3-handoff-gate.json
+            ${{ runner.temp }}/p2-p3-handoff-safe/*.json
+            ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/native-multi-cycle-safe/*.json
+            ${{ runner.temp }}/p2-unfinished-client-safe/*.json
+            ${{ runner.temp }}/native-composite-locked-safe/*.json
+            ${{ runner.temp }}/p2-no-new-native-safe/*.json
+          if-no-files-found: error
+
+
+ -or
+                ([regex]::Matches($b,'(?m)^B9FBFrame[0-9A-F]\s*=')).Count -ne 13) {
+              throw 'B did not install exact 13-frame donor-style CEM fixture'
+            }
+            & $selector -Variant C_MixedB9FB_B9F0 -IConfirmClientsClosed -IUnderstandExperimentalDonorData
+            $locked = Get-Content -LiteralPath $sidecar -Raw
+            if ($locked -notmatch '(?m)^AllowCompositeReplay=0
+        run: |
+          # Disposable GitHub-hosted Windows runner only, with no real
+          # diagnostic client and no native ECU. The installed key belongs
+          # exclusively to the virtual adapter and is removed in finally.
+          $root = (Resolve-Path -LiteralPath native-input).Path
+          $keyName = 'SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car'
+          $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            [Microsoft.Win32.RegistryView]::Registry32)
+          try {
+            $existing = $base.OpenSubKey($keyName, $false)
+            if ($null -ne $existing) {
+              $existing.Close()
+              throw 'Unexpected existing virtual adapter registry entry on disposable runner'
+            }
+          } finally { $base.Close() }
+          $previousTemp = $env:TEMP
+          $privateTemp = Join-Path $env:RUNNER_TEMP 'p2-private-empty-log'
+          [void][IO.Directory]::CreateDirectory($privateTemp)
+          $env:TEMP = $privateTemp
+          $session = Join-Path $env:RUNNER_TEMP 'p2-packaged-begin-finish-test'
+          try {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1')
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged virtual J2534 registration failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Begin -SessionDirectory $session
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Begin failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Finish -SessionDirectory $session -IConfirmClientClosed
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Finish failed' }
+            $safe = Join-Path $session 'SAFE-JSON-REPORTS'
+            $files = @(Get-ChildItem -LiteralPath $safe -File)
+            $note = Get-Content -LiteralPath (Join-Path $safe 'client-boundary.json') -Raw | ConvertFrom-Json
+            if ($files.Count -ne 2 -or
+                $note.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+                $note.new_native_records_observed -ne $false -or
+                $note.client_ecu_inventory_verified -ne $false) {
+              throw 'Packaged Begin-Finish no-log result misclassified real client acceptance'
+            }
+          } finally {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\uninstall.ps1')
+            $env:TEMP = $previousTemp
+          }
+      - name: Actual x86 DLL route regression in an isolated synthetic profile
+        shell: pwsh
+        run: |
+          # Validate PowerShell syntax before packaging a user-facing
+          # read-only script. No registry edits or user-client launches.
+          $parseTokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath emulator/scripts/Capture-P2ClientRun.ps1).Path,
+            [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            throw 'Two-phase client capture PowerShell syntax gate failed'
+          }
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-b9fb-a3-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 test failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 backend evidence failed' }
+          # Independent x86 process and profile: historical donor-derived
+          # LAB INI, with a synthetic VIN. Compare all 104 response bytes
+          # against the selected configured fixture, not only D2 controls.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-donor-b9fb-regression" -FixtureProfile emulator/virtualcar-p2-b9fb-lab-vin.ini
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB byte-for-byte replay failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-donor-b9fb-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-donor-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB backend audit failed' }
+          # This raw log remains inside the temporary isolated test directory.
+          # Only the allowlisted timing report is uploaded as an artifact.
+          python emulator/tools/verify_native_d2_followup.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-b9fb-a3-timing.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 source-local timing audit failed' }
+          # Preserve only anonymized J2534 channel aliases, never the raw trace.
+          python emulator/tools/audit_native_p2_channel_chronology.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-channel-chronology.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native P2 channel chronology audit failed' }
+          python emulator/tools/verify_native_p2_first_a3.py "$env:RUNNER_TEMP\native-p2-channel-chronology.json" "$env:RUNNER_TEMP\native-b9fb-a3-timing.json" --output "$env:RUNNER_TEMP\native-first-a3-correlation.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native first-A3 cross-report correlation failed' }
+          # Generate three sanitized reports from the SAME raw native log.
+          # The source log stays in RUNNER_TEMP and is never uploaded.
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-synthetic-capture-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Private-native capture preparation failed' }
+          # One x86 DLL process performs the entire synthetic D2 B9FB -> B9F0
+          # -> ISO15765 P3 F114 read. This is NOT a SectorV/VDASH client.
+          # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
+          if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          # A separate real x86 DLL process verifies that full CAN filter
+          # masks distinguish the same response ID by the first data byte.
+          # It is NOT a client or a donor capture; do not upload raw log.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-payload-filter" -PayloadFilterProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN PASS/BLOCK payload-filter check failed' }
+          # A second independently loaded compiled x86 DLL instance
+          # tests live CAN 500k -> 125k -> 500k DATA_RATE transition.
+          # Old queued/staged B9FB must vanish while a separate ISO P3
+          # channel continues to respond. No real diagnostic client.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-baud-switch" -BaudSwitchProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN DATA_RATE old-bus isolation failed' }
+          if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\native-can-baud-switch\SectorVVirtualCar.log" -SimpleMatch -Pattern 'CAN DATA_RATE changed: old-bus RX cancelled' -Quiet)) {
+            throw 'Compiled native DLL did not record old-bus cancellation'
+          }
+          # Re-run compiled x86 DLL in a NEW isolated process with the
+          # importer's unverified mixed-source marker and explicit lock.
+          # B9FB/B9F0 must remain silent; synthetic independent P3 still
+          # answers. Raw logs remain private in RUNNER_TEMP.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-composite-locked" -CompositeLocked
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unapproved composite D2 replay guard failed' }
+          $lockedNative = "$env:RUNNER_TEMP\native-composite-locked\SectorVVirtualCar.log"
+          if (-not (Select-String -LiteralPath $lockedNative -SimpleMatch 'P2 unapproved composite D2 fixtures disabled (count, BE)' -Quiet)) {
+            throw 'Native DLL did not report blocking composite D2 fixture replay'
+          }
+          python emulator/tools/prepare_p2_client_run.py $lockedNative --output-dir "$env:RUNNER_TEMP\native-composite-locked-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 composite-locked safe report preparation failed' }
+          $lockedBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-composite-locked-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($lockedBoundary.b9fb_positive_transport_count -ne 0 -or
+              $lockedBoundary.b9f0_positive_transport_count -ne 0 -or
+              $lockedBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $false -or
+              $lockedBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Composite-locked native DLL fabricated D2 transport or ECU acceptance'
+          }
+          python emulator/tools/verify_native_p2_p3_handoff.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-p3-handoff-gate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 native source redaction failed' }
+          # Exercise the actual user-facing client capture report against
+          # compiled x86 native DLL traffic. This remains a synthetic harness,
+          # not an execution of SectorV or VDASH.
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
+          $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $connectBound = $clientBoundary.native_b9fb_connect_channel_binding
+          if ($connectBound.status -ne 'one_b9fb_bound_to_prior_successful_channel_connect' -or
+              $connectBound.one_b9fb_bound_to_prior_successful_channel_connect -ne $true -or
+              $connectBound.b9fb_request_count -ne 1 -or
+              $connectBound.connect_success_count -lt 2 -or
+              $connectBound.client_accepted_b9fb_verified -ne $false -or
+              $connectBound.vehicle_identity_verified -ne $false) {
+            throw 'Compiled x86 J2534 Connect channel did not precede B9FB on the same mode'
+          }
+          # Adversarial modification of the *compiled DLL's actual lab*
+          # log: append another syntactically closed Open/Close cycle
+          # with the same native process label. One PID is not one
+          # device session, so B9FB Connect evidence must fail closed.
+          $nativeLog = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $duplicateLog = "$env:RUNNER_TEMP\native-reused-device-private.log"
+          Copy-Item -LiteralPath $nativeLog -Destination $duplicateLog
+          $opened = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruOpen -> device 1' | Select-Object -First 1).Line
+          $closed = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruClose' | Select-Object -Last 1).Line
+          if (-not $opened -or -not $closed) {
+            throw 'Compiled native log missing device cycle markers'
+          }
+          [IO.File]::AppendAllText($duplicateLog, "`r`n$opened`r`n$closed`r`n")
+          python emulator/tools/prepare_p2_client_run.py $duplicateLog --output-dir "$env:RUNNER_TEMP\native-multi-cycle-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Adversarial second-device-cycle safe report failed' }
+          $multi = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-multi-cycle-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($multi.native_b9fb_connect_channel_binding.status -ne 'multiple_native_device_cycles' -or
+              $multi.native_b9fb_connect_channel_binding.one_b9fb_bound_to_prior_successful_channel_connect -ne $false -or
+              $multi.native_b9fb_connect_channel_binding.native_device_open_count -ne 2 -or
+              $multi.diagnostic_focus -ne 'multiple_native_j2534_device_cycles' -or
+              $multi.client_ecu_inventory_verified -ne $false) {
+            throw 'Two device cycles in one PID incorrectly attributed B9FB Connect evidence'
+          }
+          # An untrusted UI note about a NONEMPTY ECU list must NOT
+          # override an explicitly unfinished scan, even when the
+          # compiled DLL emits a full positive B9FB/B9F0/P3 chain.
+          # The native host is PowerShell, not the proprietary client.
+          $unfinishedUi = Join-Path $env:RUNNER_TEMP 'p2-unfinished-operator.json'
+          @{
+            format = 'virtualcar-p2-client-ui-observation-v1'
+            client = 'sectorv'
+            virtual_adapter_selected = $true
+            scan_finished = $false
+            vin_display = 'visible'
+            ecu_list = 'nonempty'
+            same_run_operator_attested = $true
+          } | ConvertTo-Json -Compress | Set-Content -LiteralPath $unfinishedUi -Encoding utf8
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --ui $unfinishedUi --output-dir "$env:RUNNER_TEMP\p2-unfinished-client-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unfinished UI capture failed' }
+          $unfinished = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-unfinished-client-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($unfinished.operator_inventory_observation_gate -ne 'client_scan_not_finished' -or
+              $unfinished.operator_ecu_list_attributable_to_completed_scan -ne $false -or
+              $unfinished.client_ecu_inventory_verified -ne $false -or
+              $unfinished.first_p3_positive_transport_count -ne 1) {
+            throw 'Native x86 incomplete client scan incorrectly credited with ECU inventory'
+          }
+          # The compiled x86 DLL must bind its direct B9FB->B9F0 request
+          # to the positive B9F0 RX in the SAME closed native epoch.
+          # This is transport evidence, not acceptance by SectorV/VDASH.
+          $nativeSummary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-handoff-safe\capture-summary.json" -Raw | ConvertFrom-Json
+          $binding = $nativeSummary.b9fb_to_b9f0_same_epoch_positive_binding
+          if ($binding.status -ne 'direct_positive_b9f0_transport_same_native_epoch' -or
+              $binding.direct_b9fb_to_b9f0_request_cross_audit_verified -ne $true -or
+              $binding.positive_b9f0_transport_bound_to_direct_first_read -ne $true -or
+              $binding.genuine_cem_identity_verified -ne $false -or
+              $binding.client_b9f0_acceptance_verified -ne $false) {
+            throw 'Native x86 direct B9FB-B9F0 positive transport binding gate failed'
+          }
+          if ($clientBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $true -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client-boundary direct B9FB-B9F0 attribution failed'
+          }
+          if ($clientBoundary.native_device_lifecycle.status -ne 'single_closed_device_cycle' -or
+              $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
+              $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
+              $clientBoundary.native_p2_single_closed_epoch -ne $true -or
+              $clientBoundary.native_executable_label_family -ne 'unclassified_executable' -or
+              $clientBoundary.operator_client_native_label_comparison -ne 'no_operator_client_reported' -or
+              $clientBoundary.native_executable_identity_verified -ne $false -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
+          }
+          # A real compiled x86 DLL log with NO further appends must
+          # yield an explicit absence-of-new-evidence report, not a claim
+          # that SectorV ran or that any CEM identification was attempted.
+          $completedNative = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $oldLength = (Get-Item -LiteralPath $completedNative).Length
+          $oldSha = (Get-FileHash -LiteralPath $completedNative -Algorithm SHA256).Hash.ToLowerInvariant()
+          python emulator/tools/prepare_p2_client_run.py $completedNative --offset-bytes $oldLength --prefix-sha256 $oldSha --allow-empty-append --output-dir "$env:RUNNER_TEMP\p2-no-new-native-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'No-new-native-records safe reporter failed' }
+          $negative = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $negativeFiles = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe" -File)
+          if ($negative.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+              $negative.new_native_records_observed -ne $false -or
+              $negative.client_ecu_inventory_verified -ne $false -or
+              $negativeFiles.Count -ne 2) {
+            throw 'No-new-native-records report fabricated client discovery evidence'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-native-route-audit-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-donor-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-timing.json
+            ${{ runner.temp }}/native-p2-channel-chronology.json
+            ${{ runner.temp }}/native-first-a3-correlation.json
+            ${{ runner.temp }}/p2-synthetic-capture-safe/*.json
+            ${{ runner.temp }}/native-p2-p3-handoff-gate.json
+            ${{ runner.temp }}/p2-p3-handoff-safe/*.json
+            ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/native-multi-cycle-safe/*.json
+            ${{ runner.temp }}/p2-unfinished-client-safe/*.json
+            ${{ runner.temp }}/native-composite-locked-safe/*.json
+            ${{ runner.temp }}/p2-no-new-native-safe/*.json
+          if-no-files-found: error
+
+
+) {
+              throw 'C did not remain locked by default'
+            }
+            & $selector -Variant C_MixedB9FB_B9F0 -IConfirmClientsClosed -IUnderstandExperimentalDonorData -EnableCompositeReplay
+            $active = Get-Content -LiteralPath $sidecar -Raw
+            if ($active -notmatch '(?m)^AllowCompositeReplay=1
+        run: |
+          # Disposable GitHub-hosted Windows runner only, with no real
+          # diagnostic client and no native ECU. The installed key belongs
+          # exclusively to the virtual adapter and is removed in finally.
+          $root = (Resolve-Path -LiteralPath native-input).Path
+          $keyName = 'SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car'
+          $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            [Microsoft.Win32.RegistryView]::Registry32)
+          try {
+            $existing = $base.OpenSubKey($keyName, $false)
+            if ($null -ne $existing) {
+              $existing.Close()
+              throw 'Unexpected existing virtual adapter registry entry on disposable runner'
+            }
+          } finally { $base.Close() }
+          $previousTemp = $env:TEMP
+          $privateTemp = Join-Path $env:RUNNER_TEMP 'p2-private-empty-log'
+          [void][IO.Directory]::CreateDirectory($privateTemp)
+          $env:TEMP = $privateTemp
+          $session = Join-Path $env:RUNNER_TEMP 'p2-packaged-begin-finish-test'
+          try {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1')
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged virtual J2534 registration failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Begin -SessionDirectory $session
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Begin failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Finish -SessionDirectory $session -IConfirmClientClosed
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Finish failed' }
+            $safe = Join-Path $session 'SAFE-JSON-REPORTS'
+            $files = @(Get-ChildItem -LiteralPath $safe -File)
+            $note = Get-Content -LiteralPath (Join-Path $safe 'client-boundary.json') -Raw | ConvertFrom-Json
+            if ($files.Count -ne 2 -or
+                $note.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+                $note.new_native_records_observed -ne $false -or
+                $note.client_ecu_inventory_verified -ne $false) {
+              throw 'Packaged Begin-Finish no-log result misclassified real client acceptance'
+            }
+          } finally {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\uninstall.ps1')
+            $env:TEMP = $previousTemp
+          }
+      - name: Actual x86 DLL route regression in an isolated synthetic profile
+        shell: pwsh
+        run: |
+          # Validate PowerShell syntax before packaging a user-facing
+          # read-only script. No registry edits or user-client launches.
+          $parseTokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath emulator/scripts/Capture-P2ClientRun.ps1).Path,
+            [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            throw 'Two-phase client capture PowerShell syntax gate failed'
+          }
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-b9fb-a3-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 test failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 backend evidence failed' }
+          # Independent x86 process and profile: historical donor-derived
+          # LAB INI, with a synthetic VIN. Compare all 104 response bytes
+          # against the selected configured fixture, not only D2 controls.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-donor-b9fb-regression" -FixtureProfile emulator/virtualcar-p2-b9fb-lab-vin.ini
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB byte-for-byte replay failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-donor-b9fb-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-donor-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB backend audit failed' }
+          # This raw log remains inside the temporary isolated test directory.
+          # Only the allowlisted timing report is uploaded as an artifact.
+          python emulator/tools/verify_native_d2_followup.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-b9fb-a3-timing.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 source-local timing audit failed' }
+          # Preserve only anonymized J2534 channel aliases, never the raw trace.
+          python emulator/tools/audit_native_p2_channel_chronology.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-channel-chronology.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native P2 channel chronology audit failed' }
+          python emulator/tools/verify_native_p2_first_a3.py "$env:RUNNER_TEMP\native-p2-channel-chronology.json" "$env:RUNNER_TEMP\native-b9fb-a3-timing.json" --output "$env:RUNNER_TEMP\native-first-a3-correlation.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native first-A3 cross-report correlation failed' }
+          # Generate three sanitized reports from the SAME raw native log.
+          # The source log stays in RUNNER_TEMP and is never uploaded.
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-synthetic-capture-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Private-native capture preparation failed' }
+          # One x86 DLL process performs the entire synthetic D2 B9FB -> B9F0
+          # -> ISO15765 P3 F114 read. This is NOT a SectorV/VDASH client.
+          # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
+          if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          # A separate real x86 DLL process verifies that full CAN filter
+          # masks distinguish the same response ID by the first data byte.
+          # It is NOT a client or a donor capture; do not upload raw log.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-payload-filter" -PayloadFilterProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN PASS/BLOCK payload-filter check failed' }
+          # A second independently loaded compiled x86 DLL instance
+          # tests live CAN 500k -> 125k -> 500k DATA_RATE transition.
+          # Old queued/staged B9FB must vanish while a separate ISO P3
+          # channel continues to respond. No real diagnostic client.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-baud-switch" -BaudSwitchProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN DATA_RATE old-bus isolation failed' }
+          if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\native-can-baud-switch\SectorVVirtualCar.log" -SimpleMatch -Pattern 'CAN DATA_RATE changed: old-bus RX cancelled' -Quiet)) {
+            throw 'Compiled native DLL did not record old-bus cancellation'
+          }
+          # Re-run compiled x86 DLL in a NEW isolated process with the
+          # importer's unverified mixed-source marker and explicit lock.
+          # B9FB/B9F0 must remain silent; synthetic independent P3 still
+          # answers. Raw logs remain private in RUNNER_TEMP.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-composite-locked" -CompositeLocked
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unapproved composite D2 replay guard failed' }
+          $lockedNative = "$env:RUNNER_TEMP\native-composite-locked\SectorVVirtualCar.log"
+          if (-not (Select-String -LiteralPath $lockedNative -SimpleMatch 'P2 unapproved composite D2 fixtures disabled (count, BE)' -Quiet)) {
+            throw 'Native DLL did not report blocking composite D2 fixture replay'
+          }
+          python emulator/tools/prepare_p2_client_run.py $lockedNative --output-dir "$env:RUNNER_TEMP\native-composite-locked-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 composite-locked safe report preparation failed' }
+          $lockedBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-composite-locked-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($lockedBoundary.b9fb_positive_transport_count -ne 0 -or
+              $lockedBoundary.b9f0_positive_transport_count -ne 0 -or
+              $lockedBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $false -or
+              $lockedBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Composite-locked native DLL fabricated D2 transport or ECU acceptance'
+          }
+          python emulator/tools/verify_native_p2_p3_handoff.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-p3-handoff-gate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 native source redaction failed' }
+          # Exercise the actual user-facing client capture report against
+          # compiled x86 native DLL traffic. This remains a synthetic harness,
+          # not an execution of SectorV or VDASH.
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
+          $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $connectBound = $clientBoundary.native_b9fb_connect_channel_binding
+          if ($connectBound.status -ne 'one_b9fb_bound_to_prior_successful_channel_connect' -or
+              $connectBound.one_b9fb_bound_to_prior_successful_channel_connect -ne $true -or
+              $connectBound.b9fb_request_count -ne 1 -or
+              $connectBound.connect_success_count -lt 2 -or
+              $connectBound.client_accepted_b9fb_verified -ne $false -or
+              $connectBound.vehicle_identity_verified -ne $false) {
+            throw 'Compiled x86 J2534 Connect channel did not precede B9FB on the same mode'
+          }
+          # Adversarial modification of the *compiled DLL's actual lab*
+          # log: append another syntactically closed Open/Close cycle
+          # with the same native process label. One PID is not one
+          # device session, so B9FB Connect evidence must fail closed.
+          $nativeLog = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $duplicateLog = "$env:RUNNER_TEMP\native-reused-device-private.log"
+          Copy-Item -LiteralPath $nativeLog -Destination $duplicateLog
+          $opened = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruOpen -> device 1' | Select-Object -First 1).Line
+          $closed = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruClose' | Select-Object -Last 1).Line
+          if (-not $opened -or -not $closed) {
+            throw 'Compiled native log missing device cycle markers'
+          }
+          [IO.File]::AppendAllText($duplicateLog, "`r`n$opened`r`n$closed`r`n")
+          python emulator/tools/prepare_p2_client_run.py $duplicateLog --output-dir "$env:RUNNER_TEMP\native-multi-cycle-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Adversarial second-device-cycle safe report failed' }
+          $multi = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-multi-cycle-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($multi.native_b9fb_connect_channel_binding.status -ne 'multiple_native_device_cycles' -or
+              $multi.native_b9fb_connect_channel_binding.one_b9fb_bound_to_prior_successful_channel_connect -ne $false -or
+              $multi.native_b9fb_connect_channel_binding.native_device_open_count -ne 2 -or
+              $multi.diagnostic_focus -ne 'multiple_native_j2534_device_cycles' -or
+              $multi.client_ecu_inventory_verified -ne $false) {
+            throw 'Two device cycles in one PID incorrectly attributed B9FB Connect evidence'
+          }
+          # An untrusted UI note about a NONEMPTY ECU list must NOT
+          # override an explicitly unfinished scan, even when the
+          # compiled DLL emits a full positive B9FB/B9F0/P3 chain.
+          # The native host is PowerShell, not the proprietary client.
+          $unfinishedUi = Join-Path $env:RUNNER_TEMP 'p2-unfinished-operator.json'
+          @{
+            format = 'virtualcar-p2-client-ui-observation-v1'
+            client = 'sectorv'
+            virtual_adapter_selected = $true
+            scan_finished = $false
+            vin_display = 'visible'
+            ecu_list = 'nonempty'
+            same_run_operator_attested = $true
+          } | ConvertTo-Json -Compress | Set-Content -LiteralPath $unfinishedUi -Encoding utf8
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --ui $unfinishedUi --output-dir "$env:RUNNER_TEMP\p2-unfinished-client-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unfinished UI capture failed' }
+          $unfinished = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-unfinished-client-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($unfinished.operator_inventory_observation_gate -ne 'client_scan_not_finished' -or
+              $unfinished.operator_ecu_list_attributable_to_completed_scan -ne $false -or
+              $unfinished.client_ecu_inventory_verified -ne $false -or
+              $unfinished.first_p3_positive_transport_count -ne 1) {
+            throw 'Native x86 incomplete client scan incorrectly credited with ECU inventory'
+          }
+          # The compiled x86 DLL must bind its direct B9FB->B9F0 request
+          # to the positive B9F0 RX in the SAME closed native epoch.
+          # This is transport evidence, not acceptance by SectorV/VDASH.
+          $nativeSummary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-handoff-safe\capture-summary.json" -Raw | ConvertFrom-Json
+          $binding = $nativeSummary.b9fb_to_b9f0_same_epoch_positive_binding
+          if ($binding.status -ne 'direct_positive_b9f0_transport_same_native_epoch' -or
+              $binding.direct_b9fb_to_b9f0_request_cross_audit_verified -ne $true -or
+              $binding.positive_b9f0_transport_bound_to_direct_first_read -ne $true -or
+              $binding.genuine_cem_identity_verified -ne $false -or
+              $binding.client_b9f0_acceptance_verified -ne $false) {
+            throw 'Native x86 direct B9FB-B9F0 positive transport binding gate failed'
+          }
+          if ($clientBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $true -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client-boundary direct B9FB-B9F0 attribution failed'
+          }
+          if ($clientBoundary.native_device_lifecycle.status -ne 'single_closed_device_cycle' -or
+              $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
+              $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
+              $clientBoundary.native_p2_single_closed_epoch -ne $true -or
+              $clientBoundary.native_executable_label_family -ne 'unclassified_executable' -or
+              $clientBoundary.operator_client_native_label_comparison -ne 'no_operator_client_reported' -or
+              $clientBoundary.native_executable_identity_verified -ne $false -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
+          }
+          # A real compiled x86 DLL log with NO further appends must
+          # yield an explicit absence-of-new-evidence report, not a claim
+          # that SectorV ran or that any CEM identification was attempted.
+          $completedNative = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $oldLength = (Get-Item -LiteralPath $completedNative).Length
+          $oldSha = (Get-FileHash -LiteralPath $completedNative -Algorithm SHA256).Hash.ToLowerInvariant()
+          python emulator/tools/prepare_p2_client_run.py $completedNative --offset-bytes $oldLength --prefix-sha256 $oldSha --allow-empty-append --output-dir "$env:RUNNER_TEMP\p2-no-new-native-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'No-new-native-records safe reporter failed' }
+          $negative = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $negativeFiles = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe" -File)
+          if ($negative.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+              $negative.new_native_records_observed -ne $false -or
+              $negative.client_ecu_inventory_verified -ne $false -or
+              $negativeFiles.Count -ne 2) {
+            throw 'No-new-native-records report fabricated client discovery evidence'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-native-route-audit-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-donor-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-timing.json
+            ${{ runner.temp }}/native-p2-channel-chronology.json
+            ${{ runner.temp }}/native-first-a3-correlation.json
+            ${{ runner.temp }}/p2-synthetic-capture-safe/*.json
+            ${{ runner.temp }}/native-p2-p3-handoff-gate.json
+            ${{ runner.temp }}/p2-p3-handoff-safe/*.json
+            ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/native-multi-cycle-safe/*.json
+            ${{ runner.temp }}/p2-unfinished-client-safe/*.json
+            ${{ runner.temp }}/native-composite-locked-safe/*.json
+            ${{ runner.temp }}/p2-no-new-native-safe/*.json
+          if-no-files-found: error
+
+
+ -or
+                (Get-Content -LiteralPath (Join-Path $root 'profiles/p2-trial-02-mixed-b9fb-b9f0-locked.ini') -Raw) -notmatch '(?m)^AllowCompositeReplay=0
+        run: |
+          # Disposable GitHub-hosted Windows runner only, with no real
+          # diagnostic client and no native ECU. The installed key belongs
+          # exclusively to the virtual adapter and is removed in finally.
+          $root = (Resolve-Path -LiteralPath native-input).Path
+          $keyName = 'SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car'
+          $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            [Microsoft.Win32.RegistryView]::Registry32)
+          try {
+            $existing = $base.OpenSubKey($keyName, $false)
+            if ($null -ne $existing) {
+              $existing.Close()
+              throw 'Unexpected existing virtual adapter registry entry on disposable runner'
+            }
+          } finally { $base.Close() }
+          $previousTemp = $env:TEMP
+          $privateTemp = Join-Path $env:RUNNER_TEMP 'p2-private-empty-log'
+          [void][IO.Directory]::CreateDirectory($privateTemp)
+          $env:TEMP = $privateTemp
+          $session = Join-Path $env:RUNNER_TEMP 'p2-packaged-begin-finish-test'
+          try {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1')
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged virtual J2534 registration failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Begin -SessionDirectory $session
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Begin failed' }
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\Capture-P2ClientRun.ps1') -Phase Finish -SessionDirectory $session -IConfirmClientClosed
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Finish failed' }
+            $safe = Join-Path $session 'SAFE-JSON-REPORTS'
+            $files = @(Get-ChildItem -LiteralPath $safe -File)
+            $note = Get-Content -LiteralPath (Join-Path $safe 'client-boundary.json') -Raw | ConvertFrom-Json
+            if ($files.Count -ne 2 -or
+                $note.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+                $note.new_native_records_observed -ne $false -or
+                $note.client_ecu_inventory_verified -ne $false) {
+              throw 'Packaged Begin-Finish no-log result misclassified real client acceptance'
+            }
+          } finally {
+            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\uninstall.ps1')
+            $env:TEMP = $previousTemp
+          }
+      - name: Actual x86 DLL route regression in an isolated synthetic profile
+        shell: pwsh
+        run: |
+          # Validate PowerShell syntax before packaging a user-facing
+          # read-only script. No registry edits or user-client launches.
+          $parseTokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath emulator/scripts/Capture-P2ClientRun.ps1).Path,
+            [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            throw 'Two-phase client capture PowerShell syntax gate failed'
+          }
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
+          python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-b9fb-a3-regression"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 test failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 backend evidence failed' }
+          # Independent x86 process and profile: historical donor-derived
+          # LAB INI, with a synthetic VIN. Compare all 104 response bytes
+          # against the selected configured fixture, not only D2 controls.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_b9fb_a3.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-donor-b9fb-regression" -FixtureProfile emulator/virtualcar-p2-b9fb-lab-vin.ini
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB byte-for-byte replay failed' }
+          python emulator/tools/verify_native_b9fb_a3.py "$env:RUNNER_TEMP\native-donor-b9fb-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-donor-b9fb-a3-audit.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native donor-derived B9FB backend audit failed' }
+          # This raw log remains inside the temporary isolated test directory.
+          # Only the allowlisted timing report is uploaded as an artifact.
+          python emulator/tools/verify_native_d2_followup.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-b9fb-a3-timing.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 source-local timing audit failed' }
+          # Preserve only anonymized J2534 channel aliases, never the raw trace.
+          python emulator/tools/audit_native_p2_channel_chronology.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-channel-chronology.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native P2 channel chronology audit failed' }
+          python emulator/tools/verify_native_p2_first_a3.py "$env:RUNNER_TEMP\native-p2-channel-chronology.json" "$env:RUNNER_TEMP\native-b9fb-a3-timing.json" --output "$env:RUNNER_TEMP\native-first-a3-correlation.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native first-A3 cross-report correlation failed' }
+          # Generate three sanitized reports from the SAME raw native log.
+          # The source log stays in RUNNER_TEMP and is never uploaded.
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-synthetic-capture-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Private-native capture preparation failed' }
+          # One x86 DLL process performs the entire synthetic D2 B9FB -> B9F0
+          # -> ISO15765 P3 F114 read. This is NOT a SectorV/VDASH client.
+          # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
+          if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          # A separate real x86 DLL process verifies that full CAN filter
+          # masks distinguish the same response ID by the first data byte.
+          # It is NOT a client or a donor capture; do not upload raw log.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-payload-filter" -PayloadFilterProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN PASS/BLOCK payload-filter check failed' }
+          # A second independently loaded compiled x86 DLL instance
+          # tests live CAN 500k -> 125k -> 500k DATA_RATE transition.
+          # Old queued/staged B9FB must vanish while a separate ISO P3
+          # channel continues to respond. No real diagnostic client.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-baud-switch" -BaudSwitchProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN DATA_RATE old-bus isolation failed' }
+          if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\native-can-baud-switch\SectorVVirtualCar.log" -SimpleMatch -Pattern 'CAN DATA_RATE changed: old-bus RX cancelled' -Quiet)) {
+            throw 'Compiled native DLL did not record old-bus cancellation'
+          }
+          # Re-run compiled x86 DLL in a NEW isolated process with the
+          # importer's unverified mixed-source marker and explicit lock.
+          # B9FB/B9F0 must remain silent; synthetic independent P3 still
+          # answers. Raw logs remain private in RUNNER_TEMP.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-composite-locked" -CompositeLocked
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unapproved composite D2 replay guard failed' }
+          $lockedNative = "$env:RUNNER_TEMP\native-composite-locked\SectorVVirtualCar.log"
+          if (-not (Select-String -LiteralPath $lockedNative -SimpleMatch 'P2 unapproved composite D2 fixtures disabled (count, BE)' -Quiet)) {
+            throw 'Native DLL did not report blocking composite D2 fixture replay'
+          }
+          python emulator/tools/prepare_p2_client_run.py $lockedNative --output-dir "$env:RUNNER_TEMP\native-composite-locked-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 composite-locked safe report preparation failed' }
+          $lockedBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-composite-locked-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($lockedBoundary.b9fb_positive_transport_count -ne 0 -or
+              $lockedBoundary.b9f0_positive_transport_count -ne 0 -or
+              $lockedBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $false -or
+              $lockedBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Composite-locked native DLL fabricated D2 transport or ECU acceptance'
+          }
+          python emulator/tools/verify_native_p2_p3_handoff.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-p3-handoff-gate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 native source redaction failed' }
+          # Exercise the actual user-facing client capture report against
+          # compiled x86 native DLL traffic. This remains a synthetic harness,
+          # not an execution of SectorV or VDASH.
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
+          $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $connectBound = $clientBoundary.native_b9fb_connect_channel_binding
+          if ($connectBound.status -ne 'one_b9fb_bound_to_prior_successful_channel_connect' -or
+              $connectBound.one_b9fb_bound_to_prior_successful_channel_connect -ne $true -or
+              $connectBound.b9fb_request_count -ne 1 -or
+              $connectBound.connect_success_count -lt 2 -or
+              $connectBound.client_accepted_b9fb_verified -ne $false -or
+              $connectBound.vehicle_identity_verified -ne $false) {
+            throw 'Compiled x86 J2534 Connect channel did not precede B9FB on the same mode'
+          }
+          # Adversarial modification of the *compiled DLL's actual lab*
+          # log: append another syntactically closed Open/Close cycle
+          # with the same native process label. One PID is not one
+          # device session, so B9FB Connect evidence must fail closed.
+          $nativeLog = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $duplicateLog = "$env:RUNNER_TEMP\native-reused-device-private.log"
+          Copy-Item -LiteralPath $nativeLog -Destination $duplicateLog
+          $opened = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruOpen -> device 1' | Select-Object -First 1).Line
+          $closed = (Select-String -LiteralPath $nativeLog -SimpleMatch -Pattern 'PassThruClose' | Select-Object -Last 1).Line
+          if (-not $opened -or -not $closed) {
+            throw 'Compiled native log missing device cycle markers'
+          }
+          [IO.File]::AppendAllText($duplicateLog, "`r`n$opened`r`n$closed`r`n")
+          python emulator/tools/prepare_p2_client_run.py $duplicateLog --output-dir "$env:RUNNER_TEMP\native-multi-cycle-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Adversarial second-device-cycle safe report failed' }
+          $multi = Get-Content -LiteralPath "$env:RUNNER_TEMP\native-multi-cycle-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($multi.native_b9fb_connect_channel_binding.status -ne 'multiple_native_device_cycles' -or
+              $multi.native_b9fb_connect_channel_binding.one_b9fb_bound_to_prior_successful_channel_connect -ne $false -or
+              $multi.native_b9fb_connect_channel_binding.native_device_open_count -ne 2 -or
+              $multi.diagnostic_focus -ne 'multiple_native_j2534_device_cycles' -or
+              $multi.client_ecu_inventory_verified -ne $false) {
+            throw 'Two device cycles in one PID incorrectly attributed B9FB Connect evidence'
+          }
+          # An untrusted UI note about a NONEMPTY ECU list must NOT
+          # override an explicitly unfinished scan, even when the
+          # compiled DLL emits a full positive B9FB/B9F0/P3 chain.
+          # The native host is PowerShell, not the proprietary client.
+          $unfinishedUi = Join-Path $env:RUNNER_TEMP 'p2-unfinished-operator.json'
+          @{
+            format = 'virtualcar-p2-client-ui-observation-v1'
+            client = 'sectorv'
+            virtual_adapter_selected = $true
+            scan_finished = $false
+            vin_display = 'visible'
+            ecu_list = 'nonempty'
+            same_run_operator_attested = $true
+          } | ConvertTo-Json -Compress | Set-Content -LiteralPath $unfinishedUi -Encoding utf8
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --ui $unfinishedUi --output-dir "$env:RUNNER_TEMP\p2-unfinished-client-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 unfinished UI capture failed' }
+          $unfinished = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-unfinished-client-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($unfinished.operator_inventory_observation_gate -ne 'client_scan_not_finished' -or
+              $unfinished.operator_ecu_list_attributable_to_completed_scan -ne $false -or
+              $unfinished.client_ecu_inventory_verified -ne $false -or
+              $unfinished.first_p3_positive_transport_count -ne 1) {
+            throw 'Native x86 incomplete client scan incorrectly credited with ECU inventory'
+          }
+          # The compiled x86 DLL must bind its direct B9FB->B9F0 request
+          # to the positive B9F0 RX in the SAME closed native epoch.
+          # This is transport evidence, not acceptance by SectorV/VDASH.
+          $nativeSummary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-handoff-safe\capture-summary.json" -Raw | ConvertFrom-Json
+          $binding = $nativeSummary.b9fb_to_b9f0_same_epoch_positive_binding
+          if ($binding.status -ne 'direct_positive_b9f0_transport_same_native_epoch' -or
+              $binding.direct_b9fb_to_b9f0_request_cross_audit_verified -ne $true -or
+              $binding.positive_b9f0_transport_bound_to_direct_first_read -ne $true -or
+              $binding.genuine_cem_identity_verified -ne $false -or
+              $binding.client_b9f0_acceptance_verified -ne $false) {
+            throw 'Native x86 direct B9FB-B9F0 positive transport binding gate failed'
+          }
+          if ($clientBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $true -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client-boundary direct B9FB-B9F0 attribution failed'
+          }
+          if ($clientBoundary.native_device_lifecycle.status -ne 'single_closed_device_cycle' -or
+              $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
+              $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
+              $clientBoundary.native_p2_single_closed_epoch -ne $true -or
+              $clientBoundary.native_executable_label_family -ne 'unclassified_executable' -or
+              $clientBoundary.operator_client_native_label_comparison -ne 'no_operator_client_reported' -or
+              $clientBoundary.native_executable_identity_verified -ne $false -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
+          }
+          # A real compiled x86 DLL log with NO further appends must
+          # yield an explicit absence-of-new-evidence report, not a claim
+          # that SectorV ran or that any CEM identification was attempted.
+          $completedNative = "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log"
+          $oldLength = (Get-Item -LiteralPath $completedNative).Length
+          $oldSha = (Get-FileHash -LiteralPath $completedNative -Algorithm SHA256).Hash.ToLowerInvariant()
+          python emulator/tools/prepare_p2_client_run.py $completedNative --offset-bytes $oldLength --prefix-sha256 $oldSha --allow-empty-append --output-dir "$env:RUNNER_TEMP\p2-no-new-native-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'No-new-native-records safe reporter failed' }
+          $negative = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $negativeFiles = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\p2-no-new-native-safe" -File)
+          if ($negative.diagnostic_focus -ne 'no_new_native_j2534_records_observed' -or
+              $negative.new_native_records_observed -ne $false -or
+              $negative.client_ecu_inventory_verified -ne $false -or
+              $negativeFiles.Count -ne 2) {
+            throw 'No-new-native-records report fabricated client discovery evidence'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-native-route-audit-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-route-regression-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-donor-b9fb-a3-audit.json
+            ${{ runner.temp }}/native-b9fb-a3-timing.json
+            ${{ runner.temp }}/native-p2-channel-chronology.json
+            ${{ runner.temp }}/native-first-a3-correlation.json
+            ${{ runner.temp }}/p2-synthetic-capture-safe/*.json
+            ${{ runner.temp }}/native-p2-p3-handoff-gate.json
+            ${{ runner.temp }}/p2-p3-handoff-safe/*.json
+            ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
+            ${{ runner.temp }}/native-multi-cycle-safe/*.json
+            ${{ runner.temp }}/p2-unfinished-client-safe/*.json
+            ${{ runner.temp }}/native-composite-locked-safe/*.json
+            ${{ runner.temp }}/p2-no-new-native-safe/*.json
+          if-no-files-found: error
+
+
+) {
+              throw 'C opt-in changed source profile or did not enable local output'
+            }
+          } finally {
+            [IO.File]::WriteAllBytes($sidecar,$baseline)
           }
       - name: Smoke-test packaged Begin and Finish using ephemeral Registry32 adapter
         shell: pwsh
