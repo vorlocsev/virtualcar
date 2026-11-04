@@ -536,6 +536,110 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
 /* Eight CAN DATA_RATE transition regressions.  A new 125/500k bus
    must not inherit a previously staged D2 reply, old queued RX or
    unfinished ISO-TP CFs.  No genuine Volvo identifiers are used. */
+/* Eight J2534-2 switched J1962 6/14 and 3/11 laboratory checks.
+   Switchable ISO/CAN channels are not standard protocol aliases:
+   no synthetic ECU traffic exists until the caller binds physical pins. */
+static void test_j2534_ps_switched_pin_routes(U32 dev){
+ U32 ps=0,iso=0,standard=0,other=0,bad=0,n;
+ D2_PROFILE old_hs=g_d2[2],old_ls=g_d2[0];
+ U8 hs[8]={0xCB,0x50,0xB9,0xFB,0,0,0,0};
+ U8 ls[8]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
+ U8 ff[8]={0x8F,0x50,0xF9,0xFB,0,1,2,3};
+ U8 cf[8]={0x09,4,5,6,7,8,9,10};
+ U8 end[8]={0x4C,11,12,13,14,15,16,17};
+ U8 neg[8]={0xCC,0x40,0x7F,0xB9,0x31,0,0,0};
+ U8 vin[3]={0x22,0xF1,0x14};
+ SCONFIG opt={J1962_PINS,0};SCONFIG_LIST cfg={1,&opt};
+ PASSTHRU_MSG tx,rx;
+ memset(&g_d2[2],0,sizeof(D2_PROFILE));
+ g_d2[2].target=0x50;g_d2[2].subcommand=0xFB;
+ g_d2[2].response_id=0x01200003u;g_d2[2].baud=500000;
+ g_d2[2].frame_count=3;
+ memcpy(g_d2[2].frame[0],ff,8);
+ memcpy(g_d2[2].frame[1],cf,8);
+ memcpy(g_d2[2].frame[2],end,8);
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ memset(&g_d2[0],0,sizeof(D2_PROFILE));
+ g_d2[0].target=0x40;g_d2[0].subcommand=0xFB;
+ g_d2[0].response_id=0x00800003u;g_d2[0].baud=125000;
+ g_d2[0].frame_count=1;memcpy(g_d2[0].frame[0],neg,8);
+ REQUIRE(validate_d2_fixture(&g_d2[0]));
+ /* 1. Actual PS ProtocolIDs connect and remain unbound; a pre-pin
+       write must fail, without making a synthetic CEM reply. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,500000,&ps)==ERR_OK);
+ REQUIRE(channel(ps)->protocol==PROTO_CAN_PS && channel(ps)->ps_pins==0);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,hs,8);n=1;
+ REQUIRE(PassThruWriteMsgs(ps,&tx,&n,0)==ERR_DEVICE_NOT_CONNECTED&&n==0);
+ n=1;REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&cfg,0)==ERR_OK&&opt.Value==0);
+ /* 2. Invalid switched pins do not accidentally connect an ECU.
+       Normal fixed-pin v04.04 CAN does not acquire a PS pin mapping. */
+ opt.Value=0x0C0Du;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&cfg,0)==ERR_PIN_INVALID);
+ REQUIRE(channel(ps)->ps_pins==0);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&standard)==ERR_OK);
+ opt.Value=J1962_HS;
+ REQUIRE(PassThruIoctl(standard,IO_SET_CONFIG,&cfg,0)==ERR_NOT_SUPPORTED);
+ /* 3. Binding 6/14 at 500k enables real native-style 29-bit CAN D2
+       and preserves PS ProtocolID in RX, not ordinary CAN. */
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ opt.Value=0;REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(opt.Value==J1962_HS);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,hs,8);send(ps,&tx);
+ rx=readmsg(ps);
+ REQUIRE(rx.ProtocolID==PROTO_CAN_PS && rx.Data[4]==0x8F &&
+         rx.Data[5]==0x50 && rx.DataSize==12);
+ /* 4. PS J1962 rebind cancels queued old-HS responses, staged D2
+       tail, but does NOT silently reset another J2534 channel. */
+ tick+=100;for(U32 k=0;k<2;k++)pump_d2(channel(ps));
+ REQUIRE(channel(ps)->count==2);
+ opt.Value=J1962_LS;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(channel(ps)->count==0 && channel(ps)->d2_count==0);
+ n=1;REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(channel(standard)->baud==500000&&channel(standard)->ps_pins==0);
+ /* 5. PS pins 3/11 with 500k cannot forge LS or HS CEM identity. */
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,hs,8);send(ps,&tx);
+ n=1;REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,ls,8);send(ps,&tx);
+ n=1;REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 6. PS LS 3/11 with 125k responds only to LS route. */
+ SCONFIG speed={1,125000};SCONFIG_LIST rate={1,&speed};
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&rate,0)==ERR_OK);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,ls,8);send(ps,&tx);
+ rx=readmsg(ps);
+ REQUIRE(rx.ProtocolID==PROTO_CAN_PS&&rx.Data[4]==0xCC&&rx.Data[5]==0x40);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,hs,8);send(ps,&tx);
+ n=1;REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 7. The independent ISO15765_PS channel is also unbound until
+       explicit pins, then returns a synthetic P3 F114 only on HS. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,500000,&iso)==ERR_OK);
+ tx=frame(PROTO_ISO15765_PS,0x726u,vin,3);n=1;
+ REQUIRE(PassThruWriteMsgs(iso,&tx,&n,0)==ERR_DEVICE_NOT_CONNECTED&&n==0);
+ opt.Value=J1962_HS;
+ REQUIRE(PassThruIoctl(iso,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ tx=frame(PROTO_ISO15765_PS,0x726u,vin,3);send(iso,&tx);
+ rx=readmsg(iso);REQUIRE(rx.ProtocolID==PROTO_ISO15765_PS&&
+                        rx.Data[4]==0x62&&rx.Data[5]==0xF1&&rx.Data[6]==0x14);
+ /* 8. Rebinding PS CAN to HS and normalizing baud restores only NEW
+       HS requests. Unsupported vendor protocol remains unsupported. */
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ speed.Value=500000;
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&rate,0)==ERR_OK);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,hs,8);send(ps,&tx);
+ rx=readmsg(ps);
+ REQUIRE(rx.ProtocolID==PROTO_CAN_PS&&rx.Data[4]==0x8F);
+ REQUIRE(PassThruConnect(dev,0x10000001u,0,500000,&bad)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,500000,&other)==ERR_OK);
+ REQUIRE(channel(other)->ps_pins==0);
+ REQUIRE(PassThruDisconnect(other)==ERR_OK);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(standard)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK);
+ g_d2[2]=old_hs;g_d2[0]=old_ls;
+ puts("PASS: eight J2534-2 CAN_PS/ISO15765_PS J1962 pin binding and cross-bus isolation checks");
+}
+
 static void test_can_data_rate_change_isolation(U32 dev){
  U32 a=0,b=0,pass=0,n;
  CHANNEL *ca,*cb;
@@ -872,6 +976,7 @@ static void test_d2_all_fixtures_baud_isolation(U32 dev){
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_j2534_ps_switched_pin_routes(dev);
  test_can_data_rate_change_isolation(dev);
  test_can_explicit_clear_filter_lifecycle(dev);
  test_can_filter_mask_payload(dev);
