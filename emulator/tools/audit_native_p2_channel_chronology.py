@@ -142,6 +142,64 @@ def _first_completed_b9fb_a3(state):
     return base
 
 
+def _first_completed_b9fb_b9f0(state):
+    """First later B9F0 read TX after the first completed B9FB, same native epoch.
+
+    This checks an observed *request* only. No B9F0 reply, ECU part number,
+    client acceptance or J2534 WriteMsgs success is inferred.
+    """
+    events = state["events"]
+    completes = [e for e in events if e["kind"] == "b9fb_rx_complete"]
+    result = {
+        "status": "no_completed_b9fb_observed",
+        "b9fb_completion_order": None,
+        "first_later_b9f0_order": None,
+        "last_b9fb_rx_to_first_later_b9f0_ms": None,
+        "same_channel_target_generation_verified": False,
+        "b9f0_response_verified": False,
+        "client_acceptance_verified": False,
+    }
+    if not completes:
+        return result
+    completed = completes[0]
+    result["b9fb_completion_order"] = completed["order"]
+    later = next((e for e in events
+                  if e["kind"] == "b9f0_tx"
+                  and e["order"] > completed["order"]), None)
+    if later is None:
+        result["status"] = "no_later_b9f0_observed"
+        return result
+    result["first_later_b9f0_order"] = later["order"]
+    between_events = [e["kind"] for e in events
+                      if completed["order"] < e["order"] < later["order"]]
+    barrier = _between(state, completed, later)
+    if "b9fb_tx" in between_events:
+        result["status"] = "intervening_b9fb_request"
+    elif between_events:
+        result["status"] = "intervening_other_app_tx"
+    elif barrier is not None:
+        result["status"] = _barrier_status(barrier)
+    elif later["_channel"] != completed["_channel"]:
+        result["status"] = "different_channel"
+    elif later["_generation"] != completed["_generation"]:
+        result["status"] = "channel_reused_after_disconnect"
+    elif later["target"] != completed["target"]:
+        result["status"] = "different_target"
+    elif later["baud_bps"] != completed["baud_bps"]:
+        result["status"] = "different_baud"
+    elif state["source_error"]:
+        result["status"] = "source_context_incomplete"
+    else:
+        gap = _gap(later["_time"], completed["_time"])
+        if gap is None:
+            result["status"] = "timestamp_unverified"
+        else:
+            result["status"] = "same_channel_target_timed"
+            result["last_b9fb_rx_to_first_later_b9f0_ms"] = gap
+            result["same_channel_target_generation_verified"] = True
+    return result
+
+
 def _finish(state, reason):
     if not state["events"]:
         return None
@@ -186,6 +244,8 @@ def _finish(state, reason):
         "a3_requested": len(a3),
         "b9fb_incomplete": (state["incomplete"] + len(state["active"])),
         "first_completed_b9fb_to_later_a3": _first_completed_b9fb_a3(state),
+        "first_completed_b9fb_to_later_b9f0": _first_completed_b9fb_b9f0(state),
+        "b9f0_requests_observed": sum(e["kind"] == "b9f0_tx" for e in state["events"]),
         "channel_metadata_complete": not state["source_error"],
         "last_rx_to_a3_ms": delta,
         "same_channel_proven_for_observed_order": status == "a3_after_b9fb_same_channel_and_target"
@@ -292,6 +352,14 @@ def audit(source):
                 _barrier(s, "other_app_tx")
                 continue
             service, target = req[1], req[2]
+            if service == "B9F0":
+                # Exactly CB 40/50 B9 F0 is an executable D2 read shape.
+                # Preserve it as an ordering event AND as an intervening
+                # application-TX barrier for the independent A3 analysis.
+                if raw[4] == 0xCB:
+                    _event(s, "b9f0_tx", target, channel, baud, at)
+                _barrier(s, "other_app_tx")
+                continue
             if service not in ("A3", "B9FB"):
                 _barrier(s, "other_app_tx")
                 continue
@@ -378,6 +446,7 @@ def audit(source):
             "Per-PID session and channel alias are native log observations, not proof of ECU authorization.",
             "A3 before B9FB does not imply a successful post-B9FB Hardware transition.",
             "The first later A3 is not necessarily the first app TX, an ECU reply, or proof of causality.",
+            "A first later B9F0 event is request-only: neither a CEM response nor a parsed part number is established.",
             "A later B9FB request before the first later A3 invalidates pairing to the earlier completion.",
             "Native source-local timings do not join historical SectorV report clocks.",
             "App TX observed before J2534 WriteMsgs returns; TX success/on-wire delivery is not confirmed.",
