@@ -23,7 +23,7 @@ COUNTER = re.compile(r"(?:0|[1-9][0-9]?)\Z")
 KNOWN_LOCAL_CLASSES = {
     "local_private_raw_unverified",
     "local_synthetic_vin_unverified",
-    "local_redacted_unverified",
+    "local_redaction_attempt_unverified",
 }
 SECTIONS = (
     ("D2_40", 0x40, 0xFB),
