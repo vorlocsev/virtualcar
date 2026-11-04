@@ -61,6 +61,33 @@ Every client-side acceptance and ECU identity flag stays false.
 No source PID, executable basename, timestamp, CAN bytes, VIN,
 DID or ECU part numbers are exported.
 
+## Prevent one-PID multi-cycle source attribution
+
+A second guard now lives **inside the Connect/B9FB auditor itself**,
+rather than relying only on the outer client-boundary summary.
+To classify a positive same-channel B9FB Connect, the source must
+contain exactly one successful `PassThruOpen -> device 1` and exactly
+one `PassThruClose` for one native PID/process-label scope.
+
+Two sequential Open/Close cycles in the same PID return
+`multiple_native_device_cycles`, not positive Connect evidence.
+Nested Open, orphan Close, Connect events outside an open device,
+missing final Close, malformed source markers and explicit session
+separators fail closed. Open/Close counts and fixed error categories
+can be exported, but not the PID, process name, timestamps or bytes.
+
+Within *one* valid Open/Close cycle, disconnecting a channel and
+then successfully connecting again on that reused ID is permitted.
+The new Connect result is required before the later B9FB TX:
+an unpaired Connect marker or a duplicate Connect against a still-live
+channel is invalid. This distinction matters for diagnostic clients
+that reconnect without exiting their process.
+
+The primary capture report already checks single-device lifecycle
+separately. Independent agreement keeps individual
+`native_b9fb_connect_channel_binding` results from looking
+positive when a different epoch contains the actual CEM request.
+
 ## Verification
 
 Eight synthetic regression groups exercise: correct matching
