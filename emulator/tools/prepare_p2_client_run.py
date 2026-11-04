@@ -15,6 +15,7 @@ import sys
 
 from audit_j2534_connect import audit as audit_connect
 from audit_j2534_discovery import audit as audit_discovery, PREFIX
+from audit_native_j2534_lifecycle import audit as audit_lifecycle
 from prepare_p2_capture import prepare as prepare_p2
 
 FORMAT = "virtualcar-p2-client-capture-boundary-v1"
@@ -94,6 +95,7 @@ def prepare(source, ui=None):
         if (m := PREFIX.fullmatch(line.rstrip("\r\n"))) is not None
     }
     single_process_source = len(native_processes) == 1
+    lifecycle = audit_lifecycle(source)
     connect = audit_connect(lines)
     discovery = audit_discovery(lines, include_obd=True)
     rows = discovery["transactions"]
@@ -111,7 +113,8 @@ def prepare(source, ui=None):
     f0 = (p2_summary["b9f0_native_transport_audit"]
           if p2_summary is not None else None)
     native_clean = bool(
-        single_process_source and p2_summary is not None
+        single_process_source and lifecycle["single_closed_device_cycle_verified"]
+        and p2_summary is not None
         and p2_summary["native_epochs"] == 1
         and p2_summary["all_native_epochs_closed"] is True
         and p2_summary["native_tx_rx_context_complete"] is True
@@ -139,6 +142,10 @@ def prepare(source, ui=None):
         focus = "invalid_native_source_or_connect_metadata"
     elif not single_process_source:
         focus = "multiple_or_missing_native_process_scopes"
+    elif lifecycle["status"] == "multiple_closed_device_cycles":
+        focus = "multiple_native_j2534_device_cycles"
+    elif not lifecycle["single_closed_device_cycle_verified"]:
+        focus = "incomplete_or_invalid_native_j2534_device_cycle"
     elif connect_attempts == 0:
         focus = "no_virtual_adapter_connect_attempt_observed"
     elif connect_ok == 0:
@@ -169,6 +176,7 @@ def prepare(source, ui=None):
         "raw_log_exported": False, "client_run_executed_by_tool": False,
         "native_log_diagnostic_scope": "one_supplied_local_file",
         "single_native_process_label_observed": single_process_source,
+        "native_device_lifecycle": lifecycle,
         "connect_attempts": connect_attempts,
         "connect_succeeded": connect_ok,
         "obd_vin_requests": obd["vin_requests"],
@@ -196,6 +204,7 @@ def prepare(source, ui=None):
         "limitations": [
             "J2534 native log and operator UI observation have no independently shared authenticated run ID.",
             "A positive native B9FB, B9F0 or P3 transport does not establish diagnostic-client acceptance.",
+            "One source PID can contain multiple PassThruOpen/PassThruClose cycles; their traffic is not one device session.",
             "UI list state is an operator report, not independently verified ECU identity.",
             "No VIN, DID, hardware identifiers, process ID, client account, raw CAN bytes or source path is exported.",
             "The source may stop before B9FB, in which case the P2 report is not invented.",
