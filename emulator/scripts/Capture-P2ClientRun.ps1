@@ -175,12 +175,13 @@ if ((Get-Sha256 $dll) -ne $state.dll_sha256) {
 if ((Get-ProfileDigest) -ne $state.profile_sha256) {
     throw 'Virtual J2534 INI profile changed between Begin and Finish'
 }
-if (-not [IO.File]::Exists([string]$state.native_log_path)) {
-    throw 'No appended native J2534 log exists'
-}
+# Absence of the native log is itself a useful negative observation
+# only if Begin saw no historical file. Python verifies offset+SHA256 and
+# never claims the diagnostic program ran, selected or loaded this DLL.
 $call = @('-3', $pythonTool, [string]$state.native_log_path,
           '--offset-bytes', [string]$state.before_bytes,
           '--prefix-sha256', [string]$state.before_sha256,
+          '--allow-empty-append',
           '--output-dir', $safeFolder)
 if ($UiObservation) {
     if (-not (Test-Path -LiteralPath $UiObservation -PathType Leaf)) {
@@ -193,4 +194,5 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Client evidence capture failed closed: output not verified'
 }
 Write-Host 'PASS: only sanitized JSON files were created in SAFE-JSON-REPORTS.'
+Write-Host 'If no native bytes appeared, the report states absence of evidence only.'
 Write-Host 'Review safe JSON files before sharing. Client acceptance is NOT verified.'
