@@ -223,6 +223,15 @@ jobs:
           # It is NOT a client or a donor capture; do not upload raw log.
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-payload-filter" -PayloadFilterProbe
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN PASS/BLOCK payload-filter check failed' }
+          # A second independently loaded compiled x86 DLL instance
+          # tests live CAN 500k -> 125k -> 500k DATA_RATE transition.
+          # Old queued/staged B9FB must vanish while a separate ISO P3
+          # channel continues to respond. No real diagnostic client.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-baud-switch" -BaudSwitchProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN DATA_RATE old-bus isolation failed' }
+          if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\native-can-baud-switch\SectorVVirtualCar.log" -SimpleMatch -Pattern 'CAN DATA_RATE changed: old-bus RX cancelled' -Quiet)) {
+            throw 'Compiled native DLL did not record old-bus cancellation'
+          }
           # Re-run compiled x86 DLL in a NEW isolated process with the
           # importer's unverified mixed-source marker and explicit lock.
           # B9FB/B9F0 must remain silent; synthetic independent P3 still
