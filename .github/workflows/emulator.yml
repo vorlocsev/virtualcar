@@ -88,6 +88,9 @@ jobs:
           # Only the allowlisted timing report is uploaded as an artifact.
           python emulator/tools/verify_native_d2_followup.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-b9fb-a3-timing.json"
           if ($LASTEXITCODE -ne 0) { throw 'Native B9FB-to-A3 source-local timing audit failed' }
+          # Preserve only anonymized J2534 channel aliases, never the raw trace.
+          python emulator/tools/audit_native_p2_channel_chronology.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-channel-chronology.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Native P2 channel chronology audit failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
@@ -95,6 +98,7 @@ jobs:
             ${{ runner.temp }}/native-route-regression-audit.json
             ${{ runner.temp }}/native-b9fb-a3-audit.json
             ${{ runner.temp }}/native-b9fb-a3-timing.json
+            ${{ runner.temp }}/native-p2-channel-chronology.json
           if-no-files-found: error
 
 
