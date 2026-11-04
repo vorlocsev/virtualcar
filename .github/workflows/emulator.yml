@@ -65,6 +65,8 @@ jobs:
             emulator/tools/audit_native_p2_channel_chronology.py
             emulator/tools/audit_d2_followup_window.py
             emulator/tools/audit_native_b9f0_response.py
+            emulator/tools/verify_native_p2_p3_handoff.py
+            emulator/tools/verify_native_p2_p3_handoff.ps1
             emulator/tools/audit_j2534_discovery.py
             emulator/tools/import_p2_trace.py
 
@@ -114,6 +116,15 @@ jobs:
           # The source log stays in RUNNER_TEMP and is never uploaded.
           python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-b9fb-a3-regression\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-synthetic-capture-safe"
           if ($LASTEXITCODE -ne 0) { throw 'Private-native capture preparation failed' }
+          # One x86 DLL process performs the entire synthetic D2 B9FB -> B9F0
+          # -> ISO15765 P3 F114 read. This is NOT a SectorV/VDASH client.
+          # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
+          if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          python emulator/tools/verify_native_p2_p3_handoff.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output "$env:RUNNER_TEMP\native-p2-p3-handoff-gate.json"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
+          python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'P2/P3 native source redaction failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
@@ -125,6 +136,8 @@ jobs:
             ${{ runner.temp }}/native-p2-channel-chronology.json
             ${{ runner.temp }}/native-first-a3-correlation.json
             ${{ runner.temp }}/p2-synthetic-capture-safe/*.json
+            ${{ runner.temp }}/native-p2-p3-handoff-gate.json
+            ${{ runner.temp }}/p2-p3-handoff-safe/*.json
           if-no-files-found: error
 
 
