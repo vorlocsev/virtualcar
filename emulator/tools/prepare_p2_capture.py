@@ -18,6 +18,62 @@ OUTPUT_FILES = ("channel-chronology.json", "b9fb-followup.json",
                 "capture-summary.json")
 
 
+def _cross_audit(chronology, followup):
+    """Verify source-local transport counts before exporting related reports.
+
+    A first-A3 correlation is only meaningful for a single native epoch
+    with exactly one completed B9FB. Multi-epoch reports stay ambiguous
+    even if they happen to have matching aggregate counts.
+    """
+    chrono_completed = sum(e["b9fb_completed"] for e in chronology["epochs"])
+    next_completed = followup["completed_b9fb_count"]
+    if (chrono_completed != next_completed
+            or next_completed != len(followup["observations"])
+            or any(o["b9fb_transport_complete"] is not True
+                   for o in followup["observations"])):
+        raise ValueError("independent_b9fb_transport_counts_disagree")
+
+    status = "not_comparable"
+    gap = None
+    if len(chronology["epochs"]) == 1 and chrono_completed == 1:
+        epoch = chronology["epochs"][0]
+        if not epoch["channel_metadata_complete"] or chronology["parse_events"] or followup["parse_errors"]:
+            status = "source_context_incomplete"
+        else:
+            candidate = epoch["first_completed_b9fb_to_later_a3"]
+            first = followup["observations"][0]
+            same_first_a3 = (
+                first["followup_observation"] == "first_next_tx_observed"
+                and first["first_next_tx_service"] == "d2_a3_target_known"
+                and first["first_next_tx_same_channel"] is True
+                and first["first_next_tx_same_target"] is True
+                and first["first_next_tx_same_baud"] is True)
+            timed = (candidate["status"] == "same_channel_target_timed"
+                     and candidate["same_channel_target_generation_verified"] is True)
+            if timed != same_first_a3:
+                # An intervening TX, reset, reused channel or mismatched
+                # clock MUST prevent a false claim of direct transition.
+                # These independent reports cannot silently disagree.
+                if timed or same_first_a3:
+                    raise ValueError("independent_b9fb_a3_correlation_disagrees")
+            if timed:
+                a = candidate["last_b9fb_rx_to_first_later_a3_ms"]
+                b = first["last_rx_to_first_next_tx_ms"]
+                if (type(a) not in (float, int) or type(b) not in (float, int)
+                        or a < 0 or b < 0 or abs(a - b) > 0.001):
+                    raise ValueError("independent_b9fb_a3_clocks_disagree")
+                status = "first_a3_same_channel_target_clock_agrees"
+                gap = b
+            else:
+                status = "no_verified_direct_first_a3_pair"
+    return {
+        "transport_completion_count_agrees": True,
+        "first_a3_cross_audit_status": status,
+        "first_a3_gap_ms_when_cross_verified": gap,
+        "client_acceptance_verified": False,
+    }
+
+
 def prepare(source):
     if not isinstance(source, str) or len(source.encode("utf-8")) > MAX_INPUT_BYTES:
         raise ValueError("source_size_exceeded")
@@ -26,6 +82,7 @@ def prepare(source):
     epochs = chronology["epochs"]
     if not epochs or not any(e["events"] for e in epochs):
         raise ValueError("no_native_p2_events")
+    agreement = _cross_audit(chronology, followup)
     # A truncated log is still diagnostic evidence, just not evidence
     # of a completed capture. Do NOT silently upgrade EOF to PassThruClose.
     all_closed = all(e["boundary"] == "passthru_close" for e in epochs)
@@ -50,6 +107,7 @@ def prepare(source):
         "a3_requests_observed": a3_count,
         "b9fb_requests_observed": b9fb_count,
         "b9fb_transport_completions_observed": completed,
+        "cross_audit_consistency": agreement,
         "chronology_outcomes": dict(chronology["outcome_counts"]),
         "native_chronology_parse_errors": dict(chronology["parse_events"]),
         "native_followup_parse_errors": dict(followup["parse_errors"]),
@@ -63,6 +121,7 @@ def prepare(source):
             "Same-channel TX/RX events do not establish B9FB semantic acceptance.",
             "A source process label is untrusted and is not executable attestation.",
             "Historical PR30/run188 reports cannot be merged with this log.",
+            "Independent auditors must agree on positive B9FB completion count; A3 cross-check is restricted to one native epoch.",
             "No raw input, CAN payload, VIN, process ID, host or private path is exported.",
         ],
     }
