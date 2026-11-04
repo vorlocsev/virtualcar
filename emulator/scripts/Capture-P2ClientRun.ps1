@@ -19,6 +19,8 @@ Set-StrictMode -Version 2.0
 
 $fmt = 'virtualcar-private-native-client-capture-state-v1'
 $dll = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\VirtualCarJ2534.dll'))
+# DLL reads the sibling virtualcar.ini at PassThruOpen.
+$profile = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\virtualcar.ini'))
 $stateName = 'PRIVATE-DO-NOT-SHARE'
 $folder = [IO.Path]::GetFullPath($SessionDirectory)
 $statePath = Join-Path (Join-Path $folder $stateName) 'state.json'
@@ -86,6 +88,17 @@ function Get-Sha256([string]$path) {
     return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-ProfileDigest {
+    if (-not [IO.File]::Exists($profile)) {
+        throw 'DLL-side virtualcar.ini is missing; explicit lab profile required'
+    }
+    $bytes = (Get-Item -LiteralPath $profile).Length
+    if ($bytes -lt 1 -or $bytes -gt 262144) {
+        throw 'The virtualcar.ini profile must be nonempty and at most 256 KiB'
+    }
+    return Get-Sha256 $profile
+}
+
 function Assert-NoClientProcess {
     # A simple guard, not evidence that the user ran a particular client.
     $running = @(Get-Process -Name 'SectorV','VDASH','VDASH2' -ErrorAction SilentlyContinue)
@@ -124,6 +137,7 @@ if ($Phase -eq 'Begin') {
         before_bytes = $length
         before_sha256 = $digest
         dll_sha256 = Get-Sha256 $dll
+        profile_sha256 = Get-ProfileDigest
     }
     [IO.File]::WriteAllText($statePath,($state | ConvertTo-Json -Depth 3),
                             ([Text.UTF8Encoding]::new($false)))
@@ -149,12 +163,68 @@ if ($state.format -ne $fmt -or
     $state.before_bytes -lt 0 -or
     $state.before_bytes -gt 67108864 -or
     $state.before_sha256 -notmatch '^[a-f0-9]{64}$' -or
-    $state.dll_sha256 -notmatch '^[a-f0-9]{64}$' -or
+    $state.dll_sha256 -notmatch '^[a-f0-9]{64}
     [string]::IsNullOrWhiteSpace([string]$state.native_log_path)) {
     throw 'Invalid private Begin state'
 }
 if ((Get-Sha256 $dll) -ne $state.dll_sha256) {
     throw 'Virtual J2534 DLL changed between Begin and Finish'
+}
+if (-not [IO.File]::Exists([string]$state.native_log_path)) {
+    throw 'No appended native J2534 log exists'
+}
+$call = @('-3', $pythonTool, [string]$state.native_log_path,
+          '--offset-bytes', [string]$state.before_bytes,
+          '--prefix-sha256', [string]$state.before_sha256,
+          '--output-dir', $safeFolder)
+if ($UiObservation) {
+    if (-not (Test-Path -LiteralPath $UiObservation -PathType Leaf)) {
+        throw 'Operator UI observation JSON is missing'
+    }
+    $call += @('--ui', [IO.Path]::GetFullPath($UiObservation))
+}
+& py @call
+if ($LASTEXITCODE -ne 0) {
+    throw 'Client evidence capture failed closed: output not verified'
+}
+Write-Host 'PASS: only sanitized JSON files were created in SAFE-JSON-REPORTS.'
+Write-Host 'Review safe JSON files before sharing. Client acceptance is NOT verified.'
+ -or
+    $state.profile_sha256 -notmatch '^[a-f0-9]{64}
+    [string]::IsNullOrWhiteSpace([string]$state.native_log_path)) {
+    throw 'Invalid private Begin state'
+}
+if ((Get-Sha256 $dll) -ne $state.dll_sha256) {
+    throw 'Virtual J2534 DLL changed between Begin and Finish'
+}
+if (-not [IO.File]::Exists([string]$state.native_log_path)) {
+    throw 'No appended native J2534 log exists'
+}
+$call = @('-3', $pythonTool, [string]$state.native_log_path,
+          '--offset-bytes', [string]$state.before_bytes,
+          '--prefix-sha256', [string]$state.before_sha256,
+          '--output-dir', $safeFolder)
+if ($UiObservation) {
+    if (-not (Test-Path -LiteralPath $UiObservation -PathType Leaf)) {
+        throw 'Operator UI observation JSON is missing'
+    }
+    $call += @('--ui', [IO.Path]::GetFullPath($UiObservation))
+}
+& py @call
+if ($LASTEXITCODE -ne 0) {
+    throw 'Client evidence capture failed closed: output not verified'
+}
+Write-Host 'PASS: only sanitized JSON files were created in SAFE-JSON-REPORTS.'
+Write-Host 'Review safe JSON files before sharing. Client acceptance is NOT verified.'
+ -or
+    [string]::IsNullOrWhiteSpace([string]$state.native_log_path)) {
+    throw 'Invalid private Begin state'
+}
+if ((Get-Sha256 $dll) -ne $state.dll_sha256) {
+    throw 'Virtual J2534 DLL changed between Begin and Finish'
+}
+if ((Get-ProfileDigest) -ne $state.profile_sha256) {
+    throw 'Virtual J2534 INI profile changed between Begin and Finish'
 }
 if (-not [IO.File]::Exists([string]$state.native_log_path)) {
     throw 'No appended native J2534 log exists'
