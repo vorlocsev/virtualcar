@@ -113,7 +113,8 @@ class P2D2FixtureSourceTests(unittest.TestCase):
                 profile("virtualcar-p2-b9fb-lab-vin.ini").replace(
                     "FixtureProvenance = historical_public_2005_fixture_with_replaced_VIN",
                     "FixtureProvenance = historical_public_2005_fixture_with_replaced_VIN\n"
-                    "AllowCompositeReplay = 1"),
+                    "AllowCompositeReplay = 1\n"
+                    "allowcompositereplay = 1"),
                 encoding="utf-8")
             trace.write_text((ROOT / "samples/p2_b9f0_public_excerpt.txt").read_text(
                 encoding="utf-8"), encoding="utf-8")
@@ -126,6 +127,8 @@ class P2D2FixtureSourceTests(unittest.TestCase):
             self.assertIn("FixtureSourceClass = local_redaction_attempt_unverified", text)
             self.assertIn("AllowCompositeReplay = 0", text)
             self.assertNotIn("AllowCompositeReplay = 1", text)
+            self.assertNotIn("allowcompositereplay =", text)
+            self.assertEqual(text.count("AllowCompositeReplay = 0"), 1)
             self.assertNotIn("FixtureProvenance = historical_public_", text)
             summary = tool.audit(text)
             self.assertEqual(summary["active_fixture_count"], 2)
