@@ -5,7 +5,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [switch]$CompositeLocked
+    [switch]$CompositeLocked,
+    [switch]$PayloadFilterProbe
 )
 $ErrorActionPreference = 'Stop'
 if ([IntPtr]::Size -ne 4) {
@@ -13,6 +14,7 @@ if ([IntPtr]::Size -ne 4) {
                  $PSCommandPath, '-DllPath', $DllPath,
                  '-OutputDirectory', $OutputDirectory)
     if ($CompositeLocked) { $forward += '-CompositeLocked' }
+    if ($PayloadFilterProbe) { $forward += '-PayloadFilterProbe' }
     & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" @forward
     if ($LASTEXITCODE -ne 0) { throw 'Isolated x86 handoff process failed' }
     exit 0
@@ -69,6 +71,7 @@ using System.Runtime.InteropServices;
 public static class NativeP2P3Handoff {
     const string Library=@"__ISOLATED_DLL__";
     static readonly bool CompositeLocked=__COMPOSITE_LOCKED__;
+    static readonly bool PayloadFilterProbe=__PAYLOAD_FILTER_PROBE__;
     [StructLayout(LayoutKind.Sequential)]
     public struct Msg {
         public uint ProtocolID,RxStatus,TxFlags,Timestamp,DataSize,ExtraDataIndex;
@@ -93,6 +96,11 @@ public static class NativeP2P3Handoff {
     static extern uint PassThruWriteMsgs(uint channel,ref Msg msg,ref uint count,uint timeout);
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruReadMsgs(uint channel,IntPtr buffer,ref uint count,uint timeout);
+    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStartMsgFilter(uint channel,uint type,
+       ref Msg mask,ref Msg pattern,IntPtr flow,out uint filterId);
+    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruStopMsgFilter(uint channel,uint filterId);
 
     static void Check(bool pass,string gate) {
         if(!pass)throw new InvalidOperationException(gate);
@@ -140,6 +148,46 @@ public static class NativeP2P3Handoff {
                   "Unapproved composite replay emitted "+source);
         } finally {Marshal.FreeHGlobal(mem);}
     }
+    static void VerifyPayloadFilters(uint can) {
+        byte[] request=new byte[]{0xCB,0x50,0xB9,0xF0,0,0,0,0};
+        Msg mask=Request(5,0xFFFFFFFFu,new byte[]{0xFF});
+        Msg pat=Request(5,0x01000003u,new byte[]{0x8F});
+        uint fid=0;
+        Check(PassThruStartMsgFilter(can,1,ref mask,ref pat,
+                                     IntPtr.Zero,out fid)==0,
+              "Native five-byte PASS filter install failed");
+        try {
+            Write(can,5,0x000FFFFEu,request);
+            Msg first=Read(can,5,0x01000003u,300);
+            Check(first.Data[4]==0x8F && first.Data[5]==0x50 &&
+                  first.Data[6]==0xF9 && first.Data[7]==0xF0,
+                  "Native five-byte PASS filter missed B9F0 first frame");
+            IntPtr buf=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+            try {
+                uint count=1;
+                uint status=PassThruReadMsgs(can,buf,ref count,240);
+                Check(status==9 && count==0,
+                      "Native PASS filter leaked second/third same-ID B9F0 frame");
+            } finally { Marshal.FreeHGlobal(buf); }
+        } finally {
+            Check(PassThruStopMsgFilter(can,fid)==0,
+                  "Native PASS filter removal failed");
+        }
+        Check(PassThruStartMsgFilter(can,2,ref mask,ref pat,
+                                     IntPtr.Zero,out fid)==0,
+              "Native five-byte BLOCK filter install failed");
+        try {
+            Write(can,5,0x000FFFFEu,request);
+            Msg second=Read(can,5,0x01000003u,300);
+            Msg third=Read(can,5,0x01000003u,300);
+            Check(second.Data[4]==0x09 && third.Data[4]==0x4C,
+                  "Native BLOCK filter rejected wrong same-ID frames");
+        } finally {
+            Check(PassThruStopMsgFilter(can,fid)==0,
+                  "Native BLOCK filter removal failed");
+        }
+        Console.WriteLine("PASS: native x86 J2534 5-byte CAN PASS/BLOCK ID-and-payload filters");
+    }
     public static void Run() {
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,
               "Native x86 J2534 ABI mismatch");
@@ -160,6 +208,10 @@ public static class NativeP2P3Handoff {
             Check(PassThruConnect(device,6,0,500000,out p3)==0,
                   "ISO15765 connect failed");
             Console.WriteLine("PASS 2/8: same-process D2 CAN and P3 ISO channels");
+            if(PayloadFilterProbe) {
+                VerifyPayloadFilters(d2);
+                return;
+            }
             Write(d2,5,0x000FFFFE,new byte[]{0xCB,0x50,0xB9,0xFB,0,0,0,0});
             Console.WriteLine("PASS 3/8: B9FB request accepted by native DLL");
             byte[] controls=new byte[]{0x8F,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,
@@ -224,13 +276,17 @@ public static class NativeP2P3Handoff {
     $source=$source.Replace('__ISOLATED_DLL__',$isolatedDll.Replace('"','""'))
     $source=$source.Replace('__COMPOSITE_LOCKED__',
                             $(if ($CompositeLocked) { 'true' } else { 'false' }))
+    $source=$source.Replace('__PAYLOAD_FILTER_PROBE__',
+                            $(if ($PayloadFilterProbe) { 'true' } else { 'false' }))
     Add-Type -TypeDefinition $source -Language CSharp
     [NativeP2P3Handoff]::Run()
     $nativeLog=Join-Path $directory 'SectorVVirtualCar.log'
     if (-not (Test-Path -LiteralPath $nativeLog)) {
         throw 'Isolated same-process native J2534 log not created'
     }
-    if ($CompositeLocked) {
+    if ($PayloadFilterProbe) {
+        Write-Output 'PASS: isolated compiled x86 J2534 CAN PASS/BLOCK payload mask probe'
+    } elseif ($CompositeLocked) {
         Write-Output 'PASS: unapproved mixed-origin x86 D2 silent; independent synthetic P3 read remains available'
     } else {
         Write-Output 'PASS: one-process x86 B9FB/B9F0/P3 native lab, no real diagnostic client'
