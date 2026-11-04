@@ -81,6 +81,15 @@ class PostB9F0RequestTransitionTests(unittest.TestCase):
         self.assertEqual(candidate["first_next_app_tx_service"],
                          "other_or_unclassified_tx")
         self.assertEqual(candidate["last_b9f0_rx_to_first_next_tx_ms"], 68)
+        # ISO-TP FC is a transport continuation, not a new ECU probe.
+        flow = bytes.fromhex("30 00 00 00 00 00 00 00")
+        after_fc, data = first(b9f0_complete()
+                               + tx(flow, can=0x726, at=1_110_000)
+                               + tx(P3, can=0x726, at=1_130_000))
+        self.assertEqual(after_fc["first_next_app_tx_service"],
+                         "p3_read_data_by_identifier")
+        self.assertEqual(after_fc["last_b9f0_rx_to_first_next_tx_ms"], 88)
+        self.assertEqual(data["post_positive_first_next_tx_observed_count"], 1)
 
     def test_05_per_channel_disconnect_and_clear_are_boundaries(self):
         other, _ = first(b9f0_complete() + disconnect(2)
