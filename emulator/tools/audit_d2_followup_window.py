@@ -47,7 +47,8 @@ def _window(delta_us, duration_ms):
 
 
 def _scope():
-    return {"tx_ctx": None, "rx_ctx": None, "active": {}, "waiting": []}
+    return {"tx_ctx": None, "rx_ctx": None, "disconnect_ctx": None,
+            "active": {}, "waiting": []}
 
 
 def _service_label(request):
@@ -129,6 +130,23 @@ def audit(source):
         scope["active"].clear()
         scope["waiting"].clear()
         scope["tx_ctx"] = scope["rx_ctx"] = None
+        scope["disconnect_ctx"] = None
+
+    def disconnect_channel(scope, channel):
+        """Terminate only work bound to a known disconnected J2534 channel."""
+        nonlocal incomplete
+        if scope["active"].pop(channel, None) is not None:
+            incomplete += 1
+        remaining = []
+        for candidate in scope["waiting"]:
+            if candidate["channel"] == channel:
+                finalize(candidate, "disconnect_before_next_tx")
+            else:
+                remaining.append(candidate)
+        scope["waiting"] = remaining
+        # A pending context cannot safely survive a disconnect marker.
+        scope["tx_ctx"] = scope["rx_ctx"] = None
+        scope["disconnect_ctx"] = None
 
     for line in lines:
         if "=== SECTORV VIRTUALCAR SESSION " in line:
@@ -142,11 +160,29 @@ def audit(source):
         pid, text = match.groups()
         s = scopes.setdefault(pid, _scope())
 
-        if text in ("PassThruOpen -> device 1", "PassThruClose", "PassThruDisconnect"):
-            reason = ("open_before_next_tx" if text.startswith("PassThruOpen") else
-                      "close_before_next_tx" if text == "PassThruClose" else
-                      "disconnect_before_next_tx")
+        if text in ("PassThruOpen -> device 1", "PassThruClose"):
+            reason = ("open_before_next_tx" if text.startswith("PassThruOpen")
+                      else "close_before_next_tx")
             boundary(s, reason)
+            continue
+
+        if text.startswith("PassThruDisconnect channel (BE)"):
+            raw = text.split("(BE)", 1)[1].strip()
+            if re.fullmatch(r"[0-9A-Fa-f]{2}(?:\\s+[0-9A-Fa-f]{2}){3}", raw):
+                s["disconnect_ctx"] = int.from_bytes(bytes.fromhex(raw), "big")
+            else:
+                s["disconnect_ctx"] = None
+                errors["invalid_disconnect_context"] += 1
+            continue
+        if text == "PassThruDisconnect":
+            channel = s["disconnect_ctx"]
+            if channel is None:
+                # Without a verified channel number, do not allow an
+                # unrelated next TX to cross a potentially reused channel.
+                errors["unattributed_disconnect"] += 1
+                boundary(s, "disconnect_before_next_tx")
+            else:
+                disconnect_channel(s, channel)
             continue
 
         if text.startswith("TX context "):
@@ -271,6 +307,7 @@ def audit(source):
             "Next D2 CEM target is exported only when 0x40 or 0x50; same-target is not an access or identity check.",
             "A3 request observation does not prove an E3 response or normal-mode preparation.",
             "An end-of-log, close, clear or disconnect is not proof of a timeout or 1000 ms silence.",
+            "Verified PassThruDisconnect channel metadata ends only the named channel; missing metadata ends the PID scope conservatively.",
             "Within-window labels refer to the first logged TX, not proof that every bus frame was captured.",
             "Counters, allowlisted service labels and time gaps only; no VIN, CAN payload, paths or PID are exported.",
             "RX records with J2534 TX_MSG_TYPE, START_OF_MESSAGE or TX_INDICATION status are excluded from ECU RX framing.",
