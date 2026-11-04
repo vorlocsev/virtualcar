@@ -217,7 +217,7 @@ def main():
     if not cfg.has_section(section):cfg.add_section(section)
     source_class=('local_private_raw_unverified' if args.keep_identifiers else
                   'local_synthetic_vin_unverified' if args.lab_vin else
-                  'local_redacted_unverified')
+                  'local_redaction_attempt_unverified')
     cfg.set(section,'FixtureSourceClass',source_class)
     cfg.set(section,'FixtureIdentityVerified','0')
     cfg.set(section,'FixtureApplicationIntegrity','unknown')
