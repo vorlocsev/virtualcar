@@ -23,7 +23,9 @@ RESULT_NAME = "J2534 Connect result protocol/flags/baud/status (BE)"
 
 
 def event(name, *numbers):
-    return marker(name, words(*numbers))
+    # Same synthetic PID+host as session(): the logger's host label
+    # must not change mid-capture while testing Connect modes.
+    return marker(name, words(*numbers), host="SectorV.exe")
 
 
 def analyzed(lines):
