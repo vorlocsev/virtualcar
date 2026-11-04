@@ -209,6 +209,13 @@ def main():
     # sections may still be inherited from an unrelated historical source.
     # An old global provenance value must NOT survive this composition.
     # These fields describe untrusted local import workflow only.
+    # ConfigParser is deliberately case-preserving for ECU field names,
+    # but Win32 INI lookups are case-insensitive. Purge inherited aliases
+    # before setting a single canonical pair to avoid ambiguous duplicate
+    # options such as allowcompositereplay=1 + AllowCompositeReplay=0.
+    for old_key in list(cfg.options('P2')):
+        if old_key.casefold() in ('fixtureprovenance','allowcompositereplay'):
+            cfg.remove_option('P2', old_key)
     cfg.set('P2','FixtureProvenance','local_composite_unverified_trace_import')
     # An inherited 1 is especially dangerous when the new B9 reply belongs
     # to a different donor. A fresh output MUST require deliberate re-opt-in.
