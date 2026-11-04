@@ -50,28 +50,43 @@ def audit(source):
     result_counts = Counter()
     b9fb_checks = []
     bind_events = 0
+    device_opens = device_closes = 0
     for line in lines:
         matched = PREFIX.fullmatch(line)
         if matched is None:
+            if line.startswith("=== SECTORV VIRTUALCAR SESSION "):
+                error_counts["explicit_session_separator"] += 1
             continue
         pid, label, body = matched.groups()
         if pid not in state:
-            state[pid] = {"pending": None, "connected": {}, "tx": None}
+            state[pid] = {
+                "pending": None, "connected": {}, "tx": None, "open": False,
+            }
             labels[pid] = label
         elif labels[pid] != label:
             error_counts["process_label_changed"] += 1
         current = state[pid]
         if body == "PassThruOpen -> device 1":
+            device_opens += 1
+            if current["open"]:
+                error_counts["nested_device_open"] += 1
+            current["open"] = True
             current["pending"] = None
             current["connected"].clear()
             current["tx"] = None
         elif body == "PassThruClose":
+            device_closes += 1
+            if not current["open"]:
+                error_counts["close_without_device_open"] += 1
+            current["open"] = False
             if current["pending"] is not None:
                 error_counts["incomplete_connect_result"] += 1
             current["pending"] = None
             current["connected"].clear()
             current["tx"] = None
         elif body.startswith(BIND):
+            if not current["open"]:
+                error_counts["connect_binding_outside_device_open"] += 1
             bind_events += 1
             values = _words(body[len(BIND):], 16)
             if values is None or values[0] == 0:
@@ -82,6 +97,8 @@ def audit(source):
                     error_counts["unpaired_connect_channel_marker"] += 1
                 current["pending"] = values
         elif body.startswith(RESULT):
+            if not current["open"]:
+                error_counts["connect_result_outside_device_open"] += 1
             words = _words(body[len(RESULT):], 16)
             if words is None:
                 error_counts["malformed_connect_result"] += 1
@@ -105,6 +122,8 @@ def audit(source):
                 error_counts["bound_marker_with_failed_connect"] += 1
             current["pending"] = None
         elif body.startswith(DISCONNECT):
+            if not current["open"]:
+                error_counts["disconnect_outside_device_open"] += 1
             words = _words(body[len(DISCONNECT):], 4)
             if words is None:
                 error_counts["malformed_disconnect_channel"] += 1
@@ -112,6 +131,8 @@ def audit(source):
                 current["connected"].pop(words[0], None)
                 current["tx"] = None
         elif body.startswith(TX_CONTEXT):
+            if not current["open"]:
+                error_counts["tx_context_outside_device_open"] += 1
             words = _words(body[len(TX_CONTEXT):], 20)
             if words is None:
                 error_counts["malformed_tx_channel_context"] += 1
@@ -119,6 +140,8 @@ def audit(source):
             else:
                 current["tx"] = words
         elif body.startswith(TX_APP):
+            if not current["open"]:
+                error_counts["app_tx_outside_device_open"] += 1
             payload = _bytes(body[len(TX_APP):])
             context = current["tx"]
             current["tx"] = None
@@ -138,10 +161,15 @@ def audit(source):
     if any(x["pending"] is not None for x in state.values()):
         error_counts["incomplete_connect_result"] += sum(
             x["pending"] is not None for x in state.values())
-    if error_counts:
+    if device_opens > 1:
+        status = "multiple_native_device_cycles"
+    elif error_counts:
         status = "invalid_connect_channel_evidence"
     elif len(state) > 1:
         status = "multiple_native_process_scopes"
+    elif (device_opens != 1 or device_closes != 1
+          or any(x["open"] for x in state.values())):
+        status = "incomplete_native_device_cycle"
     elif not b9fb_checks:
         status = "no_b9fb_app_request"
     elif len(b9fb_checks) != 1:
@@ -158,6 +186,12 @@ def audit(source):
         "contains_payload_data": False,
         "source_scope": "untrusted_native_text_log",
         "native_process_scope_count": len(state),
+        "native_device_open_count": device_opens,
+        "native_device_close_count": device_closes,
+        "single_closed_native_device_cycle": (
+            device_opens == 1 and device_closes == 1
+            and not any(x["open"] for x in state.values())
+            and not error_counts and len(state) == 1),
         "connect_channel_marker_count": bind_events,
         "connect_success_count": result_counts["success"],
         "connect_success_without_channel_marker_count":
@@ -175,6 +209,7 @@ def audit(source):
         "limitations": [
             "J2534 channel IDs and event order are derived from untrusted local text, not client process authentication.",
             "A successful native Connect on the matching channel does not prove a client displayed the vehicle.",
+            "This source-local binding requires one closed PassThruOpen/PassThruClose cycle, even if a PID is reused.",
             "Older native logs without explicit channel binding cannot independently attribute aggregate Connect OK.",
             "No source PID, executable name, VIN, CAN message, DID, ECU part number or private timestamp is exported.",
         ],
