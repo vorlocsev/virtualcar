@@ -154,6 +154,22 @@ jobs:
           python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
           $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          # The compiled x86 DLL must bind its direct B9FB->B9F0 request
+          # to the positive B9F0 RX in the SAME closed native epoch.
+          # This is transport evidence, not acceptance by SectorV/VDASH.
+          $nativeSummary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-handoff-safe\capture-summary.json" -Raw | ConvertFrom-Json
+          $binding = $nativeSummary.b9fb_to_b9f0_same_epoch_positive_binding
+          if ($binding.status -ne 'direct_positive_b9f0_transport_same_native_epoch' -or
+              $binding.direct_b9fb_to_b9f0_request_cross_audit_verified -ne $true -or
+              $binding.positive_b9f0_transport_bound_to_direct_first_read -ne $true -or
+              $binding.genuine_cem_identity_verified -ne $false -or
+              $binding.client_b9f0_acceptance_verified -ne $false) {
+            throw 'Native x86 direct B9FB-B9F0 positive transport binding gate failed'
+          }
+          if ($clientBoundary.direct_b9fb_b9f0_positive_transport_bound -ne $true -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client-boundary direct B9FB-B9F0 attribution failed'
+          }
           if ($clientBoundary.native_device_lifecycle.status -ne 'single_closed_device_cycle' -or
               $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
               $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
