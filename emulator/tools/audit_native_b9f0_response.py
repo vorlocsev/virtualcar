@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import sys
 
-from audit_j2534_discovery import PREFIX, _context, _request
+from audit_j2534_discovery import PREFIX, _context, _request, _flow_control
 from import_p2_trace import validate_response
 
 MAX_BYTES = 4 * 1024 * 1024
@@ -233,6 +233,11 @@ def audit(source):
                 finish_all(state, "unattributed_app_tx")
                 continue
             channel, _, _, baud, at = ctx
+            # ISO-TP FC is transport continuation, not a fresh ECU probe.
+            # Never let FC consume a post-B9F0 first-app-TX observation,
+            # or replace the active request on that J2534 channel.
+            if _flow_control(prefix, include_obd=True):
+                continue
             req = _request(prefix)
             observe_next_tx(state, req, channel, baud, at)
             # The next TX on this channel ends the preceding response window.
@@ -344,6 +349,7 @@ def audit(source):
             "A later application TX after positive B9F0 is a request observation, not a client parse verdict or ECU inventory proof.",
             "The first later TX is attributed only within one native PID and uninterrupted source session.",
             "Variable-size ISO15765 application TX is classified by its bounded header only, not parsed as a completed ECU response.",
+            "ISO-TP Flow Control TX on P3/OBD routes is transport continuation, not the first later application request.",
             "Neither diagnostic client acceptance nor genuine XC90 V8 MY2009 identity is established.",
             "No VIN, part number, PID, host, timestamp raw bytes, CAN payload, or private source path is exported.",
         ],
