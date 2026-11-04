@@ -32,6 +32,20 @@ def _can12(text):
     return bytes.fromhex(text) if HEX12.fullmatch(text.strip()) else None
 
 
+def _tx_prefix(text):
+    """Bounded J2534 TX prefix, including variable-size ISO15765 messages.
+
+    The RX frame validator still requires exact 12-byte CAN frames; this
+    helper is only for classifying a *later app TX*, not validating a reply.
+    """
+    words = text.strip().split()
+    if not 5 <= len(words) <= 4096:
+        return None
+    if not all(re.fullmatch(r"[0-9A-Fa-f]{2}", word) for word in words):
+        return None
+    return bytes(int(word, 16) for word in words[:12])
+
+
 def _elapsed(after, before):
     if type(after) is not int or type(before) is not int:
         return None
@@ -209,19 +223,23 @@ def audit(source):
 
         if text.startswith("TX (app request)"):
             ctx = state["tx"]
-            raw = _can12(text[len("TX (app request)"):])
+            data_text = text[len("TX (app request)"):]
+            prefix = _tx_prefix(data_text)
+            raw = _can12(data_text) if ctx is not None and ctx[1] == 5 else None
             state["tx"] = None
-            if ctx is None or raw is None or ctx[1] != 5:
+            if ctx is None or prefix is None or ctx[1] not in (5, 6):
                 errors["unattributed_or_invalid_tx"] += 1
                 observe_next_tx(state, None)
                 finish_all(state, "unattributed_app_tx")
                 continue
             channel, _, _, baud, at = ctx
-            req = _request(raw)
+            req = _request(prefix)
             observe_next_tx(state, req, channel, baud, at)
             # The next TX on this channel ends the preceding response window.
             finish(state, channel, "superseded_by_app_tx")
-            if (req is None or req[0] != "D2" or req[1] != "B9F0"
+            # D2 fixture requests still require exact classic-CAN framing.
+            if (ctx[1] != 5 or raw is None or req is None
+                    or req[0] != "D2" or req[1] != "B9F0"
                     or req[2] not in RESPONSE_IDS or raw[4] != 0xCB):
                 continue
             target = req[2]
@@ -325,6 +343,7 @@ def audit(source):
             "A negative B9 service reply is not a positive B9F0 response.",
             "A later application TX after positive B9F0 is a request observation, not a client parse verdict or ECU inventory proof.",
             "The first later TX is attributed only within one native PID and uninterrupted source session.",
+            "Variable-size ISO15765 application TX is classified by its bounded header only, not parsed as a completed ECU response.",
             "Neither diagnostic client acceptance nor genuine XC90 V8 MY2009 identity is established.",
             "No VIN, part number, PID, host, timestamp raw bytes, CAN payload, or private source path is exported.",
         ],
