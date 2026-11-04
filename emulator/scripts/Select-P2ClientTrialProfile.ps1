@@ -80,12 +80,16 @@ $backupRoot=Join-Path $env:LOCALAPPDATA 'VirtualCar\TrialProfileBackups'
 $backup=Join-Path $backupRoot ('original-'+[guid]::NewGuid().ToString('N')+'.ini')
 [IO.File]::Copy($target,$backup,$false)
 $temp=Join-Path $root ('virtualcar.ini.new-'+[guid]::NewGuid().ToString('N'))
+# System.IO.File.Replace requires a NONEMPTY backup filename on some
+# Windows/.NET builds. Use a unique SAME-VOLUME intermediate for the
+# atomic replace. The durable user backup was already made in LOCALAPPDATA.
+$replaceBackup=Join-Path $root ('virtualcar.ini.atomic-backup-'+[guid]::NewGuid().ToString('N'))
 try {
     [IO.File]::WriteAllText($temp,$sourceText,(New-Object System.Text.UTF8Encoding($false)))
-    # Replace on the same volume so Begin cannot snapshot a partial INI.
-    [IO.File]::Replace($temp,$target,$null)
+    [IO.File]::Replace($temp,$target,$replaceBackup)
 } finally {
     if ([IO.File]::Exists($temp)) {[IO.File]::Delete($temp)}
+    if ([IO.File]::Exists($replaceBackup)) {[IO.File]::Delete($replaceBackup)}
 }
 $hash=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-Host "READY: $Variant; sidecar profile SHA256=$hash"
