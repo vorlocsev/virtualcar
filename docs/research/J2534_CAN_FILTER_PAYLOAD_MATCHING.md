@@ -123,6 +123,10 @@ For a CAN channel whose DATA_RATE actually changes, the simulator now:
   frames remain subject to their separately configured bus speed.
 - Preserves the J2534 filter definitions and the strict state after an
   explicit filter clear; a speed change is **not** a filter reset.
+- Refreshes the separate, **read-only P2 observer's** channel speed when
+  DATA_RATE changes, so its route classifications reflect the actual
+  J2534 channel instead of the old connection speed. This observer
+  still cannot alter the PassThru return codes or ECU reply content.
 - Leaves all other J2534 channels, including a separately connected
   ISO15765 channel, untouched.
 - Does not cancel queued RX or staged transfers if DATA_RATE is set
