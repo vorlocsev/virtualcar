@@ -23,7 +23,7 @@ EXPECTED_SEQUENCE = (
 
 def verify(chronology, timing):
     if (not isinstance(chronology, dict) or not isinstance(timing, dict)
-            or chronology.get("format") != "virtualcar-native-p2-channel-chronology-v2"
+            or chronology.get("format") != "virtualcar-native-p2-channel-chronology-v3"
             or timing.get("format") != "virtualcar-native-d2-followup-gate-v1"
             or chronology.get("epochs_with_events") != 1
             or len(chronology.get("epochs", [])) != 1
