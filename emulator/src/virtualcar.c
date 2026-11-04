@@ -919,7 +919,9 @@ static void load_config(void) {
                                  origin,sizeof(origin),g_profile_path);
         GetPrivateProfileStringA("P2","AllowCompositeReplay","0",
                                  v,sizeof(v),g_profile_path);
-        opt_in=parse_num(v,0)==1u?1u:0u;
+        /* Only literal "1" unlocks unverified composite replay.
+           Parsed numeric aliases such as 01, 0x1 or 2 remain disabled. */
+        opt_in=d2_text_equal(v,"1")?1u:0u;
         composite_disabled=block_unapproved_composite_d2(origin,opt_in);
     }
     n=GetTempPathA(sizeof(g_log_path)-32,g_log_path);
