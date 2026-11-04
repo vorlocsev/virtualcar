@@ -535,7 +535,7 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
    a matching PASS filter is installed. */
 static void test_can_explicit_clear_filter_lifecycle(U32 dev){
  U32 a=0,b=0,reopened=0,pass_id=0,block_id=0,stale_id=0,n;
- PASSTHRU_MSG mask,pattern,first,rx;
+ PASSTHRU_MSG mask,pattern,rx;
  const U8 accepted[8]={0x62,0x01,0,0,0,0,0,0};
  const U8 other[8]={0x7F,0x01,0,0,0,0,0,0};
  CHANNEL *ca,*cb;
