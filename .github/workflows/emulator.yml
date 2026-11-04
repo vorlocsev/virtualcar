@@ -69,6 +69,8 @@ jobs:
             emulator/tools/verify_native_p2_p3_handoff.ps1
             emulator/tools/prepare_p2_client_run.py
             emulator/samples/p2-client-ui-observation.template.json
+            emulator/scripts/diagnose.ps1
+            emulator/tools/audit_j2534_connect.py
             emulator/tools/audit_j2534_discovery.py
             emulator/tools/import_p2_trace.py
 
