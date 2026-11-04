@@ -106,8 +106,15 @@ class P2D2FixtureSourceTests(unittest.TestCase):
             original = root / "donor.ini"
             trace = root / "public-b9f0.txt"
             output = root / "composite.ini"
-            original.write_text(profile("virtualcar-p2-b9fb-lab-vin.ini"),
-                                encoding="utf-8")
+            # Adversarial donor template was explicitly opted into
+            # replay before a different trace was imported. The importer
+            # MUST revoke that inherited approval.
+            original.write_text(
+                profile("virtualcar-p2-b9fb-lab-vin.ini").replace(
+                    "FixtureProvenance = historical_public_2005_fixture_with_replaced_VIN",
+                    "FixtureProvenance = historical_public_2005_fixture_with_replaced_VIN\n"
+                    "AllowCompositeReplay = 1"),
+                encoding="utf-8")
             trace.write_text((ROOT / "samples/p2_b9f0_public_excerpt.txt").read_text(
                 encoding="utf-8"), encoding="utf-8")
             private_original = original.read_bytes()
@@ -117,6 +124,8 @@ class P2D2FixtureSourceTests(unittest.TestCase):
             self.assertIn("FixtureProvenance = local_composite_unverified_trace_import",
                           text)
             self.assertIn("FixtureSourceClass = local_redaction_attempt_unverified", text)
+            self.assertIn("AllowCompositeReplay = 0", text)
+            self.assertNotIn("AllowCompositeReplay = 1", text)
             self.assertNotIn("FixtureProvenance = historical_public_", text)
             summary = tool.audit(text)
             self.assertEqual(summary["active_fixture_count"], 2)
@@ -156,10 +165,15 @@ class P2D2FixtureSourceTests(unittest.TestCase):
             result = root / "lab-import.ini"
             trace.write_text((ROOT / "samples/p2_b9fb_public_redacted.txt")
                              .read_text(encoding="utf-8"), encoding="utf-8")
-            template.write_text(profile("virtualcar-p2-historical-demo.ini"),
-                                encoding="utf-8")
+            template.write_text(
+                profile("virtualcar-p2-historical-demo.ini").replace(
+                    "ReplaySpacingMs = 12",
+                    "ReplaySpacingMs = 12\nAllowCompositeReplay = 1"),
+                encoding="utf-8")
             self.assertEqual(call_import(
                 trace, template, result, "--lab-vin", "VCARLAB0000000000"), 0)
+            self.assertIn("AllowCompositeReplay = 0",
+                          result.read_text(encoding="utf-8"))
             lab_result = tool.audit(result.read_text(encoding="utf-8"))
             self.assertEqual(row(lab_result, "B9FB")["source_class"],
                              "local_synthetic_vin_unverified")
