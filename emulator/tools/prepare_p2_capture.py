@@ -157,8 +157,13 @@ def prepare(source):
             "request_count": b9f0["request_count"],
             "status_counts": b9f0["status_counts"],
             "positive_echo_transport_observed": b9f0["any_positive_transport_observed"],
+            "post_positive_first_next_tx_service_counts":
+                b9f0["post_positive_first_next_tx_service_counts"],
+            "post_positive_first_next_tx_observed_count":
+                b9f0["post_positive_first_next_tx_observed_count"],
             "parser_error_counts": b9f0["parse_errors"],
             "client_acceptance_verified": False,
+            "ecu_enumeration_verified": False,
             "part_number_decoded": False,
         },
         "b9fb_requests_observed": b9fb_count,
@@ -178,6 +183,7 @@ def prepare(source):
             "Same-channel TX/RX events do not establish B9FB semantic acceptance.",
             "B9F0 request order is audited separately from any matching B9F0 transport reply.",
             "A positive B9F0 echo and complete D2 framing do not verify part-number semantics, authentic ECU identity or client acceptance.",
+            "A next application TX after B9F0 is not proof that the client enumerated any ECU.",
             "A source process label is untrusted and is not executable attestation.",
             "Historical PR30/run188 reports cannot be merged with this log.",
             "Independent auditors must agree on positive B9FB completion count; A3 cross-check is restricted to one native epoch.",
