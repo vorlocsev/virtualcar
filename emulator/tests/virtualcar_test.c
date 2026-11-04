@@ -522,6 +522,60 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
    be emitted on another bus, even if legacy StrictRouting is set to zero.
    The replies below are synthetic NEGATIVE B9 acknowledgments; they are not
    genuine Volvo CEM data or successful client acceptance. */
+/* Eight unverified composite-profile laboratory replay gates. A correct
+   D2 response from an imported mixed-origin INI is NOT verified XC90 CEM
+   identity. Deliberate opt-in is always explicit, never inherited. */
+static void test_d2_unapproved_composite_replay_block(U32 dev){
+ D2_PROFILE original[MAX_D2_FIXTURES];
+ const char *tag="local_composite_unverified_trace_import";
+ U32 i,channel=0,n;PASSTHRU_MSG m,r;
+ memcpy(original,g_d2,sizeof(original));
+ for(i=0;i<MAX_D2_FIXTURES;i++)g_d2[i].frame_count=0;
+ for(i=0;i<BASE_D2_FIXTURES;i++)g_d2[i].frame_count=1;
+ g_d2[BASE_D2_FIXTURES].frame_count=1;
+ /* 1. All six CEM D2 slots plus an optional D2_Node are blocked. */
+ REQUIRE(block_unapproved_composite_d2(tag,0)==BASE_D2_FIXTURES+1);
+ for(i=0;i<MAX_D2_FIXTURES;i++)REQUIRE(g_d2[i].frame_count==0);
+ /* 2. Rechecking an already disabled source is safe and idempotent. */
+ REQUIRE(block_unapproved_composite_d2(tag,0)==0);
+ /* 3. Explicit opt-in=1 is the ONLY enabling value. */
+ for(i=0;i<BASE_D2_FIXTURES;i++)g_d2[i].frame_count=1;
+ REQUIRE(block_unapproved_composite_d2(tag,1)==0);
+ for(i=0;i<BASE_D2_FIXTURES;i++)REQUIRE(g_d2[i].frame_count==1);
+ /* 4. Historic public fixtures have separate, unverified lab semantics. */
+ REQUIRE(block_unapproved_composite_d2("historical_public_donor",0)==0);
+ /* 5. Original untagged synthetic fixture tests stay backwards compatible. */
+ REQUIRE(block_unapproved_composite_d2("",0)==0);
+ /* 6. This marker is a fail-closed workflow safeguard, NOT authentication:
+       arbitrary renamed INIs do not become real verified vehicle records. */
+ REQUIRE(block_unapproved_composite_d2("other_unverified_source",0)==0);
+ /* 7. Exactly the configured active replay slots are suppressed, while
+       non-frame route metadata is retained for read-only diagnostics. */
+ for(i=0;i<MAX_D2_FIXTURES;i++)g_d2[i].frame_count=0;
+ g_d2[2].target=0x50;g_d2[2].subcommand=0xFB;
+ g_d2[2].baud=500000;g_d2[2].response_id=0x01200003u;
+ g_d2[2].frame_count=1;
+ g_d2[3].frame_count=1;
+ REQUIRE(block_unapproved_composite_d2(tag,0)==2);
+ REQUIRE(g_d2[2].frame_count==0 && g_d2[3].frame_count==0);
+ REQUIRE(g_d2[2].target==0x50 && g_d2[2].response_id==0x01200003u);
+ /* 8. The original native CAN dispatch emits no imported CEM reply
+       after this runtime source guard, without impacting J2534 Connect. */
+ g_d2[2].frame_count=1;
+ {U8 neg[8]={0xCC,0x50,0x7F,0xB9,0x31,0,0,0};
+  memcpy(g_d2[2].frame[0],neg,sizeof(neg));}
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ REQUIRE(block_unapproved_composite_d2(tag,0)==1);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000,&channel)==ERR_OK);
+ {U8 request[8]={0xCB,0x50,0xB9,0xFB,0,0,0,0};
+  m=frame(PROTO_CAN,0x000FFFFE,request,8);
+  send(channel,&m);}
+ n=1;REQUIRE(PassThruReadMsgs(channel,&r,&n,0)==ERR_BUFFER_EMPTY && n==0);
+ REQUIRE(PassThruDisconnect(channel)==ERR_OK);
+ memcpy(g_d2,original,sizeof(original));
+ puts("PASS: eight composite-origin CEM D2 replay opt-in gates");
+}
+
 static void test_d2_all_fixtures_baud_isolation(U32 dev){
  D2_PROFILE original[MAX_D2_FIXTURES];
  U32 saved_strict=g_p2_strict_routing;
@@ -574,6 +628,7 @@ static void test_d2_all_fixtures_baud_isolation(U32 dev){
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_d2_unapproved_composite_replay_block(dev);
  test_d2_all_fixtures_baud_isolation(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
