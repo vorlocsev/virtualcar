@@ -35,7 +35,7 @@ class ByteOffsetCaptureTests(unittest.TestCase):
     def run_capture(self, *, old=None, appended=None, offset=None,
                     digest=None, opts=None):
         old = self.previous if old is None else old
-        appended = session().encode("utf-8") if appended is None else appended
+        appended = (session() + "\n").encode("utf-8") if appended is None else appended
         self.source.write_bytes(old + appended)
         args = [str(self.source), "--output-dir", str(self.safe)]
         if offset is not None:
@@ -66,6 +66,12 @@ class ByteOffsetCaptureTests(unittest.TestCase):
         self.assertEqual(self.run_capture(old=b"PRIVATE_CHANGED_HISTORICAL_BYTES\n",
                                           offset=len(self.previous),
                                           digest=sha(self.previous)), 2)
+        self.assertFalse(self.safe.exists())
+        # Existing historical bytes with no LF cannot form a clean
+        # append boundary even if the prefix SHA matches.
+        old = b"PREVIOUS_PRIVATE_PARTIAL_LINE"
+        self.assertEqual(self.run_capture(old=old, offset=len(old),
+                                          digest=sha(old)), 2)
         self.assertFalse(self.safe.exists())
 
     def test_03_log_rotation_or_truncation_is_rejected(self):
@@ -101,7 +107,7 @@ class ByteOffsetCaptureTests(unittest.TestCase):
 
     def test_07_old_log_over_four_megabytes_can_be_safely_skipped(self):
         # The old log is large but only the bounded new suffix is analyzed.
-        old = b"P" * (capture.MAX_BYTES + 1)
+        old = b"P" * (capture.MAX_BYTES + 1) + b"\n"
         self.assertEqual(self.run_capture(old=old, offset=len(old),
                                           digest=sha(old)), 0)
         note = json.loads((self.safe / "client-boundary.json").read_text())
@@ -115,6 +121,19 @@ class ByteOffsetCaptureTests(unittest.TestCase):
                                           digest=sha(self.previous),
                                           appended=suffix), 2)
         self.assertFalse(self.safe.exists())
+        # Reject unfinished new records, invalid UTF-8 and unscoped
+        # data injected before the first native process marker.
+        bad_cases = (
+            session().encode("utf-8"),
+            (session() + "\n").encode("utf-8") + b"\xff\n",
+            b"UNSCOPED_LINE\n" + (session() + "\n").encode("utf-8"),
+        )
+        for invalid in bad_cases:
+            with self.subTest(prefix=invalid[:16]):
+                self.assertEqual(self.run_capture(offset=len(self.previous),
+                                                  digest=sha(self.previous),
+                                                  appended=invalid), 2)
+                self.assertFalse(self.safe.exists())
         self.assertEqual(self.run_capture(offset=len(self.previous),
                                           digest=sha(self.previous)), 0)
         # Exclusive output: repeated Finish cannot overwrite the safe report.
