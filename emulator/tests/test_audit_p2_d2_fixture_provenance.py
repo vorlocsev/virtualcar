@@ -134,6 +134,12 @@ class P2D2FixtureSourceTests(unittest.TestCase):
             self.assertEqual(summary["active_fixture_count"], 2)
             self.assertEqual(summary["global_provenance_claim"],
                              "local_composite_unverified")
+            self.assertTrue(summary["composite_replay_tag_gate"][
+                "stored_d2_fixtures_blocked_without_opt_in"])
+            self.assertFalse(row(summary, "B9F0")[
+                "replay_allowed_by_profile_gate"])
+            self.assertFalse(row(summary, "B9FB")[
+                "replay_allowed_by_profile_gate"])
             self.assertEqual(row(summary, "B9F0")["source_class"],
                              "local_redaction_attempt_unverified")
             self.assertEqual(row(summary, "B9FB")["source_class"],
@@ -180,6 +186,19 @@ class P2D2FixtureSourceTests(unittest.TestCase):
             lab_result = tool.audit(result.read_text(encoding="utf-8"))
             self.assertEqual(row(lab_result, "B9FB")["source_class"],
                              "local_synthetic_vin_unverified")
+            self.assertTrue(lab_result["composite_replay_tag_gate"][
+                "stored_d2_fixtures_blocked_without_opt_in"])
+            self.assertFalse(row(lab_result, "B9FB")[
+                "replay_allowed_by_profile_gate"])
+            # Read-only local opt-in enables lab transport only, never
+            # upgrades source authentication or XC90 hardware identity.
+            allow = result.read_text(encoding="utf-8").replace(
+                "AllowCompositeReplay = 0", "AllowCompositeReplay = 1")
+            allowed = tool.audit(allow)
+            self.assertTrue(row(allowed, "B9FB")[
+                "replay_allowed_by_profile_gate"])
+            self.assertFalse(allowed["xc90_v8_my2009_identity_verified"])
+            self.assertFalse(allowed["fixture_source_consistency_verified"])
             self.assertFalse(lab_result["fixture_source_consistency_verified"])
 
 
