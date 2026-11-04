@@ -178,7 +178,7 @@ if ((Get-ProfileDigest) -ne $state.profile_sha256) {
 # Absence of the native log is itself a useful negative observation
 # only if Begin saw no historical file. Python verifies offset+SHA256 and
 # never claims the diagnostic program ran, selected or loaded this DLL.
-$call = @('-3', $pythonTool, [string]$state.native_log_path,
+$call = @($pythonTool, [string]$state.native_log_path,
           '--offset-bytes', [string]$state.before_bytes,
           '--prefix-sha256', [string]$state.before_sha256,
           '--allow-empty-append',
@@ -189,7 +189,18 @@ if ($UiObservation) {
     }
     $call += @('--ui', [IO.Path]::GetFullPath($UiObservation))
 }
-& py @call
+# python.exe may be installed without the optional py.exe launcher.
+# Neither runtime is downloaded or installed by this read-only tool.
+$python = Get-Command python -ErrorAction SilentlyContinue
+if ($null -ne $python) {
+    & $python.Source @call
+} else {
+    $launcher = Get-Command py -ErrorAction SilentlyContinue
+    if ($null -eq $launcher) {
+        throw 'Python 3 is required to sanitize the private native log'
+    }
+    & $launcher.Source -3 @call
+}
 if ($LASTEXITCODE -ne 0) {
     throw 'Client evidence capture failed closed: output not verified'
 }
