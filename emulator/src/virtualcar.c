@@ -612,7 +612,7 @@ static void backend_cancel_channel(CHANNEL *c,const char *reason,int d2_only) {
 
 /* Validates framing only. No assertion about undocumented FB semantics. */
 static int validate_d2_fixture(const D2_PROFILE *d){
-    U32 k;U8 base,seq=1;int final=0;
+    U32 k;U8 base,seq=1;int final=0,observed_bridge=0;
     if(!d->frame_count || d->frame_count>MAX_D2_FRAMES || d->response_id>0x1FFFFFFFu)return 0;
     if(d->frame_count==1){
         const U8 *f=d->frame[0];
@@ -628,6 +628,10 @@ static int validate_d2_fixture(const D2_PROFILE *d){
         U8 header=d->frame[k][0];
         if(header>=0x48 && header<=0x4F){
             if(k!=d->frame_count-1)return 0;
+            /* A bare 97/1x-to-4x jump is not a verified completed D2
+               response. Keep the existing VIDA 55 + repeated 8F bridge
+               compatible, but do not mix independent P1/P2 dialects. */
+            if(base==0x10 && !observed_bridge)return 0;
             final=1;continue;
         }
         /* Sub-block ends but the D2 response has not ended. */
@@ -639,7 +643,7 @@ static int validate_d2_fixture(const D2_PROFILE *d){
            in VIDA; it is not a new response or a payload segment. */
         if(header==0x8F && k>1 && (d->frame[k-1][0]&0xF8)==0x50 &&
            d->frame[k][1]==d->target && d->frame[k][2]==0xF9 &&
-           d->frame[k][3]==d->subcommand)continue;
+           d->frame[k][3]==d->subcommand){observed_bridge=1;continue;}
         if(header!=(U8)(base|seq))return 0;
         seq=(seq+1)&7u;
     }
