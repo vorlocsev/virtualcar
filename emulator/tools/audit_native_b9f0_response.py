@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import sys
 
-from audit_j2534_discovery import PREFIX, _context, _request, _flow_control
+from audit_j2534_discovery import PREFIX, _context, _request, _flow_control, _p3_frame
 from import_p2_trace import validate_response
 
 MAX_BYTES = 4 * 1024 * 1024
@@ -32,18 +32,20 @@ def _can12(text):
     return bytes.fromhex(text) if HEX12.fullmatch(text.strip()) else None
 
 
-def _tx_prefix(text):
-    """Bounded J2534 TX prefix, including variable-size ISO15765 messages.
-
-    The RX frame validator still requires exact 12-byte CAN frames; this
-    helper is only for classifying a *later app TX*, not validating a reply.
-    """
+def _native_message(text):
+    """Decode a bounded, local native record without ever exporting bytes."""
     words = text.strip().split()
     if not 5 <= len(words) <= 4096:
         return None
     if not all(re.fullmatch(r"[0-9A-Fa-f]{2}", word) for word in words):
         return None
-    return bytes(int(word, 16) for word in words[:12])
+    return bytes(int(word, 16) for word in words)
+
+
+def _tx_prefix(text):
+    """Allowlisted service classification uses only the first 12 bytes."""
+    raw = _native_message(text)
+    return raw[:12] if raw is not None else None
 
 
 def _elapsed(after, before):
@@ -55,7 +57,7 @@ def _elapsed(after, before):
 
 def _scope():
     return {"tx": None, "rx": None, "disconnect": None, "clear": None,
-            "active": {}, "waiting": []}
+            "active": {}, "waiting": [], "probes": {}}
 
 
 def _next_app_tx_label(req):
@@ -80,6 +82,50 @@ def audit(source):
         raise ValueError("too_many_lines")
     scopes, records, errors = {}, [], Counter()
 
+    def finish_probe(state, channel, reason):
+        """Close first post-B9F0 P3 response window; never infer ECU inventory."""
+        probe = state["probes"].pop(channel, None)
+        if probe is None:
+            return
+        transport = probe["transport"]
+        if transport["_invalid"]:
+            status = "invalid_transport"
+        elif transport["_p3_negative"]:
+            status = "negative_response"
+        elif transport["_p3_missing_data"]:
+            status = "missing_did_record"
+        elif transport["_p3_mismatch"]:
+            status = "mismatched_did_or_service"
+        elif transport["_complete"]:
+            status = "positive_transport_complete"
+        elif transport["_p3_pending"]:
+            status = ("response_pending_timeout" if probe["timeout"]
+                      else "response_pending_only")
+        elif transport["rx_frames"]:
+            status = "partial_rx"
+        elif probe["timeout"]:
+            status = "read_timeout_observed"
+        elif probe["offroute"]:
+            status = "off_route_rx_only"
+        else:
+            status = "no_matched_rx"
+        record = probe["owner"]
+        record["first_next_p3_response_status"] = status
+        record["first_next_p3_response_boundary"] = reason
+        record["first_next_p3_rx_frames"] = transport["rx_frames"]
+        record["first_next_p3_off_route_rx_count"] = probe["offroute"]
+        record["first_next_p3_pending_count"] = transport["_p3_pending"]
+        record["first_next_p3_ignored_indication_count"] = probe["indications"]
+        record["first_next_p3_tx_to_last_rx_ms"] = _elapsed(
+            probe["last_rx"], probe["tx_time"])
+        record["first_next_p3_positive_transport_complete"] = (
+            status == "positive_transport_complete")
+
+    def finish_probes(state, reason, channel=None):
+        for candidate in list(state["probes"]):
+            if channel is None or candidate == channel:
+                finish_probe(state, candidate, reason)
+
     def stop_waiting(state, reason, channel=None):
         """Close observed post-positive windows at explicit native boundaries."""
         remaining = []
@@ -90,9 +136,44 @@ def audit(source):
                 remaining.append((record, source_channel, source_baud, rx_at))
         state["waiting"] = remaining
 
-    def observe_next_tx(state, req, channel=None, baud=None, at=None):
-        """First later application TX in the same PID/native log epoch."""
-        for record, source_channel, source_baud, rx_at in state["waiting"]:
+    def observe_next_tx(state, req, channel=None, baud=None, at=None,
+                        protocol=None):
+        """Bind only the first P3 read after a positive B9F0 within this PID."""
+        prior = state["waiting"]
+        if len(prior) == 1 and channel is not None and protocol in (5, 6) and (
+                req is not None and req[0] == "P3"
+                and req[1].startswith("22") and req[1] != "other"):
+            # Use the existing read-only P3 ISO-TP/UDS validator, not a
+            # second DID decoder. The private DID stays in memory only.
+            state["probes"][channel] = {
+                "owner": prior[0][0],
+                "request_id": req[3],
+                "protocol": protocol,
+                "baud": baud,
+                "tx_time": at,
+                "last_rx": None,
+                "offroute": 0,
+                "indications": 0,
+                "timeout": False,
+                "transport": {
+                    "route": "P3", "service": req[1], "rx_frames": 0,
+                    "off_route_rx": 0, "_complete": False,
+                    "_p3_negative": False, "_p3_mismatch": False,
+                    "_p3_missing_data": False, "_invalid": False,
+                    "_p3_pending": 0, "_p3_total": None,
+                    "_p3_received": 0, "_p3_sequence": 1,
+                    "_p3_header": b"",
+                },
+            }
+            prior[0][0]["first_next_p3_response_status"] = "awaiting_rx"
+        elif len(prior) > 1 and (req is not None and req[0] == "P3"
+                                  and req[1].startswith("22")):
+            # Two completed B9F0s preceding one first TX do not identify
+            # which one the client interpreted; no causal RX claim.
+            for record, _, _, _ in prior:
+                record["first_next_p3_response_status"] = (
+                    "ambiguous_multiple_b9f0_predecessors")
+        for record, source_channel, source_baud, rx_at in prior:
             if channel is None:
                 record["first_next_app_tx_observation"] = "next_tx_unattributed"
                 record["first_next_app_tx_service"] = "unattributed_app_tx"
@@ -142,6 +223,14 @@ def audit(source):
             "first_next_app_tx_same_channel": None,
             "first_next_app_tx_same_baud": None,
             "last_b9f0_rx_to_first_next_tx_ms": None,
+            "first_next_p3_response_status": "not_a_p3_read",
+            "first_next_p3_response_boundary": None,
+            "first_next_p3_rx_frames": 0,
+            "first_next_p3_off_route_rx_count": 0,
+            "first_next_p3_pending_count": 0,
+            "first_next_p3_ignored_indication_count": 0,
+            "first_next_p3_tx_to_last_rx_ms": None,
+            "first_next_p3_positive_transport_complete": False,
         })
         if status == "positive_transport_complete":
             # Only a proven terminal RX opens a post-B9F0 observation.
@@ -153,6 +242,7 @@ def audit(source):
             raise ValueError("too_many_b9f0_records")
 
     def finish_all(state, reason):
+        finish_probes(state, reason)
         for channel in list(state["active"]):
             finish(state, channel, reason)
         state["tx"] = state["rx"] = None
@@ -190,6 +280,7 @@ def audit(source):
                 finish_all(state, "unattributed_disconnect")
             else:
                 stop_waiting(state, "disconnect_before_next_tx", channel)
+                finish_probe(state, channel, "channel_disconnect")
                 finish(state, channel, "channel_disconnect")
                 state["tx"] = state["rx"] = None
                 state["disconnect"] = state["clear"] = None
@@ -207,6 +298,7 @@ def audit(source):
             else:
                 stop_waiting(state, "rx_buffer_clear_before_next_tx",
                              state["clear"][0])
+                finish_probe(state, state["clear"][0], "rx_buffer_clear")
                 finish(state, state["clear"][0], "rx_buffer_clear")
                 state["tx"] = state["rx"] = state["clear"] = None
             continue
@@ -243,7 +335,8 @@ def audit(source):
                 # Only a classic CAN ISO-TP PCI is a Flow Control.
                 continue
             req = _request(prefix)
-            observe_next_tx(state, req, channel, baud, at)
+            finish_probe(state, channel, "superseded_by_app_tx")
+            observe_next_tx(state, req, channel, baud, at, ctx[1])
             # The next TX on this channel ends the preceding response window.
             finish(state, channel, "superseded_by_app_tx")
             # D2 fixture requests still require exact classic-CAN framing.
@@ -265,13 +358,51 @@ def audit(source):
             continue
 
         if text.startswith("PassThruReadMsgs -> delivered"):
-            raw = _can12(text[len("PassThruReadMsgs -> delivered"):])
+            data_text = text[len("PassThruReadMsgs -> delivered"):]
             ctx = state["rx"]
             state["rx"] = None
-            if ctx is None or raw is None or ctx[1] != 5:
+            raw_bytes = _native_message(data_text)
+            if ctx is None or raw_bytes is None or ctx[1] not in (5, 6):
+                errors["unattributed_or_invalid_rx"] += 1
+                # Malformed P3 framing is not proof of a delivered identity.
+                if ctx is not None and ctx[0] in state["probes"]:
+                    state["probes"][ctx[0]]["transport"]["_invalid"] = True
+                    finish_probe(state, ctx[0], "unattributed_rx_record")
+                continue
+            channel, protocol, rxstatus, baud, at = ctx
+            probe = state["probes"].get(channel)
+            if probe is not None:
+                if rxstatus & (0x01 | 0x02 | 0x08):
+                    probe["indications"] += 1
+                    continue
+                expected = (0x72E if probe["request_id"] == 0x726
+                            else 0x18DAF150)
+                actual_id = int.from_bytes(raw_bytes[:4], "big")
+                if (protocol != probe["protocol"] or baud != probe["baud"]
+                        or actual_id != expected):
+                    probe["offroute"] += 1
+                    continue
+                if (protocol == 5 and len(raw_bytes) != 12) or (
+                        protocol == 6 and len(raw_bytes) < 5):
+                    probe["transport"]["_invalid"] = True
+                    finish_probe(state, channel, "invalid_native_rx_length")
+                    errors["invalid_p3_rx_length"] += 1
+                    continue
+                _p3_frame(probe["transport"], raw_bytes[4:],
+                          "CAN" if protocol == 5 else "ISO15765")
+                probe["last_rx"] = at
+                frame = probe["transport"]
+                if frame["rx_frames"] > 64:
+                    frame["_invalid"] = True
+                if (frame["_complete"] or frame["_p3_negative"]
+                        or frame["_p3_missing_data"] or frame["_p3_mismatch"]
+                        or frame["_invalid"]):
+                    finish_probe(state, channel, "terminal_p3_rx")
+                continue
+            raw = raw_bytes if protocol == 5 and len(raw_bytes) == 12 else None
+            if raw is None:
                 errors["unattributed_or_invalid_rx"] += 1
                 continue
-            channel, _, rxstatus, baud, at = ctx
             candidate = state["active"].get(channel)
             if candidate is None:
                 continue
@@ -315,6 +446,8 @@ def audit(source):
                 channel = int.from_bytes(bytes.fromhex(" ".join(fields[:4])), "big")
                 if channel in state["active"]:
                     state["active"][channel]["timeout"] = True
+                if channel in state["probes"]:
+                    state["probes"][channel]["timeout"] = True
             else:
                 errors["invalid_timeout_context"] += 1
 
@@ -327,6 +460,9 @@ def audit(source):
     next_services = Counter(
         item["first_next_app_tx_service"] or "no_classified_next_tx"
         for item in post_positive)
+    p3_statuses = Counter(
+        item["first_next_p3_response_status"] for item in post_positive
+        if item["first_next_app_tx_service"] == "p3_read_data_by_identifier")
     return {
         "format": FORMAT,
         "read_only": True,
@@ -342,6 +478,11 @@ def audit(source):
         "post_positive_first_next_tx_observed_count": sum(
             item["first_next_app_tx_observation"] == "first_next_tx_observed"
             for item in post_positive),
+        "post_positive_first_p3_response_status_counts": dict(sorted(
+            p3_statuses.items())),
+        "post_positive_first_p3_positive_transport_count": sum(
+            item["first_next_p3_positive_transport_complete"]
+            for item in post_positive),
         "b9f0_identity_verified": False,
         "ecu_enumeration_verified": False,
         "client_acceptance_verified": False,
@@ -354,6 +495,9 @@ def audit(source):
             "The first later TX is attributed only within one native PID and uninterrupted source session.",
             "Variable-size ISO15765 application TX is classified by its bounded header only, not parsed as a completed ECU response.",
             "ISO-TP Flow Control TX on P3/OBD routes is transport continuation, not the first later application request.",
+            "A first P3 DID read is paired only by same native PID, request channel, protocol, baud and known reply CAN route.",
+            "Shared P3 UDS header/ISO-TP validator checks positive, negative, pending and incomplete transport, not true ECU discovery.",
+            "Multiple positive B9F0 predecessors of one P3 request remain causally ambiguous.",
             "Neither diagnostic client acceptance nor genuine XC90 V8 MY2009 identity is established.",
             "No VIN, part number, PID, host, timestamp raw bytes, CAN payload, or private source path is exported.",
         ],
