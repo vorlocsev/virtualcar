@@ -141,6 +141,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'P2/P3 same-native-process handoff provenance gate failed' }
           python emulator/tools/prepare_p2_capture.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-handoff-safe"
           if ($LASTEXITCODE -ne 0) { throw 'P2/P3 native source redaction failed' }
+          # Exercise the actual user-facing client capture report against
+          # compiled x86 native DLL traffic. This remains a synthetic harness,
+          # not an execution of SectorV or VDASH.
+          python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
+          $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          if ($clientBoundary.native_device_lifecycle.status -ne 'single_closed_device_cycle' -or
+              $clientBoundary.native_device_lifecycle.device_open_count -ne 1 -or
+              $clientBoundary.native_device_lifecycle.device_close_count -ne 1 -or
+              $clientBoundary.native_p2_single_closed_epoch -ne $true -or
+              $clientBoundary.client_ecu_inventory_verified -ne $false) {
+            throw 'Native x86 client Open/Close single-cycle and no-client-verdict gate failed'
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}
@@ -154,6 +167,7 @@ jobs:
             ${{ runner.temp }}/p2-synthetic-capture-safe/*.json
             ${{ runner.temp }}/native-p2-p3-handoff-gate.json
             ${{ runner.temp }}/p2-p3-handoff-safe/*.json
+            ${{ runner.temp }}/p2-p3-client-boundary-safe/*.json
           if-no-files-found: error
 
 
