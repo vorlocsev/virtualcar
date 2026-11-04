@@ -509,9 +509,63 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
 }
+/* Eight read-only D2 network-routing checks. A known fixture must NEVER
+   be emitted on another bus, even if legacy StrictRouting is set to zero.
+   The replies below are synthetic NEGATIVE B9 acknowledgments; they are not
+   genuine Volvo CEM data or successful client acceptance. */
+static void test_d2_all_fixtures_baud_isolation(U32 dev){
+ D2_PROFILE original[MAX_D2_FIXTURES];
+ U32 saved_strict=g_p2_strict_routing;
+ U32 ls=0,hs=0,z;
+ PASSTHRU_MSG request,rx;
+ U32 n;
+ memcpy(original,g_d2,sizeof(original));
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0x800,125000,&ls)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0x800,500000,&hs)==ERR_OK);
+ g_p2_strict_routing=0; /* adversarial legacy configuration */
+ for(z=0;z<6;z++){
+   U8 target=(z==0||z==1||z==4)?0x40:0x50;
+   U8 opcode=z>=4?0xFC:(z%2==0?0xFB:0xF0);
+   U8 command[8]={0xCB,target,0xB9,opcode,0,0,0,0};
+   D2_PROFILE *d=&g_d2[z];
+   U32 matching=target==0x40?ls:hs,wrong=target==0x40?hs:ls;
+   memset(d,0,sizeof(*d));
+   d->target=target;d->subcommand=opcode;
+   d->baud=target==0x40?125000:500000;
+   d->response_id=target==0x40?0x00800003:0x01000003;
+   d->frame_count=1;
+   {U8 negative[8]={0xCC,target,0x7F,0xB9,0x31,0,0,0};
+    memcpy(d->frame[0],negative,sizeof(negative));}
+   REQUIRE(validate_d2_fixture(d));
+   /* Case 1..6: one matching and one mismatching 125/500k channel. */
+   request=frame(PROTO_CAN,0x000FFFFE,command,8);send(wrong,&request);
+   n=1;REQUIRE(PassThruReadMsgs(wrong,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
+   request=frame(PROTO_CAN,0x000FFFFE,command,8);send(matching,&request);
+   n=1;REQUIRE(PassThruReadMsgs(matching,&rx,&n,0)==ERR_OK && n==1);
+   REQUIRE(rx.ProtocolID==PROTO_CAN && rx.DataSize==12);
+   REQUIRE(rx.Data[5]==target && rx.Data[6]==0x7F && rx.Data[7]==0xB9);
+   n=1;REQUIRE(PassThruReadMsgs(matching,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
+   d->frame_count=0;
+ }
+ /* Case 7: an unconfigured CEM-adjacent target cannot borrow a fixture. */
+ {U8 unknown[8]={0xCB,0x60,0xB9,0xFB,0,0,0,0};
+  request=frame(PROTO_CAN,0x000FFFFE,unknown,8);send(hs,&request);
+  n=1;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);}
+ /* Case 8: an unsupported D2 opcode cannot borrow another response. */
+ {U8 unsupported[8]={0xCB,0x50,0xB9,0xFD,0,0,0,0};
+  request=frame(PROTO_CAN,0x000FFFFE,unsupported,8);send(hs,&request);
+  n=1;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);}
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ls)==ERR_OK);
+ memcpy(g_d2,original,sizeof(original));
+ g_p2_strict_routing=saved_strict;
+ puts("PASS: eight CEM D2 read-only LS/HS fixture isolation checks");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_d2_all_fixtures_baud_isolation(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
