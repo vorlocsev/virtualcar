@@ -135,7 +135,7 @@ static TRACE_FRAME g_trace[MAX_PASSIVE_TRACES];
 static U32 g_trace_count=0;
 static U32 g_iso_rx_start=0;
 static U32 g_ecu_count=2;
-static U32 g_p2_strict_routing=0;
+static U32 g_p2_strict_routing=1; /* historical flag: route enforcement is mandatory */
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
 typedef struct {U32 req,resp;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
 static ECU g_ecu[MAX_ECUS];
@@ -769,8 +769,12 @@ static void load_config(void) {
        fabricated when a fixture is absent.
        B9FB response CAN ID 0x01200003 is from a published 2005-era DiCE trace;
        not guaranteed for every P2 model or CAN bus. */
-    GetPrivateProfileStringA("P2","StrictRouting","0",v,sizeof(v),g_profile_path);
-    g_p2_strict_routing=parse_num(v,0)?1:0;
+    /* Route safety is no longer optional: a CEM target 0x40 fixture must
+       not leak onto HS/500k, nor target 0x50 onto LS/125k. The historic
+       StrictRouting=0 setting is ignored intentionally. Any verified
+       alternate route must be a separately reviewed fixture, not a
+       channel-wide bypass of CEM identity. */
+    g_p2_strict_routing=1;
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
     bytes_zero(g_trace,sizeof(g_trace));g_trace_count=0;
@@ -1179,7 +1183,9 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         discarded=drop_queued_d2(c);
         if(discarded){U8 count_be[4];u32_be(count_be,discarded);
             logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
-        if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
+        /* Every D2 fixture is tied to the configured bus speed, including
+           legacy slot 0..5. No operator flag can bypass this check. */
+        if(c->baud!=d->baud){
             logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
             backend_event(c,c->active_trace,"request_completed",route,"unsupported_bus","no_response");
             return 1;
