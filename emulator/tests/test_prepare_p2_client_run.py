@@ -20,8 +20,11 @@ from test_native_b9f0_first_p3_response import p3_rx
 from test_native_p2_p3_single_run_gate import p3_tx
 
 P3_POS = bytes.fromhex("62 F1 14 41")
-GOOD_CONNECT = [marker("J2534 Connect result protocol/flags/baud/status (BE)",
-                       words(5, 0x800, 500000, 0))]
+GOOD_CONNECT = [
+    marker("PassThruOpen -> device 1"),
+    marker("J2534 Connect result protocol/flags/baud/status (BE)",
+           words(5, 0x800, 500000, 0)),
+]
 
 
 def session(*, include_b9fb=True, include_b9f0=True, include_p3=True):
@@ -59,6 +62,8 @@ class ClientCapturePreparationTests(unittest.TestCase):
         self.assertEqual(summary["b9f0_positive_transport_count"], 1)
         self.assertEqual(summary["first_p3_positive_transport_count"], 1)
         self.assertTrue(summary["native_p2_single_closed_epoch"])
+        self.assertTrue(
+            summary["native_device_lifecycle"]["single_closed_device_cycle_verified"])
         self.assertFalse(summary["same_run_independently_verified"])
         self.assertFalse(summary["client_ecu_inventory_verified"])
 
@@ -95,7 +100,9 @@ class ClientCapturePreparationTests(unittest.TestCase):
         self.assertEqual(note["connect_succeeded"], 1)
 
     def test_05_no_connect_and_invalid_connect_do_not_infer_vehicle_scan(self):
-        without_connect = "\n".join(session().splitlines()[1:])
+        without_connect = "\n".join(
+            line for line in session().splitlines()
+            if "J2534 Connect result protocol/flags/baud/status (BE)" not in line)
         # No valid connect marker; a complete synthetic route is NOT proof
         # that a real client made a successful local Connect call.
         note = tool.prepare(without_connect)["client-boundary.json"]
@@ -124,7 +131,7 @@ class ClientCapturePreparationTests(unittest.TestCase):
         two = session() + "\n" + session()
         note = tool.prepare(two)["client-boundary.json"]
         self.assertEqual(note["diagnostic_focus"],
-                         "native_p2_source_incomplete_or_unverifiable")
+                         "multiple_native_j2534_device_cycles")
         self.assertFalse(note["native_p2_single_closed_epoch"])
         self.assertFalse(note["same_run_independently_verified"])
 
