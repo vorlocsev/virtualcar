@@ -30,7 +30,9 @@ client name or private source path is copied.
 
 The first TX can be on another channel: it remains an observation rather
 than being mistaken for a same-channel identity continuation. An unrelated
-TX takes precedence over any later recognized P3 request. A response
+TX takes precedence over any later recognized P3 request. ISO-TP Flow
+Control on a recognized P3 or OBD route is transport-only and is not counted
+as a fresh app TX or permitted to supersede an active request. A response
 observation ending at PassThruClose, EOF, explicit session marker,
 disconnect or CLEAR_RX_BUFFER does not prove a client timeout or silence.
 
