@@ -168,7 +168,7 @@ def audit(source):
 
         if text.startswith("PassThruDisconnect channel (BE)"):
             raw = text.split("(BE)", 1)[1].strip()
-            if re.fullmatch(r"[0-9A-Fa-f]{2}(?:\\s+[0-9A-Fa-f]{2}){3}", raw):
+            if re.fullmatch(r"[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){3}", raw):
                 s["disconnect_ctx"] = int.from_bytes(bytes.fromhex(raw), "big")
             else:
                 s["disconnect_ctx"] = None
