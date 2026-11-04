@@ -50,12 +50,18 @@ def _cross_audit(chronology, followup):
                 and first["first_next_tx_same_baud"] is True)
             timed = (candidate["status"] == "same_channel_target_timed"
                      and candidate["same_channel_target_generation_verified"] is True)
-            if timed != same_first_a3:
-                # An intervening TX, reset, reused channel or mismatched
-                # clock MUST prevent a false claim of direct transition.
-                # These independent reports cannot silently disagree.
-                if timed or same_first_a3:
+            if timed and not same_first_a3:
+                raise ValueError("independent_b9fb_a3_correlation_disagrees")
+            if same_first_a3 and not timed:
+                # Followup examines only the next app TX, whereas the
+                # chronology also checks CLEAR_RX_BUFFER and channel reuse.
+                # An intervening native barrier makes this association
+                # intentionally uncertain, not a failed/accepted ECU reply.
+                if candidate["status"] not in (
+                    "intervening_other_app_tx", "clear_rx_between_events",
+                    "channel_reused_after_disconnect"):
                     raise ValueError("independent_b9fb_a3_correlation_disagrees")
+                status = "native_barrier_blocks_direct_a3_pair"
             if timed:
                 a = candidate["last_b9fb_rx_to_first_later_a3_ms"]
                 b = first["last_rx_to_first_next_tx_ms"]
