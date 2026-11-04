@@ -84,7 +84,7 @@ class DonorB9FBCoherenceTests(unittest.TestCase):
         for source in (
             original.replace("B9FBFrameCount = 13", "B9FBFrameCount = 14", 1),
             original.replace("[D2_40_B9F0]",
-                             "B9FBFrameD = 00 00 00 00 00 00 00 00\\n[D2_40_B9F0]", 1),
+                             "B9FBFrameD = 00 00 00 00 00 00 00 00\n[D2_40_B9F0]", 1),
             original.replace("B9FBFrameA = 0A 30", "B9FBFrameA = 0A XX", 1),
         ):
             with self.subTest(length=len(source)), self.assertRaises(ValueError):
