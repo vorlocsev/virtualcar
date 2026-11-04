@@ -673,8 +673,28 @@ static int validate_fc140_fixture(const D2_PROFILE *d){
     for(k=0;k<140;k++)sum+=(U32)stream[5+k];
     return stream[4]==(U8)sum;
 }
+/* The importer marks mixed donor/local D2 input explicitly. This is a
+   LABORATORY gate, not cryptographic provenance verification. A tagged
+   composite profile must not silently replay identity-looking CEM frames.
+   It can be tested only after a conscious [P2] AllowCompositeReplay=1.
+   An arbitrary renamed/untagged INI remains untrusted by definition. */
+static int d2_text_equal(const char *a,const char *b){
+    if(!a || !b)return 0;
+    while(*a && *b){if(*a++!=*b++)return 0;}
+    return !*a && !*b;
+}
+static U32 block_unapproved_composite_d2(const char *origin,U32 explicit_opt_in){
+    U32 i,disabled=0;
+    if(!d2_text_equal(origin,"local_composite_unverified_trace_import") ||
+       explicit_opt_in!=0u)return 0;
+    for(i=0;i<MAX_D2_FIXTURES;i++){
+        if(g_d2[i].frame_count){g_d2[i].frame_count=0;disabled++;}
+    }
+    return disabled;
+}
+
 static void load_config(void) {
-    U32 n,i;char v[512],key[24];
+    U32 n,i,composite_disabled=0;char v[512],key[24];
     /* Include the host executable and PID so GUI self-checks and SectorV
        sessions can be distinguished when they share the same log file. */
     g_host_pid=GetCurrentProcessId();
@@ -888,6 +908,20 @@ static void load_config(void) {
             d->frame_count=0;invalid_p2++;
         }
     }
+    /* The trace importer always writes the composite source marker and
+       forcibly resets the opt-in to 0, even when inherited INI was 1.
+       Disabling only the D2 replay fixtures leaves VIN/ECU diagnostics
+       and J2534 open/connection available to inspect where clients stop. */
+    {
+        char origin[96];
+        U32 opt_in;
+        GetPrivateProfileStringA("P2","FixtureProvenance","",
+                                 origin,sizeof(origin),g_profile_path);
+        GetPrivateProfileStringA("P2","AllowCompositeReplay","0",
+                                 v,sizeof(v),g_profile_path);
+        opt_in=parse_num(v,0)==1u?1u:0u;
+        composite_disabled=block_unapproved_composite_d2(origin,opt_in);
+    }
     n=GetTempPathA(sizeof(g_log_path)-32,g_log_path);
     if(n==0||n>=sizeof(g_log_path)-32)str_copy(g_log_path,"C:\\Windows\\Temp\\SectorVVirtualCar.log",sizeof(g_log_path));
     else str_append(g_log_path,"SectorVVirtualCar.log",sizeof(g_log_path));
@@ -898,6 +932,8 @@ static void load_config(void) {
      logline("Network ACTIVE passive frames / extra D2 fixtures (BE)",network_counts,8);}
     if(invalid_p2){U8 number[4];u32_be(number,invalid_p2);
         logline("P2 invalid D2 fixtures disabled (count, BE)",number,4);}
+    if(composite_disabled){U8 number[4];u32_be(number,composite_disabled);
+        logline("P2 unapproved composite D2 fixtures disabled (count, BE)",number,4);}
     {
         U8 opts[16];u32_be(opts,g_passive_enabled);u32_be(opts+4,g_passive_period_ms);
         u32_be(opts+8,g_iso_rx_start);u32_be(opts+12,g_p2_strict_routing);
