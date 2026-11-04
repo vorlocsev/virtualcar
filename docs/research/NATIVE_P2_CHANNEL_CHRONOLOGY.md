@@ -232,3 +232,47 @@ Share only the three sanitized JSON reports after inspection.
 The script does not invoke SectorV or VMware, touch physical
 hardware, synthesize ECU replies, decode protected data or
 modify CEM configuration.
+
+
+## Cross-check independently derived safe JSON reports
+
+The local preparation script now reconciles two independent auditors
+before writing any of its three public JSON outputs.
+
+- A positive B9FB completion must be counted equally by the
+  channel chronology and the first-next-TX observer. A D2
+  negative B9 reply is **not** a positive B9FB completion,
+  even if its single-frame transport envelope is well formed.
+- A first-A3 timing comparison is attempted only for one native
+  process epoch containing exactly one positive B9FB completion.
+  Multi-process and multi-completion summaries remain
+  not_comparable; matching aggregate counters alone cannot
+  establish a same-session pair.
+- A direct A3 on matching target, channel, baud and native clock
+  must agree between the two observers to 0.001 ms, accounting
+  for both reports' millisecond rounding.
+- A CLEAR_RX_BUFFER or reused channel that invalidates direct
+  pairing is marked uncertain instead of treated as successful
+  authorization or as automatically contradictory evidence.
+- A malformed native TX/RX context prevents a verified direct
+  A3 correlation. The report still preserves diagnostic counts.
+- Any genuine conflict in counts, next-TX attribution or the
+  measured gap raises an error before the output directory
+  is created. No partial reports are published on such failure.
+
+capture-summary.json now contains cross_audit_consistency with
+transport_completion_count_agrees, first_a3_cross_audit_status,
+first_a3_gap_ms_when_cross_verified and a permanently false
+client_acceptance_verified. A consistent synthetic J2534 test
+only proves the auditors agree with the native DLL transport.
+It does not prove an actual SectorV client accepted a B9FB
+vehicle identity or successfully completed A3 Security Access.
+
+Eight new regressions check positive B9FB, negative single-frame
+B9, deliberately changed completion counts, tampered time,
+incorrect channel/target/baud, an RX buffer clear, distinct
+PID epochs, and malformed private TX input.
+
+The native lab CI runs the same local capture preparation after
+the x86 DLL regression. The source log remains private and only
+allowlisted sanitized JSON reports are uploaded.
