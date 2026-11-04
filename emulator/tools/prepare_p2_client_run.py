@@ -90,6 +90,32 @@ def _client_label_comparison(ui, native_family):
     return "operator_client_matches_untrusted_native_label"
 
 
+def _operator_inventory_gate(ui, label_comparison):
+    """Allow only an explicitly finished, selected, attested UI observation.
+
+    Even the 'ready' state is an operator report, NOT independent client
+    authentication or proof that a displayed ECU belongs to a real car.
+    Unknown/false milestones are distinct and never silently promoted.
+    """
+    if ui is None:
+        return "no_operator_ui"
+    if not ui["same_run_operator_attested"]:
+        return "operator_not_attested_same_run"
+    if ui["client"] == "other":
+        return "operator_client_unspecified"
+    if ui["virtual_adapter_selected"] is False:
+        return "virtual_adapter_not_selected"
+    if ui["virtual_adapter_selected"] is None:
+        return "virtual_adapter_selection_unknown"
+    if ui["scan_finished"] is False:
+        return "client_scan_not_finished"
+    if ui["scan_finished"] is None:
+        return "client_scan_completion_unknown"
+    if label_comparison != "operator_client_matches_untrusted_native_label":
+        return "client_native_label_not_consistent"
+    return "completed_scan_operator_report_only"
+
+
 def _category(tx):
     # Do not export UDS DIDs, RX identifiers, timestamps or process labels.
     route, service = tx.get("route"), tx.get("service")
@@ -138,6 +164,7 @@ def prepare(source, ui=None):
     single_process_source = len(native_processes) == 1
     native_family = _native_client_family(lines)
     label_comparison = _client_label_comparison(ui, native_family)
+    operator_gate = _operator_inventory_gate(ui, label_comparison)
     lifecycle = audit_lifecycle(source)
     connect = audit_connect(lines)
     discovery = audit_discovery(lines, include_obd=True)
@@ -224,9 +251,11 @@ def prepare(source, ui=None):
         focus = "no_first_p3_read_after_positive_b9f0"
     elif not p3_positive:
         focus = "first_p3_did_read_has_no_positive_transport"
-    elif ui is not None and ui["same_run_operator_attested"] and ui["ecu_list"] == "empty":
+    elif ui is not None and ui["ecu_list"] != "unknown" and operator_gate != "completed_scan_operator_report_only":
+        focus = "operator_ecu_list_not_attributable_to_completed_virtual_scan"
+    elif operator_gate == "completed_scan_operator_report_only" and ui["ecu_list"] == "empty":
         focus = "transport_positive_but_operator_reports_empty_ecu_list"
-    elif ui is not None and ui["same_run_operator_attested"] and ui["ecu_list"] == "nonempty":
+    elif operator_gate == "completed_scan_operator_report_only" and ui["ecu_list"] == "nonempty":
         focus = "operator_reports_nonempty_ecu_list_identity_unverified"
     else:
         focus = "native_transport_positive_client_ui_result_unknown"
@@ -239,6 +268,10 @@ def prepare(source, ui=None):
         "single_native_process_label_observed": single_process_source,
         "native_executable_label_family": native_family,
         "operator_client_native_label_comparison": label_comparison,
+        "operator_inventory_observation_gate": operator_gate,
+        "operator_ecu_list_attributable_to_completed_scan": (
+            operator_gate == "completed_scan_operator_report_only"
+            and ui is not None and ui["ecu_list"] != "unknown"),
         "native_executable_identity_verified": False,
         "native_device_lifecycle": lifecycle,
         "connect_attempts": connect_attempts,
@@ -276,6 +309,8 @@ def prepare(source, ui=None):
             "A positive native B9FB, B9F0 or P3 transport does not establish diagnostic-client acceptance.",
             "One source PID can contain multiple PassThruOpen/PassThruClose cycles; their traffic is not one device session.",
             "UI list state is an operator report, not independently verified ECU identity.",
+            "A UI ECU list requires an explicitly selected virtual adapter, completed scan, same-run attestation and a matching untrusted executable label before limited operator attribution.",
+            "False or unknown adapter selection and scan completion never establish a finished diagnostic scan.",
             "No VIN, DID, hardware identifiers, process ID, client account, raw CAN bytes or source path is exported.",
             "The source may stop before B9FB, in which case the P2 report is not invented.",
         ],
