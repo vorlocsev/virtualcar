@@ -91,10 +91,13 @@ class NativeChannelScopedDisconnectTests(unittest.TestCase):
         self.assertIsNone(data["observations"][0]["last_rx_to_first_next_tx_ms"])
 
     def test_07_only_waiting_candidate_on_disconnected_channel_is_finalized(self):
-        data = inspected(tx(D2FB, channel=1) + response(channel=1)
-                         + tx(D2FB, channel=2, at=2_000_000)
-                         + response(channel=2, first=2_020_000)
-                         + disconnect(1) + tx(A3, channel=2, at=2_132_000))
+        # Both requests precede either reply, so both completed responses
+        # remain waiting for the first subsequent application TX.
+        data = inspected(tx(D2FB, channel=1)
+                         + tx(D2FB, channel=2, at=1_005_000)
+                         + response(channel=1, first=1_020_000)
+                         + response(channel=2, first=1_040_000)
+                         + disconnect(1) + tx(A3, channel=2, at=1_152_000))
         self.assertEqual(data["completed_b9fb_count"], 2)
         outcomes = [x["followup_observation"] for x in data["observations"]]
         self.assertEqual(outcomes.count("disconnect_before_next_tx"), 1)
