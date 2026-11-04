@@ -7,7 +7,9 @@ The native J2534 log is kept private; only allowlisted JSON is exported.
 """
 import argparse
 from collections import Counter
+import hashlib
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -210,11 +212,46 @@ def prepare(source, ui=None):
     return reports
 
 
+def _read_private_suffix(path, offset, expected_prefix):
+    """Read only newly appended native bytes; reject rotation or truncation.
+
+    The historical prefix digest never leaves the private caller state.
+    SHA256 is a continuity check, NOT proof of diagnostic-client identity.
+    """
+    if type(offset) is not int or offset < 0 or offset > (1 << 40):
+        raise ValueError("invalid_start_offset")
+    if (not isinstance(expected_prefix, str) or
+            re.fullmatch(r"[0-9a-fA-F]{64}", expected_prefix) is None):
+        raise ValueError("invalid_original_digest")
+    stat = path.stat()
+    if stat.st_size <= offset or stat.st_size - offset > MAX_BYTES:
+        raise ValueError("no_bounded_appended_session")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        unread = offset
+        while unread:
+            block = stream.read(min(unread, 64 * 1024))
+            if not block:
+                raise ValueError("native_log_truncated")
+            digest.update(block)
+            unread -= len(block)
+        if digest.hexdigest() != expected_prefix.lower():
+            raise ValueError("old_log_prefix_changed")
+        suffix = stream.read(MAX_BYTES + 1)
+    if not suffix or len(suffix) > MAX_BYTES:
+        raise ValueError("invalid_appended_session")
+    return suffix.decode("utf-8-sig", errors="replace")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("native_log", type=Path)
     p.add_argument("--ui", type=Path, default=None,
                    help="Optional operator-only enum observation file")
+    p.add_argument("--offset-bytes", type=int, default=None,
+                   help="Private pre-client file length; checks only appended bytes")
+    p.add_argument("--prefix-sha256", default=None,
+                   help="Private SHA256 of the exact pre-client byte prefix")
     p.add_argument("--output-dir", type=Path, required=True,
                    help="New directory; existing output is never overwritten")
     args = p.parse_args(argv)
@@ -227,14 +264,23 @@ def main(argv=None):
         target = args.output_dir.resolve()
         if len(set(sources)) != len(sources) or target in sources:
             raise ValueError("overlapping_paths")
-        if args.native_log.stat().st_size > MAX_BYTES:
+        if (args.offset_bytes is None) != (args.prefix_sha256 is None):
+            raise ValueError("offset_and_digest_required_together")
+        if args.offset_bytes is None and args.native_log.stat().st_size > MAX_BYTES:
             raise ValueError("input_too_large")
         if args.ui is not None and args.ui.stat().st_size > 4096:
             raise ValueError("ui_too_large")
         ui = (json.loads(args.ui.read_text(encoding="utf-8-sig"))
               if args.ui is not None else None)
-        reports = prepare(args.native_log.read_text(encoding="utf-8-sig",
-                                                    errors="replace"), ui=ui)
+        # A historical log may be large. Only a SHA256-verified appended
+        # suffix may bypass the whole-file size limit. The caller must
+        # have recorded byte offset + digest before launching the client.
+        source = (_read_private_suffix(args.native_log, args.offset_bytes,
+                                      args.prefix_sha256)
+                  if args.offset_bytes is not None
+                  else args.native_log.read_text(encoding="utf-8-sig",
+                                                errors="replace"))
+        reports = prepare(source, ui=ui)
         output = {name: json.dumps(value, indent=2, sort_keys=True,
                                    ensure_ascii=False) + "\n"
                   for name, value in reports.items()}
