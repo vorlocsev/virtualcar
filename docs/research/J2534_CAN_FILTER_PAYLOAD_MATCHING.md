@@ -104,6 +104,47 @@ Specification references: SAE J2534-1 revision DEC2004 §7.3.10
 (CLEAR_MSG_FILTERS), and the public v04.04 API description at
 https://www.scandoc.org/en/develop/j2534/pt_ioctl.html .
 
+## CAN DATA_RATE transitions and old-bus RX isolation
+
+A separate native J2534 defect was found next to the filter lifecycle:
+`PassThruIoctl(SET_CONFIG, DATA_RATE)` changed the channel's baud but
+left previously queued CAN frames, **staged D2 B9FB/B9F0 replies** and
+pending raw-CAN ISO-TP consecutive-frame state alive. A delayed HS-CAN
+CEM reply could therefore be observed after a virtual channel switched
+to LS-CAN. The network speed check at *request time* was insufficient.
+
+For a CAN channel whose DATA_RATE actually changes, the simulator now:
+
+- Cancels the old receive FIFO, staged D2 schedule, pending raw-CAN
+  ISO-TP CF state and their synthetic request-evidence attribution.
+- Records a bounded metadata-only change (channel, old/new baud), not
+  payload bytes or customer identifiers.
+- Reschedules passive test traffic under the new baud; passive profile
+  frames remain subject to their separately configured bus speed.
+- Preserves the J2534 filter definitions and the strict state after an
+  explicit filter clear; a speed change is **not** a filter reset.
+- Leaves all other J2534 channels, including a separately connected
+  ISO15765 channel, untouched.
+- Does not cancel queued RX or staged transfers if DATA_RATE is set
+  to its existing value. A new valid request on the newly selected bus
+  can receive its own validated fixture; the old one cannot spill over.
+
+Eight C-host regression checks cover no-op rate change, queued D2 plus
+unrelated old RX, delayed tail suppression, other-channel isolation,
+wrong-bus B9FB silence, newly selected LS fixture, returning to HS
+with a fresh B9FB, and pending raw-CAN ISO-TP CF cancellation.
+
+An independent `-BaudSwitchProbe` executes against the **compiled
+Windows x86 DLL**, using the exported J2534 SET_CONFIG interface:
+a 13-frame synthetic HS B9FB is staged, the channel moves to 125k,
+no old B9FB may be delivered, a separate P3 ISO15765 F114 call must
+remain usable, and returning to 500k must permit a fresh B9FB.
+The isolated log stays private.
+
+This is an emulator consistency safeguard. It is not proof that all
+hardware J2534 devices cancel frames on a rate switch, nor evidence
+that SectorV or VDASH accepts the simulated XC90 V8 MY2009.
+
 ## Evidence boundary
 
 Matching J2534 filter semantics does not prove SectorV/VDASH saw,
