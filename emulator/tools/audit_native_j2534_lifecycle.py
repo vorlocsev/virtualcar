@@ -11,7 +11,7 @@ import re
 FORMAT = "virtualcar-native-j2534-device-lifecycle-v1"
 MAX_LINES = 50000
 MAX_BYTES = 4 * 1024 * 1024
-PREFIX = re.compile(r"^\\[PID=([0-9a-fA-F]{8}) ([^\\]\\r\\n]{1,80})\\] (.*)$")
+PREFIX = re.compile(r"^\[PID=([0-9a-fA-F]{8}) ([^\]\r\n]{1,80})\] (.*)$")
 OPEN = "PassThruOpen -> device 1"
 CLOSE = "PassThruClose"
 # These messages should occur only after a successful J2534 Open. A
