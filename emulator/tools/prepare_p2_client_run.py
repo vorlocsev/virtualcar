@@ -237,10 +237,25 @@ def _read_private_suffix(path, offset, expected_prefix):
             unread -= len(block)
         if digest.hexdigest() != expected_prefix.lower():
             raise ValueError("old_log_prefix_changed")
+        # This DLL writes complete CRLF-terminated native log lines. If
+        # the prior file ended mid-line, appending creates a synthetic
+        # merged entry and cannot be source-attributed safely.
+        if offset:
+            stream.seek(offset - 1)
+            if stream.read(1) != b"\n":
+                raise ValueError("historical_prefix_ends_midline")
+            stream.seek(offset)
         suffix = stream.read(MAX_BYTES + 1)
     if not suffix or len(suffix) > MAX_BYTES:
         raise ValueError("invalid_appended_session")
-    return suffix.decode("utf-8-sig", errors="replace")
+    if not suffix.endswith(b"\n"):
+        raise ValueError("appended_session_ends_midline")
+    # The native logger writes ASCII metadata; never replace malformed
+    # bytes silently or convert a corrupt client capture into evidence.
+    decoded = suffix.decode("utf-8-sig", errors="strict")
+    if not decoded.startswith("[PID="):
+        raise ValueError("appended_native_epoch_has_no_first_metadata")
+    return decoded
 
 
 def main(argv=None):
