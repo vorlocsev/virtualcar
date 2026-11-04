@@ -218,6 +218,11 @@ jobs:
           # Keep the raw native log inside RUNNER_TEMP, upload safe JSON only.
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-p2-p3-handoff"
           if ($LASTEXITCODE -ne 0) { throw 'Single-process P2/P3 native x86 handoff failed' }
+          # A separate real x86 DLL process verifies that full CAN filter
+          # masks distinguish the same response ID by the first data byte.
+          # It is NOT a client or a donor capture; do not upload raw log.
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-can-payload-filter" -PayloadFilterProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534 CAN PASS/BLOCK payload-filter check failed' }
           # Re-run compiled x86 DLL in a NEW isolated process with the
           # importer's unverified mixed-source marker and explicit lock.
           # B9FB/B9F0 must remain silent; synthetic independent P3 still
