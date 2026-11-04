@@ -236,7 +236,11 @@ def audit(source):
             # ISO-TP FC is transport continuation, not a fresh ECU probe.
             # Never let FC consume a post-B9F0 first-app-TX observation,
             # or replace the active request on that J2534 channel.
-            if _flow_control(prefix, include_obd=True):
+            if (ctx[1] == 5 and prefix[4] in (0x30, 0x31, 0x32)
+                    and _flow_control(prefix, include_obd=True)):
+                # Raw ISO15765 J2534 payloads begin with a UDS service,
+                # where 0x31 is RoutineControl and 0x3E TesterPresent.
+                # Only a classic CAN ISO-TP PCI is a Flow Control.
                 continue
             req = _request(prefix)
             observe_next_tx(state, req, channel, baud, at)
