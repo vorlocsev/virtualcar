@@ -85,6 +85,7 @@ jobs:
             emulator/tools/verify_native_p2_p3_handoff.ps1
             emulator/tools/prepare_p2_client_run.py
             emulator/tools/audit_native_j2534_lifecycle.py
+            emulator/tools/audit_native_connect_b9fb_channel.py
             emulator/samples/p2-client-ui-observation.template.json
             emulator/scripts/diagnose.ps1
             emulator/scripts/Capture-P2ClientRun.ps1
@@ -246,6 +247,15 @@ jobs:
           python emulator/tools/prepare_p2_client_run.py "$env:RUNNER_TEMP\native-p2-p3-handoff\SectorVVirtualCar.log" --output-dir "$env:RUNNER_TEMP\p2-p3-client-boundary-safe"
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 client-boundary preparation failed' }
           $clientBoundary = Get-Content -LiteralPath "$env:RUNNER_TEMP\p2-p3-client-boundary-safe\client-boundary.json" -Raw | ConvertFrom-Json
+          $connectBound = $clientBoundary.native_b9fb_connect_channel_binding
+          if ($connectBound.status -ne 'one_b9fb_bound_to_prior_successful_channel_connect' -or
+              $connectBound.one_b9fb_bound_to_prior_successful_channel_connect -ne $true -or
+              $connectBound.b9fb_request_count -ne 1 -or
+              $connectBound.connect_success_count -lt 2 -or
+              $connectBound.client_accepted_b9fb_verified -ne $false -or
+              $connectBound.vehicle_identity_verified -ne $false) {
+            throw 'Compiled x86 J2534 Connect channel did not precede B9FB on the same mode'
+          }
           # An untrusted UI note about a NONEMPTY ECU list must NOT
           # override an explicitly unfinished scan, even when the
           # compiled DLL emits a full positive B9FB/B9F0/P3 chain.
