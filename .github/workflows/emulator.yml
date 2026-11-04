@@ -64,6 +64,7 @@ jobs:
             emulator/tools/prepare_p2_capture.py
             emulator/tools/audit_native_p2_channel_chronology.py
             emulator/tools/audit_d2_followup_window.py
+            emulator/tools/audit_native_b9f0_response.py
             emulator/tools/audit_j2534_discovery.py
             emulator/tools/import_p2_trace.py
 
