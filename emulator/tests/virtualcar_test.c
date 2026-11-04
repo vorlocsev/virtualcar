@@ -125,7 +125,16 @@ static void fill_untraced_rx(CHANNEL *ch,U32 target){
  ch->active_trace=prior;
 }
 static PASSTHRU_MSG frame(U32 proto,U32 id,const U8 *data,U32 len){PASSTHRU_MSG m={0};m.ProtocolID=proto;m.DataSize=len+4;m.Data[0]=(U8)(id>>24);m.Data[1]=(U8)(id>>16);m.Data[2]=(U8)(id>>8);m.Data[3]=(U8)id;if(len)memcpy(m.Data+4,data,len);return m;}
-static PASSTHRU_MSG readmsg(U32 cid){PASSTHRU_MSG m={0};U32 n=1;REQUIRE(PassThruReadMsgs(cid,&m,&n,0)==ERR_OK);REQUIRE(n==1);return m;}
+static PASSTHRU_MSG readmsg_at(U32 cid,int caller_line){
+ PASSTHRU_MSG m={0};U32 n=1,rc=PassThruReadMsgs(cid,&m,&n,0);
+ if(rc!=ERR_OK){
+  fprintf(stderr,"FAIL readmsg caller line %d: code %u channel %u count %u\\n",
+          caller_line,rc,cid,n);
+  exit(1);
+ }
+ REQUIRE(n==1);return m;
+}
+#define readmsg(cid) readmsg_at((cid),__LINE__)
 static void send(U32 cid,PASSTHRU_MSG *m){U32 n=1;REQUIRE(PassThruWriteMsgs(cid,m,&n,10)==ERR_OK);REQUIRE(n==1);}
 /* Synthetic VMware audit regressions: compare actual emitted events, not
    guesses about the unidentified requests in a redacted user report. */
