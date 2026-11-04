@@ -139,6 +139,25 @@ class ClientCapturePreparationTests(unittest.TestCase):
                          "multiple_native_j2534_device_cycles")
         self.assertFalse(note["native_p2_single_closed_epoch"])
         self.assertFalse(note["same_run_independently_verified"])
+        # Observed SectorV pattern: repeated valid Open/Close is not a
+        # failure by itself. An absent Connect is the actionable boundary.
+        repeated_open = "\n".join(
+            (marker("PassThruOpen -> device 1") + "\n" +
+             marker("PassThruClose")) for _ in range(13))
+        note = tool.prepare(repeated_open)["client-boundary.json"]
+        self.assertEqual(note["native_device_lifecycle"]["device_open_count"], 13)
+        self.assertEqual(note["diagnostic_focus"],
+                         "no_virtual_adapter_connect_attempt_observed")
+        # Second observed pattern: Connect did happen, but the client did
+        # not transmit any B9FB. Do not mask this with repeated cycles.
+        connected = "\n".join(
+            "\n".join(GOOD_CONNECT + [marker("PassThruClose")])
+            for _ in range(5))
+        note = tool.prepare(connected)["client-boundary.json"]
+        self.assertEqual(note["diagnostic_focus"],
+                         "no_native_b9fb_request_observed")
+        self.assertEqual(note["connect_succeeded"], 5)
+        self.assertEqual(note["connect_invalid_protocol_attempts"], 0)
 
     def test_08_cli_exclusive_output_redaction_and_strict_ui_schema(self):
         secret = "CUSTOMER_PRIVATE_ACTUAL_VIN_AND_KEY"
