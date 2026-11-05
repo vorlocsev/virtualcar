@@ -21,8 +21,11 @@ Copy-Item -LiteralPath $dll -Destination $isolatedDll
 $profile=@'
 ; Synthetic stage 40 J2534-only fixture. Never connect a physical vehicle.
 [Vehicle]
-ECUCount=0
+ECUCount=1
 BatteryMv=12500
+[ECU0]
+RequestId=7E0
+ResponseId=7E8
 [PassiveCAN]
 Enabled=0
 [PassiveTrace]
@@ -74,6 +77,19 @@ public static class Stage40NativeFilter {
     static extern uint FilterNoFlow(uint channel,uint type,ref Msg mask,ref Msg pattern,IntPtr noFlow,out uint filter);
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruStopMsgFilter(uint channel,uint filter);
+    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruWriteMsgs(uint channel,ref Msg msg,ref uint count,uint timeout);
+    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
+    static extern uint PassThruReadMsgs(uint channel,IntPtr buffer,ref uint count,uint timeout);
+    static uint Receive(uint channel,out Msg received) {
+        received=new Msg();IntPtr buffer=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+        try {
+            uint count=1;
+            uint rc=PassThruReadMsgs(channel,buffer,ref count,0);
+            if(rc==OK&&count==1)received=(Msg)Marshal.PtrToStructure(buffer,typeof(Msg));
+            return rc;
+        } finally {Marshal.FreeHGlobal(buffer);}
+    }
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruIoctl(uint channel,uint code,IntPtr input,IntPtr output);
     static void Check(string name,bool condition,uint actual) {
@@ -138,6 +154,33 @@ public static class Stage40NativeFilter {
             Check("Reconnect_ISO",rc==OK&&iso!=0,rc);
             rc=PassThruStopMsgFilter(iso,old);
             Check("Old_ID_after_reconnect",rc==INVALID_FILTER,rc);
+            if(strict) {
+                /* Real Windows x86 DLL, synthetic ECU only. No VIN is printed. */
+                Msg request=Id(ISO,0x7e0u);
+                request.Data[4]=0x22;request.Data[5]=0xF1;request.Data[6]=0x90;
+                request.DataSize=7;
+                uint n=1;
+                rc=PassThruWriteMsgs(iso,ref request,ref n,10);
+                Check("Strict_no_filter_TX",rc==OK&&n==1,rc);
+                Msg received;
+                rc=Receive(iso,out received);
+                Check("Strict_no_filter_RX",rc==16,rc);
+                rc=FilterWithFlow(iso,FC,ref mask,ref pattern,ref flow,out filter);
+                Check("Strict_add_valid_FC",rc==OK,rc);
+                n=1;rc=PassThruWriteMsgs(iso,ref request,ref n,10);
+                Check("Strict_FC_TX",rc==OK&&n==1,rc);
+                rc=Receive(iso,out received);
+                Check("Strict_FC_reassembled_VIN",rc==OK&&received.ProtocolID==ISO
+                      &&received.DataSize==24&&received.ExtraDataIndex==24
+                      &&received.Data[4]==0x62&&received.Data[5]==0xF1
+                      &&received.Data[6]==0x90,rc);
+                rc=PassThruStopMsgFilter(iso,filter);
+                Check("Strict_stop_FC",rc==OK,rc);
+                n=1;rc=PassThruWriteMsgs(iso,ref request,ref n,10);
+                Check("Strict_after_stop_TX",rc==OK&&n==1,rc);
+                rc=Receive(iso,out received);
+                Check("Strict_after_stop_RX",rc==16,rc);
+            }
             Console.WriteLine("STAGE40 SUMMARY "+checks+" checks, mode="+(strict?"strict":"legacy"));
         } finally {
             if(iso!=0) PassThruDisconnect(iso);
