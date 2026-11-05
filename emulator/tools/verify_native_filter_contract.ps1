@@ -129,9 +129,10 @@ public static class Stage40NativeFilter {
             Check("Clear_filters",rc==OK,rc);
             rc=PassThruStopMsgFilter(iso,filter);
             Check("Cleared_FilterID_invalid",rc==INVALID_FILTER,rc);
+            uint disconnectedChannel=iso;
             rc=PassThruDisconnect(iso);
             Check("Disconnect_ISO",rc==OK,rc);iso=0;
-            rc=PassThruStopMsgFilter(2,old);
+            rc=PassThruStopMsgFilter(disconnectedChannel,old);
             Check("Disconnected_channel_invalid",rc==INVALID_CHANNEL,rc);
             rc=PassThruConnect(device,ISO,0,500000,out iso);
             Check("Reconnect_ISO",rc==OK&&iso!=0,rc);
