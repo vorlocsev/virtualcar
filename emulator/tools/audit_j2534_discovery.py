@@ -139,15 +139,46 @@ def _p3_uds(tx, head, uds_length):
         tx["_p3_mismatch"] = True
 
 
+def _p3_expected_header(tx, data):
+    """Identify only the expected SID/DID or an NRC, never ECU identity bytes."""
+    if len(data) < 3:
+        return False
+    if data[:2] == b"\x7F\x22":
+        return True
+    return (tx["service"].startswith("22") and len(tx["service"]) == 6
+            and data[:3] == bytes.fromhex("62" + tx["service"][2:]))
+
+
 def _p3_frame(tx, payload, protocol):
     """Track raw CAN ISO-TP, or already reassembled J2534 ISO15765 RX."""
     if (tx["_complete"] or tx["_p3_negative"] or tx["_p3_mismatch"]
-            or tx["_p3_missing_data"] or tx["_invalid"]):
+            or tx["_p3_missing_data"] or tx["_invalid"]
+            or tx["_p3_transport_error"]):
         tx["off_route_rx"] += 1
         return
     if protocol == "ISO15765":
+        # With J2534 ISO15765, RX carries UDS only, not an ISO-TP PCI byte.
+        # Distinguish an incorrectly exposed CAN SF/FF from a malformed
+        # application response. Only match the expected DID or NRC header.
+        if len(payload) == 8 and (
+            (3 <= payload[0] <= 7 and
+             _p3_expected_header(tx, payload[1:4])) or
+            ((payload[0] & 0xF0) == 0x10 and
+             (((payload[0] & 0x0F) << 8) | payload[1]) > 7 and
+             _p3_expected_header(tx, payload[2:5]))
+        ):
+            tx["rx_frames"] += 1
+            tx["_p3_transport_error"] = "p3_can_pci_on_iso15765_channel"
+            return
         tx["rx_frames"] += 1
         _p3_uds(tx, payload[:3], len(payload))
+        return
+    if protocol == "CAN" and _p3_expected_header(tx, payload[:3]):
+        # A complete UDS message on a raw CAN channel has no ISO-TP PCI.
+        # The capture format or channel metadata is inconsistent; do not
+        # attribute this to an actual malformed ECU frame.
+        tx["rx_frames"] += 1
+        tx["_p3_transport_error"] = "p3_uds_without_pci_on_can_channel"
         return
     head = payload[0]
     kind = head & 0xF0
@@ -243,6 +274,8 @@ def _result(tx):
         status, reason = "partial_rx", tx["_a6_error"]
     elif tx["_invalid"]:
         status, reason = "partial_rx", ("invalid_iso_tp_framing" if tx["route"] in ("P3", "OBD") else "invalid_d2_sequence")
+    elif tx["_p3_transport_error"]:
+        status, reason = "unverified", tx["_p3_transport_error"]
     elif tx["_p3_negative"]:
         status, reason = "negative_response", ("obd_negative_response_observed" if tx["route"] == "OBD" else "uds_negative_response_observed")
     elif tx["_p3_missing_data"]:
@@ -552,6 +585,7 @@ def audit(lines, *, include_obd=False):
             "_p3_total": None, "_p3_received": 0, "_p3_sequence": 1,
             "_p3_header": b"", "_p3_negative": False, "_p3_mismatch": False,
             "_p3_missing_data": False, "_p3_pending": 0,
+            "_p3_transport_error": None,
             "_ambiguous_f114_retry": ambiguous_f114_retry,
             "_obd_starts": 0, "_obd_repeat": 0,
             "_obd_request_line": line_number, "_obd_last_rx_line": None,
@@ -642,7 +676,23 @@ def audit(lines, *, include_obd=False):
                 tx["rx_frames"] += 1
                 tx["_source_error"] = "vida_unknown_transport"
             else:
-                _p3_frame(tx, payload, tx["protocol"])
+                rx_protocol = metadata["protocol"] if metadata is not None else ctx[1] if ctx else None
+                rx_baud = metadata["baud"] if metadata is not None else ctx[3] if ctx else None
+                if (rx_protocol in (5, 6) and
+                        {5: "CAN", 6: "ISO15765"}[rx_protocol] != tx["protocol"]):
+                    tx["_source_error"] = "p3_rx_protocol_metadata_mismatch"
+                elif (rx_baud is not None and tx["baud_bps"] is not None
+                      and rx_baud != tx["baud_bps"]):
+                    tx["_source_error"] = "p3_rx_baud_metadata_mismatch"
+                elif ctx is not None and ctx[2] & 0x09:
+                    # TX echoes / indications are not replies from the ECU.
+                    return
+                elif ctx is not None and ctx[2] & 0x02:
+                    # A valid ISO15765 START_OF_MESSAGE is an ID-only
+                    # indication; unexpected payload must never complete DID.
+                    tx["_source_error"] = "p3_invalid_start_indication"
+                else:
+                    _p3_frame(tx, payload, tx["protocol"])
         elif tx["service"] == "A6":
             route_ctx = ([channel, metadata["protocol"], None, metadata["baud"], None]
                          if metadata is not None and metadata["protocol"] is not None else ctx)
@@ -858,6 +908,7 @@ def audit(lines, *, include_obd=False):
             "UDS NRC 0x78 is nonterminal; pending-only probes stay unverified unless a read timeout is logged.",
             "A positive ReadDataByIdentifier header requires at least one data-record byte.",
             "P3 transport checks parse only UDS headers and ISO-TP lengths, not VIN or identity authenticity.",
+            "P3 raw CAN PCI and ISO15765 reassembled UDS are distinguished; format mismatch is not an ECU framing diagnosis.",
             "A second identical F114 request before the first completes leaves later RX attribution ambiguous without a reset boundary.",
             "A6 delivery validates a single-frame E6 echo and length only; no parameter value or normal-mode state is decoded.",
             "A6 route candidates are limited to observed CEM IDs; unknown routes and non-CD ... 01 request shapes stay unverified.",
