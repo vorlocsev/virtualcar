@@ -35,6 +35,8 @@ StrictRouting=1
 [Diagnostics]
 BackendTelemetryEnabled=0
 '@
+# Mode is an opt-in INI setting read by PassThruOpen, not a test-only switch.
+$profile += "`r`nStrictJ2534Filters=$([int]($Mode -eq 'strict'))`r`n"
 [IO.File]::WriteAllText((Join-Path $directory 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
