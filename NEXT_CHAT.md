@@ -3,6 +3,16 @@
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
 
+## Checkpoint 2026-11-05: Stage 41 StrictJ2534Filters, PR #49 merged
+
+- **development merge commit:** `7a290d4f74d8a251fa0de0f82852ffed509f544a`. [PR #49](https://github.com/vorlocsev/virtualcar/pull/49) merged squash. `main`, Dvinholm and published Virtual Car releases not changed.
+- Introduced optional `[Diagnostics] StrictJ2534Filters=1`, **default 0**. Existing legacy CAN/ISO15765 RX and P2 B9FB fixture behavior are preserved when disabled.
+- In strict mode: CAN accepts PASS/BLOCK with ID + optional payload matching and rejects FC with `ERR_NO_FLOW_CONTROL`; ISO15765 accepts only `FLOW_CONTROL_FILTER`, requires a correctly formed `FlowControlMsg`, blocks RX without a matching FC filter, and suppresses START_OF_MESSAGE for rejected responses. CLEAR_MSG_FILTERS, full FilterID and disconnect/reconnect semantics retained.
+- **Native Windows x86 verification:** [Emulator CI #42108537380](https://github.com/vorlocsev/virtualcar/actions/runs/42108537380), `build` and `native-routes` both **completed success**. Native filter contract: **22/22 legacy**, **27/27 strict**, including synthetic 20-byte VIN response delivered as a 24-byte `PASSTHRU_MSG` on ISO15765 only with a valid Flow Control filter; no donor VIN printed. Route checks 8/8; host C/J2534, Python, Go, PE32 validation also passed. [VMware LAB CI #42108537553](https://github.com/vorlocsev/virtualcar/actions/runs/42108537553) build/package **success**, **not** a guest VMware test.
+- Scope limitation: ISO-TP UDS responses are preassembled inside the synthetic ECU; no actual hardware CAN Flow Control CTS/STmin/BS transmission, extended ISO15765 5-byte addressing, or real DiCE transport is implemented. This does **not** establish authentic XC90 V8 MY2009 ECU discovery or VIDA/SectorV/VDASH acceptance. Real P2 CEM A3/A6/B9F0 replies remain unimplemented without verified captures.
+- New documentation: `emulator/README_STRICT_J2534_FILTERS_RU.md`; native tests in `emulator/tools/verify_native_filter_contract.ps1`.
+- **Next priority:** evidence-bound read-only Issue #4 CEM P2 MY2009 normal-mode/identification predicate; in parallel extend native strict isolation with payload filtering / multiple ECU response IDs and test FC handling in the **actual application transport** before claiming full ISO-TP Flow Control compatibility. No automatic Virtual Car release.
+
 ## Checkpoint 2026-11-05: P3 raw CAN / ISO15765 RX format, PR #47 merged
 
 - **development HEAD после PR #47:** `626a65aa0be0e7405adc763ce28fc34e860f5b20`. [PR #47](https://github.com/vorlocsev/virtualcar/pull/47) merged squash from `fix/p3-f114-transport-format-evidence-20261105` into development. `main`, Dvinholm, выпущенные Virtual Car сборки не менялись.
