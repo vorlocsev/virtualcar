@@ -74,6 +74,11 @@ typedef void *HANDLE;
 #define ERR_INVALID_DEVICE_ID 26u
 #define PROTO_CAN 5u
 #define PROTO_ISO15765 6u
+#define PROTO_CAN_PS 0x00008004u /* J2534-2 switched-pin CAN */
+#define PROTO_ISO15765_PS 0x00008005u /* switched-pin ISO15765 */
+#define J1962_PINS 0x00008001u
+#define J1962_HS 0x060Eu /* OBD 6/14 */
+#define J1962_LS 0x030Bu /* OBD 3/11 */
 #define IO_GET_CONFIG 1u
 #define IO_SET_CONFIG 2u
 #define IO_READ_VBATT 3u
@@ -135,7 +140,7 @@ static TRACE_FRAME g_trace[MAX_PASSIVE_TRACES];
 static U32 g_trace_count=0;
 static U32 g_iso_rx_start=0;
 static U32 g_ecu_count=2;
-static U32 g_p2_strict_routing=0;
+static U32 g_p2_strict_routing=1; /* historical flag: route enforcement is mandatory */
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
 typedef struct {U32 req,resp;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
 static ECU g_ecu[MAX_ECUS];
@@ -149,7 +154,9 @@ typedef struct {
 static D2_PROFILE g_d2[MAX_D2_FIXTURES];
 
 typedef struct { U32 id,interval_ms; U64 next_us; PASSTHRU_MSG msg; int used; } PERIODIC;
-typedef struct { U32 id,type; U8 mask[4],pattern[4]; } FILTER;
+/* CAN PASS/BLOCK masks may cover the CAN ID plus up to eight data bytes.
+   ISO15765 FLOW_CONTROL filters remain matched on the CAN header only. */
+typedef struct { U32 id,type,length; U8 mask[12],pattern[12]; } FILTER;
 /* A recorded abort has to survive queued First/Consecutive Frames.
    At most MAX_QUEUE different aborted requests can have queued frames. */
 #define BACKEND_ABORT_FC_OVERFLOW 1u
@@ -164,7 +171,9 @@ typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
+    U32 ps_pins; /* zero means J2534-2 channel not yet attached */
     FILTER filters[MAX_FILTERS]; U32 filters_count;
+    U32 explicit_can_filters_cleared; /* sticky until channel disconnect */
     U32 passive_next_tick;
     U32 trace_next_tick[MAX_PASSIVE_TRACES];
     U64 d2_next_us;
@@ -182,6 +191,26 @@ typedef struct {
        unlimited only while pending_cf_active is set. */
     U32 pending_cf_active,pending_cf_credit,read_timeout_count;
 } CHANNEL;
+static U32 protocol_family(U32 p){
+    if(p==PROTO_CAN_PS)return PROTO_CAN;
+    if(p==PROTO_ISO15765_PS)return PROTO_ISO15765;
+    return p;
+}
+static int protocol_is_ps(U32 p){
+    return p==PROTO_CAN_PS||p==PROTO_ISO15765_PS;
+}
+static int channel_link_ready(const CHANNEL *c){
+    return c && (!protocol_is_ps(c->protocol)||c->ps_pins!=0);
+}
+/* For the synthetic Volvo P2 LAB, switched 6/14 at 500k is HS,
+   switched 3/11 at 125k is LS. Other pin/rate pairs cannot
+   imply a verified ECU or manufacture a CEM reply. */
+static int channel_lab_route_ready(const CHANNEL *c){
+    if(!channel_link_ready(c))return 0;
+    if(!protocol_is_ps(c->protocol))return 1;
+    return (c->ps_pins==J1962_HS && c->baud==500000u) ||
+           (c->ps_pins==J1962_LS && c->baud==125000u);
+}
 static CHANNEL g_ch[MAX_CHANNELS];
 /* Read-only vehicle-state observer, serialized by g_lock. */
 static p2_j2534_bridge g_vehicle_bridge;
@@ -356,7 +385,7 @@ static const char *p2_informer_probe_name(const CHANNEL *c,U32 id,const U8 *p,U3
         0x0C,0x06,0x07,0x20,0x21,0x22,0xB2,0xB3,
         0xB4,0x01,0x93,0x15};
     U32 i;
-    if(!c||!p||id!=0x000FFFFEu||c->protocol!=PROTO_CAN||n!=8u)return 0;
+    if(!c||!p||id!=0x000FFFFEu||protocol_family(c->protocol)!=PROTO_CAN||n!=8u)return 0;
     if(c->baud==125000u) {
         /* Exact source single-frame VIN TX; no implied RX 62 F1 90. */
         if(p[0]==0x03u && p[1]==0x22u && p[2]==0xF1u && p[3]==0x90u &&
@@ -403,28 +432,54 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
     id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
     p=m->Data+4;n=m->DataSize-4;
+    /* Observe an exact functional OBD VIN request, never the returned VIN.
+       Only known J2534 ISO15765 and zero-padded raw CAN at 500 kbit/s.
+       An observed request does NOT imply that the diagnostic UI accepted
+       the VIN or started CEM enumeration. No CAN response is changed. */
+    if(id==0x7DFu && c->baud==500000u &&
+       ((protocol_family(c->protocol)==PROTO_ISO15765 && n==2u &&
+         p[0]==0x09u && p[1]==0x02u) ||
+        (protocol_family(c->protocol)==PROTO_CAN && n==8u &&
+         p[0]==0x02u && p[1]==0x09u && p[2]==0x02u &&
+         p[3]==0u && p[4]==0u && p[5]==0u &&
+         p[6]==0u && p[7]==0u)))
+        return "OBD_FUNC_VIN_0902";
+    /* The exact VDASH 2.0 functional 3E 80 probe is session keepalive, not
+       CEM discovery. Only metadata on a known 500-kbit/s route, no new RX.
+       Raw CAN mode uses a full, zero-padded eight-byte single frame. */
+    if(id==0x18DB33F1u && c->baud==500000u &&
+       ((protocol_family(c->protocol)==PROTO_ISO15765 && n==2u &&
+         p[0]==0x3Eu && p[1]==0x80u) ||
+        (protocol_family(c->protocol)==PROTO_CAN && n==8u &&
+         p[0]==0x02u && p[1]==0x3Eu && p[2]==0x80u &&
+         p[3]==0u && p[4]==0u && p[5]==0u &&
+         p[6]==0u && p[7]==0u)))
+        return "FUNC29_TP_SUPPRESSED";
     /* These source-labelled families are metadata only, never new CAN RX. */
     {
         const char *informer=p2_informer_probe_name(c,id,p,n);
         if(informer)return informer;
     }
-    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && cem_d2_probe_shape(p,n)){
+    if(id==0x000FFFFEu && protocol_family(c->protocol)==PROTO_CAN && cem_d2_probe_shape(p,n)){
         target=p[1]==0x40u?0u:1u;
         return d2_labels[target][p[2]==0xA3u?0u:1u];
     }
-    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && n>=3 &&
-       (p[0]==0xCBu||p[0]==0xCFu||p[0]==0xCAu) &&
-       (p[1]==0x40u||p[1]==0x50u)){
+    /* Keep B9 probe evidence aligned with process_d2: only CB
+       declares a complete target/B9/subcommand request. CA lacks
+       the subcommand; CF is not handled by the B9 replay route.
+       Neither form should be mislabeled as a supported B9 read. */
+    if(id==0x000FFFFEu && protocol_family(c->protocol)==PROTO_CAN && n>=4 &&
+       p[0]==0xCBu && (p[1]==0x40u||p[1]==0x50u)){
         target=p[1]==0x40u?0u:1u;
-        if(p[2]!=0xB9u||n<4)return 0;
+        if(p[2]!=0xB9u)return 0;
         if(p[3]==0xF0u)return d2_labels[target][2];
         if(p[3]==0xFBu)return d2_labels[target][3];
         if(p[3]==0xFCu)return d2_labels[target][4];
         return 0;
     }
     if(id!=0x726u && id!=0x18DA50F1u)return 0;
-    if(c->protocol==PROTO_ISO15765){uds=p;size=n;}
-    else if(c->protocol==PROTO_CAN){
+    if(protocol_family(c->protocol)==PROTO_ISO15765){uds=p;size=n;}
+    else if(protocol_family(c->protocol)==PROTO_CAN){
         /* Only a complete single-frame ReadDataByIdentifier request can be
            classified. Multi-frame TX and Flow Control remain unclassified. */
         if(n<4 || (p[0]&0xF0u)!=0 || (p[0]&0x0Fu)!=3u)return 0;
@@ -589,7 +644,7 @@ static void backend_cancel_channel(CHANNEL *c,const char *reason,int d2_only) {
 
 /* Validates framing only. No assertion about undocumented FB semantics. */
 static int validate_d2_fixture(const D2_PROFILE *d){
-    U32 k;U8 base,seq=1;int final=0;
+    U32 k;U8 base,seq=1;int final=0,observed_bridge=0;
     if(!d->frame_count || d->frame_count>MAX_D2_FRAMES || d->response_id>0x1FFFFFFFu)return 0;
     if(d->frame_count==1){
         const U8 *f=d->frame[0];
@@ -605,6 +660,10 @@ static int validate_d2_fixture(const D2_PROFILE *d){
         U8 header=d->frame[k][0];
         if(header>=0x48 && header<=0x4F){
             if(k!=d->frame_count-1)return 0;
+            /* A bare 97/1x-to-4x jump is not a verified completed D2
+               response. Keep the existing VIDA 55 + repeated 8F bridge
+               compatible, but do not mix independent P1/P2 dialects. */
+            if(base==0x10 && !observed_bridge)return 0;
             final=1;continue;
         }
         /* Sub-block ends but the D2 response has not ended. */
@@ -616,7 +675,7 @@ static int validate_d2_fixture(const D2_PROFILE *d){
            in VIDA; it is not a new response or a payload segment. */
         if(header==0x8F && k>1 && (d->frame[k-1][0]&0xF8)==0x50 &&
            d->frame[k][1]==d->target && d->frame[k][2]==0xF9 &&
-           d->frame[k][3]==d->subcommand)continue;
+           d->frame[k][3]==d->subcommand){observed_bridge=1;continue;}
         if(header!=(U8)(base|seq))return 0;
         seq=(seq+1)&7u;
     }
@@ -643,8 +702,28 @@ static int validate_fc140_fixture(const D2_PROFILE *d){
     for(k=0;k<140;k++)sum+=(U32)stream[5+k];
     return stream[4]==(U8)sum;
 }
+/* The importer marks mixed donor/local D2 input explicitly. This is a
+   LABORATORY gate, not cryptographic provenance verification. A tagged
+   composite profile must not silently replay identity-looking CEM frames.
+   It can be tested only after a conscious [P2] AllowCompositeReplay=1.
+   An arbitrary renamed/untagged INI remains untrusted by definition. */
+static int d2_text_equal(const char *a,const char *b){
+    if(!a || !b)return 0;
+    while(*a && *b){if(*a++!=*b++)return 0;}
+    return !*a && !*b;
+}
+static U32 block_unapproved_composite_d2(const char *origin,U32 explicit_opt_in){
+    U32 i,disabled=0;
+    if(!d2_text_equal(origin,"local_composite_unverified_trace_import") ||
+       explicit_opt_in!=0u)return 0;
+    for(i=0;i<MAX_D2_FIXTURES;i++){
+        if(g_d2[i].frame_count){g_d2[i].frame_count=0;disabled++;}
+    }
+    return disabled;
+}
+
 static void load_config(void) {
-    U32 n,i;char v[512],key[24];
+    U32 n,i,composite_disabled=0;char v[512],key[24];
     /* Include the host executable and PID so GUI self-checks and SectorV
        sessions can be distinguished when they share the same log file. */
     g_host_pid=GetCurrentProcessId();
@@ -739,8 +818,12 @@ static void load_config(void) {
        fabricated when a fixture is absent.
        B9FB response CAN ID 0x01200003 is from a published 2005-era DiCE trace;
        not guaranteed for every P2 model or CAN bus. */
-    GetPrivateProfileStringA("P2","StrictRouting","0",v,sizeof(v),g_profile_path);
-    g_p2_strict_routing=parse_num(v,0)?1:0;
+    /* Route safety is no longer optional: a CEM target 0x40 fixture must
+       not leak onto HS/500k, nor target 0x50 onto LS/125k. The historic
+       StrictRouting=0 setting is ignored intentionally. Any verified
+       alternate route must be a separately reviewed fixture, not a
+       channel-wide bypass of CEM identity. */
+    g_p2_strict_routing=1;
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
     bytes_zero(g_trace,sizeof(g_trace));g_trace_count=0;
@@ -854,6 +937,22 @@ static void load_config(void) {
             d->frame_count=0;invalid_p2++;
         }
     }
+    /* The trace importer always writes the composite source marker and
+       forcibly resets the opt-in to 0, even when inherited INI was 1.
+       Disabling only the D2 replay fixtures leaves VIN/ECU diagnostics
+       and J2534 open/connection available to inspect where clients stop. */
+    {
+        char origin[96];
+        U32 opt_in;
+        GetPrivateProfileStringA("P2","FixtureProvenance","",
+                                 origin,sizeof(origin),g_profile_path);
+        GetPrivateProfileStringA("P2","AllowCompositeReplay","0",
+                                 v,sizeof(v),g_profile_path);
+        /* Only literal "1" unlocks unverified composite replay.
+           Parsed numeric aliases such as 01, 0x1 or 2 remain disabled. */
+        opt_in=d2_text_equal(v,"1")?1u:0u;
+        composite_disabled=block_unapproved_composite_d2(origin,opt_in);
+    }
     n=GetTempPathA(sizeof(g_log_path)-32,g_log_path);
     if(n==0||n>=sizeof(g_log_path)-32)str_copy(g_log_path,"C:\\Windows\\Temp\\SectorVVirtualCar.log",sizeof(g_log_path));
     else str_append(g_log_path,"SectorVVirtualCar.log",sizeof(g_log_path));
@@ -864,6 +963,8 @@ static void load_config(void) {
      logline("Network ACTIVE passive frames / extra D2 fixtures (BE)",network_counts,8);}
     if(invalid_p2){U8 number[4];u32_be(number,invalid_p2);
         logline("P2 invalid D2 fixtures disabled (count, BE)",number,4);}
+    if(composite_disabled){U8 number[4];u32_be(number,composite_disabled);
+        logline("P2 unapproved composite D2 fixtures disabled (count, BE)",number,4);}
     {
         U8 opts[16];u32_be(opts,g_passive_enabled);u32_be(opts+4,g_passive_period_ms);
         u32_be(opts+8,g_iso_rx_start);u32_be(opts+12,g_p2_strict_routing);
@@ -890,15 +991,31 @@ static CHANNEL *channel(U32 id){U32 i;for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used
 /* Apply installed CAN/ISO pass and block masks to simulated incoming IDs.
    Historical compatibility: channels without filters still pass, as before.
    A strict no-filter default remains future work since GUI self-tests rely on it. */
-static int filter_allows(const CHANNEL *c,U32 response_id) {
+static int filter_allows(const CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
     U8 idbytes[4];U32 i,j;int has_pass=0,matched_pass=0;
+    /* Historical untouched CAN channels allow unfiltered synthetic RX.
+       Explicit CLEAR_MSG_FILTERS is different: J2534 specifies that
+       no NEW RX frames are queued until a PASS_FILTER is added. */
+    if(protocol_family(c->protocol)==PROTO_CAN && c->explicit_can_filters_cleared &&
+       c->filters_count==0)return 0;
     u32_be(idbytes,response_id);
     for(i=0;i<c->filters_count;i++){
-        const FILTER *f=&c->filters[i];int matched=1;
-        for(j=0;j<4;j++)if((idbytes[j]&f->mask[j])!=(f->pattern[j]&f->mask[j])){matched=0;break;}
+        const FILTER *f=&c->filters[i];
+        /* FLOW_CONTROL is a receive-ID matcher. PASS/BLOCK on CAN
+           can also match payload bytes. Do not compare an ISO-TP
+           reassembled payload as if it were an extended CAN address. */
+        U32 checked=f->type==3?4:f->length;
+        int matched=(checked<=len+4);
+        for(j=0;matched&&j<checked;j++){
+            U8 value=j<4?idbytes[j]:payload[j-4];
+            if((value&f->mask[j])!=(f->pattern[j]&f->mask[j]))
+                matched=0;
+        }
         if(f->type==2 && matched)return 0;
         if(f->type==1 || f->type==3){has_pass=1;if(matched)matched_pass=1;}
     }
+    if(protocol_family(c->protocol)==PROTO_CAN && c->explicit_can_filters_cleared && !has_pass)
+        return 0;
     return !has_pass || matched_pass;
 }
 static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,U32 status) {
@@ -910,7 +1027,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
         backend_note_drop(c,c->active_trace,cause);
         return;
     }
-    if(!filter_allows(c,response_id)){
+    if(!filter_allows(c,response_id,payload,len)){
         backend_event(c,c->active_trace,"filter_drop","UNKNOWN","filter_reject","unknown");
         backend_note_drop(c,c->active_trace,BACKEND_DROP_FILTER_REJECT);
         U8 idbytes[4];u32_be(idbytes,response_id);
@@ -940,7 +1057,7 @@ static void enqueue(CHANNEL *c,U32 response_id,const U8 *payload,U32 len){enqueu
 /* Bus-specific recorded traffic. Never cross CAN-LS/HS speed boundaries. */
 static void pump_recorded_trace(CHANNEL *c){
     U32 i,now;
-    if(c->protocol!=PROTO_CAN)return;
+    if(protocol_family(c->protocol)!=PROTO_CAN||!channel_lab_route_ready(c))return;
     now=GetTickCount();
     for(i=0;i<MAX_PASSIVE_TRACES;i++){
         TRACE_FRAME *t=&g_trace[i];
@@ -953,7 +1070,7 @@ static void pump_recorded_trace(CHANNEL *c){
 }
 static void maybe_passive_frame(CHANNEL *c){
     U32 now;
-    if(!g_passive_enabled||c->protocol!=PROTO_CAN||c->count>=MAX_QUEUE)return;
+    if(!g_passive_enabled||!channel_lab_route_ready(c)||protocol_family(c->protocol)!=PROTO_CAN||c->count>=MAX_QUEUE)return;
     now=GetTickCount();
     if((U32)(now-c->passive_next_tick)>=0x80000000u)return;
     c->passive_next_tick=now+g_passive_period_ms;
@@ -965,7 +1082,7 @@ static void maybe_passive_frame(CHANNEL *c){
    using the existing microsecond clock and the queue-ready timestamp. */
 static void pump_can_cf(CHANNEL *c) {
     U8 f[8];U32 i,sz;U64 now,due;
-    if(c->protocol!=PROTO_CAN || !c->pending_cf_active || !c->pending_len)return;
+    if(protocol_family(c->protocol)!=PROTO_CAN || !c->pending_cf_active || !c->pending_len)return;
     while(c->pending_cf_active && c->pending_pos<c->pending_len && c->count<MAX_QUEUE){
         sz=c->pending_len-c->pending_pos;if(sz>7)sz=7;
         bytes_zero(f,8);f[0]=(U8)(0x20 | (c->pending_sn&15));
@@ -1004,7 +1121,7 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
         c->pending_cf_active=0;c->pending_cf_credit=0;
         backend_abort_pending(c,previous,BACKEND_ABORT_SUPERSEDED);
     }
-    if(c->protocol==PROTO_ISO15765){
+    if(protocol_family(c->protocol)==PROTO_ISO15765){
         if(g_iso_rx_start && len>7 && c->count+2<=MAX_QUEUE)
             enqueue_status(c,response_id,0,0,START_OF_MESSAGE);
         enqueue(c,response_id,payload,len);return;
@@ -1111,16 +1228,26 @@ static void pump_d2(CHANNEL *c){
 }
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     U32 i;D2_PROFILE *d;const char *route;
-    if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
+    if(id!=0x000FFFFEu || protocol_family(c->protocol)!=PROTO_CAN)return 0;
     /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
        responses. Keep them silent, but distinguish the known missing emulator
        implementation from an arbitrary CAN ID or an absent B9 fixture.
        Never synthesize E3/E6, an ignition state, or a module identity. */
     if(cem_d2_probe_shape(data,len)){
+        /* Distinguish a mismatched P2 CEM bus from a correctly routed
+           request lacking a verified ECU response. Diagnostic metadata
+           only: neither case emits E3/E6 or alters the J2534 TX result. */
+        U32 expected_baud=data[1]==0x50u?500000u:125000u;
         backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
-        logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
-        backend_event(c,c->active_trace,"request_completed","CEM",
-                      "unimplemented_probe","no_response");
+        if(c->baud!=expected_baud) {
+            logline("P2 D2 CEM A3/A6: route/bus mismatch (no response)",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unsupported_bus","no_response");
+        } else {
+            logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unimplemented_probe","no_response");
+        }
         return 1;
     }
     if(len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
@@ -1139,7 +1266,9 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         discarded=drop_queued_d2(c);
         if(discarded){U8 count_be[4];u32_be(count_be,discarded);
             logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
-        if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
+        /* Every D2 fixture is tied to the configured bus speed, including
+           legacy slot 0..5. No operator flag can bypass this check. */
+        if(c->baud!=d->baud){
             logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
             backend_event(c,c->active_trace,"request_completed",route,"unsupported_bus","no_response");
             return 1;
@@ -1169,7 +1298,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     const char *route;
     int matched=0,answered=0;
     const U8 *data;
-    if(msg->DataSize<5||msg->DataSize>MAX_DATA)return;
+    if(msg->DataSize<5||msg->DataSize>MAX_DATA||!channel_lab_route_ready(c))return;
     id=((U32)msg->Data[0]<<24)|((U32)msg->Data[1]<<16)|((U32)msg->Data[2]<<8)|msg->Data[3];
     if(process_d2(c,id,msg->Data+4,msg->DataSize-4))return;
     /* FF C8 is documented as a broadcast ECU reset in published P2 logs.
@@ -1180,10 +1309,24 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         backend_event(c,c->active_trace,"request_completed","CEM","no_response","no_response");
         return;
     }
+    /* VDASH 2.0 laboratory traces include a 29-bit functional TesterPresent.
+       0x18DB33F1 is the ISO15765-4 functional address, not a CEM target.
+       3E 80 suppresses the positive response. Classify this exact request
+       without fabricating any ECU, ECU discovery result or response frame. */
+    if(id==0x18DB33F1u &&
+       ((protocol_family(c->protocol)==PROTO_ISO15765 && msg->DataSize==6u &&
+         msg->Data[4]==0x3Eu && msg->Data[5]==0x80u) ||
+        (protocol_family(c->protocol)==PROTO_CAN && msg->DataSize==12u &&
+         msg->Data[4]==0x02u && msg->Data[5]==0x3Eu && msg->Data[6]==0x80u))){
+        logline("29-bit functional TesterPresent 3E 80: suppressed, not ECU identification",0,0);
+        backend_event(c,c->active_trace,"route_selected","ECU_OTHER","none","unknown");
+        backend_event(c,c->active_trace,"request_completed","ECU_OTHER","no_response","no_response");
+        return;
+    }
     for(i=0;i<g_ecu_count;i++){
         ecu=&g_ecu[i];if(id!=ecu->req&&id!=0x7DF)continue;
         n=msg->DataSize-4;data=msg->Data+4;
-        if(c->protocol==PROTO_CAN){
+        if(protocol_family(c->protocol)==PROTO_CAN){
             if((data[0]&0xF0)==0x30 && c->pending_len){
                 if(n<3){
                     logline("ISO-TP FC ignored (missing block size or STmin)",msg->Data,msg->DataSize);
@@ -1255,7 +1398,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         /* A missing P3 CEM profile is distinguishable from an arbitrary ID.
            Classify only the exact read-only F114 request on the two known
            P3 CEM addressing forms. This adds evidence, never an ECU reply. */
-        if(c->protocol==PROTO_ISO15765 &&
+        if(protocol_family(c->protocol)==PROTO_ISO15765 &&
            (id==0x726u || id==0x18DA50F1u) &&
            msg->DataSize==7u && msg->Data[4]==0x22u &&
            msg->Data[5]==0xF1u && msg->Data[6]==0x14u) {
@@ -1277,11 +1420,38 @@ static void pump_periodic(CHANNEL *c){
     U32 i;U64 now=now_us();
     for(i=0;i<MAX_PERIODIC;i++){
         PERIODIC *p=&c->periodic[i];
+        U64 previous_trace;
         if(!p->used || now<p->next_us || c->count>=MAX_QUEUE)continue;
         p->next_us=now+(U64)p->interval_ms*1000ull;
         logline("J2534 periodic TX (read-only simulator)",p->msg.Data,p->msg.DataSize);
+        /* A StartPeriodicMsg registration can produce several TX firings
+           without any subsequent PassThruWriteMsgs call. Distinguish each
+           firing from an application write in metadata-only backend JSONL.
+           Keep normal J2534 responses/return codes exactly unchanged. */
+        previous_trace=c->active_trace;
+        c->active_trace=next_backend_request();
+        backend_event(c,c->active_trace,"periodic_fired","UNKNOWN","none","unknown");
+        backend_probe_event(c,c->active_trace,&p->msg);
         process_request(c,&p->msg);
+        c->active_trace=previous_trace;
     }
+}
+/* A switched J1962 bus rebind cancels old frames exactly like DATA_RATE.
+   It never silently resets J2534 filter IDs or other channels. */
+static void cancel_staged_old_can_bus(CHANNEL *c,const char *reason){
+    U32 k,now_tick=GetTickCount();
+    backend_cancel_channel(c,reason,0);
+    c->r=c->w=c->count=0;
+    c->d2_count=c->d2_pos=0;c->d2_trace=0;
+    c->d2_next_us=0;c->d2_response_id=0;
+    c->pending_len=c->pending_pos=0;
+    c->pending_id=c->pending_request_id=0;
+    c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
+    c->pending_cf_active=c->pending_cf_credit=0;
+    bytes_zero(c->queue_d2_gen,sizeof(c->queue_d2_gen));
+    c->passive_next_tick=now_tick+g_passive_period_ms;
+    for(k=0;k<MAX_PASSIVE_TRACES;k++)
+        c->trace_next_tick[k]=now_tick+g_trace[k].period_ms+(k%4)*3u;
 }
 /* Standard 04.04 API. Undecorated export names are defined in virtualcar.def. */
 EXPORT U32 WINCALL PassThruOpen(PTR name,U32 *device) {
@@ -1305,7 +1475,8 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(!g_open||device!=1)return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);
     /* P3Tool also contains driver-specific 0x8004/0x8005/0x10000001 modes.
        Do not silently reinterpret them as standard CAN/ISO15765. */
-    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765)
+    if(protocol!=PROTO_CAN && protocol!=PROTO_ISO15765 &&
+       protocol!=PROTO_CAN_PS && protocol!=PROTO_ISO15765_PS)
         return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
     lock_state();for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
@@ -1315,9 +1486,16 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
     *channel_id=i+1;
-    p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
+    p2_bridge_connect(&g_vehicle_bridge,i+1,protocol_family(protocol),baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
+    /* Record the allocated channel alongside protocol and baud before the
+       successful Connect result. An aggregate Connect OK on another
+       channel must never be attributed to a CEM B9FB application TX.
+       This is local transport provenance, NOT a client identity proof. */
+    {U8 bound[16];u32_be(bound,i+1);u32_be(bound+4,protocol);
+     u32_be(bound+8,flags);u32_be(bound+12,baud);
+     logline("J2534 Connect bound channel/protocol/flags/baud (BE)",bound,16);}
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
 }
 EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
@@ -1331,6 +1509,7 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
+    if(!channel_link_ready(c)){*count=0;unlock_state();return error(ERR_DEVICE_NOT_CONNECTED);}
     for(i=0;i<n;i++){
         if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5){*count=i;unlock_state();return error(ERR_INVALID_MSG);}
         {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
@@ -1348,7 +1527,7 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
         }
         /* Flow-control frames continue a previous response, not a new ECU
            diagnostic request. They are intentionally not assigned a new ID. */
-        if(!(c->protocol==PROTO_CAN && msgs[i].DataSize>=5 &&
+        if(!(protocol_family(c->protocol)==PROTO_CAN && msgs[i].DataSize>=5 &&
              (msgs[i].Data[4]&0xF0u)==0x30u)){
             c->active_trace=next_backend_request();
             backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
@@ -1367,6 +1546,13 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
     for(;;){
         CHANNEL *c;lock_state();c=channel(id);
         if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+        if(!channel_link_ready(c)){
+            unlock_state();
+            if((U32)(GetTickCount()-started)>=timeout){
+                *count=0;return error(timeout?ERR_TIMEOUT:ERR_BUFFER_EMPTY);
+            }
+            Sleep(1);continue;
+        }
         maybe_passive_frame(c);
         pump_recorded_trace(c);
         pump_periodic(c);
@@ -1392,7 +1578,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
                 logline("P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)",d2_meta,20);
                 c->queue_d2_gen[c->r]=0;
             }
-            if(c->protocol==PROTO_ISO15765){
+            if(protocol_family(c->protocol)==PROTO_ISO15765){
                 U8 meta[20];u32_be(meta,msgs[actual].ProtocolID);u32_be(meta+4,msgs[actual].RxStatus);
                 u32_be(meta+8,msgs[actual].DataSize);u32_be(meta+12,msgs[actual].ExtraDataIndex);
                 u32_be(meta+16,msgs[actual].Timestamp);
@@ -1432,12 +1618,20 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
-    if(mask->DataSize<4||pattern->DataSize<4){unlock_state();return error(ERR_INVALID_MSG);}
+    /* The filter data begins at the four CAN-ID bytes. For CAN
+       PASS/BLOCK it may include up to eight payload bytes. Never
+       silently accept unequal lengths then compare just the ID. */
+    if(mask->DataSize<4||mask->DataSize>12||
+       pattern->DataSize!=mask->DataSize){
+        unlock_state();return error(ERR_INVALID_MSG);
+    }
     if(c->filters_count>=MAX_FILTERS){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     *filter_id=g_filter_counter++;
     {
         FILTER *f=&c->filters[c->filters_count++];f->id=*filter_id;f->type=type;
-        bytes_copy(f->mask,mask->Data,4);bytes_copy(f->pattern,pattern->Data,4);
+        f->length=mask->DataSize;
+        bytes_copy(f->mask,mask->Data,f->length);
+        bytes_copy(f->pattern,pattern->Data,f->length);
     }
     {U8 descriptor[8];u32_be(descriptor,type);u32_be(descriptor+4,*filter_id);
      logline("PassThruStartMsgFilter type / id (BE)",descriptor,8);}
@@ -1510,7 +1704,13 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
          logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 CLEAR_RX_BUFFER: queued and staged D2 dropped",0,0);
         unlock_state();return error(ERR_OK);}
-    if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
+    if(ioctl==IO_CLEAR_MSG_FILTERS){
+        c->filters_count=0;
+        if(protocol_family(c->protocol)==PROTO_CAN)c->explicit_can_filters_cleared=1;
+        /* Do not erase already queued responses: CLEAR_MSG_FILTERS
+           controls filtering of subsequent incoming frames. */
+        unlock_state();return error(ERR_OK);
+    }
     if(ioctl==IO_CLEAR_PERIODIC_MSGS){bytes_zero(c->periodic,sizeof(c->periodic));unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
@@ -1520,10 +1720,50 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
+                if(s->Parameter==J1962_PINS){
+                    U8 binding[12];
+                    if(!protocol_is_ps(c->protocol)){
+                        unlock_state();return error(ERR_NOT_SUPPORTED);
+                    }
+                    if(s->Value!=J1962_HS && s->Value!=J1962_LS){
+                        unlock_state();return error(ERR_PIN_INVALID);
+                    }
+                    if(c->ps_pins!=s->Value){
+                        u32_be(binding,id);
+                        u32_be(binding+4,c->ps_pins);
+                        u32_be(binding+8,s->Value);
+                        cancel_staged_old_can_bus(c,"j1962_pins_changed");
+                        c->ps_pins=s->Value;
+                        logline("J2534 PS J1962_PINS bound channel/old/new (BE)",binding,12);
+                    }
+                }
+                if(s->Parameter==1 && c->baud!=s->Value){
+                    /* A 125/500 kbit/s CAN switch invalidates all queued
+                       frames and staged D2/ISO-TP replies from the OLD bus.
+                       Otherwise a delayed B9FB tail or pending CF could
+                       appear after the client changed CAN networks.
+                       Keep other J2534 channels and installed RX filters
+                       untouched. Never report discarded RX as delivered. */
+                    if(protocol_family(c->protocol)==PROTO_CAN){
+                        U8 transition[12];
+                        u32_be(transition,id);
+                        u32_be(transition+4,c->baud);
+                        u32_be(transition+8,s->Value);
+                        cancel_staged_old_can_bus(c,"data_rate_changed");
+                        logline("CAN DATA_RATE changed: old-bus RX cancelled (channel/old/new BE)",
+                                transition,12);
+                    }
+                    c->baud=s->Value;
+                    /* Mirror the new speed in the read-only P2 observer.
+                       Otherwise its channel table keeps the OLD network,
+                       misclassifying perfectly valid later CEM requests. */
+                    p2_bridge_connect(&g_vehicle_bridge,id,protocol_family(c->protocol),c->baud);
+                }
                 log_set_config(id,s->Parameter,s->Value);
             }
-            if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
+            if(ioctl==IO_GET_CONFIG)
+                s->Value=s->Parameter==1?c->baud:
+                         s->Parameter==J1962_PINS?c->ps_pins:0;
         }
         unlock_state();return error(ERR_OK);
     }

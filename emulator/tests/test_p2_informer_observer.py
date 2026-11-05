@@ -108,7 +108,15 @@ class P2InformerObserverTests(unittest.TestCase):
         self.assertFalse(result["identity_verified"])
 
     def test_08_legacy_d2_p3_matrix_is_not_replaced(self):
-        self.assertEqual(len(tool.PROBES), 26)
+        self.assertEqual(len(tool.PROBES), 28)
+        self.assertEqual(tool.PROBES["OBD_FUNC_VIN_0902"], {
+            "service": "0902", "can_id": "0x7DF",
+            "id_format": "11bit", "target": None,
+        })
+        self.assertEqual(tool.PROBES["FUNC29_TP_SUPPRESSED"], {
+            "service": "3E80", "can_id": "0x18DB33F1",
+            "id_format": "29bit", "target": None,
+        })
         for token in ("D2_40_B9FB", "D2_50_A3", "P3_726_F114",
                       "P3_29_F190"):
             self.assertIn(token, tool.PROBES)
@@ -118,7 +126,7 @@ class P2InformerObserverTests(unittest.TestCase):
                            reason="missing_profile", outcome="no_response"))
         self.assertEqual(result["summary"]["statuses"], {"no_fixture": 1})
         self.assertEqual(result["transactions"][0]["service"], "B9FB")
-        self.assertEqual(len(result["coverage"]["probes"]), 26)
+        self.assertEqual(len(result["coverage"]["probes"]), 28)
 
 
 if __name__ == "__main__":

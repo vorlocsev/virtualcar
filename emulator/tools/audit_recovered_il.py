@@ -1,0 +1,798 @@
+#!/usr/bin/env python3
+"""Audit user-provided recovered .NET IL evidence; never export raw proprietary text.
+
+This tool does NOT deobfuscate binaries, execute VDASH or infer CAN traffic.
+Its output is an allowlisted method/shape summary from an independently supplied
+inventory JSON and IL excerpt. No source paths, VINs or string literals escape.
+"""
+import argparse
+import ast
+import json
+import re
+from pathlib import Path
+
+HEADER = re.compile(r"^([^:\n]+): MethodDef (0x[0-9A-Fa-f]{8}) (.+?); (\d+) decoded opcodes$")
+IL = re.compile(r"^IL_([0-9A-Fa-f]{4,8})\s+([A-Za-z0-9_.]+)(?:\s+(.*?))?\s*$")
+TOKEN = re.compile(r"0x[0-9A-Fa-f]{8}")
+IMPORTANT = ("0x06001329", "0x0600132C", "0x06001160", "0x06002472", "0x060002EF")
+# MethodDef tokens are unique only *inside an assembly*, not globally.
+KNOWN = {
+    "detect": ("Frontend.Client.Core.dll", "0x0600132B"),
+    "execute": ("Frontend.Client.Core.dll", "0x0600115D"),
+    "pre_detect": ("Frontend.Client.Core.dll", "0x0600133D"),
+    "get_vin": ("Frontend.Client.Core.dll", "0x0600133A"),
+    "get_config": ("Frontend.Client.Core.dll", "0x06001339"),
+    "parse_data": ("Frontend.Client.Core.dll", "0x06001160"),
+    "ui_done": ("Frontend.exe", "0x06002472"),
+    "send_v2": ("Client.Core.dll", "0x060002EF"),
+}
+
+
+def parse_excerpts(text):
+    """Read intact MethodDef blocks and verify exact decoded opcode counts."""
+    blocks = {}
+    current = None
+    for line in text.splitlines():
+        heading = HEADER.fullmatch(line.strip())
+        if heading:
+            token = heading.group(2).upper().replace("0X", "0x")
+            key = (heading.group(1), token)
+            if key in blocks:
+                raise ValueError("duplicate_method_token")
+            current = {"declared": int(heading.group(4)), "ops": [], "offsets": []}
+            blocks[key] = current
+            continue
+        if line.startswith("IL_"):
+            if current is None:
+                raise ValueError("unattributed_il")
+            op = IL.fullmatch(line)
+            if not op:
+                raise ValueError("invalid_il_line")
+            offset = int(op.group(1), 16)
+            if current["offsets"] and offset <= current["offsets"][-1]:
+                raise ValueError("nonmonotonic_il_offsets")
+            current["offsets"].append(offset)
+            current["ops"].append((op.group(2), (op.group(3) or "").strip()))
+    if not blocks:
+        raise ValueError("no_method_bodies")
+    for item in blocks.values():
+        if len(item["ops"]) != item["declared"]:
+            raise ValueError("truncated_or_mismatched_il_body")
+    return blocks
+
+
+def _has_call(ops, token):
+    return any(op in ("call", "callvirt") and (TOKEN.search(arg) is not None)
+               and TOKEN.search(arg).group(0).upper() == token.upper()
+               for op, arg in ops)
+
+
+def _has_motif(ops, steps):
+    """Contiguous CIL shape only; no claim the CFG reaches this code."""
+    if not steps or len(ops) < len(steps):
+        return False
+    for start in range(len(ops) - len(steps) + 1):
+        if all(
+            actual[0] == expected[0]
+            and (expected[1] is None or actual[1].startswith(expected[1]))
+            for actual, expected in zip(ops[start:start + len(steps)], steps)
+        ):
+            return True
+    return False
+
+
+def _model_shapes(detect):
+    # Construct an *observed* def-use neighborhood, not de-flattened paths.
+    get_resultdata = next((i for i, (op, arg) in enumerate(detect)
+                           if op == "callvirt" and arg.startswith("0x06001142")), None)
+    near_local2 = get_resultdata is not None and any(
+        op == "stloc.2" for op, _ in detect[get_resultdata + 1:get_resultdata + 17]
+    )
+    return {
+        "detect_resultdata_near_local2_store": near_local2,
+        "detect_result_constructor_from_volvo_and_local2": _has_motif(detect, [
+            ("ldarg.0", None), ("ldarg.0", None),
+            ("call", "0x060012E2"), ("ldloc.2", None),
+            ("newobj", "0x060011BB"), ("call", "0x060012E9"),
+        ]),
+        "detect_ecus_constructor_from_detect_result": _has_motif(detect, [
+            ("ldarg.0", None), ("ldarg.0", None),
+            ("call", "0x060012E8"), ("newobj", "0x0600126D"),
+            ("call", "0x060012DF"),
+        ]),
+        "detect_model_stores_command_datahash": _has_motif(detect, [
+            ("ldarg.0", None), ("ldloc.1", None),
+            ("callvirt", "0x0600113C"), ("stfld", "0x040003A9"),
+        ]),
+        "detect_has_result_units_enumeration": _has_motif(detect, [
+            ("call", "0x060012E8"), ("callvirt", "0x06001B99"),
+            ("callvirt", "0x0A00011A"),
+        ]),
+        "detect_has_both_boolean_return_sites":
+            _has_motif(detect, [("ldc.i4.1", None), ("ret", None)])
+            and _has_motif(detect, [("ldc.i4.0", None), ("ret", None)]),
+    }
+
+
+def _branch_destination(ops, offsets, i):
+    """Resolve a printed relative CIL jump to an *existing* IL offset.
+
+    This is one structural edge only; it does not de-flatten all switch paths
+    or establish that the source basic block can ever be executed.
+    """
+    if i < 0 or i + 1 >= len(ops) or len(ops) != len(offsets):
+        return None
+    opcode, argument = ops[i]
+    if opcode not in ("brfalse", "brfalse.s", "brtrue", "brtrue.s"):
+        return None
+    if not re.fullmatch(r"[+-]?\d+", argument):
+        return None
+    dest = offsets[i + 1] + int(argument)
+    try:
+        return offsets.index(dest)
+    except ValueError:
+        return None
+
+
+def _get_vin_null_branch_to_volvo(ops, offsets):
+    for i in range(2, len(ops) - 1):
+        if not (
+            ops[i] == ("brfalse.s", "108")
+            and ops[i - 1][0] == "call"
+            and ops[i - 1][1].startswith("0x060012F2")
+        ):
+            continue
+        destination = _branch_destination(ops, offsets, i)
+        if destination is not None and _has_motif(
+            ops[destination:destination + 2],
+            [("ldarg.0", None), ("call", "0x060012E2")]
+        ):
+            return True
+    return False
+
+
+def _get_config_null_guard(ops, offsets):
+    for i, (opcode, arg) in enumerate(ops):
+        if opcode != "brtrue.s" or i < 3:
+            continue
+        if not _has_motif(ops[i - 3:i + 1], [
+            ("ldarg.0", None), ("call", "0x060012E8"),
+            ("dup", None), ("brtrue.s", None)
+        ]):
+            continue
+        if not _has_motif(ops[i + 1:i + 4], [
+            ("pop", None), ("ldnull", None), ("ret", None)
+        ]):
+            continue
+        dest = _branch_destination(ops, offsets, i)
+        if dest is not None and _has_motif(ops[dest:dest + 2], [
+            ("callvirt", "0x06001B7E"), ("ret", None)
+        ]):
+            return True
+    return False
+
+
+def _result_failure_branch(ops, offsets):
+    # Observed: get_Result -> opaque predicate 0x06001359 -> direct false return.
+    # The enum/constant/predicate meaning is intentionally NOT inferred.
+    seq = [
+        ("ldloc.1", None), ("callvirt", "0x0600113E"),
+        ("ldc.i4", None), ("br.s", "0"),
+        ("call", "0x2B"), ("call", "0x06001359"),
+        ("brfalse", None),
+    ]
+    for start in range(len(ops) - len(seq) + 1):
+        if not _has_motif(ops[start:start + len(seq)], seq):
+            continue
+        dest = _branch_destination(ops, offsets, start + len(seq) - 1)
+        if dest is not None and _has_motif(ops[dest:dest + 2], [
+            ("ldc.i4.0", None), ("ret", None)
+        ]):
+            return True
+    return False
+
+
+def _shared_predicate_result_and_hardware(ops):
+    """Verify source neighborhoods for both callers of opaque 0x06001359.
+
+    Seeing the same MethodDef after different getters excludes a claim that
+    this method is *only* a dedicated CEM/DongleCommandResult validator.
+    Its actual semantics, argument types and return values remain unknown.
+    """
+    result_site = [
+        ("ldloc.1", None),
+        ("callvirt", "0x0600113E"),
+        ("ldc.i4", None), ("br.s", "0"),
+        ("call", "0x2B000002"), ("call", "0x06001359"),
+        ("brfalse", None),
+    ]
+    hardware_site = [
+        ("ldloc.s", "6"),
+        ("callvirt", "0x06001F95"),
+        ("ldc.i4", None), ("br.s", "0"),
+        ("call", "0x2B000002"), ("call", "0x06001359"),
+        ("brtrue.s", None),
+    ]
+    return {
+        "detect_shared_predicate_for_result_and_hardware_number":
+            _has_motif(ops, result_site) and _has_motif(ops, hardware_site),
+        "detect_shared_predicate_call_count":
+            sum(op == "call" and arg.startswith("0x06001359")
+                for op, arg in ops),
+    }
+
+
+_METHODSPEC_STRING = bytes((0x0A, 0x01, 0x0E))
+_METHODSPEC_LITERAL = re.compile(
+    r"^0x2B000002\s+\[\d+,\s+(b'(?:\\.|[^'\\])*')\]$"
+)
+
+
+def _string_methodspec_instantiation(operand):
+    """Verify the *reported* MethodSpec blob 0A 01 0E.
+
+    Per ECMA-335 II.23.2.15, this means GENRICINST with one
+    ELEMENT_TYPE_STRING generic argument. It does not identify the
+    generic method or establish its return type, constants, or semantics.
+    Decode a bounded bytes literal without evaluating executable code.
+    """
+    if len(operand) > 128:
+        return False
+    match = _METHODSPEC_LITERAL.fullmatch(operand)
+    if match is None:
+        return False
+    try:
+        blob = ast.literal_eval(match.group(1))
+    except (SyntaxError, ValueError, TypeError, MemoryError):
+        return False
+    return type(blob) is bytes and blob == _METHODSPEC_STRING
+
+
+def _string_methodspec_predicate_pairs(ops):
+    """Count adjacent MethodSpec<string> → opaque predicate callsites."""
+    count = 0
+    for first, second in zip(ops, ops[1:]):
+        if (first[0] == "call" and second[0] == "call"
+                and second[1].startswith("0x06001359")
+                and _string_methodspec_instantiation(first[1])):
+            count += 1
+    return {
+        "detect_shared_string_methodspec_predicate_call_count": count,
+        "detect_shared_string_methodspec_at_both_calls": count == 2,
+    }
+
+
+def _status_values(ops):
+    values = set()
+    for a, b in zip(ops, ops[1:]):
+        if a[0] in ("call", "callvirt") and a[1].startswith("0x06001178"):
+            if b[0] in ("ldc.i4.2", "ldc.i4.3", "ldc.i4.4"):
+                values.add(int(b[0][-1]))
+    return sorted(values)
+
+
+def _one_shot_timer_shape(ops):
+    # Only recognises the exact recovered IL shape. The unknown helper
+    # 0x0600117C might not be the Timer constructor; do not infer execution.
+    required = [
+        ("ldftn", "0x0600115F"),
+        ("newobj", "System.Threading.TimerCallback..ctor"),
+        ("ldc.r8", "1.0"),
+        ("call", "System.TimeSpan.FromSeconds"),
+        ("ldsfld", "System.Threading.Timeout.InfiniteTimeSpan"),
+        ("call", "0x0600117C"),
+        ("stfld", "0x04000334"),
+    ]
+    found_at = -1
+    for op, arg in ops:
+        if required[found_at + 1][0] == op and required[found_at + 1][1] in arg:
+            found_at += 1
+            if found_at + 1 == len(required):
+                return True
+    return False
+
+
+def _execute_parse_data_staging(ops, offsets):
+    """Match the eight *adjacent* IL instructions at the recovered callsite.
+
+    This is a stack-value staging neighborhood, not a deobfuscated data
+    signature or proof of reachable execution. Both unknown wrappers receive
+    the command's `result` field; return values and ParseData argument types
+    cannot be established here.
+    """
+    expected = [
+        (0x0247, "ldarg.0", None),
+        (0x0248, "ldarg.0", None),
+        (0x0249, "ldfld", "0x04000333"),
+        (0x024E, "call", "0x0600117A"),
+        (0x0253, "ldarg.0", None),
+        (0x0254, "ldfld", "0x04000333"),
+        (0x0259, "call", "0x0600117B"),
+        (0x025E, "call", "0x06001160"),
+    ]
+    if len(ops) != len(offsets):
+        return False
+    for start in range(len(ops) - len(expected) + 1):
+        for index, (offset, opcode, token) in enumerate(expected):
+            observed_op, arg = ops[start + index]
+            if offsets[start + index] != offset or observed_op != opcode:
+                break
+            if token is not None and arg.split(maxsplit=1)[0].upper() != token.upper():
+                break
+        else:
+            return True
+    return False
+
+
+def _execute_staging_call_inventory(by_key):
+    """Independently check three call frequencies from private inventory.
+
+    Absent call inventory is unknown, not a negative finding. The inventory
+    carries no invocation ordering, parameter types or runtime evidence.
+    """
+    entry = by_key.get(KNOWN["execute"])
+    if entry is None or "calls" not in entry:
+        return "unreported"
+    calls = entry["calls"]
+    if not isinstance(calls, list):
+        return "invalid_inventory"
+    wanted = {"0x0600117a", "0x0600117b", "0x06001160"}
+    counted = {key: 0 for key in wanted}
+    for call in calls:
+        if not isinstance(call, dict):
+            return "invalid_inventory"
+        token, count = call.get("token"), call.get("count")
+        if not isinstance(token, str) or not TOKEN.fullmatch(token):
+            return "invalid_inventory"
+        if token.lower() in wanted:
+            if type(count) is not int or count < 0:
+                return "invalid_inventory"
+            counted[token.lower()] += count
+    return ("three_single_calls_observed"
+            if all(count == 1 for count in counted.values())
+            else "counts_differ")
+
+
+
+def _exact_il_site(ops, offsets, site):
+    """Check exact instruction offsets/opcodes/tokens within ONE recovered body.
+
+    This is a static neighborhood observation only, never a statement about
+    flattened control flow, successful event firing or visible ECU data.
+    """
+    if len(ops) != len(offsets) or not site:
+        return False
+    try:
+        start = offsets.index(site[0][0])
+    except ValueError:
+        return False
+    if start + len(site) > len(ops):
+        return False
+    for index, (offset, opcode, operand) in enumerate(site):
+        actual_op, actual_arg = ops[start + index]
+        if offsets[start + index] != offset or actual_op != opcode:
+            return False
+        if operand is not None:
+            parts = actual_arg.split(maxsplit=1)
+            if not parts or parts[0].upper() != operand.upper():
+                return False
+    return True
+
+
+def _predetect_completion_sites(ops, offsets):
+    """Prove only that PreDetectResult and guarded Done event have source sites."""
+    construction = [
+        (0x0186, "ldarg.0", None), (0x0187, "ldarg.0", None),
+        (0x0188, "call", "0x060012E2"), (0x018D, "ldarg.0", None),
+        (0x018E, "ldfld", "0x040003A6"), (0x0193, "ldloc.2", None),
+        (0x0194, "ldloc.3", None), (0x0195, "newobj", "0x0600139D"),
+        (0x019A, "call", "0x060012F3"),
+    ]
+    completion = [
+        (0x019F, "ldarg.0", None), (0x01A0, "ldfld", "0x040003CC"),
+        (0x01A5, "dup", None), (0x01A6, "brtrue.s", "6"),
+        (0x01A8, "pop", None), (0x01A9, "br", "-186"),
+        (0x01AE, "ldarg.0", None),
+        (0x01AF, "ldsfld", "0x0A0000DE"),
+        (0x01B4, "callvirt", "0x0A0000DF"),
+    ]
+    constructed = _exact_il_site(ops, offsets, construction)
+    event = _exact_il_site(ops, offsets, completion)
+    if event:
+        branch_index = offsets.index(0x01A6)
+        dest = _branch_destination(ops, offsets, branch_index)
+        event = dest is not None and offsets[dest] == 0x01AE
+    return {
+        "pre_detect_result_constructor_exact_static_site": constructed,
+        "pre_detect_done_guarded_event_exact_static_site": event,
+        "pre_detect_has_distinct_result_and_event_sites": constructed and event,
+    }
+
+
+def _detect_ui_availability_sites(ops, offsets):
+    """Track four ECU availability refresh *sites* and two completion markers."""
+    refresh = [
+        [(0x05CD, "ldarg.0", None), (0x05CE, "call", "0x060012EC"),
+         (0x05D3, "callvirt", "0x06001BB2")],  # DIM
+        [(0x0617, "ldarg.0", None), (0x0618, "call", "0x060012F0"),
+         (0x061D, "callvirt", "0x06001BBA")],  # ECM
+        [(0x0648, "ldarg.0", None), (0x0649, "call", "0x060012EE"),
+         (0x064E, "callvirt", "0x06001BCC")],  # ICM
+        [(0x069D, "ldarg.0", None), (0x069E, "call", "0x060012EA"),
+         (0x06A3, "callvirt", "0x06001BE9")],  # PHM
+    ]
+    count = sum(_exact_il_site(ops, offsets, site) for site in refresh)
+    done = _exact_il_site(ops, offsets, [
+        (0x0632, "ldarg.0", None),
+        (0x0633, "call", "0x06001343"),
+    ])
+    available = _exact_il_site(ops, offsets, [
+        (0x0683, "ldarg.0", None), (0x0684, "ldc.i4.1", None),
+        (0x0685, "call", "0x060012F7"),
+    ])
+    ecus = _exact_il_site(ops, offsets, [
+        (0x0261, "ldarg.0", None), (0x0262, "ldarg.0", None),
+        (0x0263, "call", "0x060012E8"),
+        (0x0268, "newobj", "0x0600126D"),
+        (0x026D, "call", "0x060012DF"),
+    ])
+    return {
+        "detect_availability_refresh_static_site_count": count,
+        "detect_on_detect_done_exact_static_site": done,
+        "detect_device_available_true_exact_static_site": available,
+        "detect_ecus_ctor_and_ui_sites_observed": ecus and done and available and count == 4,
+    }
+
+
+
+def _detect_unit_projection_sites(ops, offsets):
+    """Audit bounded source sites, never assume a complete executed Units pass.
+
+    Even with all sites present, control flow may skip them or produce empty
+    collections. No unit identity, hardware value or loader response is exported.
+    """
+    enumerations = [
+        [(0x02A4, "ldarg.0", None),
+         (0x02A5, "call", "0x060012E8"),
+         (0x02AA, "callvirt", "0x06001B99"),
+         (0x02AF, "callvirt", "0x0A00011A"),
+         (0x02B4, "stloc.s", "5")],
+        [(0x04DF, "ldarg.0", None),
+         (0x04E0, "call", "0x060012E8"),
+         (0x04E5, "callvirt", "0x06001B99"),
+         (0x04EA, "callvirt", "0x0A00011A"),
+         (0x04EF, "stloc.s", "5")],
+    ]
+    enumeration_count = sum(
+        _exact_il_site(ops, offsets, site) for site in enumerations)
+    ecu = _exact_il_site(ops, offsets, [
+        (0x030C, "ldloc.s", "6"),
+        (0x030E, "callvirt", "0x06001F8F"),
+    ])
+    hardware = _exact_il_site(ops, offsets, [
+        (0x0415, "ldloc.s", "6"),
+        (0x0417, "callvirt", "0x06001F95"),
+    ])
+    current = _exact_il_site(ops, offsets, [
+        (0x0530, "ldloc.s", "10"),
+        (0x0532, "ldloca.s", "5"),
+        (0x0534, "call", "0x0A00011C"),
+        (0x0539, "stfld", "0x040003D3"),
+    ])
+    loader = _exact_il_site(ops, offsets, [
+        (0x0568, "ldloc.s", "10"),
+        (0x056A, "ldfld", "0x040003D3"),
+        (0x056F, "ldloc.s", "9"),
+        (0x0571, "ldloc.s", "10"),
+        (0x0573, "ldftn", "0x06001387"),
+        (0x0579, "newobj", "0x0A00011D"),
+        (0x057E, "call", "0x2B000023"),
+        (0x0583, "callvirt", "0x06001F8E"),
+    ])
+    session = _exact_il_site(ops, offsets, [
+        (0x01E2, "ldarg.0", None),
+        (0x01E3, "ldloc.1", None),
+        (0x01E4, "callvirt", "0x06001140"),
+        (0x01E9, "stfld", "0x040003AA"),
+    ])
+    return {
+        "detect_result_units_enumerator_static_site_count": enumeration_count,
+        "detect_unit_ecu_getter_exact_static_site": ecu,
+        "detect_unit_hardware_number_exact_static_site": hardware,
+        "detect_units_current_local_capture_exact_static_site": current,
+        "detect_unit_loader_result_exact_static_site": loader,
+        "detect_stores_command_session_exact_static_site": session,
+        "detect_units_and_loader_static_shapes_complete":
+            enumeration_count == 2 and ecu and hardware and current and loader,
+    }
+
+
+
+
+# The UI view-model method is indexed only; its extracted *body* is absent.
+# Tokens below are module-local to Frontend.exe and name only a call inventory,
+# not a verified call path, unit filtering predicate or wire request.
+UI_DONE_CALL_TOKENS = {
+    "model_id": "0x0600695B",
+    "header": "0x0600695D",
+    "initialize_units": "0x06002469",
+    "dtcs_row_height": "0x060023C9",
+    "dtcs_visibility": "0x060023D5",
+    "cem_command_getter": "0x060023DC",
+    "tuning_getter": "0x060023F1",
+}
+AVAILABILITY_METHODS = (
+    ("Frontend.Client.Core.dll", "0x06001BB2"),
+    ("Frontend.Client.Core.dll", "0x06001BBA"),
+    ("Frontend.Client.Core.dll", "0x06001BCC"),
+    ("Frontend.Client.Core.dll", "0x06001BE9"),
+)
+
+
+def _ui_done_inventory_phase(by_key, blocks):
+    """Summarize UI method call *inventory* without inventing its method body.
+
+    A missing method or call inventory means unobserved evidence, not an
+    empty collection, false UI predicate, missing vehicle or failed scan.
+    """
+    known = by_key.get(KNOWN["ui_done"])
+    body = KNOWN["ui_done"] in blocks
+    refresh_bodies = sum(key in blocks for key in AVAILABILITY_METHODS)
+    result = {
+        "ui_done_inventory_state": "not_selected",
+        "ui_done_covered_call_tokens": 0,
+        "ui_done_initialize_units_call_indexed": False,
+        "ui_done_cem_command_getter_indexed": False,
+        "ui_done_ui_projection_call_token_count": 0,
+        "ui_done_full_body_in_excerpt": body,
+        "ui_done_availability_bodies_in_excerpt": refresh_bodies,
+        "ui_done_reported_decoded_instructions": None,
+        "ui_done_reported_decoder_issues": None,
+    }
+    if known is None:
+        return result
+    instructions = known.get("decoded_instructions")
+    if type(instructions) is int and 0 <= instructions <= 100000:
+        result["ui_done_reported_decoded_instructions"] = instructions
+    issues = known.get("decoder_issues")
+    if type(issues) is int and 0 <= issues <= 100000:
+        result["ui_done_reported_decoder_issues"] = issues
+    calls = known.get("calls")
+    if calls is None:
+        result["ui_done_inventory_state"] = "calls_unreported"
+        return result
+    if not isinstance(calls, list):
+        result["ui_done_inventory_state"] = "invalid_call_inventory"
+        return result
+    counts = {token.lower(): 0 for token in UI_DONE_CALL_TOKENS.values()}
+    for call in calls:
+        if not isinstance(call, dict):
+            result["ui_done_inventory_state"] = "invalid_call_inventory"
+            return result
+        token, count = call.get("token"), call.get("count")
+        if (not isinstance(token, str) or not TOKEN.fullmatch(token)
+                or type(count) is not int or count < 0 or count > 100000):
+            result["ui_done_inventory_state"] = "invalid_call_inventory"
+            return result
+        if token.lower() in counts:
+            counts[token.lower()] += count
+    result["ui_done_covered_call_tokens"] = sum(v == 1 for v in counts.values())
+    init = counts[UI_DONE_CALL_TOKENS["initialize_units"].lower()] == 1
+    cem = counts[UI_DONE_CALL_TOKENS["cem_command_getter"].lower()] == 1
+    result["ui_done_initialize_units_call_indexed"] = init
+    result["ui_done_cem_command_getter_indexed"] = cem
+    result["ui_done_ui_projection_call_token_count"] = sum(
+        counts[UI_DONE_CALL_TOKENS[label].lower()] == 1
+        for label in ("model_id", "header", "dtcs_row_height", "dtcs_visibility")
+    )
+    result["ui_done_inventory_state"] = (
+        "seven_single_calls_indexed"
+        if result["ui_done_covered_call_tokens"] == len(UI_DONE_CALL_TOKENS)
+        else "partial_or_duplicate_named_calls"
+    )
+    return result
+
+
+
+
+# The eight candidate bodies are build-local research targets, not a claim
+# about which code ran in VDASH or which ECUs would become visible.
+def _g4_dependency_coverage(by_key, blocks):
+    """Build a provenance-aware, allowlisted index of missing G4 method bodies.
+
+    Direct-CIL references, indexed UI calls, selected metadata and actual
+    complete excerpt bodies are intentionally different kinds of evidence.
+    No guessed execution order, private symbols, payload or identity leaks.
+    """
+    detect_body = blocks.get(KNOWN["detect"], {})
+    ops = detect_body.get("ops", [])
+    offsets = detect_body.get("offsets", [])
+    shapes = _model_shapes(ops)
+    ui_inventory = _ui_done_inventory_phase(by_key, blocks)
+
+    def direct(site):
+        return _exact_il_site(ops, offsets, site)
+
+    targets = [
+        ("model_detect_done", KNOWN["ui_done"],
+         "indexed_method" if KNOWN["ui_done"] in by_key else "not_observed"),
+        ("initialize_units", ("Frontend.exe", "0x06002469"),
+         "indexed_call" if ui_inventory["ui_done_initialize_units_call_indexed"]
+         else "not_observed"),
+        ("dim_refresh", ("Frontend.Client.Core.dll", "0x06001BB2"),
+         "direct_il" if direct([
+             (0x05CD, "ldarg.0", None),
+             (0x05CE, "call", "0x060012EC"),
+             (0x05D3, "callvirt", "0x06001BB2")]) else "not_observed"),
+        ("ecm_refresh", ("Frontend.Client.Core.dll", "0x06001BBA"),
+         "direct_il" if direct([
+             (0x0617, "ldarg.0", None),
+             (0x0618, "call", "0x060012F0"),
+             (0x061D, "callvirt", "0x06001BBA")]) else "not_observed"),
+        ("icm_refresh", ("Frontend.Client.Core.dll", "0x06001BCC"),
+         "direct_il" if direct([
+             (0x0648, "ldarg.0", None),
+             (0x0649, "call", "0x060012EE"),
+             (0x064E, "callvirt", "0x06001BCC")]) else "not_observed"),
+        ("phm_refresh", ("Frontend.Client.Core.dll", "0x06001BE9"),
+         "direct_il" if direct([
+             (0x069D, "ldarg.0", None),
+             (0x069E, "call", "0x060012EA"),
+             (0x06A3, "callvirt", "0x06001BE9")]) else "not_observed"),
+        ("detect_result_ctor", ("Frontend.Client.Core.dll", "0x060011BB"),
+         "direct_il" if shapes[
+             "detect_result_constructor_from_volvo_and_local2"
+         ] else "not_observed"),
+        ("ecus_ctor", ("Frontend.Client.Core.dll", "0x0600126D"),
+         "direct_il" if shapes[
+             "detect_ecus_constructor_from_detect_result"
+         ] else "not_observed"),
+    ]
+    records = []
+    for label, key, source in targets:
+        coverage = ("excerpt_present" if key in blocks else
+                    "selected_without_excerpt" if key in by_key else
+                    "not_selected")
+        records.append({
+            "target": label,
+            "reference": source,
+            "body_coverage": coverage,
+        })
+    missing = [
+        x["target"] for x in records
+        if x["reference"] != "not_observed"
+        and x["body_coverage"] != "excerpt_present"
+    ]
+    return {
+        "scope": "eight_build_local_static_method_targets",
+        "targets": records,
+        "total_targets": len(records),
+        "source_referenced": sum(
+            x["reference"] != "not_observed" for x in records),
+        "full_excerpt_bodies": sum(
+            x["body_coverage"] == "excerpt_present" for x in records),
+        "prioritized_missing_bodies": missing,
+        "runtime_execution_verified": False,
+        "ecu_list_acceptance_verified": False,
+    }
+
+
+
+def audit(inventory, excerpts):
+    selected = inventory.get("selected_methods")
+    if not isinstance(selected, list) or not selected:
+        raise ValueError("invalid_inventory")
+    tokens = set()
+    by_key = {}
+    for method in selected:
+        token = method.get("method_token")
+        module = method.get("module")
+        if not isinstance(token, str) or not TOKEN.fullmatch(token):
+            raise ValueError("invalid_inventory_token")
+        if not isinstance(module, str) or not module:
+            raise ValueError("invalid_inventory_module")
+        key = (module, token)
+        if key in tokens:
+            raise ValueError("duplicate_inventory_token")
+        tokens.add(key)
+        by_key[key] = method
+    blocks = parse_excerpts(excerpts)
+    for key, body in blocks.items():
+        if key not in tokens:
+            raise ValueError("excerpt_method_not_in_inventory")
+        if by_key[key].get("decoded_instructions") != body["declared"]:
+            raise ValueError("inventory_excerpt_disagreement")
+
+    detect = blocks.get(KNOWN["detect"], {}).get("ops", [])
+    execute = blocks.get(KNOWN["execute"], {}).get("ops", [])
+    predetect = blocks.get(KNOWN["pre_detect"], {}).get("ops", [])
+    getvin_block = blocks.get(KNOWN["get_vin"], {})
+    getvin = getvin_block.get("ops", [])
+    config_block = blocks.get(KNOWN["get_config"], {})
+    detect_block = blocks.get(KNOWN["detect"], {})
+    # Fixed schema, no raw strings, source path, VIN, PID or private methods.
+    return {
+        "format": "recovered-il-evidence-audit-v9",
+        "selected_methods": len(tokens),
+        "fully_extracted_excerpt_methods": len(blocks),
+        "unexpanded_selected_methods": len(tokens - set(blocks)),
+        "verified_opcode_count": sum(x["declared"] for x in blocks.values()),
+        "missing_priority_bodies": [
+            label for label in ("parse_data", "ui_done", "send_v2")
+            if KNOWN[label] in tokens and KNOWN[label] not in blocks
+        ],
+        "evidence": {
+            "pre_detect_uses_suggested_vin": _has_call(predetect, "0x0600020C"),
+            **_predetect_completion_sites(predetect,
+                blocks.get(KNOWN["pre_detect"], {}).get("offsets", [])),
+            "pre_detect_uses_last_view_wrapper": _has_call(predetect, "0x06001377"),
+            "get_vin_reads_pre_detect_result": _has_call(getvin, "0x060012F2"),
+            "get_vin_missing_predetect_direct_volvo_fallback":
+                _get_vin_null_branch_to_volvo(getvin, getvin_block.get("offsets", [])),
+            "get_config_null_guard_direct_get_config":
+                _get_config_null_guard(config_block.get("ops", []),
+                                       config_block.get("offsets", [])),
+            "detect_calls_create_command": _has_call(detect, "0x06001329"),
+            "detect_calls_enqueue": _has_call(detect, "0x0600132C"),
+            "detect_calls_wait": _has_call(detect, "0x0600115B"),
+            "detect_assigns_ecus_model": _has_call(detect, "0x060012DF"),
+            "detect_fires_done": _has_call(detect, "0x06001343"),
+            "detect_result_predicate_direct_false_return":
+                _result_failure_branch(detect, detect_block.get("offsets", [])),
+            **_shared_predicate_result_and_hardware(detect),
+            **_string_methodspec_predicate_pairs(detect),
+            "execute_calls_parse_data": _has_call(execute, "0x06001160"),
+            "execute_parse_data_two_result_wrappers_exact_static_site":
+                _execute_parse_data_staging(
+                    execute, blocks.get(KNOWN["execute"], {}).get("offsets", [])),
+            "execute_parse_data_wrappers_inventory":
+                _execute_staging_call_inventory(by_key),
+            "execute_observed_status_numeric_comparisons": _status_values(execute),
+            "execute_one_second_timer_shape": _one_shot_timer_shape(execute),
+            **_model_shapes(detect),
+            **_detect_ui_availability_sites(detect,
+                detect_block.get("offsets", [])),
+            **_detect_unit_projection_sites(detect,
+                detect_block.get("offsets", [])),
+            **_ui_done_inventory_phase(by_key, blocks),
+        },
+        "g4_dependency_coverage": _g4_dependency_coverage(by_key, blocks),
+        "limitations": [
+            "Method references do not prove execution order in flattened CFG",
+            "Enum meaning and unknown wrapper effects not established",
+            "No J2534 request/ECU acceptance claim from recovered IL alone",
+            "Constructor/data-flow motifs do not establish runtime reachability",
+            "Direct branch targets do not prove that source blocks are reachable",
+            "Shared opaque predicate usage does not reveal equality or acceptance semantics",
+            "MethodSpec<string> does not establish generic method return type or semantics",
+            "Two unknown result-field wrappers before ParseData do not reveal arguments or prove execution",
+            "PreDetectDone and OnDetectDone are separate static sites, not proof of successful user-facing detection",
+            "RefreshAvailability and DeviceAvailable sites do not establish runtime ECU list contents",
+            "Two Units enumeration sites are not proof of two executed loops, nonempty Units, or individual ECU reads",
+            "Unit hardware getters and LoaderResult assignment are static motifs without authenticated identity or acceptance evidence",
+            "UI method call inventory is not a recovered method body or a proven ECU-list visibility predicate",
+            "Indexed InitializeUnits and CEM getter calls do not prove individual ECU reads or configuration access",
+            "Availability method bodies missing from a selected excerpt are unobserved, not absent from the vendor program",
+            "G4 dependency coverage records static reference and source-body availability, not execution or ECU acceptance",
+            "An unselected MethodDef may exist in the original client and is not evidence of a missing method implementation",
+        ],
+    }
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--inventory", type=Path, required=True)
+    p.add_argument("--excerpts", type=Path, required=True)
+    p.add_argument("--output", type=Path)
+    args = p.parse_args()
+    report = audit(json.loads(args.inventory.read_text(encoding="utf-8")),
+                   args.excerpts.read_text(encoding="utf-8"))
+    encoded = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.write_text(encoded, encoding="utf-8")
+    else:
+        print(encoded, end="")
+
+
+if __name__ == "__main__":
+    main()

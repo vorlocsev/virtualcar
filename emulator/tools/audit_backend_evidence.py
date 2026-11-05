@@ -18,7 +18,7 @@ MAX_LINE = 4096
 MAX_EVENTS = 200000
 MAX_REQUESTS = 20000
 KINDS = frozenset((
-    "tx_received", "probe_classified", "route_selected", "response_generated", "filter_pass",
+    "tx_received", "periodic_fired", "probe_classified", "route_selected", "response_generated", "filter_pass",
     "filter_drop", "rx_queued", "rx_dequeued", "rx_dropped",
     "response_aborted", "tracking_overflow", "request_completed",
 ))
@@ -34,7 +34,16 @@ REASONS = frozenset((
 SESSION = re.compile(r"[0-9a-fA-F]{16}\Z")
 # Only compile-time identifiers from the DLL are accepted. They reveal request
 # shape, not VIN, payload content or the presence of a physical ECU.
-PROBES = {}
+PROBES = {
+    "OBD_FUNC_VIN_0902": {
+        "service": "0902", "can_id": "0x7DF",
+        "id_format": "11bit", "target": None,
+    },
+    "FUNC29_TP_SUPPRESSED": {
+        "service": "3E80", "can_id": "0x18DB33F1",
+        "id_format": "29bit", "target": None,
+    },
+}
 for _target in ("40", "50"):
     for _op in ("A3", "A6", "B9F0", "B9FB", "B9FC"):
         PROBES[f"D2_{_target}_{_op}"] = {
@@ -105,6 +114,11 @@ def _decode(line):
     if e["kind"] == "probe_classified":
         if type(e.get("probe")) is not str or e["probe"] not in PROBES:
             return None
+        if e["probe"] in ("FUNC29_TP_SUPPRESSED", "OBD_FUNC_VIN_0902"):
+            # Only the metadata shapes emitted by the 500-kbit/s CAN/
+            # ISO15765 classifier are compatible with this known probe.
+            if e["baud"] != 500000 or e["protocol"] not in (5, 6):
+                return None
         if e["probe"].startswith("P2INF_"):
             # Refuse wrong-protocol / wrong-bus provenance even if a
             # locally supplied JSONL line spoofs an allowlisted token.
@@ -129,7 +143,7 @@ def _new_event(e, session_number, ordinal):
         "freq": e["freq"], "clock_conflict": False,
         "context_conflict": False, "context_fields": set(), "terminal": None,
         "duplicate_terminal": False, "late_events": False,
-        "saw_tx": False, "probes": set(),
+        "saw_tx": False, "origin": "unknown", "probes": set(),
         "last_tick": None, "sequence_conflict": False,
         "dequeue_without_queue": False, "queued_open": 0,
     }
@@ -143,7 +157,7 @@ def _update(r, e):
     if r["last_tick"] is not None and e["tick"] < r["last_tick"]:
         r["clock_conflict"] = True
     r["last_tick"] = e["tick"]
-    if kind == "tx_received":
+    if kind in ("tx_received", "periodic_fired"):
         if r["saw_tx"] or r["counts"]:
             r["sequence_conflict"] = True
     elif not r["saw_tx"]:
@@ -168,8 +182,9 @@ def _update(r, e):
             r["context_fields"].add(field)
     if e["freq"] != r["freq"]:
         r["clock_conflict"] = True
-    if kind == "tx_received":
+    if kind in ("tx_received", "periodic_fired"):
         r["saw_tx"] = True
+        r["origin"] = "periodic" if kind == "periodic_fired" else "app_write"
         if r["start_tick"] is None:
             r["start_tick"] = e["tick"]
     if r["terminal"] is not None and kind != "request_completed":
@@ -212,6 +227,18 @@ def _classify(r):
     outcome, reason = terminal
     if outcome == "no_response" and (queued or delivered):
         return "unverified", "rx_evidence_with_no_response"
+    # A confirmed suppress-positive-response keepalive is not a failed ECU
+    # discovery attempt. Require the exact probe, correct functional route,
+    # an explicit silent terminal and *no* contradictory RX/response events.
+    if (r["probes"] == {"FUNC29_TP_SUPPRESSED"}
+            and r["routes"] == {"ECU_OTHER"}
+            and r["baud"] == 500000 and r["protocol"] in (5, 6)
+            and outcome == "no_response" and reason == "no_response"
+            and not queued and not delivered and not lost
+            and not r["counts"]["response_generated"]
+            and not r["counts"]["filter_pass"]
+            and not r["counts"]["response_aborted"]):
+        return "suppressed", "functional_tester_present_no_rx_expected"
     if reason == "missing_profile" and outcome == "no_response":
         return "no_fixture", "explicit_missing_profile"
     if reason in ("unsupported_bus", "unhandled_request", "unimplemented_probe") and outcome == "no_response":
@@ -236,7 +263,7 @@ def _classify(r):
 
 
 def _trusted_probe(r):
-    """Only a uniquely classified, well-ordered TX can enter coverage."""
+    """Only a uniquely classified, well-ordered request can enter coverage."""
     if len(r["probes"]) != 1 or not r["saw_tx"] or r["sequence_conflict"]:
         return None
     return next(iter(r["probes"]))
@@ -253,6 +280,7 @@ def _result(r):
         duration = round((r["end_tick"] - r["start_tick"]) * 1000 / r["freq"], 3)
     return {
         "session": r["session"], "request": r["ordinal"],
+        "request_origin": r["origin"] if not r["sequence_conflict"] else "unknown",
         "route": r["route"] if len(r["routes"]) == 1 else "UNKNOWN",
         # Allowlisted metadata only; never repair conflicting legacy evidence.
         "observed_routes": sorted(r["routes"]),
@@ -271,6 +299,51 @@ def _result(r):
         "terminal_seen": r["terminal"] is not None,
         "status": status, "reason": reason,
     }
+
+
+def _vin_cem_request_order(records, results):
+    """Summarize *observed TX shapes* within one backend session.
+
+    Request ordering comes from the first appearance in this JSONL file, not
+    from cross-channel wall clocks. Do not imply VIN response reception,
+    client acceptance, CEM presence, or lack of another adapter's requests.
+    """
+    flows = {}
+    for record, result in zip(records, results):
+        session = result["session"]
+        if session not in flows:
+            flows[session] = {"session": session, "vin_request_count": 0,
+                              "cem_probe_count": 0, "cem_before_first_vin": None,
+                              "cem_after_first_vin": None,
+                              "_observed": []}
+        flow = flows[session]
+        probe = _trusted_probe(record)
+        if (record["context_conflict"] or record["clock_conflict"]
+                or record["duplicate_terminal"] or record["late_events"]
+                or len(record["routes"]) > 1):
+            continue
+        if probe == "OBD_FUNC_VIN_0902" or (
+                probe is not None and
+                (probe.startswith("D2_40_") or probe.startswith("D2_50_")
+                 or probe.startswith("P3_726_") or probe.startswith("P3_29_"))):
+            flow["_observed"].append((result["request"], probe))
+    for flow in flows.values():
+        found = flow.pop("_observed")
+        vins = [ordinal for ordinal, probe in found if probe == "OBD_FUNC_VIN_0902"]
+        cems = [ordinal for ordinal, probe in found if probe != "OBD_FUNC_VIN_0902"]
+        flow["vin_request_count"] = len(vins)
+        flow["cem_probe_count"] = len(cems)
+        if vins:
+            first = min(vins)
+            flow["cem_before_first_vin"] = sum(x < first for x in cems)
+            flow["cem_after_first_vin"] = sum(x > first for x in cems)
+        flow["observation"] = (
+            "vin_tx_then_cem_probe_tx" if vins and flow["cem_after_first_vin"]
+            else "vin_tx_no_later_cem_probe_observed" if vins
+            else "cem_probe_without_observed_obd_vin" if cems
+            else "no_matching_tx_probes_observed"
+        )
+    return list(flows.values())
 
 
 def audit(lines):
@@ -295,9 +368,13 @@ def audit(lines):
         _update(transactions[key], e)
     records = list(transactions.values())
     results = [_result(r) for r in records]
-    # Coverage is only about what the client actually *asked* the virtual DLL.
+    # Coverage is only about observed J2534 writes and fired periodic requests.
     # No probe is not a failure, no fixture, an ECU response, or a timeout.
     coverage_counts = {probe: Counter() for probe in PROBES}
+    coverage_origins = {
+        probe: {"app_write": Counter(), "periodic": Counter(), "unknown": Counter()}
+        for probe in PROBES
+    }
     unattributed = 0
     for record, result in zip(records, results):
         probe = _trusted_probe(record)
@@ -305,6 +382,7 @@ def audit(lines):
             unattributed += 1
         else:
             coverage_counts[probe][result["status"]] += 1
+            coverage_origins[probe][result["request_origin"]][result["status"]] += 1
     observed = {
         probe: counts for probe, counts in coverage_counts.items() if counts
     }
@@ -318,6 +396,11 @@ def audit(lines):
                 "probe": probe,
                 "observed_requests": sum(counts.values()),
                 "status_counts": dict(sorted(counts.items())),
+                "by_origin": {
+                    origin: dict(sorted(by_status.items()))
+                    for origin, by_status in sorted(coverage_origins[probe].items())
+                    if by_status
+                },
             }
             for probe, counts in sorted(coverage_counts.items())
         ],
@@ -328,17 +411,28 @@ def audit(lines):
         "identity_verified": False,
         "probe_detail_available": bool(observed),
         "coverage": coverage,
+        "vin_cem_observation": {
+            "scope": "same_backend_session_order_of_allowlisted_tx_shapes",
+            "request_order_not_client_acceptance": True,
+            "sessions": _vin_cem_request_order(records, results),
+        },
         "limitations": [
             "Missing, reordered or incomplete queue/terminal events downgrade delivery to unverified",
             "Only exact allowlisted probe_classified shapes identify a request; legacy logs remain unknown",
-            "Coverage describes observed client TX only; never infer a missing ECU reply from an unobserved probe",
+            "Coverage describes observed app writes and J2534 periodic firings only; never infer an ECU reply from an unobserved probe",
             "delivered means J2534 RX dequeue, not complete D2/ISO-TP or client acceptance",
             "A missing terminal event does not prove a client timeout",
+            "Origin breakdown counts observed J2534 events, not VDASH internal decisions or ECU presence",
+            "VIN/CEM ordering is first appearance in backend JSONL, not a confirmed client-side phase or verified VIN",
+            "No later CEM probe observed does not prove no CEM exists or no other transport was used",
+            "suppressed means exact silent 3E80 functional request, never ECU discovery or client acceptance",
         ],
         "summary": {
             "requests": len(results), "sessions": len(sessions),
             "invalid_lines": errors["invalid_lines"],
             "statuses": dict(sorted(Counter(r["status"] for r in results).items())),
+            "request_origins": dict(sorted(
+                Counter(r["request_origin"] for r in results).items())),
         },
         "transactions": results,
     }

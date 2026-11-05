@@ -95,10 +95,18 @@ def validate_response(frames, target, opcode):
         base=0x10 if first[0]==0x97 else 0x08
         counter=1
         prev_subblock=False
+        # Only an observed 0x5x sub-block boundary followed by a
+        # repeated 8F positive echo links the 97/1x header family to
+        # the 4x last-frame family. A bare 97 -> 11 -> 4F is not a
+        # verified complete P2 reply. P1 2007 V50 captures use 97/1x
+        # but do not establish that crossover for an XC90 V8.
+        observed_transport_bridge=False
         for i, (_,frame) in enumerate(frames[1:],1):
             head=frame[0]
             if 0x48<=head<=0x4F:
                 if i!=len(frames)-1:raise ValueError('Early D2 final frame')
+                if base==0x10 and not observed_transport_bridge:
+                    raise ValueError('Unverified 97-to-4x final without D2 sub-block bridge')
                 return
             if (head&0xF8)==0x50:
                 if i==len(frames)-1:raise ValueError('Incomplete D2 sub-block')
@@ -106,6 +114,7 @@ def validate_response(frames, target, opcode):
                 continue
             if prev_subblock and head==0x8F and frame[1:4]==bytes([target,0xF9,opcode]):
                 prev_subblock=False
+                observed_transport_bridge=True
                 continue
             prev_subblock=False
             if head!=(base|counter):
@@ -120,6 +129,28 @@ def validate_response(frames, target, opcode):
         if not ((first[2]==0xF9 and first[3]==opcode) or
                 (first[2]==0x7F and first[3]==0xB9)):
             raise ValueError('Wrong D2 single-frame service/opcode echo')
+
+
+
+def select_complete_response(groups, target, opcode):
+    """Choose the longest individually valid D2 attempt, never concatenate runs.
+
+    A truncated or contaminated attempt may contain more RX frames than a
+    completed reply. Raw length alone must not override transport validation.
+    Ties retain the first valid capture to keep selection deterministic.
+    This proves framing only, not vehicle identity or client acceptance.
+    """
+    best = None
+    for frames in groups:
+        try:
+            validate_response(frames, target, opcode)
+        except ValueError:
+            continue
+        if best is None or len(frames) > len(best):
+            best = frames
+    if best is None:
+        raise ValueError('No complete D2 response passes transport validation')
+    return best
 
 
 def set_lab_vin(frames, vin):
@@ -152,9 +183,8 @@ def main():
     groups=sessions(args.log.read_text(encoding='utf-8',errors='replace').splitlines(),target,opcode)
     if not groups:
         a.error('No matching D2 CEM request with recorded responses was found')
-    frames=max(groups,key=len)
     try:
-        validate_response(frames, target, opcode)
+        frames=select_complete_response(groups, target, opcode)
     except ValueError as exc:
         a.error(str(exc))
     can_id=frames[0][0]
@@ -175,11 +205,33 @@ def main():
     cfg.optionxform=str
     cfg.read(args.profile,encoding='utf-8')
     if not cfg.has_section('P2'):cfg.add_section('P2')
+    # A new read-only trace replaces at least one section, but the other
+    # sections may still be inherited from an unrelated historical source.
+    # An old global provenance value must NOT survive this composition.
+    # These fields describe untrusted local import workflow only.
+    # ConfigParser is deliberately case-preserving for ECU field names,
+    # but Win32 INI lookups are case-insensitive. Purge inherited aliases
+    # before setting a single canonical pair to avoid ambiguous duplicate
+    # options such as allowcompositereplay=1 + AllowCompositeReplay=0.
+    for old_key in list(cfg.options('P2')):
+        if old_key.casefold() in ('fixtureprovenance','allowcompositereplay'):
+            cfg.remove_option('P2', old_key)
+    cfg.set('P2','FixtureProvenance','local_composite_unverified_trace_import')
+    # An inherited 1 is especially dangerous when the new B9 reply belongs
+    # to a different donor. A fresh output MUST require deliberate re-opt-in.
+    cfg.set('P2','AllowCompositeReplay','0')
     if args.lab_vin:
         if not cfg.has_section('Vehicle'): cfg.add_section('Vehicle')
         cfg.set('Vehicle','VIN',args.lab_vin)
     section=f'D2_{args.target}' if opcode==0xFB else f'D2_{args.target}_B9{args.opcode}'
     if not cfg.has_section(section):cfg.add_section(section)
+    source_class=('local_private_raw_unverified' if args.keep_identifiers else
+                  'local_synthetic_vin_unverified' if args.lab_vin else
+                  'local_redaction_attempt_unverified')
+    cfg.set(section,'FixtureSourceClass',source_class)
+    cfg.set(section,'FixtureIdentityVerified','0')
+    cfg.set(section,'FixtureApplicationIntegrity','unknown')
+    cfg.set(section,'FixtureSingleClientRunVerified','0')
     cfg.set(section,'ResponseId',f'{can_id:08X}')
     for key in list(cfg[section]):
         if re.fullmatch(r'(B9FBFrame|Frame)[0-9A-F]{1,2}',key):cfg.remove_option(section,key)
@@ -194,6 +246,7 @@ def main():
         with args.output.open('x',encoding='utf-8') as f: cfg.write(f)
     except OSError:
         a.error('Unable to create new output; existing files are never overwritten')
+    print('Provenance: local unverified import; any inherited fixtures remain unverified composite data.')
     print(f'Imported: CEM 0x{target:02X} B9{opcode:02X}, {len(frames)} frames, RX CAN ID 0x{can_id:08X}')
     print(f'Wrote local P2 profile to {args.output}')
 

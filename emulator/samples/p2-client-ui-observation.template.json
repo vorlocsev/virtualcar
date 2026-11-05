@@ -1,0 +1,9 @@
+{
+  "format": "virtualcar-p2-client-ui-observation-v1",
+  "client": "other",
+  "virtual_adapter_selected": null,
+  "scan_finished": null,
+  "vin_display": "unknown",
+  "ecu_list": "unknown",
+  "same_run_operator_attested": false
+}
