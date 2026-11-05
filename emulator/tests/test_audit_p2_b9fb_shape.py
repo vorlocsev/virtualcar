@@ -69,7 +69,7 @@ class B9FBShapeEvidenceTests(unittest.TestCase):
         self.assertNotIn(LAB_VIN.decode(), serialized)
 
     def test_03_invalid_vin_shape_is_not_promoted_to_identity(self):
-        invalid = b"AB-CDE0002A0000001"
+        invalid = b"AB-CDE0002A000000"
         self.assertEqual(len(invalid), 17)
         out = audit.audit_frames(frames(content(vin=invalid)))
         self.assertEqual(out["transport"], "complete")
