@@ -63,6 +63,22 @@ int main(void) {
  /* Never produces replies or validates E3 on raw fragments. */
  assert(b.vehicle.diag_e3_02_candidates==0);
  assert(b.vehicle.diagnostic_ignition==P2_DIAG_IGNITION_UNKNOWN); GROUP();
- printf("dev26: %u/11 J2534 bridge integration groups OK\n",groups);
- return groups==11?0:1;
+ /* Optional MY selection is passive and preserves the default MY2009 path. */
+ {
+  p2_vehicle_config early, invalid;
+  assert(p2_vehicle_xc90_model_year_config(2003u,false,&early));
+  assert(early.hs_bitrate==250000u && early.ls_bitrate==125000u);
+  assert(!early.enable_community_ls_signals);
+  assert(p2_bridge_init_xc90_model_year(&b,2003u,false));
+  assert(b.vehicle.cfg.hs_bitrate==250000u);
+  invalid=b.vehicle.cfg;
+  assert(!p2_bridge_init_xc90_model_year(&b,2002u,false));
+  assert(b.vehicle.cfg.hs_bitrate==invalid.hs_bitrate);
+  assert(p2_bridge_init_xc90_model_year(&b,2009u,true));
+  assert(b.vehicle.cfg.hs_bitrate==500000u);
+  assert(!p2_bridge_init_xc90_model_year(0,2009u,true));
+  GROUP();
+ }
+ printf("dev26: %u/12 J2534 bridge integration groups OK\n",groups);
+ return groups==12?0:1;
 }
