@@ -2,6 +2,16 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
+
+## Checkpoint 2026-11-05: P3 raw CAN / ISO15765 RX format, PR #47 merged
+
+- **development HEAD после PR #47:** `626a65aa0be0e7405adc763ce28fc34e860f5b20`. [PR #47](https://github.com/vorlocsev/virtualcar/pull/47) merged squash from `fix/p3-f114-transport-format-evidence-20261105` into development. `main`, Dvinholm, выпущенные Virtual Car сборки не менялись.
+- В `emulator/tools/audit_j2534_discovery.py` подтверждённый кодовый пробел закрыт: сырые ISO-TP SF/FF на канале `ISO15765` распознаются как `unverified/p3_can_pci_on_iso15765_channel`; уже собранный `62 F1 14` без PCI на `CAN` как `unverified/p3_uds_without_pci_on_can_channel`. Это свидетельствует о несоответствии формата данных и метаданных, **не доказывает дефект ECU**. В P3 дополнительно проверяются противоречивые RX protocol/baud, TX indication и некорректный START_OF_MESSAGE.
+- Добавлены **8 синтетических тестовых групп** `emulator/tests/test_audit_p3_mode_boundary.py`: корректные одиночные/многокадровые ответы, SF/FF в неправильном режиме, явно конфликтующие RX-метаданные, индикации J2534, настоящий неверный CF, повтор `F114` (PR #46) и приватность.
+- [Emulator Windows x86 CI #41977369404](https://github.com/vorlocsev/virtualcar/actions/runs/41977369404) **completed success**: C/J2534 native code, Python tests, Go, Windows x86 DLL/GUI, native-routes. [VMware LAB package CI #41977369479](https://github.com/vorlocsev/virtualcar/actions/runs/41977369479) **completed success**: сборка и упаковка, не гостевой VMware run. Новых релизов нет.
+- **Issue #4 остаётся OPEN**. Причина старого `partial_rx/invalid_iso_tp_framing` в исходном SectorV клиенте ещё не доказана; последние подтверждённые пользовательские VDASH native-данные не содержат повторной пары `22 F1 14`. Следующий критерий: version-bound один реальный read-only LAB capture двух идентичных запросов с контекстом protocol/channel/RxStatus/ExtraDataIndex/CLEAR_RX, сравнить с настоящей DLL. Без исходной трассы нельзя утверждать успешную CEM идентификацию и нельзя придумывать ответы A3/A6/B9F0.
+
+
 ## Checkpoint 2026-11-05: F114 retry attribution, PR #46 merged
 
 - **development HEAD после PR #46:** `d3f50c814a245ec0534265ea178ec6eb6f384ce2`. [PR #46](https://github.com/vorlocsev/virtualcar/pull/46) merged squash; branch `fix/p3-f114-retry-attribution-20261105` была основана на `development`.
