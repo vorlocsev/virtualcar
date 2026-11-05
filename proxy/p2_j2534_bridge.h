@@ -34,6 +34,11 @@ typedef struct {
 } p2_bridge_tx_result;
 
 void p2_bridge_init(p2_j2534_bridge *bridge);
+/* Opt-in MY selection for read-only classification. Does not change any J2534
+   channel or DLL behavior and never emits an ECU response. Invalid MY leaves
+   the destination unchanged. */
+bool p2_bridge_init_xc90_model_year(p2_j2534_bridge *bridge,
+                                     unsigned model_year, bool engine_b8444s);
 void p2_bridge_connect(p2_j2534_bridge *bridge, uint32_t channel,
                        uint32_t protocol_id, uint32_t baud);
 void p2_bridge_disconnect(p2_j2534_bridge *bridge, uint32_t channel);
