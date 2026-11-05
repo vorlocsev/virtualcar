@@ -416,6 +416,105 @@ static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
 }
+/* Stage 42: eight focused host groups for deterministic ISO15765 FC routing.
+   All requests and responses are synthetic and read-only. */
+static void test_stage42_multiecu_fc(U32 dev){
+ U32 ch=0,peer=0,f_ecm=0,f_cem=0,f_other=0,old_count=g_ecu_count;
+ U32 old_start=g_iso_rx_start,old_counter=g_filter_counter;
+ U32 prior_count,prior_id,n;
+ PASSTHRU_MSG mask,pat,flow,ecm_req,cem_req,functional,short_req,rx;
+ const U8 read_vin[3]={0x22,0xF1,0x90},f114[3]={0x22,0xF1,0x14};
+ const U8 tester[2]={0x3E,0x00};
+ ECU saved0=g_ecu[0],saved1=g_ecu[1];
+ g_strict_j2534_filters=1;g_iso_rx_start=0;g_ecu_count=2;
+ g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;
+ g_ecu[1].req=0x726;g_ecu[1].resp=0x72E;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&peer)==ERR_OK);
+ mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_ISO15765,0x7E8u,0,0);
+ flow=frame(PROTO_ISO15765,0x7E0u,0,0);
+ ecm_req=frame(PROTO_ISO15765,0x7E0u,read_vin,3);
+ cem_req=frame(PROTO_ISO15765,0x726u,f114,3);
+ functional=frame(PROTO_ISO15765,0x7DFu,read_vin,3);
+ short_req=frame(PROTO_ISO15765,0x7E0u,tester,2);
+ /* Group 1: duplicate response CAN ID is not unique; no filter is allocated. */
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_ecm)==ERR_OK);
+ prior_count=channel(ch)->filters_count;prior_id=g_filter_counter;
+ flow.Data[3]=0xE1;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_other)==ERR_NOT_UNIQUE);
+ REQUIRE(channel(ch)->filters_count==prior_count&&g_filter_counter==prior_id);
+ puts("PASS stage42 group 1: duplicate RX CAN ID");
+ /* Group 2: duplicated FC ID and crossed RX/FC identifiers are rejected. */
+ pat.Data[3]=0x2E;flow.Data[3]=0xE0;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_other)==ERR_NOT_UNIQUE);
+ pat.Data[3]=0xE0;flow.Data[3]=0x25;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_other)==ERR_NOT_UNIQUE);
+ pat.Data[3]=0x2E;flow.Data[3]=0xE8;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_other)==ERR_NOT_UNIQUE);
+ REQUIRE(channel(ch)->filters_count==1&&g_filter_counter==prior_id);
+ puts("PASS stage42 group 2: duplicate FC and crossed IDs");
+ /* Group 3: valid distinct ECM/CEM FC routes carry the correct multi-frame. */
+ pat.Data[3]=0x2E;flow.Data[3]=0x26;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_cem)==ERR_OK);
+ send(ch,&ecm_req);rx=readmsg(ch);REQUIRE(rx.DataSize==24 && rx.Data[3]==0xE8);
+ send(ch,&cem_req);rx=readmsg(ch);REQUIRE(rx.DataSize==24 && rx.Data[3]==0x2E);
+ puts("PASS stage42 group 3: independent ECM and CEM responses");
+ /* Group 4: mismatched physical CTS destination blocks segmented response. */
+ REQUIRE(PassThruStopMsgFilter(ch,f_cem)==ERR_OK);
+ flow.Data[3]=0x25;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_cem)==ERR_OK);
+ send(ch,&cem_req);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruStopMsgFilter(ch,f_cem)==ERR_OK);
+ flow.Data[3]=0x26;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_cem)==ERR_OK);
+ send(ch,&cem_req);rx=readmsg(ch);REQUIRE(rx.Data[3]==0x2E);
+ puts("PASS stage42 group 4: physical CTS request ID");
+ /* Group 5: functional fanout uses each physical ECU's CTS ID, not 0x7DF. */
+ send(ch,&functional);
+ rx=readmsg(ch);REQUIRE(rx.DataSize==24&&rx.Data[3]==0xE8);
+ rx=readmsg(ch);REQUIRE(rx.DataSize==24&&rx.Data[3]==0x2E);
+ n=1;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ puts("PASS stage42 group 5: functional dual-ECU fanout");
+ /* Group 6: broad receive masks can admit a short reply, not a segmented VIN. */
+ REQUIRE(PassThruStopMsgFilter(ch,f_ecm)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(ch,f_cem)==ERR_OK);
+ mask.Data[3]=0xFE;pat.Data[3]=0xE8;flow.Data[3]=0xE0;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_ecm)==ERR_OK);
+ send(ch,&ecm_req);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ send(ch,&short_req);rx=readmsg(ch);
+ REQUIRE(rx.DataSize==6&&rx.Data[4]==0x7E&&rx.Data[5]==0);
+ puts("PASS stage42 group 6: wildcard single-frame only");
+ /* Group 7: matching pairs may be reused on a different connected channel. */
+ mask.Data[3]=0xFF;
+ REQUIRE(PassThruStartMsgFilter(peer,3,&mask,&pat,&flow,&f_other)==ERR_OK);
+ send(peer,&ecm_req);rx=readmsg(peer);REQUIRE(rx.DataSize==24&&rx.Data[3]==0xE8);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ send(ch,&ecm_req);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ send(peer,&ecm_req);rx=readmsg(peer);REQUIRE(rx.DataSize==24);
+ puts("PASS stage42 group 7: channel isolation and CLEAR");
+ /* Group 8: re-create after clear, retired IDs and channel lifecycle. */
+ pat.Data[3]=0xE8;flow.Data[3]=0xE0;
+ REQUIRE(PassThruStartMsgFilter(ch,3,&mask,&pat,&flow,&f_ecm)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(ch,f_ecm)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(ch,f_ecm)==ERR_INVALID_FILTER_ID);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&ch)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(ch,f_ecm)==ERR_INVALID_FILTER_ID);
+ send(ch,&ecm_req);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS stage42 group 8: reset and stale ID");
+ g_ecu[0]=saved0;g_ecu[1]=saved1;g_ecu_count=old_count;
+ g_iso_rx_start=old_start;g_strict_j2534_filters=0;
+ /* A failed attempt must not consume a filter ID; successful ones may. */
+ REQUIRE(g_filter_counter>=old_counter);
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
@@ -1713,6 +1812,7 @@ int main(){
   g_strict_j2534_filters=0;
   REQUIRE(g_strict_j2534_filters==0);
  }
+ test_stage42_multiecu_fc(dev);
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
  REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
