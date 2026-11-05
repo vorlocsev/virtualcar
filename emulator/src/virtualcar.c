@@ -45,6 +45,7 @@ typedef void *HANDLE;
 #define MAX_FILTERS 24
 #define START_OF_MESSAGE 0x00000002u
 #define CAN_29BIT_ID 0x00000100u
+#define ISO15765_ADDR_TYPE 0x00000080u /* J2534 5-byte extended address header */
 #define ERR_OK 0u
 #define ERR_NOT_SUPPORTED 1u
 #define ERR_INVALID_CHANNEL_ID 2u
@@ -1072,6 +1073,15 @@ static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 
             }
             logline("ISO15765 synthetic multi-frame FC route verified (no CAN TX)",0,0);
         }
+        /* START_OF_MESSAGE and its reassembled payload are one logical RX.
+           In strict mode never enqueue only half when FIFO has one slot. */
+        if(g_strict_j2534_filters && g_iso_rx_start && len>7u &&
+           c->count>MAX_QUEUE-2u){
+            backend_event(c,c->active_trace,"rx_dropped","UNKNOWN","queue_full","unknown");
+            backend_note_drop(c,c->active_trace,BACKEND_DROP_QUEUE_FULL);
+            logline("Strict ISO15765 RX pair dropped atomically (FIFO full)",0,0);
+            return;
+        }
         if(g_iso_rx_start && len>7 && c->count+2<=MAX_QUEUE)
             enqueue_status(c,response_id,0,0,START_OF_MESSAGE);
         enqueue(c,response_id,payload,len);return;
@@ -1400,6 +1410,12 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
         if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5){*count=i;unlock_state();return error(ERR_INVALID_MSG);}
+        /* Extended ISO15765 addressing needs a real fifth-byte transport
+           mapping, not a silent normal-addressing UDS interpretation. */
+        if(g_strict_j2534_filters && c->protocol==PROTO_ISO15765 &&
+           (msgs[i].TxFlags&ISO15765_ADDR_TYPE)){
+            *count=i;unlock_state();return error(ERR_NOT_SUPPORTED);
+        }
         {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
          u32_be(meta+8,msgs[i].TxFlags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now_us());
@@ -1506,6 +1522,10 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
         }
         if(type==3u && !flow){unlock_state();return error(ERR_NULL_PARAMETER);}
         if(type==3u && flow->ProtocolID!=c->protocol){unlock_state();return error(ERR_MSG_PROTOCOL_ID);}
+        if(c->protocol==PROTO_ISO15765 &&
+           ((mask->TxFlags|pattern->TxFlags|(flow?flow->TxFlags:0u))&ISO15765_ADDR_TYPE)){
+            unlock_state();return error(ERR_NOT_SUPPORTED);
+        }
         if(mask->DataSize!=pattern->DataSize || mask->DataSize<4u ||
            (c->protocol==PROTO_ISO15765 && mask->DataSize!=4u) ||
            (c->protocol==PROTO_CAN && mask->DataSize>12u) ||

@@ -515,6 +515,104 @@ static void test_stage42_multiecu_fc(U32 dev){
  REQUIRE(g_filter_counter>=old_counter);
 }
 
+/* Stage 43: extended address safety and all-or-nothing ISO15765 RX pairs.
+   The emulator does NOT implement physical fifth-byte ISO-TP addressing. */
+static void test_stage43_iso_rx_boundaries(U32 dev){
+ const U8 read_vin[]={0x22,0xF1,0x90},short_req[]={0x3E,0x00};
+ const U8 synthetic_short[]={0x7E,0x00};
+ U32 iso=0,peer=0,id=0,z,count,prior_id,prior_n;
+ U32 old_start=g_iso_rx_start;
+ PASSTHRU_MSG mask,pat,flow,request,shortmsg,rx;
+ PASSTHRU_MSG *batch;
+ CHANNEL *c,*other;
+ g_strict_j2534_filters=1;g_iso_rx_start=1;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&iso)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&peer)==ERR_OK);
+ c=channel(iso);other=channel(peer);
+ mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_ISO15765,0x7E8u,0,0);
+ flow=frame(PROTO_ISO15765,0x7E0u,0,0);
+ request=frame(PROTO_ISO15765,0x7E0u,read_vin,3);
+ shortmsg=frame(PROTO_ISO15765,0x7E0u,short_req,2);
+ /* Group 1: a flagged extended-address filter fails without mutation. */
+ prior_id=g_filter_counter;
+ mask.TxFlags=ISO15765_ADDR_TYPE;
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_NOT_SUPPORTED);
+ REQUIRE(c->filters_count==0&&g_filter_counter==prior_id);
+ mask.TxFlags=0;pat.TxFlags=ISO15765_ADDR_TYPE;
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_NOT_SUPPORTED);
+ pat.TxFlags=0;flow.TxFlags=ISO15765_ADDR_TYPE;
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_NOT_SUPPORTED);
+ flow.TxFlags=0;
+ puts("PASS stage43 group 1: extended address flags are explicitly unsupported");
+ /* Group 2: unsupported five-byte headers cannot allocate a filter. */
+ mask.DataSize=5;pat.DataSize=5;flow.DataSize=5;
+ mask.Data[4]=0xFF;pat.Data[4]=0xA1;flow.Data[4]=0xA2;
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_INVALID_MSG);
+ REQUIRE(c->filters_count==0&&g_filter_counter==prior_id);
+ mask.DataSize=pat.DataSize=flow.DataSize=4;
+ puts("PASS stage43 group 2: no accidental five-byte route");
+ /* Group 3: a flagged ISO15765 TX is rejected before producing RX. */
+ request.TxFlags=ISO15765_ADDR_TYPE;
+ request.Data[7]=request.Data[6];request.Data[6]=request.Data[5];
+ request.Data[5]=request.Data[4];request.Data[4]=0xA2;request.DataSize=8;
+ count=1;REQUIRE(PassThruWriteMsgs(iso,&request,&count,0)==ERR_NOT_SUPPORTED&&count==0);
+ REQUIRE(c->count==0);request=frame(PROTO_ISO15765,0x7E0u,read_vin,3);
+ puts("PASS stage43 group 3: extended-address TX never enters normal route");
+ /* Group 4: normal 4-byte FC filter and short UDS still work. */
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_OK);
+ send(iso,&shortmsg);rx=readmsg(iso);
+ REQUIRE(rx.DataSize==6&&rx.Data[4]==0x7E&&rx.Data[5]==0);
+ REQUIRE(c->count==0);
+ puts("PASS stage43 group 4: normal ISO single response preserved");
+ /* Group 5: 63/64 slots must not produce an orphan full message. */
+ {U64 trace=c->active_trace;c->active_trace=0;
+  for(z=0;z<63;z++)enqueue(c,0x7E8u,synthetic_short,2);
+  c->active_trace=trace;
+ }
+ REQUIRE(c->count==63u);
+ prior_n=c->count;send(iso,&request);
+ REQUIRE(c->count==prior_n && (c->queue[(c->w+MAX_QUEUE-1u)%MAX_QUEUE].RxStatus&START_OF_MESSAGE)==0);
+ puts("PASS stage43 group 5: one free slot drops the whole RX pair");
+ /* Group 6: at 62/64, START_OF_MESSAGE + full response land together. */
+ REQUIRE(PassThruIoctl(iso,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ {U64 trace=c->active_trace;c->active_trace=0;
+  for(z=0;z<62;z++)enqueue(c,0x7E8u,synthetic_short,2);
+  c->active_trace=trace;
+ }
+ send(iso,&request);REQUIRE(c->count==64u);
+ REQUIRE((c->queue[62].RxStatus&START_OF_MESSAGE)!=0&&c->queue[62].DataSize==4);
+ REQUIRE(c->queue[63].DataSize==24&&c->queue[63].Data[4]==0x62);
+ batch=(PASSTHRU_MSG*)calloc(64,sizeof(*batch));REQUIRE(batch!=0);
+ count=64;REQUIRE(PassThruReadMsgs(iso,batch,&count,0)==ERR_OK&&count==64);
+ REQUIRE((batch[62].RxStatus&START_OF_MESSAGE)!=0&&batch[63].DataSize==24);
+ free(batch);
+ puts("PASS stage43 group 6: two slots accept atomic START + payload");
+ /* Group 7: a completely full queue never overwrites existing entries. */
+ {U64 trace=c->active_trace;c->active_trace=0;
+  for(z=0;z<64;z++)enqueue(c,0x7E8u,synthetic_short,2);
+  c->active_trace=trace;
+ }
+ REQUIRE(c->count==64u);
+ prior_n=c->w;send(iso,&request);
+ REQUIRE(c->count==64u&&c->w==prior_n);
+ REQUIRE(PassThruIoctl(iso,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ send(iso,&request);rx=readmsg(iso);
+ REQUIRE((rx.RxStatus&START_OF_MESSAGE)!=0);
+ rx=readmsg(iso);REQUIRE(rx.DataSize==24);
+ puts("PASS stage43 group 7: full FIFO drop and recovery");
+ /* Group 8: overflow in one channel must not leak to another channel. */
+ REQUIRE(PassThruStartMsgFilter(peer,3,&mask,&pat,&flow,&prior_id)==ERR_OK);
+ send(peer,&request);REQUIRE(other->count==2);
+ REQUIRE(c->count==0u);
+ rx=readmsg(peer);REQUIRE((rx.RxStatus&START_OF_MESSAGE)!=0);
+ rx=readmsg(peer);REQUIRE(rx.DataSize==24&&rx.Data[3]==0xE8);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ g_iso_rx_start=old_start;g_strict_j2534_filters=0;
+ puts("PASS stage43 group 8: independent channel queue and cleanup");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
@@ -1813,6 +1911,7 @@ int main(){
   REQUIRE(g_strict_j2534_filters==0);
  }
  test_stage42_multiecu_fc(dev);
+ test_stage43_iso_rx_boundaries(dev);
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
  REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
