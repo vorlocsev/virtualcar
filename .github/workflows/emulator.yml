@@ -271,6 +271,16 @@ jobs:
           if (-not (Select-String -LiteralPath "$env:RUNNER_TEMP\native-can-baud-switch\SectorVVirtualCar.log" -SimpleMatch -Pattern 'CAN DATA_RATE changed: old-bus RX cancelled' -Quiet)) {
             throw 'Compiled native DLL did not record old-bus cancellation'
           }
+          # Exercise J2534-2 switched-pin protocols through the compiled x86 DLL.
+          # The probe verifies unbound channels, explicit 6/14 and 3/11 binding,
+          # old-route cancellation, HS/LS isolation and independent ISO15765_PS.
+          # The native log stays in RUNNER_TEMP and is never uploaded.
+          $switchedPinDirectory = "$env:RUNNER_TEMP\native-switched-pin"
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_p2_p3_handoff.ps1 -DllPath $dll[0].FullName -OutputDirectory $switchedPinDirectory -SwitchedPinProbe
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 J2534-2 switched-pin binding and isolation failed' }
+          $switchedPinLog = Join-Path $switchedPinDirectory 'SectorVVirtualCar.log'
+          $pinBindings = @(Select-String -LiteralPath $switchedPinLog -SimpleMatch -Pattern 'J2534 PS J1962_PINS bound channel/old/new (BE)')
+          if ($pinBindings.Count -ne 4) { throw 'Expected four explicit native J2534-2 pin bindings' }
           # Re-run compiled x86 DLL in a NEW isolated process with the
           # importer's unverified mixed-source marker and explicit lock.
           # B9FB/B9F0 must remain silent; synthetic independent P3 still
