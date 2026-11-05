@@ -3,6 +3,15 @@
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
 
+## Checkpoint 2026-11-05: Stage 42 multi-ECU FC routing, PR #50 merged
+
+- **development merge SHA:** `38756a7aa42e03f7efecb86e092fba840e6d25d9`. [PR #50](https://github.com/vorlocsev/virtualcar/pull/50) merged squash into development, based on previous Stage41 strict J2534 implementation. Source changes: `emulator/src/virtualcar.c`, host C tests, native J2534 PowerShell tests, strict-mode Russian documentation.
+- **Only opt-in strict mode** (`[Diagnostics] StrictJ2534Filters=1`) changed. Default `legacy=0` unchanged, including prior P2 D2 B9FB read-only replay and no fabricated CEM A3/A6 response.
+- Strict ISO15765 now rejects ambiguous existing FC filter RX/FlowControl CAN IDs or overlapping RX masks with **ERR_NOT_UNIQUE (0x18)** without consuming a FilterID. Filters remain independent per J2534 channel. For **synthetic reassembled** ISO15765 responses longer than seven UDS bytes, an exact 4-byte CAN ID mask and matching physical ECU FlowControl ID are required; functional `0x7DF` uses the responding ECU's physical request ID. Partial/wildcard masks can still authorize synthetic single-frame responses but not multiframe responses.
+- [Emulator Windows x86 CI #42110198577](https://github.com/vorlocsev/virtualcar/actions/runs/42110198577): **build + native-routes completed success**. Eight explicit C host Stage42 groups passed, 22/22 native legacy checks, 46/46 native strict checks, including independent ECM `7E8→7E0` and CEM `72E→726` RX, duplicate FilterID rejection, wrong FC route blocking, functional dual-ECU fanout. Existing Python/Go, PE32 and J2534 export tests passed. [VMware LAB package CI #42110198413](https://github.com/vorlocsev/virtualcar/actions/runs/42110198413) **package build completed success only**; no VMware guest test.
+- **Proof boundary:** this is a virtual preassembled UDS routing/FC authorization model, not physical CAN CTS/STmin/BS emission; no genuine DiCE or automotive bus behavior, VIDA/VDASH/SectorV acceptance, or XC90 V8 MY2009 identification is proven. No donor VIN, private captures or ECU dumps committed. `main`, Dvinholm and published Virtual Car releases not changed by this PR.
+- **Next priority:** Issue #4 evidence-bound P2 MY2009 CEM normal-mode and identification, exact accepted client response predicate or one version-bound real read-only trace; do not synthesize CEM responses without evidence. Secondary transport work: test strict ISO 15765 addressing flags, masked single frames, queue overflow with concurrent ECU responses and actual synthetic FC state transition in laboratory only. No automatic Virtual Car release.
+
 ## Checkpoint 2026-11-05: Stage 41 StrictJ2534Filters, PR #49 merged
 
 - **development merge commit:** `7a290d4f74d8a251fa0de0f82852ffed509f544a`. [PR #49](https://github.com/vorlocsev/virtualcar/pull/49) merged squash. `main`, Dvinholm and published Virtual Car releases not changed.
