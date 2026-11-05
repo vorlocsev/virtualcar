@@ -16,6 +16,16 @@ void p2_bridge_init(p2_j2534_bridge *b) {
     *b = (p2_j2534_bridge){0};
     p2_vehicle_init(&b->vehicle, 0);
 }
+bool p2_bridge_init_xc90_model_year(p2_j2534_bridge *b,
+                                     unsigned model_year, bool engine_b8444s) {
+    p2_vehicle_config cfg;
+    if (!b || !p2_vehicle_xc90_model_year_config(model_year, engine_b8444s,
+                                                   &cfg)) return false;
+    *b = (p2_j2534_bridge){0};
+    p2_vehicle_init(&b->vehicle, &cfg);
+    return true;
+}
+
 void p2_bridge_connect(p2_j2534_bridge *b,uint32_t id,
                        uint32_t protocol_id,uint32_t baud) {
     size_t k; p2_bridge_channel *c;
