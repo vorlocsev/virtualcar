@@ -895,6 +895,9 @@ static CHANNEL *channel(U32 id){U32 i;for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used
    ISO15765 is already reassembled in this laboratory simulator, so only the
    flow-control filter's response CAN ID is matched. Extended ISO addressing
    and actual hardware CAN Flow Control are not implemented here. */
+static U32 can_id_from_data(const U8 *data){
+    return ((U32)data[0]<<24)|((U32)data[1]<<16)|((U32)data[2]<<8)|(U32)data[3];
+}
 static int strict_filter_matches(const FILTER *f,U32 response_id,const U8 *payload,U32 len){
     U8 idbytes[4];U32 j;
     if(f->length<4u||f->length>12u||f->length>len+4u)return 0;
@@ -931,6 +934,27 @@ static int filter_allows(const CHANNEL *c,U32 response_id,const U8 *payload,U32 
     }
     return !has_pass || matched_pass;
 }
+static void note_filter_reject(CHANNEL *c,U32 response_id){
+    U8 idbytes[4];u32_be(idbytes,response_id);
+    backend_event(c,c->active_trace,"filter_drop","UNKNOWN","filter_reject","unknown");
+    backend_note_drop(c,c->active_trace,BACKEND_DROP_FILTER_REJECT);
+    logline("RX discarded by installed J2534 filter",idbytes,4);
+}
+static int strict_iso_fc_route_matches(const CHANNEL *c,U32 response_id,U32 request_id,
+                                        const U8 *payload,U32 len){
+    U32 i,j;
+    for(i=0;i<c->filters_count;i++){
+        const FILTER *f=&c->filters[i];
+        if(f->type!=3u || !strict_filter_matches(f,response_id,payload,len))continue;
+        /* A broad RX mask may authorize multiple SingleFrames, not a
+           segmented reply with one ambiguous physical CTS destination. */
+        for(j=0;j<4u;j++)if(f->mask[j]!=0xFFu)break;
+        if(j!=4u)continue;
+        if(can_id_from_data(f->flow_id)!=request_id)continue;
+        return 1;
+    }
+    return 0;
+}
 static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,U32 status) {
     PASSTHRU_MSG *msg;U32 i;
     if(c->count>=MAX_QUEUE||len>MAX_DATA-4){
@@ -941,10 +965,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
         return;
     }
     if(!filter_allows(c,response_id,payload,len)){
-        backend_event(c,c->active_trace,"filter_drop","UNKNOWN","filter_reject","unknown");
-        backend_note_drop(c,c->active_trace,BACKEND_DROP_FILTER_REJECT);
-        U8 idbytes[4];u32_be(idbytes,response_id);
-        logline("RX discarded by installed J2534 filter",idbytes,4);
+        note_filter_reject(c,response_id);
         return;
     }
     msg=&c->queue[c->w];bytes_zero(msg,sizeof(*msg));
@@ -1022,7 +1043,7 @@ static void send_can_cf(CHANNEL *c,U32 block_size) {
     c->pending_cf_credit=block_size; /* BS=0: unlimited until final CF. */
     pump_can_cf(c);
 }
-static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) {
+static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 *payload,U32 len) {
     U8 f[8];U32 i;
     backend_event(c,c->active_trace,"response_generated","UNKNOWN","none","unknown");
     /* This compact simulator has only one outstanding segmented response per
@@ -1041,16 +1062,15 @@ static void emit_response(CHANNEL *c,U32 response_id,const U8 *payload,U32 len) 
             enqueue(c,response_id,payload,len);return;
         }
         if(g_strict_j2534_filters && len>7u){
-            /* The virtual ECU produces already-assembled UDS. Record that a
-               matched FC filter authorizes segmented reception; DO NOT claim
-               or inject physical CAN CTS frames into the client's RX queue. */
-            for(i=0;i<c->filters_count;i++){
-                const FILTER *f=&c->filters[i];
-                if(f->type==3u && strict_filter_matches(f,response_id,payload,len)){
-                    logline("ISO15765 synthetic flow-control route armed (no physical CAN TX)",f->flow_id,4);
-                    break;
-                }
+            /* This emulator returns reassembled UDS data. Its synthetic
+               segmentation must be authorized by one exact RX CAN ID and
+               the physical ECU request CAN ID used for Flow Control.
+               No real FC CTS is transmitted on CAN or USB. */
+            if(!strict_iso_fc_route_matches(c,response_id,fc_request_id,payload,len)){
+                note_filter_reject(c,response_id);
+                return;
             }
+            logline("ISO15765 synthetic multi-frame FC route verified (no CAN TX)",0,0);
         }
         if(g_iso_rx_start && len>7 && c->count+2<=MAX_QUEUE)
             enqueue_status(c,response_id,0,0,START_OF_MESSAGE);
@@ -1286,7 +1306,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             return;
         }
         sz=answer_uds(ecu,payload,n,answer);
-        if(sz){answered=1;emit_response(c,ecu->resp,answer,sz);if(c->pending_len)c->pending_request_id=id;
+        if(sz){answered=1;emit_response(c,ecu->resp,id==0x7DFu?ecu->req:id,answer,sz);if(c->pending_len)c->pending_request_id=id;
             /* Functional requests visit every configured ECU. Complete their
                shared telemetry record only after all responders were checked. */
             if(id!=0x7DF)backend_end_if_drained(c,c->active_trace);
@@ -1494,6 +1514,27 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
         }
     } else if(mask->DataSize<4u||pattern->DataSize<4u){
         unlock_state();return error(ERR_INVALID_MSG);
+    }
+    /* 0x18: Pattern and FlowControl CAN IDs must not collide with either
+       side of any existing ISO15765 FC filter on this channel. Overlapping
+       RX masks are also ambiguous, including wildcard/specific pairs. */
+    if(g_strict_j2534_filters && c->protocol==PROTO_ISO15765 && type==3u){
+        U32 i,new_pattern=can_id_from_data(pattern->Data);
+        U32 new_flow=can_id_from_data(flow->Data);
+        U32 new_mask=can_id_from_data(mask->Data);
+        for(i=0;i<c->filters_count;i++){
+            const FILTER *f=&c->filters[i];
+            U32 old_pattern,old_flow,old_mask;
+            if(f->type!=3u)continue;
+            old_pattern=can_id_from_data(f->pattern);
+            old_flow=can_id_from_data(f->flow_id);
+            old_mask=can_id_from_data(f->mask);
+            if(new_pattern==old_pattern||new_pattern==old_flow||
+               new_flow==old_pattern||new_flow==old_flow||
+               (((new_pattern^old_pattern)&new_mask&old_mask)==0u)){
+                unlock_state();return error(ERR_NOT_UNIQUE);
+            }
+        }
     }
     if(c->filters_count>=MAX_FILTERS){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     *filter_id=g_filter_counter++;

@@ -21,11 +21,14 @@ Copy-Item -LiteralPath $dll -Destination $isolatedDll
 $profile=@'
 ; Synthetic stage 40 J2534-only fixture. Never connect a physical vehicle.
 [Vehicle]
-ECUCount=1
+ECUCount=2
 BatteryMv=12500
 [ECU0]
 RequestId=7E0
 ResponseId=7E8
+[ECU1]
+RequestId=726
+ResponseId=72E
 [PassiveCAN]
 Enabled=0
 [PassiveTrace]
@@ -182,6 +185,57 @@ public static class Stage40NativeFilter {
                 Check("Strict_after_stop_TX",rc==OK&&n==1,rc);
                 rc=Receive(iso,out received);
                 Check("Strict_after_stop_RX",rc==16,rc);
+                /* Stage 42: read-only multi-ECU FC conflict and routing checks. */
+                Msg patternCem=Id(ISO,0x72eu),flowCem=Id(ISO,0x726u),flowOther=Id(ISO,0x727u);
+                uint duplicate=0,ecmFilter=0,cemFilter=0;
+                rc=FilterWithFlow(iso,FC,ref mask,ref pattern,ref flow,out ecmFilter);
+                Check("Stage42_ECM_FC",rc==OK,rc);
+                rc=FilterWithFlow(iso,FC,ref mask,ref pattern,ref flowOther,out duplicate);
+                Check("Stage42_duplicate_response_id",rc==24,rc);
+                rc=FilterWithFlow(iso,FC,ref mask,ref patternCem,ref flow,out duplicate);
+                Check("Stage42_duplicate_flow_id",rc==24,rc);
+                rc=FilterWithFlow(iso,FC,ref mask,ref patternCem,ref flowCem,out cemFilter);
+                Check("Stage42_distinct_CEM_FC",rc==OK,rc);
+                Msg cemRequest=Id(ISO,0x726u);
+                cemRequest.Data[4]=0x22;cemRequest.Data[5]=0xF1;cemRequest.Data[6]=0x14;
+                cemRequest.DataSize=7;n=1;
+                rc=PassThruWriteMsgs(iso,ref cemRequest,ref n,10);
+                Check("Stage42_CEM_TX",rc==OK&&n==1,rc);
+                rc=Receive(iso,out received);
+                Check("Stage42_CEM_RX",rc==OK&&received.ProtocolID==ISO
+                      &&received.DataSize==24&&received.Data[3]==0x2E
+                      &&received.Data[4]==0x62&&received.Data[6]==0x14,rc);
+                n=1;rc=PassThruWriteMsgs(iso,ref request,ref n,10);
+                Check("Stage42_ECM_TX",rc==OK&&n==1,rc);
+                rc=Receive(iso,out received);
+                Check("Stage42_ECM_RX",rc==OK&&received.DataSize==24
+                      &&received.Data[3]==0xE8&&received.Data[6]==0x90,rc);
+                rc=PassThruStopMsgFilter(iso,cemFilter);
+                Check("Stage42_remove_CEM",rc==OK,rc);
+                flowOther=Id(ISO,0x725u);
+                rc=FilterWithFlow(iso,FC,ref mask,ref patternCem,ref flowOther,out cemFilter);
+                Check("Stage42_mismatched_flow_filter_admitted",rc==OK,rc);
+                n=1;rc=PassThruWriteMsgs(iso,ref cemRequest,ref n,10);
+                Check("Stage42_wrong_FC_TX",rc==OK&&n==1,rc);
+                rc=Receive(iso,out received);
+                Check("Stage42_wrong_FC_blocks_RX",rc==16,rc);
+                rc=PassThruStopMsgFilter(iso,cemFilter);
+                Check("Stage42_remove_wrong_FC",rc==OK,rc);
+                rc=FilterWithFlow(iso,FC,ref mask,ref patternCem,ref flowCem,out cemFilter);
+                Check("Stage42_restore_CEM_FC",rc==OK,rc);
+                Msg functional=Id(ISO,0x7dfu);
+                functional.Data[4]=0x22;functional.Data[5]=0xF1;functional.Data[6]=0x90;
+                functional.DataSize=7;n=1;
+                rc=PassThruWriteMsgs(iso,ref functional,ref n,10);
+                Check("Stage42_functional_TX",rc==OK&&n==1,rc);
+                rc=Receive(iso,out received);
+                Check("Stage42_functional_ECM_RX",rc==OK&&received.Data[3]==0xE8,rc);
+                rc=Receive(iso,out received);
+                Check("Stage42_functional_CEM_RX",rc==OK&&received.Data[3]==0x2E,rc);
+                rc=PassThruStopMsgFilter(iso,ecmFilter);
+                Check("Stage42_remove_ECM",rc==OK,rc);
+                rc=PassThruStopMsgFilter(iso,cemFilter);
+                Check("Stage42_remove_CEM_final",rc==OK,rc);
             }
             Console.WriteLine("STAGE40 SUMMARY "+checks+" checks, mode="+(strict?"strict":"legacy"));
         } finally {
