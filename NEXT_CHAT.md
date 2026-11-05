@@ -2,6 +2,15 @@
 
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
+## Checkpoint 2026-11-05: F114 retry attribution, PR #46 merged
+
+- **development HEAD после PR #46:** `d3f50c814a245ec0534265ea178ec6eb6f384ce2`. [PR #46](https://github.com/vorlocsev/virtualcar/pull/46) merged squash; branch `fix/p3-f114-retry-attribution-20261105` была основана на `development`.
+- Изменён только `emulator/tools/audit_j2534_discovery.py` и добавлен `emulator/tests/test_audit_f114_retry.py`. Если `22 F1 14` повторён на том же канале до терминального ответа первого запроса, следующий транспортно корректный ответ `62 F1 14` помечается `unverified / identical_f114_retry_unattributable` вместо необоснованного `delivered`. Явные CLEAR_RX, завершённый первый ответ, иной канал/DID и реальные ISO-TP ошибки сохраняют отдельный статус.
+- Восемь синтетических групп тестирования: повтор ISO15765, прерванный raw CAN, сброс RX, другой канал, завершённый предыдущий запрос, иной DID, неверный CF, NRC 0x78 + privacy. В исходниках нет VIN, секретов и донорских данных.
+- **CI HEAD PR #46:** [Virtual Car Emulator Windows x86 #41976097550](https://github.com/vorlocsev/virtualcar/actions/runs/41976097550) **success** (C J2534, Python regression, Go, Windows x86, native-routes); [VMware LAB package #41976097418](https://github.com/vorlocsev/virtualcar/actions/runs/41976097418) **success** (package build only, НЕ реальный запуск в гостевой VMware).
+- **Ограничение:** корневая причина ранее наблюдавшегося `partial_rx / invalid_iso_tp_framing` не установлена. Нельзя доказывать по логическому request_id, что второй идентичный запрос получил именно свой ответ. В текущем этапе не выполнялись SectorV/VDASH, виртуальная машина или физический J2534, не менялись `virtualcar.c`, INI, DLL и ECU-ответы. Не выпускать Virtual Car build как release автоматически.
+- **Следующее действие, Issue #4:** при наличии исходного локального обезличенного LAB-снимка с двумя `22 F1 14` провести дифференциальную проверку `CAN` raw ISO-TP и `ISO15765` собранного UDS, включая RX flags/ExtraDataIndex/канал/очистки/время. Без такого снимка продолжать только синтетические тесты и исследование доказательных P2 CEM сообщений, без фиктивных ответов.
+
 ## Текущая рабочая ветка: VDASH offline evidence (02.11.2026)
 
 - По присланному пользователем `docs/research/VDASH_RESEARCH_HANDOFF.md` подготовлен отдельный этап `feature/vdash-offline-evidence` от development **`ee9e2cd66d2da9ea2087605f6ea06fc4ecd2ca83`**. PR/HEAD/CI сверять live; VDASH handoff требует оставить PR для review без автоматического merge. Main/Dvinholm/опубликованный prerelease не менять.
