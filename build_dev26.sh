@@ -20,7 +20,7 @@ lld-link "${args[@]}"
 popd >/dev/null
 for c in gcc clang; do
   "$c" -std=c99 -Werror -Wall -Wextra -pedantic -Iproxy \
-  proxy/p2_cem_router.c proxy/p2_ls_observer.c proxy/p2_vehicle_core.c proxy/p2_j2534_bridge.c \
+  proxy/p2_cem_router.c proxy/p2_xc90_generation.c proxy/p2_ls_observer.c proxy/p2_vehicle_core.c proxy/p2_j2534_bridge.c \
   tests/test_bridge.c -o "_build/test_bridge_$c"
   "_build/test_bridge_$c"
 done
