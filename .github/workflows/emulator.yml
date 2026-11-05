@@ -87,6 +87,13 @@ jobs:
           if ($dll.Count -ne 1) { throw 'Expected exactly one built x86 J2534 DLL' }
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_filter_contract.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-filter-stage40" -Mode legacy
           if ($LASTEXITCODE -ne 0) { throw 'Native x86 filter contract failed' }
+      - name: Native x86 J2534 filter policy (strict, synthetic UDS VIN)
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected exactly one built x86 J2534 DLL' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_filter_contract.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-filter-strict-stage41" -Mode strict
+          if ($LASTEXITCODE -ne 0) { throw 'Native x86 strict filter contract failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualCar-native-route-audit-${{ github.sha }}

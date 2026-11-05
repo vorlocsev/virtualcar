@@ -1630,6 +1630,89 @@ int main(){
    REQUIRE(PassThruDisconnect(lc)==ERR_OK);
   }
  }
+ /* Stage 41: opt-in strict receive filters. All original legacy checks
+    above run with strict disabled; restore the default before closing. */
+ {
+  const U8 vin_read[]={0x22,0xF1,0x90};
+  PASSTHRU_MSG msg,rx,mask,pattern,flow,canmask,canpattern;
+  U32 can=0,iso=0,filter=0,allow=0,block=0,count=1,old_start=g_iso_rx_start;
+  REQUIRE(g_strict_j2534_filters==0);
+  g_strict_j2534_filters=1;
+  g_iso_rx_start=1;
+  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&iso)==ERR_OK);
+  REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&can)==ERR_OK);
+  msg=frame(PROTO_ISO15765,0x7E0,vin_read,3);
+  send(iso,&msg);count=1;
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY && count==0);
+  mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+  pattern=frame(PROTO_ISO15765,0x7E8u,0,0);
+  flow=frame(PROTO_ISO15765,0x7E0u,0,0);
+  canmask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+  canpattern=frame(PROTO_CAN,0x7E8u,0,0);
+  REQUIRE(PassThruStartMsgFilter(can,3,&canmask,&canpattern,&flow,&filter)==ERR_NO_FLOW_CONTROL);
+  REQUIRE(PassThruStartMsgFilter(iso,1,&mask,&pattern,0,&filter)==ERR_INVALID_FLAGS);
+  REQUIRE(PassThruStartMsgFilter(iso,2,&mask,&pattern,0,&filter)==ERR_INVALID_FLAGS);
+  REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pattern,0,&filter)==ERR_NULL_PARAMETER);
+  mask.DataSize=5;
+  REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pattern,&flow,&filter)==ERR_INVALID_MSG);
+  mask.DataSize=4;
+  flow.DataSize=5;
+  REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pattern,&flow,&filter)==ERR_INVALID_MSG);
+  flow.DataSize=4;
+  flow.ProtocolID=PROTO_CAN;
+  REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pattern,&flow,&filter)==ERR_MSG_PROTOCOL_ID);
+  flow.ProtocolID=PROTO_ISO15765;
+  pattern.Data[3]=0xE9;
+  REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pattern,&flow,&filter)==ERR_OK);
+  send(iso,&msg);count=1;
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY && count==0);
+  REQUIRE(PassThruStopMsgFilter(iso,filter)==ERR_OK);
+  pattern.Data[3]=0xE8;
+  REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pattern,&flow,&filter)==ERR_OK);
+  send(iso,&msg);
+  rx=readmsg(iso);
+  REQUIRE(rx.RxStatus & START_OF_MESSAGE);
+  REQUIRE(rx.DataSize==4&&rx.ExtraDataIndex==0);
+  rx=readmsg(iso);
+  REQUIRE(rx.ProtocolID==PROTO_ISO15765&&rx.DataSize==24);
+  REQUIRE(rx.Data[4]==0x62&&rx.Data[5]==0xF1&&rx.Data[6]==0x90);
+  REQUIRE(rx.ExtraDataIndex==rx.DataSize);
+  REQUIRE(PassThruIoctl(iso,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+  REQUIRE(PassThruStopMsgFilter(iso,filter)==ERR_INVALID_FILTER_ID);
+  send(iso,&msg);count=1;
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY && count==0);
+  REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&iso)==ERR_OK);
+  send(iso,&msg);count=1;
+  REQUIRE(PassThruReadMsgs(iso,&rx,&count,0)==ERR_BUFFER_EMPTY && count==0);
+  /* Strict raw CAN: no PASS means no RX; BLOCK overrides PASS. */
+  {
+   const U8 raw_read[8]={3,0x22,0xF1,0x90,0,0,0,0};
+   PASSTHRU_MSG rawmsg=frame(PROTO_CAN,0x7E0,raw_read,8);
+   send(can,&rawmsg);count=1;
+   REQUIRE(PassThruReadMsgs(can,&rx,&count,0)==ERR_BUFFER_EMPTY && count==0);
+   REQUIRE(PassThruStartMsgFilter(can,1,&canmask,&canpattern,0,&allow)==ERR_OK);
+   REQUIRE(PassThruStartMsgFilter(can,2,&canmask,&canpattern,0,&block)==ERR_OK);
+   send(can,&rawmsg);count=1;
+   REQUIRE(PassThruReadMsgs(can,&rx,&count,0)==ERR_BUFFER_EMPTY && count==0);
+   REQUIRE(PassThruStopMsgFilter(can,block)==ERR_OK);
+   send(can,&rawmsg);rx=readmsg(can);
+   REQUIRE(rx.Data[4]==0x10);
+   REQUIRE(PassThruStopMsgFilter(can,allow)==ERR_OK);
+   canmask.DataSize=12;canpattern.DataSize=12;
+   for(U32 j=4;j<12;j++){canmask.Data[j]=0;canpattern.Data[j]=0;}
+   canmask.Data[4]=0xFF;canpattern.Data[4]=0x10;
+   REQUIRE(PassThruStartMsgFilter(can,1,&canmask,&canpattern,0,&allow)==ERR_OK);
+   send(can,&rawmsg);rx=readmsg(can);
+   REQUIRE(rx.Data[4]==0x10);
+   REQUIRE(PassThruStopMsgFilter(can,allow)==ERR_OK);
+  }
+  REQUIRE(PassThruDisconnect(can)==ERR_OK);
+  REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+  g_iso_rx_start=old_start;
+  g_strict_j2534_filters=0;
+  REQUIRE(g_strict_j2534_filters==0);
+ }
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
  REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
