@@ -1,11 +1,24 @@
 #include "p2_vehicle_core.h"
+#include "p2_xc90_generation.h"
 
-p2_vehicle_config p2_vehicle_xc90_v8_my2009_config(void) {
-    p2_vehicle_config cfg;
-    cfg.hs_bitrate = 500000u;
-    cfg.ls_bitrate = 125000u;
+bool p2_vehicle_xc90_model_year_config(unsigned model_year, bool engine_b8444s,
+                                        p2_vehicle_config *out) {
+    p2_xc90_generation p;
+    p2_vehicle_config cfg = {0};
+    if (!out || !p2_xc90_generation_lookup(model_year, engine_b8444s, &p))
+        return false;
+    cfg.hs_bitrate = p.hs_can_bps;
+    cfg.ls_bitrate = p.ls_can_bps;
+    /* Community-derived LS IDs and ignition state remain disabled. */
     cfg.enable_community_ls_signals = false;
     cfg.observed_cem_ls_can_id = 0u;
+    *out = cfg;
+    return true;
+}
+
+p2_vehicle_config p2_vehicle_xc90_v8_my2009_config(void) {
+    p2_vehicle_config cfg = {0};
+    (void)p2_vehicle_xc90_model_year_config(2009u, true, &cfg);
     return cfg;
 }
 
