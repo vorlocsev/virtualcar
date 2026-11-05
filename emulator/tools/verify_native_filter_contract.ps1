@@ -121,7 +121,6 @@ public static class Stage40NativeFilter {
         Msg shortRequest=Id(ISO,0x7E0u);
         shortRequest.Data[4]=0x3E;shortRequest.Data[5]=0;shortRequest.DataSize=6;
         Msg incoming;uint filter=0,rc;
-        uint before=0;
         mask.TxFlags=0x80u;
         rc=FilterWithFlow(iso,FC,ref mask,ref pattern,ref flow,out filter);
         Check("Stage43_extended_filter_refused",rc==1,rc);
