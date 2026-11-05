@@ -249,6 +249,10 @@ def _result(tx):
         status, reason = "partial_rx", ("invalid_obd_vin_length" if tx["route"] == "OBD" else "missing_uds_identifier_data")
     elif tx["_p3_mismatch"]:
         status, reason = "unverified", ("obd_response_does_not_match_request" if tx["route"] == "OBD" else "uds_response_does_not_match_request")
+    elif tx["_complete"] and tx["_ambiguous_f114_retry"]:
+        # Two identical in-flight ReadDataByIdentifier requests cannot be
+        # distinguished by CAN ID, UDS DID or J2534 RX content alone.
+        status, reason = "unverified", "identical_f114_retry_unattributable"
     elif tx["_complete"]:
         status = "delivered"
         reason = ("obd_vin_header_length_transport_only" if tx["route"] == "OBD" else
@@ -510,11 +514,23 @@ def audit(lines, *, include_obd=False):
         kind, service, target, can_id = request
         ctx = s["txctx"]
         channel = metadata["channel"] if metadata is not None else ctx[0] if ctx else None
-        s["last_tx_channel"] = channel
-        finish(s, channel, "superseded_by_tx")
+        previous = s["active"].get(channel)
         flags = metadata["flags"] if metadata is not None else ctx[2] if ctx else None
         protocol = metadata["protocol"] if metadata is not None else ctx[1] if ctx else None
         baud = metadata["baud"] if metadata is not None else ctx[3] if ctx else None
+        protocol_name = ({5: "CAN", 6: "ISO15765"}.get(protocol, "other")
+                         if protocol is not None else "unknown")
+        ambiguous_f114_retry = (
+            kind == "P3" and service == "22F114" and previous is not None
+            and previous["route"] == kind and previous["service"] == service
+            and int(previous["can_id"], 16) == can_id
+            and previous["protocol"] == protocol_name
+            and previous["baud_bps"] == baud
+            and not (previous["_complete"] or previous["_p3_negative"]
+                     or previous["_no_fixture"] or previous["_bad_route"])
+        )
+        s["last_tx_channel"] = channel
+        finish(s, channel, "superseded_by_tx")
         start_at = ctx[4] if ctx else stamp
         mod = 2**32 if ctx else 86400000
         tx = {
@@ -536,6 +552,7 @@ def audit(lines, *, include_obd=False):
             "_p3_total": None, "_p3_received": 0, "_p3_sequence": 1,
             "_p3_header": b"", "_p3_negative": False, "_p3_mismatch": False,
             "_p3_missing_data": False, "_p3_pending": 0,
+            "_ambiguous_f114_retry": ambiguous_f114_retry,
             "_obd_starts": 0, "_obd_repeat": 0,
             "_obd_request_line": line_number, "_obd_last_rx_line": None,
         }
@@ -841,6 +858,7 @@ def audit(lines, *, include_obd=False):
             "UDS NRC 0x78 is nonterminal; pending-only probes stay unverified unless a read timeout is logged.",
             "A positive ReadDataByIdentifier header requires at least one data-record byte.",
             "P3 transport checks parse only UDS headers and ISO-TP lengths, not VIN or identity authenticity.",
+            "A second identical F114 request before the first completes leaves later RX attribution ambiguous without a reset boundary.",
             "A6 delivery validates a single-frame E6 echo and length only; no parameter value or normal-mode state is decoded.",
             "A6 route candidates are limited to observed CEM IDs; unknown routes and non-CD ... 01 request shapes stay unverified.",
             ("OBD window_ms is observed TX-to-last matched RX, not a claimed ECU processing duration."
