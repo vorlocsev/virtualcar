@@ -4,7 +4,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [ValidateSet('legacy','strict')][string]$Mode='legacy'
+    [ValidateSet('legacy','strict','strict_queue')][string]$Mode='legacy'
 )
 $ErrorActionPreference='Stop'
 if ([IntPtr]::Size -ne 4) {
@@ -39,7 +39,10 @@ StrictRouting=1
 BackendTelemetryEnabled=0
 '@
 # Mode is an opt-in INI setting read by PassThruOpen, not a test-only switch.
-$profile += "`r`nStrictJ2534Filters=$([int]($Mode -eq 'strict'))`r`n"
+$profile += "`r`nStrictJ2534Filters=$([int]($Mode -ne 'legacy'))`r`n"
+if ($Mode -eq 'strict_queue') {
+    $profile=$profile.Replace("BatteryMv=12500","BatteryMv=12500`r`nEmitIsoRxStart=1")
+}
 [IO.File]::WriteAllText((Join-Path $directory 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
@@ -107,7 +110,77 @@ public static class Stage40NativeFilter {
         m.Data[0]=(byte)(id>>24);m.Data[1]=(byte)(id>>16);
         m.Data[2]=(byte)(id>>8);m.Data[3]=(byte)id;return m;
     }
-    public static void Run(bool strict) {
+    private static void Send(uint channel,ref Msg request) {
+        uint count=1;
+        Check("stage43_send",PassThruWriteMsgs(channel,ref request,ref count,10)==OK&&count==1,count);
+    }
+    private static void QueueBoundary(uint iso) {
+        Msg mask=Id(ISO,0xFFFFFFFFu),pattern=Id(ISO,0x7E8u),flow=Id(ISO,0x7E0u);
+        Msg request=Id(ISO,0x7E0u);
+        request.Data[4]=0x22;request.Data[5]=0xF1;request.Data[6]=0x90;request.DataSize=7;
+        Msg shortRequest=Id(ISO,0x7E0u);
+        shortRequest.Data[4]=0x3E;shortRequest.Data[5]=0;shortRequest.DataSize=6;
+        Msg incoming;uint filter=0,rc;
+        uint before=0;
+        mask.TxFlags=0x80u;
+        rc=FilterWithFlow(iso,FC,ref mask,ref pattern,ref flow,out filter);
+        Check("Stage43_extended_filter_refused",rc==1,rc);
+        mask.TxFlags=0;
+        pattern.DataSize=5;mask.DataSize=5;flow.DataSize=5;
+        rc=FilterWithFlow(iso,FC,ref mask,ref pattern,ref flow,out filter);
+        Check("Stage43_five_byte_filter_refused",rc==10,rc);
+        pattern.DataSize=4;mask.DataSize=4;flow.DataSize=4;
+        rc=FilterWithFlow(iso,FC,ref mask,ref pattern,ref flow,out filter);
+        Check("Stage43_valid_normal_filter",rc==OK,rc);
+        Msg extRequest=Id(ISO,0x7E0u);
+        extRequest.TxFlags=0x80u;extRequest.DataSize=8;
+        extRequest.Data[4]=0xA2;extRequest.Data[5]=0x22;
+        extRequest.Data[6]=0xF1;extRequest.Data[7]=0x90;
+        uint count=1;
+        rc=PassThruWriteMsgs(iso,ref extRequest,ref count,10);
+        Check("Stage43_extended_TX_refused",rc==1&&count==0,rc);
+        rc=Receive(iso,out incoming);
+        Check("Stage43_no_extended_RX",rc==16,rc);
+        /* 63 short responses leave one slot. A segmented VIN must not
+           enter the queue without its START_OF_MESSAGE indication. */
+        for(int i=0;i<63;i++){
+            count=1;rc=PassThruWriteMsgs(iso,ref shortRequest,ref count,10);
+            if(rc!=OK||count!=1)throw new Exception("Stage43 short queue fill 63 failed");
+        }
+        count=1;rc=PassThruWriteMsgs(iso,ref request,ref count,10);
+        Check("Stage43_one_slot_TX",rc==OK&&count==1,rc);
+        for(int i=0;i<63;i++){
+            rc=Receive(iso,out incoming);
+            if(rc!=OK||incoming.DataSize!=6||(incoming.RxStatus&2u)!=0u)
+               throw new Exception("Stage43 orphan START or unexpected FIFO message at 63");
+        }
+        rc=Receive(iso,out incoming);
+        Check("Stage43_one_slot_no_orphan",rc==16,rc);
+        /* 62 slots: START and fully assembled UDS are inseparable. */
+        for(int i=0;i<62;i++){
+            count=1;rc=PassThruWriteMsgs(iso,ref shortRequest,ref count,10);
+            if(rc!=OK||count!=1)throw new Exception("Stage43 short queue fill 62 failed");
+        }
+        count=1;rc=PassThruWriteMsgs(iso,ref request,ref count,10);
+        Check("Stage43_two_slots_TX",rc==OK&&count==1,rc);
+        for(int i=0;i<62;i++){
+            rc=Receive(iso,out incoming);
+            if(rc!=OK||incoming.DataSize!=6)throw new Exception("Stage43 FIFO head corruption at 62");
+        }
+        rc=Receive(iso,out incoming);
+        Check("Stage43_pair_START",rc==OK&&(incoming.RxStatus&2u)!=0u&&incoming.DataSize==4,rc);
+        rc=Receive(iso,out incoming);
+        Check("Stage43_pair_payload",rc==OK&&incoming.DataSize==24
+              &&incoming.ExtraDataIndex==24&&incoming.Data[4]==0x62,rc);
+        rc=Receive(iso,out incoming);
+        Check("Stage43_pair_queue_drained",rc==16,rc);
+        /* Reopen the same channel slot: no inherited FIFO or FilterID. */
+        rc=PassThruDisconnect(iso);Check("Stage43_disconnect",rc==OK,rc);
+        rc=PassThruStopMsgFilter(iso,filter);
+        Check("Stage43_retired_filter",rc==2,rc);
+        Console.WriteLine("STAGE43 SUMMARY "+checks+" checks, mode=strict_queue");
+    }
+    public static void Run(bool strict,bool queueMode) {
         Check("ABI_4152",IntPtr.Size==4&&Marshal.SizeOf(typeof(Msg))==4152,
               (uint)Marshal.SizeOf(typeof(Msg)));
         IntPtr module=LoadLibraryW(Library);
@@ -127,6 +200,11 @@ public static class Stage40NativeFilter {
             Check("CAN_connect",rc==OK&&can!=0,rc);
             rc=PassThruConnect(device,ISO,0,500000,out iso);
             Check("ISO_connect",rc==OK&&iso!=0,rc);
+            if(queueMode) {
+                QueueBoundary(iso);
+                iso=0;
+                return;
+            }
             Msg canMask=Id(CAN,0xffffffff),canPattern=Id(CAN,0x7e8),canFlow=Id(CAN,0x7e0);
             Msg mask=Id(ISO,0xffffffff),pattern=Id(ISO,0x7e8),flow=Id(ISO,0x7e0);
             rc=FilterWithFlow(can,FC,ref canMask,ref canPattern,ref canFlow,out filter);
@@ -249,7 +327,7 @@ public static class Stage40NativeFilter {
 '@
     $source=$source.Replace('__ISOLATED_DLL__',$isolatedDll.Replace('"','""'))
     Add-Type -TypeDefinition $source -Language CSharp
-    [Stage40NativeFilter]::Run($Mode -eq 'strict')
+    [Stage40NativeFilter]::Run($Mode -ne 'legacy',$Mode -eq 'strict_queue')
 } finally {
     $env:LOCALAPPDATA=$savedLocal
     $env:TEMP=$savedTemp
