@@ -36,6 +36,39 @@ Completed:
   Test source: emulator/native-cpp/tests/legacy_c_cpp_parity.cpp.
   Scope: docs/architecture/VIRTUALCAR-LEGACY-C-CPP-EXEC-PARITY-M4B2.md.
 
+## Latest Windows VMware Runner validation (2026-11-06)
+
+[Run #42313066763](https://github.com/vorlocsev/virtualcar/actions/runs/42313066763)
+completed **SUCCESS** against development HEAD
+`c4d436b0aae2262bce440b4b60c7b734accc895c`.
+
+- Python: 252 tests passed.
+- Legacy C host protocol regression: PASS.
+- Clang/LLD Windows x86 DLL build: PASS.
+- PE32/i386 validation: exactly 14 undecorated J2534 exports.
+- Native x86 legacy DLL route regression and evidence audit: PASS.
+- Go tests/vet: PASS.
+- Native C++20 x86 and x64 build/CTest: PASS.
+- .NET 10 Core, SQLite Storage and Scenario Compiler: PASS.
+- M4B-2 independent legacy C DLL vs C++20 RX comparison: **8/8 PASS**.
+- No artifacts uploaded, no releases or deployments.
+
+The run selected `source_ref=development`, so M5A was **skipped** because
+`VirtualCar.Service.Checks` is not present on that branch. M5A remains in
+Draft [PR #85](https://github.com/vorlocsev/virtualcar/pull/85), current head
+`42df2953cb8287eb81a1e94052020b353a80eb03`. Its current head has the Windows
+host-shim, Git Bash path-conversion and exact-export fixes, but still needs
+a fresh VMware run. The previous 9/9 M5A result in PR #85 belongs to an older
+source head. PR CI attempts #42313398352, #42313398144 and #42313398379
+failed before runner assignment (runner_id=0, no executed steps/logs); they
+are not evidence of a code regression.
+
+Next: dispatch `vmware-development-validation.yml` from `main` with
+`source_ref=feature/m5a-secure-local-ipc-preflight`, verify the current
+M5A 9/9 integration groups and all other gates, then review PR #85.
+M5B PRs #87 and #88 remain Draft and depend on M5A. No main merge, release,
+driver registration or physical adapter test.
+
 **EVIDENCE LIMITS:** This is actual old C J2534 DLL versus compiled
 new C++ RX *module*, NOT old versus a FUNCTIONAL new J2534 DLL.
 The new M3 C++ PassThru DLL still deliberately returns NOT_CONNECTED;
