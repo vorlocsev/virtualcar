@@ -17,7 +17,7 @@ not requirements for the new architecture.
 | M4A | Isolated C++ CAN/ISO-TP FIFO, FC and STmin deterministic engine | COMPLETED, PR #79, CI #13 |
 | M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
 | M4B-2 | Executed x86 old C DLL vs C++ RX module, 8 synthetic trace gates | COMPLETED, PR #83, CI #638 |
-| M5 | C# Host + secure Named Pipes + native C++ client | M5A Windows VMware 8/8 PASS, Draft PR #85; M5B C++ client in progress (stacked branch) |
+| M5 | C# Host + secure Named Pipes + native C++ client | M5A Windows VMware 8/8 PASS, Draft PR #85; M5B C++ client in progress, Draft PR #87 stacked on #85 |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
