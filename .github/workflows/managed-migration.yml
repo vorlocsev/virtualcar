@@ -1,4 +1,4 @@
-name: Virtual Car CSharp-Cpp Migration M0
+name: Virtual Car CSharp-Cpp Migration
 on:
   pull_request:
     branches: [development]
@@ -30,8 +30,14 @@ jobs:
         run: dotnet build emulator/managed/VirtualCar.Core.Checks/VirtualCar.Core.Checks.csproj -c Release
       - name: Eight managed synthetic lifecycle checks
         run: dotnet run --project emulator/managed/VirtualCar.Core.Checks/VirtualCar.Core.Checks.csproj -c Release --no-build
-      - name: Cross compile managed core for Windows x64 (compile only)
-        run: dotnet build emulator/managed/VirtualCar.Core/VirtualCar.Core.csproj -c Release -r win-x64 --self-contained false
+      - name: Build CSharp .NET 10 SQLite repository
+        run: dotnet build emulator/managed/VirtualCar.Storage.Checks/VirtualCar.Storage.Checks.csproj -c Release
+      - name: Eight managed actual SQLite integration checks
+        run: dotnet run --project emulator/managed/VirtualCar.Storage.Checks/VirtualCar.Storage.Checks.csproj -c Release --no-build
+      - name: Cross compile managed core and storage for Windows x64 (compile only)
+        run: |
+          dotnet build emulator/managed/VirtualCar.Core/VirtualCar.Core.csproj -c Release -r win-x64 --self-contained false
+          dotnet build emulator/managed/VirtualCar.Storage/VirtualCar.Storage.csproj -c Release -r win-x64 --self-contained false
       - name: Compile and run C++20 J2534 ABI host contract
         run: |
           c++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -I emulator/native-cpp/include \
@@ -49,3 +55,6 @@ jobs:
       - name: Windows native-host .NET 10 synthetic checks
         shell: pwsh
         run: dotnet run --project emulator/managed/VirtualCar.Core.Checks/VirtualCar.Core.Checks.csproj -c Release
+      - name: Windows native-host actual SQLite checks
+        shell: pwsh
+        run: dotnet run --project emulator/managed/VirtualCar.Storage.Checks/VirtualCar.Storage.Checks.csproj -c Release
