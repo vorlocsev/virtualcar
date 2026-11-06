@@ -1,5 +1,22 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## CURRENT PRIORITY OVERRIDE (2026-11-06): rewrite Virtual Car on C# / .NET 10
+
+The user selected a **complete C# migration** for Virtual Car.
+Dvinholm remains the primary product and Virtual Car stays a private,
+optional read-only J2534 testing laboratory. Legacy C/Go stays as
+the working parity reference and cannot be deleted before the new C#
+implementation passes real J2534 and Dvinholm integration tests.
+
+Canonical state: docs/progress/CURRENT.md.
+C# migration plan: docs/architecture/VIRTUALCAR-CSHARP-DOTNET10-MIGRATION.md.
+The previous Go SQLite stage 60B-2 is SUPERSEDED, not completed.
+First staged milestone: CS-01 .NET 10 Core + x86/x64 Native AOT ABI-only
+nonfunctional probe. Do NOT register/publish the probe DLL.
+Check the latest CS-01 PR/CI before moving on to CS-02 C# SQLite.
+Keep exact user's cross-chat resume phrase: **virtual car**.
+
+---
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
 
 
