@@ -6,6 +6,13 @@
 #define WINCALL
 #define IMPORT
 #define EXPORT
+#elif defined(CROSS_LLVM)
+/* The module .def owns the exact undecorated J2534 export names.
+   Do not also emit __declspec(dllexport): x86 __stdcall would add a second,
+   decorated export for every PassThru function. */
+#define WINCALL __stdcall
+#define IMPORT __declspec(dllimport)
+#define EXPORT
 #else
 #define WINCALL __stdcall
 #define IMPORT __declspec(dllimport)
