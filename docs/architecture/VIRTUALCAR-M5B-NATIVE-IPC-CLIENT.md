@@ -17,6 +17,10 @@ not link this client yet.
 - Use Windows Named Pipes with overlapped I/O, explicit bounded connect,
   read and write deadlines, session/generation binding, strict pipe-name
   allowlisting and fail-closed handle cleanup.
+- Require the expected server PID from the trusted launcher and verify it
+  with `GetNamedPipeServerProcessId` **before sending the launch secret**.
+  Open the client handle with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`
+  so the server cannot impersonate the client.
 - Serialize public operations with a mutex. No SQLite calls, CAN frames,
   ECU requests, J2534 success returns, or physical device access.
 - Wipe the temporary HELLO secret payload and encoded frame buffers after
@@ -41,7 +45,7 @@ Additional native integration:
   send session-bound KEEPALIVE, send GOODBYE and require both processes
   to exit successfully.
 - This test secret is only for CI and must never be used by a production
-  launcher. Production secret provisioning remains a separate task.
+  launcher. Production launcher provisioning of the expected PID and launch secret remains a separate task.
 
 ## Safety boundaries
 
