@@ -1,10 +1,15 @@
-#include "virtualcar/ipc_client.hpp"
-
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0602 // GetNamedPipeServerProcessId (Windows 8+).
 #endif
 #include <Windows.h>
+
+#include "virtualcar/ipc_client.hpp"
 
 #include <algorithm>
 #include <array>
