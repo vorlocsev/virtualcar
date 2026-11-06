@@ -1,0 +1,151 @@
+name: Virtual Car VMware development validation
+
+# Trusted development pushes run on the owner's persistent VMware runner.
+# Pull requests never execute on this self-hosted machine. Manual dispatch remains available.
+# No artifacts, releases, or publishing.
+on:
+  push:
+    branches: [development]
+    paths:
+      - "emulator/**"
+      - ".github/workflows/**"
+      - "NuGet.Config"
+      - "global.json"
+      - "go.mod"
+      - "go.sum"
+      - "Directory.Build.*"
+      - "Directory.Packages.props"
+      - "pyproject.toml"
+      - "requirements*.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virtualcar-vmware-development-validation
+  cancel-in-progress: false
+
+jobs:
+  validate-development:
+    name: Development Python, Go, C++ and .NET gates
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development')
+    runs-on: [self-hosted, Windows, X64, virtualcar-win]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@v4
+        with:
+          ref: development
+          persist-credentials: false
+
+      - name: Verify local toolchain
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host ('Source commit: ' + (git rev-parse HEAD))
+          Write-Host ('Runner: ' + $env:RUNNER_NAME)
+          Write-Host ('OS: ' + [System.Environment]::OSVersion.Version)
+          Write-Host ('Architecture: ' + [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
+
+          $pythonManifest = 'E:\VirtualCar\Tools\python312.path'
+          if (-not (Test-Path -LiteralPath $pythonManifest)) { throw 'Python manifest is missing' }
+          $python = (Get-Content -LiteralPath $pythonManifest -Raw).Trim()
+          if (-not (Test-Path -LiteralPath $python)) { throw "Python not found: $python" }
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Python 3.12 failed' }
+          & $python -m pip --version
+          if ($LASTEXITCODE -ne 0) { throw 'pip is unavailable' }
+
+          $goVersion = go version
+          Write-Host $goVersion
+          if ($LASTEXITCODE -ne 0) { throw 'Go is unavailable' }
+
+          $dotnetSdks = dotnet --list-sdks | Out-String
+          Write-Host $dotnetSdks
+          if ($dotnetSdks -notmatch '10\.0\.') { throw '.NET 10 SDK is not installed for the runner service' }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere.exe not found' }
+          $vs2022 = & $vswhere -latest -products '*' -version '[17.0,18.0)' -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vs2022)) { throw 'Visual Studio 2022 Build Tools not found' }
+          Write-Host ('Visual Studio 2022: ' + $vs2022)
+
+          cmake --version
+          if ($LASTEXITCODE -ne 0) { throw 'CMake is unavailable' }
+
+      - name: Run complete Python emulator test suite
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          & $python -m unittest discover -s emulator/tests -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Python emulator test suite failed' }
+
+      - name: Run Go control tests and vet
+        shell: powershell
+        working-directory: emulator/control
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./... -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Go control tests failed' }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Go vet failed' }
+
+      - name: Configure and build native C++ x86
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE '.ci-build\native-x86'
+          cmake -S emulator/native-cpp -B $buildDir -G 'Visual Studio 17 2022' -A Win32
+          if ($LASTEXITCODE -ne 0) { throw 'CMake x86 configuration failed' }
+          cmake --build $buildDir --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x86 build failed' }
+          ctest --test-dir $buildDir -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x86 CTest suite failed' }
+          Write-Host 'Note: vc_legacy_c_cpp_parity.exe is compiled only. Running it requires the independent legacy C x86 DLL from the Linux cross-build.'
+
+      - name: Configure and build native C++ x64
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE '.ci-build\native-x64'
+          cmake -S emulator/native-cpp -B $buildDir -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'CMake x64 configuration failed' }
+          cmake --build $buildDir --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x64 build failed' }
+          ctest --test-dir $buildDir -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x64 CTest suite failed' }
+
+      - name: Run .NET 10 managed core checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project emulator/managed/VirtualCar.Core.Checks/VirtualCar.Core.Checks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw '.NET Core checks failed' }
+
+      - name: Run .NET 10 SQLite storage checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project emulator/managed/VirtualCar.Storage.Checks/VirtualCar.Storage.Checks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw '.NET SQLite storage checks failed' }
+
+      - name: Run .NET 10 scenario compiler checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project emulator/managed/VirtualCar.Scenarios.Checks/VirtualCar.Scenarios.Checks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw '.NET scenario compiler checks failed' }
+
+      - name: Validation summary
+        if: success()
+        shell: powershell
+        run: |
+          Write-Host 'PASS: Python emulator tests'
+          Write-Host 'PASS: Go control tests and vet'
+          Write-Host 'PASS: Native C++ x86 configure/build/CTest'
+          Write-Host 'PASS: Native C++ x64 configure/build/CTest'
+          Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
+          Write-Host 'No artifacts uploaded. No releases or deployments performed.'
