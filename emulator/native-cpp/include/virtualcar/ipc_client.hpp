@@ -73,7 +73,7 @@ public:
                                  std::span<const std::uint8_t> launch_secret,
                                  std::uint32_t timeout_ms = 3000);
     [[nodiscard]] Result keep_alive();
-    void disconnect() noexcept;
+    [[nodiscard]] Result disconnect() noexcept;
 
     [[nodiscard]] bool connected() const noexcept;
     [[nodiscard]] SessionToken session() const noexcept;
