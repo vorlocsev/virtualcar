@@ -131,6 +131,8 @@ jobs:
           }
           $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
           if (-not (Test-Path -LiteralPath $dll)) { throw 'Legacy x86 J2534 DLL was not produced' }
+          llvm-readobj --coff-exports $dll
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM could not inspect the legacy x86 DLL export table' }
           $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
           & $python emulator/native-cpp/tests/verify_pe_exports.py $dll Win32
           if ($LASTEXITCODE -ne 0) { throw 'Legacy x86 DLL PE architecture/export verification failed' }
