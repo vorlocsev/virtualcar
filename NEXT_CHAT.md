@@ -1,35 +1,36 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: M2 completed, C# / C++20 lab migration
+## ACTIVE: C++20 native M3 ABI complete; M4 transport next
 
-Dvinholm is the main product. Virtual Car is optional PRIVATE read-only
-J2534/ECU lab, not an independently published diagnostics product.
-User technology decision: C#/.NET 10 managed core, storage and GUI;
-C++20 x86/x64 J2534 DLL and performance-critical transport. Preserve
-old C x86 emulator and Go controller until parity is established.
+Dvinholm is the MAIN PRODUCT. Virtual Car is its independent private
+read-only test lab, not a separately released diagnostic adapter.
+User-selected architecture: C# .NET10 for Core, SQLite, scenarios, service,
+WinUI3 control; C++20 for x86/x64 J2534 and performance-critical transport.
 
-Verified GitHub results:
-- M0 PR #71 merged (C# core + C++20 ABI; CI #1 success).
-- M1 PR #72 merged (C# SQLite; CI #4 success).
-- M2 PR #75 merged 0487fc1a (deterministic scenario compiler from
-  original SQLite v1 with full snapshot SHA-256). CI #6 Linux/Windows
-  SUCCESS; old native emulator x86 CI #619 SUCCESS and VMware LAB package
-  #442 SUCCESS. VMware packaging != guest/hardware test.
-- Older PR #70 Native AOT DLL is an ABI probe only, NOT a functioning or
-  chosen J2534 adapter.
+Verified GitHub:
+- M0 PR #71 merged (C# core, C++ ABI; CI #1).
+- M1 PR #72 merged (C# SQLite schema v1; CI #4).
+- M2 PR #75 merged (hash-verified synthetic scenario; CI #6).
+- M3 PR #77 merged **e835fd67** (real native x86 and x64
+  `VirtualCarJ2534Cpp.dll` files, exact 14 exports and fail-closed behavior).
+  Final managed/native CI #10 SUCCESS; legacy x86 routes #624 SUCCESS;
+  VMware LAB packaging #445 SUCCESS. The first CI #8 failure was fixed by
+  correcting PassThruStartPeriodicMsg's MsgID-pointer/interval argument
+  order; do not use that earlier ABI header.
+- The x86 legacy C J2534 emulator and Go code are retained for parity.
+- The older Native AOT PR #70 is only a NONFUNCTIONAL ABI experiment.
 
-**NEXT M3:** implement C++20 native x86/x64 J2534 DLL with all 14
-PassThru 04.04 exports and exact structure/calling conventions. Start
-fail-closed; add 6-8 ABI, load, lifecycle and error-semantics tests.
-Do not register unsupported DLLs in real J2534 device lists; no releases.
-Later M4 transport parity, M5 C# Named Pipe host and M7 Dvinholm E2E.
+**NEXT: M4 C++ CAN/ISO15765/ISO-TP transport parity.**
+Implement bounded CAN RX/TX buffers and filters, FC/STmin, independent
+deadlines, session/reset isolation, no SQL in CAN path and no writes to
+physical hardware. Add 6-8 synthetic groups comparing original x86 C
+semantics and new x86/x64 C++ DLL. Then M5 secured C# Named Pipes host.
+This M3 DLL has NO working channels: never install/register as J2534
+device, publish builds or claim Dvinholm/VIDA/SectorV/DiCE compatibility.
 
-Read first from development:
-- docs/progress/CURRENT.md
-- docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
-- docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
-
-New chat trigger: **virtual car**.
+Read development branch docs/progress/CURRENT.md and
+docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md.
+Resume phrase: **virtual car**.
 
 ---
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
