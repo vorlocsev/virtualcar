@@ -6,10 +6,10 @@
 
 /*
  * Keep the simulator's Win32 shims in a private namespace. On a Windows
- * host the UCRT itself imports several Kernel32 names (notably
- * GetCurrentProcessId, QueryPerformanceCounter, WriteFile and CloseHandle).
- * Defining test shims with those public names makes the Windows host linker
- * report duplicate symbols. Renaming only this translation unit's calls and
+ * host the default link also brings in Kernel32 import symbols for several
+ * names (notably GetCurrentProcessId, QueryPerformanceCounter, WriteFile and
+ * CloseHandle). Defining test shims with those public names makes LLD report
+ * duplicate symbols. Renaming only this translation unit's calls and
  * shim definitions preserves the Linux-host behavior while allowing the
  * same deterministic regression executable to run on Windows.
  */
