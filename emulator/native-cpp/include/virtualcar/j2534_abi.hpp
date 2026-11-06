@@ -41,7 +41,7 @@ using Connect = DWORD (VC_J2534_CALL *)(DWORD, DWORD, DWORD, DWORD, DWORD*);
 using Disconnect = DWORD (VC_J2534_CALL *)(DWORD);
 using ReadMsgs = DWORD (VC_J2534_CALL *)(DWORD, PASSTHRU_MSG*, DWORD*, DWORD);
 using WriteMsgs = DWORD (VC_J2534_CALL *)(DWORD, PASSTHRU_MSG*, DWORD*, DWORD);
-using StartPeriodicMsg = DWORD (VC_J2534_CALL *)(DWORD, PASSTHRU_MSG*, DWORD*, DWORD*);
+using StartPeriodicMsg = DWORD (VC_J2534_CALL *)(DWORD, PASSTHRU_MSG*, DWORD*, DWORD);
 using StopPeriodicMsg = DWORD (VC_J2534_CALL *)(DWORD, DWORD);
 using StartMsgFilter = DWORD (VC_J2534_CALL *)(DWORD, DWORD, PASSTHRU_MSG*,
                                               PASSTHRU_MSG*, PASSTHRU_MSG*, DWORD*);
