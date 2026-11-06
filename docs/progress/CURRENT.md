@@ -21,8 +21,9 @@ Branch: `feature/m5b-cpp-named-pipe-client`, Draft PR #87 stacked on M5A PR #85.
 Adds strict v1 frame codec, overlapped Windows pipe I/O, total transfer
 deadlines, expected server-PID verification before sending the secret,
 client anti-impersonation QoS, serialized HELLO/KEEPALIVE/GOODBYE,
-secret-buffer wiping, 8 native offline gates and planned x86/x64
-C++-to-C# integration checks (including wrong-PID rejection).
+secret-buffer wiping, 8 native offline gates and wired x86/x64
+C++-to-C# integration checks (including wrong-PID rejection), awaiting
+an executed Windows CI run.
 The C++ client is **not linked into the J2534 DLL**. No CAN/ECU command,
 PassThru success, real vehicle data, or physical adapter is enabled.
 No M5B CI result is claimed until the Windows matrix executes. Manual VMware dispatch support is prepared separately in Draft PR #88.
