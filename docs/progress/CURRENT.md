@@ -1,54 +1,56 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: C# / .NET10 + C++20, M4A completed (2026-11-06)
+## ACTIVE checkpoint: C# .NET 10 / C++20, M4B-1 complete (2026-11-06)
 
-**Dvinholm is the PRIMARY product.** Virtual Car remains its private
-read-only laboratory, independent of Dvinholm runtime. Do NOT publish
-Virtual Car builds/releases or register nonfunctional J2534 DLLs.
+**Dvinholm is PRIMARY.** Virtual Car remains a PRIVATE read-only lab.
+Do not publish Virtual Car, register nonfunctional J2534 DLLs or
+change original ECU/device behavior without separate evidence.
 
 Verified milestones:
-- M0 PR #71 merged: C# Core and C++20 ABI (CI #1 SUCCESS).
-- M1 PR #72 merged: C# SQLite v1 and backup (CI #4 SUCCESS).
-- M2 PR #75 merged: SHA-256 checked read-only synthetic scenario
-  compiler (CI #6, legacy x86 CI #619 SUCCESS).
-- M3 PR #77 merged e835fd67: native C++20 x86 and x64 14-export
-  fail-closed J2534 ABI DLLs. CI #10, legacy #624 SUCCESS.
-- **M4A PR #79 MERGED** to development at
-  **3719f58b234e0c244d1d3f5d874658f6811ea6ee**.
-  New isolated native C++20 CAN / ISO-TP transport engine with:
-  - fixed 64-frame RX FIFO, up to 24 strict PASS/BLOCK filters;
-  - one explicitly synthetic ECU route, 11-/29-bit CAN ID bounds;
-  - SF/FF/CF, CTS/WAIT/OVERFLOW, bounded 4095-byte payload;
-  - Flow Control block credit, STmin timing and reserved-value refusal;
-  - independent FC timeout, wrong-ID isolation, lost-credit-free
-    queue saturation, CF sequence wrap, reset generation invalidation.
-  Eight synthetic transport test groups passed on **Linux, Windows
-  Win32 and Windows x64**. Managed/native CI **#13 SUCCESS**,
-  legacy x86 J2534 CI **#628 SUCCESS**, VMware LAB packaging
-  **#447 SUCCESS**. VMware packaging is NOT guest-client testing.
-  Source: emulator/native-cpp/include/virtualcar/transport.hpp,
-  emulator/native-cpp/src/transport.cpp; reference document
-  docs/architecture/VIRTUALCAR-CPP-TRANSPORT-M4A.md.
+- M0 PR #71: C# Core/C++ ABI, CI #1 SUCCESS.
+- M1 PR #72: C# SQLite v1 catalog, CI #4 SUCCESS.
+- M2 PR #75: C# sealed SHA-verified synthetic scenarios, CI #6 SUCCESS.
+- M3 PR #77: Windows x86/x64 native C++20 14-export J2534
+  *fail-closed* DLLs, managed native CI #10 SUCCESS.
+- M4A PR #79 merged 3719f58b: isolated C++ CAN/ISO-TP
+  FIFO, FC, STmin, deadlines, eight synthetic gates Linux/Win32/x64.
+  CI #13, legacy Windows x86 #628, VMware LAB package #447 SUCCESS.
+- **M4B-1 PR #81 MERGED** to development at
+  **1786b33e080d19b20c34b0586346263b10c14cbf**.
+  Added emulator/native-cpp/include/virtualcar/isotp_rx.hpp and
+  emulator/native-cpp/src/isotp_rx.cpp: strict, isolated J2534 v04.04
+  ISO15765 RX metadata, 8 ECU request/response routes, 24 flow filters,
+  64 bounded message entries, 4095-byte synthetic payloads, 29-bit CAN
+  flag, 32-bit wrapping microsecond timestamps, big-endian CAN IDs,
+  correct DataSize/ExtraDataIndex, and atomic START_OF_MESSAGE +
+  complete response admission. Rejects write/security responses,
+  broad filter authorization of segmented replies, cross-ECU
+  collisions and stale queued data on reset.
+  Eight new groups passed on **Linux, Windows x86 and Windows x64**.
+  Final C# + C++ Migration CI **#15 SUCCESS**, legacy x86 emulator
+  **#631 SUCCESS**, VMware LAB packaging **#448 SUCCESS**.
+  Documentation: docs/architecture/VIRTUALCAR-J2534-ISOTP-RX-M4B1.md.
 
-**IMPORTANT M4A LIMIT:** Transport engine is standalone/isolated, not
-wired into the PassThru DLL or C# IPC. The M3 C++ DLL still returns
-unavailable/not connected; it cannot diagnose or simulate a vehicle.
-These tests do NOT establish old/new J2534 byte-for-byte parity, actual
-VIDA/SectorV/Dvinholm recognition, real Volvo MY2009 CEM identity, or
-physical DiCE/J2534 compatibility. Old C/Go emulator remains intact.
+**IMPORTANT EVIDENCE LIMIT:** new RX output is checked against
+*source-derived* behavior from emulator/src/virtualcar.c and separately
+passed old x86 native CI. This is NOT yet a black-box execution of
+identical inputs against both old C and new C++ DLLs. New engine
+modules are isolated. M3 C++ J2534 DLL still returns disconnected and
+has NOT been registered as a functioning adapter. No real CAN, Dvinholm
+x64 J2534 E2E, VIDA/SectorV discovery, Volvo XC90 V8 MY2009 CEM
+response proof or physical DiCE/hardware tests. C/Go reference remains.
 
-**NEXT M4B:** complete native J2534 filter and ISO15765 receive
-metadata compatibility, atomic START_OF_MESSAGE + response admission,
-multi-route/ECU isolation, bounded queue faults/cancellation, rollover
-and timing parity. Implement black-box same-input comparisons against
-the existing native C x86 emulator, 6-8 test groups, then M5
-authenticated local Named Pipes with the .NET10 headless host.
-Never fabricate unsupported positive Volvo D2/CEM replies, PIN or
-SecurityAccess responses.
+**NEXT: M4B-2 black-box legacy-vs-new executable trace parity.**
+Under matching synthetic profiles and explicit input traces, compare
+actual old x86 C DLL outputs to new C++ test engine across 6-8 gates,
+normalizing only monotonic timestamps/dynamic handles. Add multi-channel
+filter isolation and accountable errors, then M5 authenticated local
+Named Pipes .NET10 host. No fabricated Volvo D2/CEM positive replies,
+PIN cracking, programming or real vehicle writes.
 
-Canonical docs:
+Canonical references:
 - docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
-- docs/architecture/VIRTUALCAR-CPP-TRANSPORT-M4A.md
+- docs/architecture/VIRTUALCAR-J2534-ISOTP-RX-M4B1.md
 - docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 
 **Exact cross-chat continuation phrase: virtual car**
