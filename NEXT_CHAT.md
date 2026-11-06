@@ -1,18 +1,31 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE decision: full C# rewrite (2026-11-06)
+## ACTIVE development checkpoint: C#/.NET10 + C++20
 
-Primary product Dvinholm; Virtual Car test lab to be written in C#/.NET 10.
-Complete historical Go 60B-2 PR #68 remains in development (CI #604).
-New Go stages are superseded, keep C/Go for parity. New CS-01 PR #70
-adds .NET10 core, tests and a NONFUNCTIONAL Native AOT J2534 x86/x64
-ABI probe. Check CI/PR before calling exports verified; probe must never
-be registered as a real diagnostic adapter or published.
+The latest user architecture choice is C# for managed Virtual Car and C++20
+for critical native J2534/CAN/ISO-TP. Dvinholm is the MAIN PRODUCT.
+Existing Go/C remain only as behavior/parity baseline.
 
-Read docs/progress/CURRENT.md and
-docs/architecture/VIRTUALCAR-CSHARP-DOTNET10-MIGRATION.md first.
-Continue CS-01 until CI passes, then CS-02 C# SQLite.
-Keyword for future chats: **virtual car**.
+COMPLETED, GitHub verified:
+- PR #70: Native AOT ABI probe, nonfunctional experiment only.
+- PR #71: managed C# Core and C++20 ABI baseline (merge b4b70f41).
+- PR #72: C# SQLite Storage with WAL and schema v1 (merge e11a15d4).
+- Latest tested M1 commit: C# migration CI #4 SUCCESS, legacy x86 CI #612
+  SUCCESS, VMware LAB packaging #441 SUCCESS. VMware workflow != guest run.
+
+**NEXT: migration M2 C# canonical scenario compiler**. Load only approved
+synthetic read-only profile/ECU bindings, materialize bytes, verify complete
+SHA-256 and CAN route isolation, fail closed for missing/research-only data,
+6-8 tests. Then M3 native C++ DLL for real x86/x64 J2534 exports.
+A working C++ DLL, real VIDA/SectorV recognition and physical J2534 are
+NOT yet demonstrated. Do not publish Virtual Car.
+
+Read first:
+- docs/progress/CURRENT.md
+- docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
+- docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
+
+New chat trigger: **virtual car**.
 
 ---
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
