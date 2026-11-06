@@ -1,5 +1,34 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
+## NEW TECHNOLOGY DECISION: C# + C++20 migration (2026-11-06)
+
+The user explicitly chose to rewrite **Virtual Car** to C#/.NET 10 with
+critical transport and native J2534 code on C++20. This supersedes the
+planned GO-BASED stages 61-67 as implementation plans, but the historical
+Go/C/Python implementation is retained as an immutable behavioral reference.
+The primary product remains Dvinholm and no Virtual Car release is allowed.
+
+Migration specification:
+docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
+
+Migration M0 in progress on branch
+feature/csharp-cpp-virtualcar-migration-foundation:
+- emulator/managed/VirtualCar.Core (pure C# lifecycle)
+- emulator/managed/VirtualCar.Core.Checks (8 synthetic tests)
+- emulator/native-cpp/include/virtualcar/j2534_abi.hpp (ABI declaration)
+- emulator/native-cpp/tests/j2534_abi_smoke.cpp (C++ host layout checks)
+- .github/workflows/managed-migration.yml (isolated .NET 10/C++ CI)
+
+This M0 stage DOES NOT produce a functional C++ J2534 DLL, real ECU
+replies, C# SQLite integration, GUI, or real Dvinholm client acceptance.
+Do not call it finished until CI completes and GitHub reports a merge.
+After M0, M1 migrates the SQLite catalog to C# Microsoft.Data.Sqlite;
+M2 compiles read-only scenarios; M3/M4 replace C J2534 transport by C++;
+M5/M6 implement C# service/GUI; M7 is Dvinholm-native E2E.
+
+**The exact resume phrase stays: virtual car.**
+
+
 Verified checkpoint: 2026-11-06.
 This document is the canonical cross-chat continuation note. Re-read the
 current GitHub PR/CI state before changing code; do not rely only on chat memory.
