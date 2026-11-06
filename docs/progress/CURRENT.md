@@ -54,7 +54,7 @@ Implemented and tested:
 - No private trace, VIN, PIN, EEPROM or VIDA XML committed.
 
 NOT IMPLEMENTED:
-- Go SQLite driver registration, database opening, migration transaction/backup.
+- Go SQLite driver, migration and backup are in PR #68; not yet merged to development.
 - Existing Go database/sql boundary is metadata-only and cannot activate a scenario.
 - Hash-verified compiled scenario snapshot and runtime fixture selection.
 - Named Pipe IPC, headless Go service, actual x64 J2534 DLL.
@@ -62,21 +62,33 @@ NOT IMPLEMENTED:
 - Authorized live VIDA/SectorV identification of target XC90 MY2009.
 - Physical J2534/vehicle testing.
 
-## NEXT STAGE: 60B-2 (real Go SQLite driver, migration and backup)
+## Current implementation review: Stage 60B-2 (PR #68)
 
-1. Verify and pin modernc.org/sqlite and aligned libc/go.sum compatible with the
-   target Windows x64 self-contained service. Review licenses and CI builds.
-2. Enforce exact migration checksum, foreign keys, bounded file paths, WAL,
-   single-writer transactions and database backups.
-3. Connect the existing Go labdb metadata boundary to the pinned driver,
-   retaining the explicit read-only descriptor contract; consider a guarded
-   labcore.Catalog only after stage61 scenario materialization.
-   NEVER treat metadata SHA as payload verification.
-4. Implement canonical materialized snapshot content SHA-256 verification
-   in stage 61 before permitting read-only scenario activation.
-5. Add 6-8 Go tests for missing DB, migrations, corruption, private content
-   isolation, scenario revisions, concurrency, cancellation, fail closed.
-6. Run CI and submit/merge a dedicated PR to development. Do not publish.
+- https://github.com/vorlocsev/virtualcar/pull/68
+- Base: development after merged PR #66/#67.
+- New: Go sqlite_driver.go with pinned modernc.org/sqlite v1.36.3,
+  exact go.sum, single-connection WAL database, migration checksum,
+  exclusive initialization, metadata-only scenario descriptor and
+  VACUUM INTO backup.
+- Reuses existing labdb.Repository and its 8 synthetic SQL tests.
+  Adds 8 real disk-backed SQLite Go tests and Windows x64 no-CGO
+  crosscompile. No J2534 DLL runtime changes.
+- Earlier PR #65 passed x86 CI #597 / VMware LAB #433 but could
+  NOT merge due to concurrent PR #66/#67. PR #68 supersedes #65
+  with both implementations reconciled; verify final HEAD CI.
+- Until the latest PR #68 CI is green and GitHub reports merged,
+  Stage 60B-2 is NOT a completed development branch feature.
+- A sealed DB descriptor is not scenario byte evidence: returns
+  ApprovedReadOnly=false and cannot activate any CAN reply.
+
+## NEXT AFTER PR #68: Stage 61 Scenario Compiler
+
+1. Create canonical, immutable scenario payloads from scoped approved
+   fixture bindings and exact ECU/CAN routes.
+2. Verify the SHA-256 of the entire materialized snapshot.
+3. Refuse missing/research-only/ambiguous Volvo CEM evidence.
+4. Add 6-8 deterministic tests and preserve J2534 native regressions.
+5. Never publish Virtual Car; keep Dvinholm the primary product.
 
 Canonical roadmap:
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
@@ -89,7 +101,7 @@ docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 проекта по этому файлу и
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md из ветки development
 репозитория vorlocsev/virtualcar, проверить актуальные PR, CI, коммиты
-и продолжить первый незавершённый этап (по состоянию этого файла: 60B-2).
+и продолжить первый незавершённый этап (PR #68, затем этап 61).
 
 Dvinholm остаётся основным продуктом. Virtual Car используется только
 как независимый тестовый стенд. Сборки и релизы Virtual Car не публиковать
