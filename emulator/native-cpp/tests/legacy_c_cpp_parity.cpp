@@ -32,7 +32,6 @@ constexpr std::array<std::uint8_t, 3> did_part{0x22, 0xf1, 0x87};
 constexpr std::array<std::uint8_t, 3> did_sw{0x22, 0xf1, 0x89};
 constexpr Dword ok = 0U;
 constexpr Dword empty = 16U;
-constexpr Dword invalid_channel = 2U;
 
 std::vector<std::uint8_t> expected(std::uint8_t did, std::string_view label)
 {
@@ -422,7 +421,16 @@ int main(int argc, char** argv)
         }};
         int passed = 0;
         for (const auto& [name, gate] : checks) {
-            const bool success = gate(old);
+            bool success = gate(old);
+            // The reference C DLL has eight channel slots. Release each
+            // gate's channels before the next independent trace begins.
+            while (!old.channels.empty()) {
+                const Dword channel = old.channels.back();
+                if (!old.close_channel(channel)) {
+                    success = false;
+                    break;
+                }
+            }
             std::printf("%s %s\n", success ? "PASS" : "FAIL", name);
             if (success) ++passed;
         }
