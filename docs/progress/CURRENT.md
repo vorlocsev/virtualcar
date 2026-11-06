@@ -34,6 +34,12 @@ current GitHub PR/CI state before changing code; do not rely only on chat memory
   https://github.com/vorlocsev/dvinholm/pull/702
   Verify current status before acting; no public x64 acceptance asserted.
 
+- Virtual Car PR #66: stage 60B-1 Go database/sql metadata boundary,
+  MERGED to development as 0d0ecdeaa63e483d8c2e80b70d187780916678b3.
+  Windows x86 CI #598 and VMware LAB packaging #434 SUCCESS.
+  Eight synthetic Go driver tests, no real SQLite Go driver and no runtime
+  J2534 change. https://github.com/vorlocsev/virtualcar/pull/66
+
 ## Actual technical state
 
 Implemented and tested:
@@ -48,20 +54,23 @@ Implemented and tested:
 - No private trace, VIN, PIN, EEPROM or VIDA XML committed.
 
 NOT IMPLEMENTED:
-- Go SQLite Catalog driver with migration transaction/backup.
+- Go SQLite driver registration, database opening, migration transaction/backup.
+- Existing Go database/sql boundary is metadata-only and cannot activate a scenario.
 - Hash-verified compiled scenario snapshot and runtime fixture selection.
 - Named Pipe IPC, headless Go service, actual x64 J2534 DLL.
 - Dvinholm real native x64 J2534 end-to-end tests.
 - Authorized live VIDA/SectorV identification of target XC90 MY2009.
 - Physical J2534/vehicle testing.
 
-## NEXT STAGE: 60B (Go-owned SQLite Catalog)
+## NEXT STAGE: 60B-2 (real Go SQLite driver, migration and backup)
 
-1. Choose a pinned, license-reviewed Go SQLite driver compatible with the
-   target Windows x64 self-contained service.
+1. Verify and pin modernc.org/sqlite and aligned libc/go.sum compatible with the
+   target Windows x64 self-contained service. Review licenses and CI builds.
 2. Enforce exact migration checksum, foreign keys, bounded file paths, WAL,
    single-writer transactions and database backups.
-3. Implement Go labcore.Catalog loading sealed descriptor metadata ONLY;
+3. Connect the existing Go labdb metadata boundary to the pinned driver,
+   retaining the explicit read-only descriptor contract; consider a guarded
+   labcore.Catalog only after stage61 scenario materialization.
    NEVER treat metadata SHA as payload verification.
 4. Implement canonical materialized snapshot content SHA-256 verification
    in stage 61 before permitting read-only scenario activation.
@@ -80,7 +89,7 @@ docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 проекта по этому файлу и
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md из ветки development
 репозитория vorlocsev/virtualcar, проверить актуальные PR, CI, коммиты
-и продолжить первый незавершённый этап (по состоянию этого файла: 60B).
+и продолжить первый незавершённый этап (по состоянию этого файла: 60B-2).
 
 Dvinholm остаётся основным продуктом. Virtual Car используется только
 как независимый тестовый стенд. Сборки и релизы Virtual Car не публиковать
