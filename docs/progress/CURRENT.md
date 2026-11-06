@@ -2,6 +2,19 @@
 
 ## ACTIVE checkpoint: C# .NET10 / C++20, M4B-2 complete (2026-11-06)
 
+### M5A local IPC preflight, Draft PR #85 (NOT merged / NOT verified)
+
+`feature/m5a-secure-local-ipc-preflight` introduces `VirtualCar.Service`:
+Windows current-user Named Pipe, 32-byte launch-secret HELLO, bounded
+LE v1 frames, session-generation validation, one-client fail-closed
+KEEPALIVE/GOODBYE and eight Windows synthetic integration gate groups.
+Managed CI is wired but do not claim a PASS until the latest PR checks
+finish successfully. This is **not** an installed service, a production
+credential-provisioning path, a functional native J2534 DLL or full M5.
+The underlying old C/Go references and existing J2534 binaries are unchanged.
+See docs/architecture/VIRTUALCAR-LOCAL-IPC-M5A.md and PR #85.
+
+
 Dvinholm remains the PRIMARY product. Virtual Car is a PRIVATE,
 optional, read-only development lab. Never publish/register Virtual
 Car as a physical J2534 adapter without explicit direction.
