@@ -5,6 +5,7 @@ This is a developer-only bridge until the Go service owns SQLite. It is NEVER
 called from the native J2534 DLL or the CAN hot path. No private vehicle data.
 """
 import argparse
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -57,7 +58,8 @@ def initialize(db_path):
     try:
         if os.name == "posix":
             os.chmod(tmp, 0o600)
-        with sqlite3.connect(tmp) as conn:
+        conn = sqlite3.connect(tmp)
+        try:
             conn.execute("PRAGMA foreign_keys=ON")
             if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
                 raise LabDbError("SQLite foreign key enforcement unavailable")
@@ -73,6 +75,8 @@ def initialize(db_path):
             _integrity(conn)
             if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise LabDbError("schema foreign key violation")
+        finally:
+            conn.close()
         with open(tmp, "rb") as stream:
             os.fsync(stream.fileno())
         # Same-filesystem exclusive hardlink: never replace even under a race.
@@ -233,7 +237,7 @@ def main(argv=None):
             initialize(args.database)
             print("Lab database initialized locally; no emulator connected")
             return
-        with open_database(args.database, readonly=(args.command == "inspect")) as conn:
+        with closing(open_database(args.database, readonly=(args.command == "inspect"))) as conn:
             if args.command == "add-profile":
                 add_synthetic_profile(conn, args.id, args.label, args.platform, args.year)
             elif args.command == "add-bus":
