@@ -15,7 +15,8 @@ not requirements for the new architecture.
 | M2 | Canonical immutable scenario compiler, evidence gates | COMPLETED, PR #75, CI #6 |
 | M3 | C++20 native x86/x64 J2534 ABI DLLs, 14 fail-closed exports | COMPLETED, PR #77, CI #10 |
 | M4A | Isolated C++ CAN/ISO-TP FIFO, FC and STmin deterministic engine | COMPLETED, PR #79, CI #13 |
-| M4B | J2534 ISO15765 metadata, atomic RX, multi-route, old/new C parity | NEXT |
+| M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
+| M4B-2 | Black-box same-input old C/new C++ parity, multi-channel behavior | NEXT |
 | M5 | C# headless Windows service and secure Named Pipes IPC | PLANNED |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
@@ -37,6 +38,11 @@ Completed source and CI evidence:
   library tested in Win32/x64 and Linux with eight offline groups.
   Managed CI #13, legacy x86 J2534 CI #628 and VMware LAB #447
   SUCCESS. **No functional J2534 DLL integration yet**. M4B next.
+- M4B-1: PR #81 merged 1786b33e. New isolated C++ J2534
+  ISO15765 RX framing, exact legacy SOURCE-DERIVED metadata,
+  8 synthetic multi-ECU and atomic queue tests on Linux/Win32/x64.
+  C# + C++ CI #15, legacy x86 emulator #631, VMware packaging
+  #448 SUCCESS. No live old/new DLL black-box parity yet.
 - Experimental prior Native AOT ABI probe PR #70 is nonfunctional
   and is not the user-selected C++20 production DLL.
 

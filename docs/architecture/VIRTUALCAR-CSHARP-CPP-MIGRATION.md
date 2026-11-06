@@ -23,8 +23,14 @@ C++20 CAN/ISO-TP FIFO/FC/BS/STmin transport. Linux and Windows Win32/x64
 eight-group synthetic tests passed, migration CI #13, legacy x86 #628 and
 VMware LAB packaging #447 SUCCESS. This does NOT mean the DLL can open
 a J2534 channel or that old/new protocol parity is complete.
-**Next M4B:** exact PassThru receive metadata, atomic ISO15765 indication,
-multi-route isolation and independent black-box comparisons with old C.
+**M4B-1 completed:** PR #81 merged 1786b33e, isolated C++20
+J2534 ISO15765 RX metadata and atomic START_OF_MESSAGE pair,
+8 synthetic ECU routes, 8 test groups Linux/Win32/x64.
+Managed CI #15, legacy x86 #631, VMware LAB packaging #448 SUCCESS.
+This is a SOURCE-DERIVED contract comparison, not old/new DLL
+executable parity. The native J2534 DLL still fails closed.
+**Next M4B-2:** actual identical-input old C vs new C++ black-box
+output parity and multi-channel behavior, before M5 host.
 Preserve old C/Go until real functional parity is verified.
 
 ## Final stack

@@ -1,29 +1,34 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: C# / C++20 M4A done; native transport M4B next
+## ACTIVE: M4B-1 complete, M4B-2 black-box parity next
 
-Dvinholm remains the PRIMARY product. Virtual Car is a PRIVATE read-only
-simulator for Dvinholm development, not a public J2534 driver.
-User-approved architecture: C#/.NET10 Core/SQLite/scenario/service/WinUI3,
-native C++20 for Win32/x64 PassThru and CAN/ISO-TP transport.
+Dvinholm is the PRIMARY product; Virtual Car remains PRIVATE, optional
+and read-only. C# .NET10 Core/SQLite/Scenario/Service/WinUI; C++20
+Win32/x64 native J2534 DLL and critical CAN/ISO-TP transport.
 
-GitHub verified: M0 PR #71, M1 PR #72, M2 PR #75, M3 PR #77 merged.
-**M4A PR #79 MERGED** at 3719f58b234e0c244d1d3f5d874658f6811ea6ee.
-The standalone C++20 engine now models bounded CAN FIFO/filter/ISO-TP
-FF/CF/CTS/BS/STmin/WAIT/OVERFLOW and reset generation. 8 synthetic
-test groups passed on Linux + Windows x86/x64. Managed CI #13,
-legacy x86 J2534 #628 and VMware LAB package #447 SUCCESS.
+Verified, merged: M0 #71, M1 #72, M2 #75, M3 #77,
+M4A #79 at 3719f58b, M4B-1 #81 at
+**1786b33e080d19b20c34b0586346263b10c14cbf**.
+M4B-1 adds strict ISO15765 J2534 RX metadata, up to 8 synthetic ECU
+routes, 64 bounded J2534 RX entries, exact flow filter ownership,
+atomic START_OF_MESSAGE + full reply, timestamps, 29-bit IDs,
+fail-closed rejected services. Eight tests passed on Linux/Win32/x64;
+C# + C++ CI #15 SUCCESS; old x86 emulator CI #631 SUCCESS;
+VMware LAB packaging #448 SUCCESS.
 
-**NEXT: M4B** strict ISO15765 PassThru RX metadata, atomic
-START_OF_MESSAGE admission, multi-route isolation and byte-for-byte
-legacy C/native C++ parity tests using identical synthetic traces.
-Only then M5 local authenticated Named Pipes C# host. The new M3 DLL
-is STILL FAIL-CLOSED: no functional J2534 channels, no live CAN or
-Dvinholm E2E. Never publish/register it. Preserve C/Go old code.
+**NEXT M4B-2:** real black-box comparison old C x86 PassThru DLL
+vs new C++ under identical synthetic CAN/UDS traces, normalize only
+timestamps/handles; add multi-route/channel isolation and error
+semantics, 6-8 gates. Only after parity comes M5 secure C# Named
+Pipes and M7 Dvinholm x64 end-to-end. DO NOT treat source-derived
+expected structures as proof of actual old/new DLL parity.
 
-Read development docs/progress/CURRENT.md,
-docs/architecture/VIRTUALCAR-CPP-TRANSPORT-M4A.md and ROADMAP first.
-Cross-chat trigger: **virtual car**.
+M3 C++ J2534 DLL remains fail-closed, no real adapter, no public release,
+no physical vehicle testing. Preserve C/Go references.
+
+Read docs/progress/CURRENT.md, ROADMAP, and
+docs/architecture/VIRTUALCAR-J2534-ISOTP-RX-M4B1.md on development.
+Cross-chat phrase remains exactly **virtual car**.
 
 ---
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
