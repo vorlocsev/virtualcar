@@ -64,8 +64,12 @@ class SqliteRepositoryTests(unittest.TestCase):
                 conn.execute("UPDATE schema_migrations SET checksum_sha256=?", ("f" * 64,))
             with self.assertRaises(RepositoryError):
                 open_repository(p)
-            with sqlite3.connect(p) as conn:
+            conn = sqlite3.connect(p)
+            try:
                 conn.execute("UPDATE schema_migrations SET version=99,checksum_sha256=?", ("a" * 64,))
+                conn.commit()
+            finally:
+                conn.close()
             with self.assertRaises(RepositoryError):
                 open_repository(p)
 
