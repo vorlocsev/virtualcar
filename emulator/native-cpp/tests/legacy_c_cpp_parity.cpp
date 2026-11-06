@@ -209,7 +209,7 @@ bool group01_short_positive(Legacy& old)
     tr::Iso15765Rx fresh;
     if (!channel || !old.install(channel, ecu_a.response_id, ecu_a.request_id) ||
         !configure(fresh, ecu_a) || !old.send(channel, ecu_a.request_id, did_part) ||
-        !emit(fresh, 0, expected(0x87U, "LAB-A"))) return false;
+        !emit(fresh, 0, expected(0x87U, "LABA"))) return false;
     std::vector<Msg> a, b;
     return old.drain(channel, a) && collect(fresh, b) &&
         a.size() == 1U && equal_messages(a, b);
@@ -241,8 +241,8 @@ bool group03_two_ecu(Legacy& old)
         return false;
     if (!old.send(channel, ecu_a.request_id, did_part) ||
         !old.send(channel, ecu_b.request_id, did_part) ||
-        !emit(fresh, 0, expected(0x87U, "LAB-A")) ||
-        !emit(fresh, 1, expected(0x87U, "LAB-B")))
+        !emit(fresh, 0, expected(0x87U, "LABA")) ||
+        !emit(fresh, 1, expected(0x87U, "LABB")))
         return false;
     std::vector<Msg> a, b;
     return old.drain(channel, a) && collect(fresh, b) &&
@@ -261,9 +261,9 @@ bool group04_channel_isolation(Legacy& old)
         return false;
     if (!old.send(with_filter, ecu_a.request_id, did_part) ||
         !old.send(without_filter, ecu_a.request_id, did_part) ||
-        !emit(fresh_allowed, 0, expected(0x87U, "LAB-A")) ||
+        !emit(fresh_allowed, 0, expected(0x87U, "LABA")) ||
         fresh_blocked.emit_verified_readonly_reply(0,
-            expected(0x87U, "LAB-A"), false, 0U) != tr::Result::blocked)
+            expected(0x87U, "LABA"), false, 0U) != tr::Result::blocked)
         return false;
     std::vector<Msg> a, b, c, d;
     return old.drain(with_filter, a) && old.drain(without_filter, b) &&
@@ -280,7 +280,7 @@ bool group05_broad_filter(Legacy& old)
         !configure(fresh, ecu_a, broad) ||
         !old.send(channel, ecu_a.request_id, did_part) ||
         !old.send(channel, ecu_a.request_id, did_sw) ||
-        !emit(fresh, 0, expected(0x87U, "LAB-A")) ||
+        !emit(fresh, 0, expected(0x87U, "LABA")) ||
         fresh.emit_verified_readonly_reply(
             0, expected(0x89U, "LAB-LONG-SYNTHETIC-ENGINE"), true, 1U)
             != tr::Result::blocked)
@@ -313,7 +313,7 @@ bool group07_atomic_full_fifo(Legacy& old)
     tr::Iso15765Rx fresh;
     if (!channel || !old.install(channel, ecu_a.response_id, ecu_a.request_id) ||
         !configure(fresh, ecu_a)) return false;
-    const auto short_reply = expected(0x87U, "LAB-A");
+    const auto short_reply = expected(0x87U, "LABA");
     for (std::size_t i = 0; i < 63U; ++i) {
         if (!old.send(channel, ecu_a.request_id, did_part) ||
             !emit(fresh, 0, short_reply)) return false;
@@ -337,7 +337,7 @@ bool group08_disconnect_reset(Legacy& old)
     if (!channel || !old.install(channel, ecu_a.response_id, ecu_a.request_id) ||
         !configure(fresh, ecu_a) ||
         !old.send(channel, ecu_a.request_id, did_part) ||
-        !emit(fresh, 0, expected(0x87U, "LAB-A")))
+        !emit(fresh, 0, expected(0x87U, "LABA")))
         return false;
     const auto generation = fresh.generation();
     if (!old.close_channel(channel)) return false;
@@ -368,9 +368,9 @@ bool create_lab(const fs::path& old_path, const fs::path& lab_dir,
         "; Synthetic executable parity only, never a genuine ECU profile.\r\n"
         "[Vehicle]\r\nECUCount=2\r\nBatteryMv=12500\r\nEmitIsoRxStart=1\r\n"
         "[ECU0]\r\nRequestId=7E0\r\nResponseId=7E8\r\n"
-        "PartNumber=LAB-A\r\nSoftware=LAB-LONG-SYNTHETIC-ENGINE\r\n"
+        "PartNumber=LABA\r\nSoftware=LAB-LONG-SYNTHETIC-ENGINE\r\n"
         "[ECU1]\r\nRequestId=7E1\r\nResponseId=7E9\r\n"
-        "PartNumber=LAB-B\r\nSoftware=LAB-SW-B\r\n"
+        "PartNumber=LABB\r\nSoftware=LAB-SW-B\r\n"
         "[Diagnostics]\r\nStrictJ2534Filters=1\r\nBackendTelemetryEnabled=0\r\n"
         "[PassiveCAN]\r\nEnabled=0\r\n"
         "[PassiveTrace]\r\nEnabled=0\r\n"
