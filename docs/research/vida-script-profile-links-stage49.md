@@ -94,3 +94,20 @@ The exact VIDA 2015A RunIdentifyVehicleScript selection must be resolved
 by analyzing the ScriptObjectProvider/IRunScriptService call chain and the
 actual authorized SQL/XML scripts, then matching client-observed sequence
 B9FB / B9F0 / identity / ECU identification in one read-only run.
+
+## Optional Windows PowerShell metadata export
+
+A new SELECT-only local helper performs the three exact queries without
+dumping XmlDataCompressed, original scripts, VIN or credentials:
+
+    & .\emulator\scripts\Export-VidaScriptMetadata.ps1 -ServerInstance 'YOUR_SQL_INSTANCE' -OutputDirectory 'C:\PRIVATE-VIDA-METADATA'
+
+Only run on a trusted workstation where you have SQL SELECT authorization.
+The Windows PowerShell SqlServer module (Invoke-Sqlcmd) is a prerequisite;
+this helper never installs it. It refuses a destination under the Git repo
+and will not overwrite an existing output directory. It does not validate
+whether VIDA 2015A matches the 2014D column names: a query error requires
+manual schema inspection rather than a fallback or altered SQL.
+
+The emitted CSV contains internal script/profile keys and stays PRIVATE.
+Only the audited count-only JSON output may be reviewed for further sharing.
