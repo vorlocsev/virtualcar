@@ -40,11 +40,11 @@ using Close = DWORD (VC_J2534_CALL *)(DWORD);
 using Connect = DWORD (VC_J2534_CALL *)(DWORD, DWORD, DWORD, DWORD, DWORD*);
 using Disconnect = DWORD (VC_J2534_CALL *)(DWORD);
 using ReadMsgs = DWORD (VC_J2534_CALL *)(DWORD, PASSTHRU_MSG*, DWORD*, DWORD);
-using WriteMsgs = DWORD (VC_J2534_CALL *)(DWORD, const PASSTHRU_MSG*, DWORD*, DWORD);
-using StartPeriodicMsg = DWORD (VC_J2534_CALL *)(DWORD, const PASSTHRU_MSG*, DWORD*, DWORD*);
+using WriteMsgs = DWORD (VC_J2534_CALL *)(DWORD, PASSTHRU_MSG*, DWORD*, DWORD);
+using StartPeriodicMsg = DWORD (VC_J2534_CALL *)(DWORD, PASSTHRU_MSG*, DWORD*, DWORD*);
 using StopPeriodicMsg = DWORD (VC_J2534_CALL *)(DWORD, DWORD);
-using StartMsgFilter = DWORD (VC_J2534_CALL *)(DWORD, DWORD, const PASSTHRU_MSG*,
-                                              const PASSTHRU_MSG*, const PASSTHRU_MSG*, DWORD*);
+using StartMsgFilter = DWORD (VC_J2534_CALL *)(DWORD, DWORD, PASSTHRU_MSG*,
+                                              PASSTHRU_MSG*, PASSTHRU_MSG*, DWORD*);
 using StopMsgFilter = DWORD (VC_J2534_CALL *)(DWORD, DWORD);
 using SetProgrammingVoltage = DWORD (VC_J2534_CALL *)(DWORD, DWORD, DWORD);
 using ReadVersion = DWORD (VC_J2534_CALL *)(DWORD, char*, char*, char*);
