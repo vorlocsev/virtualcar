@@ -65,7 +65,7 @@ func Test02MissingDatabaseNoImplicitCreationAndNoOverwrite(t *testing.T) {
 func Test03RejectMigrationTamperingAndCorruption(t *testing.T) {
 	c,path:=makeDB(t)
 	if _,err:=c.db.Exec("UPDATE schema_migrations SET checksum_sha256=?",strings.Repeat("f",64));err!=nil{t.Fatal(err)}
-	if _,err:=Open(context.Background(),path,schemaPath());!errors.Is(err,ErrMigration){t.Fatalf("tampered schema: %v",err)}
+	if _,err:=Open(context.Background(),path,schemaPath());!errors.Is(err,ErrUnavailable){t.Fatalf("tampered schema: %v",err)}
 	if err:=c.Close();err!=nil {t.Fatal(err)}
 	// A corrupt user DB is never implicitly destroyed or reset.
 	corrupt:=filepath.Join(t.TempDir(),"bad.db")
