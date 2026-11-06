@@ -20,9 +20,9 @@ Independent scenario expectations come from a temporary ASCII-only
 `virtualcar.ini` synthesized by the test:
 
 - ECM A: CAN request 0x7E0, response 0x7E8,
-  F187 PartNumber `LAB-A`, F189 Software `LAB-LONG-SYNTHETIC-ENGINE`.
+  F187 PartNumber `LABA`, F189 Software `LAB-LONG-SYNTHETIC-ENGINE`.
 - ECM B: CAN request 0x7E1, response 0x7E9,
-  F187 PartNumber `LAB-B`, F189 Software `LAB-SW-B`.
+  F187 PartNumber `LABB`, F189 Software `LAB-SW-B`.
 - Strict J2534 filters ON, optional ISO15765 START_OF_MESSAGE ON.
   No passive traffic, D2/CEM frames, private VIN or hardware I/O.
 
