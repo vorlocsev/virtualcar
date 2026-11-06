@@ -145,6 +145,22 @@ integration has been completed yet.
 NEXT: complete CS-01 native x86/x64 CI, then CS-02 Microsoft.Data.Sqlite.
 Keep Dvinholm primary and NEVER publish Virtual Car without permission.
 
+## CS-01 verified and CS-02 in implementation (2026-11-06)
+
+CS-01 PR #70 MERGED to development as
+5ab1773d317900064fa1b2a9ddb1dc47e0dd969f.
+Windows emulator CI #607 SUCCESS: eight C# Core tests, Native AOT
+x86 and x64 14-export ABI-only DLL load, old C/Go and native routes.
+The Native AOT DLL returns ERR_NOT_SUPPORTED. NOT a usable J2534 adapter.
+
+CURRENT CS-02 BRANCH: feature/csharp-sqlite-storage-stage-cs02
+C# SQLite v1 migration/backup code and eight real SQLite tests are being
+reviewed. No pass/merge claim until the latest CI verifies it.
+docs/architecture/VIRTUALCAR-CSHARP-SQLITE-CS02.md
+
+NEXT after CS-02: CS-03 C# CAN/ISO-TP protocol parity with old C.
+No C# GUI/native functional J2534 or physical DiCE validation yet.
+
 ## Короткая фраза для продолжения в новом чате
 
 **virtual car**
@@ -153,7 +169,7 @@ Keep Dvinholm primary and NEVER publish Virtual Car without permission.
 проекта по этому файлу и
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md из ветки development
 репозитория vorlocsev/virtualcar, проверить актуальные PR, CI, коммиты
-и продолжить первый незавершённый этап (сейчас этап CS-01, затем CS-02).
+и продолжить первый незавершённый этап (сейчас этап CS-02, затем CS-03).
 
 Dvinholm остаётся основным продуктом. Virtual Car используется только
 как независимый тестовый стенд. Сборки и релизы Virtual Car не публиковать

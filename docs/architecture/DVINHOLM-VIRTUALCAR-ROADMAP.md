@@ -118,8 +118,8 @@ docs/architecture/VIRTUALCAR-CSHARP-DOTNET10-MIGRATION.md
 
 | C# stage | Goal | State |
 | --- | --- | --- |
-| CS-01 | C# Core and 8 synthetic gates; native AOT 14 exports on x86/x64 | PR #70 / CI pending |
-| CS-02 | C# Microsoft.Data.Sqlite repository + migrations/backups | PLANNED |
+| CS-01 | C# Core and 8 synthetic gates; Native AOT 14-export ABI x86/x64 | COMPLETE, PR #70, CI #607 |
+| CS-02 | Microsoft.Data.Sqlite, v1 migration, WAL, online backup, eight real SQLite tests | IN REVIEW |
 | CS-03 | C# CAN/ISO-TP parity | PLANNED |
 | CS-04 | C# D2 and ECU/scenario compiler | PLANNED |
 | CS-05 | .NET10 Host and named-pipe control/data channels | PLANNED |

@@ -25,6 +25,8 @@ jobs:
         run: dotnet build dotnet/src/VirtualCar.Core/VirtualCar.Core.csproj -c Release --warnaserror
       - name: Eight synthetic read-only control plane gates
         run: dotnet run --project dotnet/tests/VirtualCar.Core.Smoke/VirtualCar.Core.Smoke.csproj -c Release
+      - name: Eight real CSharp SQLite data and backup gates
+        run: dotnet run --project dotnet/tests/VirtualCar.Storage.Smoke/VirtualCar.Storage.Smoke.csproj -c Release
       - name: Verify old C and Go sources still present
         shell: pwsh
         run: |

@@ -1,5 +1,16 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## CURRENT WORK: C# CS-02 SQLite repository (2026-11-06)
+
+- C# CS-01 PR #70 MERGED: 5ab1773d317900064fa1b2a9ddb1dc47e0dd969f.
+  CI #607 SUCCESS, both win-x86 and win-x64 Native AOT ABI canaries.
+- Active CS-02 branch feature/csharp-sqlite-storage-stage-cs02:
+  Microsoft.Data.Sqlite 10.0.14, embedded v1 migration SHA-256, WAL,
+  backups, eight actual SQLite regression groups.
+- Check its PR/CI before claiming completion. No live J2534 C# simulator
+  or Dvinholm physical acceptance yet. Next CS-03 CAN/ISO-TP C#.
+- Keep the user keyword **virtual car** and NO Virtual Car publication.
+
 ## ACTIVE decision: full C# rewrite (2026-11-06)
 
 Primary product Dvinholm; Virtual Car test lab to be written in C#/.NET 10.
