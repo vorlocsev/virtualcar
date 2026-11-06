@@ -243,7 +243,20 @@ bool group08_reset_wrap_and_lossless_backpressure()
         e.queued() != Engine::fifo_capacity || !e.pending())
         return false;
     Frame stale{};
-    if (!e.pop(stale)) return false;
+    // Consume FF + 63 CFs; pending transfer must resume at the NEXT
+    // sequence number, without skipping any payload bytes.
+    if (!e.pop(stale) || stale.data[0] != 0x1fU ||
+        stale.data[1] != 0xffU) return false;
+    for (std::size_t i = 0; i < 63; ++i) {
+        Frame drained{};
+        if (!e.pop(drained) ||
+            drained.data[0] != static_cast<std::uint8_t>(0x20U | ((i + 1U) & 0x0fU)))
+            return false;
+    }
+    if (e.queued() != 0 || !e.pending()) return false;
+    if (e.pump(12U) != Result::queue_full || e.queued() != Engine::fifo_capacity ||
+        !e.pending()) return false;
+    if (!e.pop(stale) || stale.data[0] != 0x20U) return false; // CF#64 wraps
     const auto before = e.generation();
     e.reset();
     if (e.generation() == before || e.pending() || e.queued() ||
