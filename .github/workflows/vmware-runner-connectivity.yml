@@ -40,7 +40,7 @@ jobs:
 
           # Python is a uv-managed, isolated runtime on E:.
           # No Python registry entries or per-user profile paths are used.
-          $manifest = 'E:\\VirtualCar\\Tools\\python312.path'
+          $manifest = 'E:\VirtualCar\Tools\python312.path'
           if (-not (Test-Path -LiteralPath $manifest)) {
               throw "Python runtime manifest not found: $manifest. Run Install-VirtualCar-Python312-Managed.ps1 on the VM."
           }
