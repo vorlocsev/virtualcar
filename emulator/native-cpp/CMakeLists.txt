@@ -45,3 +45,14 @@ add_executable(vc_transport_checks tests/transport_checks.cpp)
 target_link_libraries(vc_transport_checks PRIVATE VirtualCarTransport)
 target_compile_options(vc_transport_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m4a_bounded_isotp_transport_8_groups COMMAND vc_transport_checks)
+
+# M4B-1: isolated ISO15765/J2534 RX compatibility layer, not linked
+# into the fail-closed adapter DLL until the later M5 authenticated host.
+add_library(VirtualCarIsoRx STATIC src/isotp_rx.cpp)
+target_include_directories(VirtualCarIsoRx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(VirtualCarIsoRx PRIVATE /W4 /WX /permissive- /sdl)
+
+add_executable(vc_isotp_rx_checks tests/isotp_rx_checks.cpp)
+target_link_libraries(vc_isotp_rx_checks PRIVATE VirtualCarIsoRx)
+target_compile_options(vc_isotp_rx_checks PRIVATE /W4 /WX /permissive- /sdl)
+add_test(NAME m4b1_isotp_rx_metadata_8_groups COMMAND vc_isotp_rx_checks)
