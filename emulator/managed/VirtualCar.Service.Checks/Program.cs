@@ -89,7 +89,7 @@ internal static class Program
         Require(response?.Kind == PipeFrameCodec.Ack &&
             response.SessionId != 0 && response.Generation != 0 &&
             response.Payload.Length == 0, "Authentication did not create a real core session");
-        return response;
+        return response!;
     }
 
     private static async Task ExpectClosedAsync(Stream client)
