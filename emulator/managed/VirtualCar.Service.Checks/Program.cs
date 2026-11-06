@@ -161,9 +161,12 @@ internal static class Program
         byte[] raw = buffer.ToArray();
         mutate(raw);
         if (truncate is int length) raw = raw[..length];
-        // Named pipes are unbuffered here. FlushAsync can race the host's
-        // intentional rejection/close and spuriously throw on Windows.
-        await client.WriteAsync(raw);
+        // The server may reject and close immediately after reading the
+        // 28-byte invalid header, before Windows has accepted the remaining
+        // bytes. A broken-pipe write is an expected fail-closed result here,
+        // but the caller must independently verify that no ACK is returned.
+        try { await client.WriteAsync(raw); }
+        catch (IOException) { /* The hostile frame was rejected early. */ }
     }
 
     private static async Task Test04()
@@ -228,8 +231,8 @@ internal static class Program
             "VCLB"u8.CopyTo(raw);
             BinaryPrimitives.WriteUInt16LittleEndian(raw.AsSpan(4), PipeFrameCodec.Version);
             BinaryPrimitives.WriteUInt16LittleEndian(raw.AsSpan(6), 99);
-            await client.WriteAsync(raw);
-            await client.FlushAsync();
+            try { await client.WriteAsync(raw); }
+            catch (IOException) { /* Deliberate unsupported command rejected early. */ }
             await ExpectClosedAsync(client);
         });
     }
