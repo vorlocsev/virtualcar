@@ -161,8 +161,9 @@ internal static class Program
         byte[] raw = buffer.ToArray();
         mutate(raw);
         if (truncate is int length) raw = raw[..length];
+        // Named pipes are unbuffered here. FlushAsync can race the host's
+        // intentional rejection/close and spuriously throw on Windows.
         await client.WriteAsync(raw);
-        await client.FlushAsync();
     }
 
     private static async Task Test04()
