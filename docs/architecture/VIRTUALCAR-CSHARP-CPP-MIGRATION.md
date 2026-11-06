@@ -18,8 +18,14 @@ J2534 fail-closed DLL ABI exported, 14 exact symbols, PE32/PE32+ and
 8 per-arch native checks. CI #10, #624 and VMware LAB package #445 SUCCESS.
 The DLL remains NONFUNCTIONAL as a diagnostic device; no CAN/IPC/ECU
 transport, no registration and no client acceptance yet.
-**Next M4:** bounded C++ CAN/ISO-TP/filter parity versus legacy C.
-Preserve old C/Go until independent functional parity is verified.
+**M4A completed:** PR #79 merged 3719f58b with bounded, isolated
+C++20 CAN/ISO-TP FIFO/FC/BS/STmin transport. Linux and Windows Win32/x64
+eight-group synthetic tests passed, migration CI #13, legacy x86 #628 and
+VMware LAB packaging #447 SUCCESS. This does NOT mean the DLL can open
+a J2534 channel or that old/new protocol parity is complete.
+**Next M4B:** exact PassThru receive metadata, atomic ISO15765 indication,
+multi-route isolation and independent black-box comparisons with old C.
+Preserve old C/Go until real functional parity is verified.
 
 ## Final stack
 

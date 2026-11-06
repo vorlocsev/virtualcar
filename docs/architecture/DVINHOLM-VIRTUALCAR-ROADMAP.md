@@ -14,7 +14,8 @@ not requirements for the new architecture.
 | M1 | Microsoft.Data.Sqlite / SQLite v1 migration with rollback | COMPLETED, PR #72, CI #4 |
 | M2 | Canonical immutable scenario compiler, evidence gates | COMPLETED, PR #75, CI #6 |
 | M3 | C++20 native x86/x64 J2534 ABI DLLs, 14 fail-closed exports | COMPLETED, PR #77, CI #10 |
-| M4 | C++ transport/parity: filters, FC, ISO-TP, queues, deadlines | NEXT |
+| M4A | Isolated C++ CAN/ISO-TP FIFO, FC and STmin deterministic engine | COMPLETED, PR #79, CI #13 |
+| M4B | J2534 ISO15765 metadata, atomic RX, multi-route, old/new C parity | NEXT |
 | M5 | C# headless Windows service and secure Named Pipes IPC | PLANNED |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
@@ -32,6 +33,10 @@ Completed source and CI evidence:
   ABI/error gates. Managed native CI #10, legacy x86 #624, VMware LAB
   packaging #445 all SUCCESS. This is a fail-closed ABI binary,
   not a functioning transport or approved physical J2534 adapter.
+- M4A: PR #79 merged 3719f58b. Bounded native C++20 CAN/ISO-TP
+  library tested in Win32/x64 and Linux with eight offline groups.
+  Managed CI #13, legacy x86 J2534 CI #628 and VMware LAB #447
+  SUCCESS. **No functional J2534 DLL integration yet**. M4B next.
 - Experimental prior Native AOT ABI probe PR #70 is nonfunctional
   and is not the user-selected C++20 production DLL.
 
