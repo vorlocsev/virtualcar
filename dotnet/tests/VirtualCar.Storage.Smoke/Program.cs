@@ -51,7 +51,7 @@ static async Task CreateAndReopen()
     {
         Ensure((await db.ListProfilesAsync()).Count == 0, "Fresh DB not empty");
         using var separate = new SqliteConnection(new SqliteConnectionStringBuilder {
-            DataSource = Path.Combine(dir, "lab.db"), Mode = SqliteOpenMode.ReadWrite, ForeignKeys = true
+            DataSource = Path.Combine(dir, "lab.db"), Mode = SqliteOpenMode.ReadWrite, ForeignKeys = true, Pooling = false
         }.ToString());
         separate.Open();
         using var cmd = separate.CreateCommand();
@@ -83,7 +83,7 @@ static async Task CorruptionAndSchema()
         File.Delete(path);
         using (var db = LabStorage.Open(path, initialize: true)) { }
         using (var edit = new SqliteConnection(new SqliteConnectionStringBuilder {
-            DataSource = path, Mode = SqliteOpenMode.ReadWrite
+            DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false
         }.ToString()))
         {
             edit.Open();
@@ -123,7 +123,7 @@ static async Task MetadataOnly()
     {
         await db.AddSyntheticProfileAsync("lab", "Synthetic vehicle", "GENERIC", 2009);
         using (var sql = new SqliteConnection(new SqliteConnectionStringBuilder {
-            DataSource = Path.Combine(dir, "lab.db"), Mode = SqliteOpenMode.ReadWrite, ForeignKeys = true
+            DataSource = Path.Combine(dir, "lab.db"), Mode = SqliteOpenMode.ReadWrite, ForeignKeys = true, Pooling = false
         }.ToString()))
         {
             sql.Open();
@@ -161,7 +161,7 @@ static async Task CancellationAndFk()
         try { await db.ListProfilesAsync(ct: cts.Token); throw new Exception("Cancelled read succeeded"); }
         catch (OperationCanceledException) { }
         using (var external = new SqliteConnection(new SqliteConnectionStringBuilder {
-            DataSource = Path.Combine(dir, "lab.db"), Mode = SqliteOpenMode.ReadWrite, ForeignKeys = true
+            DataSource = Path.Combine(dir, "lab.db"), Mode = SqliteOpenMode.ReadWrite, ForeignKeys = true, Pooling = false
         }.ToString()))
         {
             external.Open();
