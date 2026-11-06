@@ -49,7 +49,7 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 | --- | --- | --- | --- |
 | 60A | SQLite offline catalog | explicit init, checksum, migration rejection, integrity, FK, rollback, bounded metadata, symlink safety | COMPLETED, PR #62, CI #587 |
 | 60B-1 | Go SQL metadata boundary | injected driver, checksum/integrity/FK checks, safe bounded metadata, eight synthetic tests | COMPLETED, PR #66, CI #598 |
-| 60B-2 | Real Go SQLite driver | pinned dependency, DB backup, migrations, async-safe locking, corruption refusal, sealed metadata, cancellation | NEXT |
+| 60B-2 | Real Go SQLite driver | pinned modernc and checksums, WAL backup, migrations, bounded queries, real SQLite tests, Windows x64 build | PR #68 IN REVIEW; check HEAD CI |
 | 61 | Scenario Compiler | exactly sourced fixtures, canonical serialization, SHA-256, sealed revision, refusal on missing evidence, bus/ECU isolation, reproducible replay, read-only policy | PLANNED |
 | 62 | Go Headless Core | lifecycle, CPU/timing, queues, no SQL in RX, reset, faults, stale session rejection, cancellation, recovery | PLANNED |
 | 63 | IPC control/data | Windows SID ACL, version negotiation, x86/x64, length caps, deadline, disconnect recovery, invalid IDs, event isolation | PLANNED |
@@ -58,23 +58,18 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 | 66 | Lab Control UI | profiles, ECU catalog, scenario revision, start/stop, fault scenarios, test history, RU/EN, privacy | PLANNED |
 | 67 | Evidence-scoped P2 | real diagnostic traces, B9FB/B9F0 provenance, identity script, VIN validation, profile resolution, ECU inventory, missing-data fail-closed, Windows acceptance | RESEARCH BLOCKED |
 
-## Explicit next step (stage 60B-2)
+## Active next gate: PR #68, then stage 61
 
-- Read the latest docs/progress/CURRENT.md first, then verify GitHub.
-- Stage60A and stage60B-1 are merged and tested. Do not mistake a
-  fake database/sql test driver for real Go SQLite integration.
-- Stage60B-1 PR #66, merge 0d0ecdea, x86 CI #598 SUCCESS and
-  VMware LAB packaging #434 SUCCESS.
-- Integrate the existing Go labdb boundary with a pinned/verified
-  modernc.org/sqlite driver (or justified equivalent), dependency checksums,
-  Windows x64 build verification, the existing v1 schema and schema checksum,
-  explicit migration, WAL/foreign keys, safe backup and single-writer state.
-- Connect metadata loading to labcore.Catalog only after a separate
-  immutable scenario payload/compiler is present; metadata digest alone
-  cannot authorize actual CAN replies.
-- Add 6-8 Go synthetic tests, verify full Windows x86/native CI, then
-  merge to Virtual Car development. x64/native E2E is still pending.
-- Keep Dvinholm PR #702 x64 work separate. Never publish Virtual Car.
+- PR #66 merged the safe injected database/sql metadata boundary.
+- PR #68 adds the pinned real Go SQLite driver, schema, WAL backup and
+  8 additional real SQLite tests; supports Windows x64 no-CGO build.
+- PR #65 was blocked by concurrent merge conflicts and is superseded
+  by PR #68. Do not force-merge or overwrite the existing Repository.
+- Verify PR #68 final HEAD CI and native x86 J2534 regression before
+  merging into development. Record actual merge SHA when confirmed.
+- After stage 60B-2 is merged: implement canonical scenario compiler,
+  artifact SHA-256 and provenance-bound, read-only ECU reply activation.
+- Never publish Virtual Car or claim physical MY2009 CEM acceptance.
 
 ## Cross-chat restoration procedure
 
