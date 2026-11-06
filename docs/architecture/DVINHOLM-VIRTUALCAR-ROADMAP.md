@@ -34,8 +34,12 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
   schema test groups; Virtual Car Windows x86 CI #577 SUCCESS.
 - Dvinholm PR #702: separate ongoing x64 WinUI migration; its existence
   is not proof of a public x64 release.
-- Dvinholm PR #703: proposed Dvinholm-first lab contract documentation,
-  draft; check the latest PR head/CI before deciding whether to merge.
+- Dvinholm PR #703: merged Dvinholm-first lab contract documentation
+  to main as 558f816d, head CI #5151 SUCCESS.
+- Virtual Car stage60A PR #62: merged to development as 73c4f375.
+  The final Windows x86 CI #587 and VMware LAB #426 SUCCESS.
+  Standard-library Python SQLite offline catalog, explicit migration
+  checksum, no implicit schema creation/upgrades, eight synthetic tests.
 - No confirmed actual VIDA 2015A or SectorV identification of target
   XC90 V8 MY2009, no physical J2534 test, no approved release publication.
 
@@ -43,7 +47,8 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 
 | Stage | Goal | Required gates | State |
 | --- | --- | --- | --- |
-| 60 | SQLite Repository v1 | schema checks, immutable snapshots, migrations, idempotence, rollback, path safety, input bounds, metadata-only reports | IN PROGRESS |
+| 60A | SQLite offline catalog | explicit init, checksum, migration rejection, integrity, FK, rollback, bounded metadata, symlink safety | COMPLETED, PR #62, CI #587 |
+| 60B | Go-owned catalog | pinned driver, DB backup, migration, async-safe locking, bounded queries, corrupt DB refusal, sealed metadata, cancellation | NEXT |
 | 61 | Scenario Compiler | exactly sourced fixtures, canonical serialization, SHA-256, sealed revision, refusal on missing evidence, bus/ECU isolation, reproducible replay, read-only policy | PLANNED |
 | 62 | Go Headless Core | lifecycle, CPU/timing, queues, no SQL in RX, reset, faults, stale session rejection, cancellation, recovery | PLANNED |
 | 63 | IPC control/data | Windows SID ACL, version negotiation, x86/x64, length caps, deadline, disconnect recovery, invalid IDs, event isolation | PLANNED |
@@ -52,20 +57,20 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 | 66 | Lab Control UI | profiles, ECU catalog, scenario revision, start/stop, fault scenarios, test history, RU/EN, privacy | PLANNED |
 | 67 | Evidence-scoped P2 | real diagnostic traces, B9FB/B9F0 provenance, identity script, VIN validation, profile resolution, ECU inventory, missing-data fail-closed, Windows acceptance | RESEARCH BLOCKED |
 
-## Explicit next step (stage 60)
+## Explicit next step (stage 60B)
 
-- Implement SQLite management repository as an isolated local component.
-- Reuse emulator/schema/0001_lab_catalog.sql rather than creating a second
-  schema. Driver/loader must enforce foreign keys, bounded SQL inputs, version
-  journal with SHA-256, WAL and one writer; no SQL in J2534 hot path.
-- Begin with standard-library SQLite3 offline importer/migration tester as
-  a standalone local tool, then bridge to Go through an audited native/pure
-  SQLite driver, without adding a Python runtime to the future x64
-  self-contained laboratory release.
-- Run new tests as part of existing Python CI discovery, then verify native
-  x86 J2534 checks unchanged. Merging stage 60 depends on both CI jobs.
-- Re-evaluate separate Dvinholm PR #703 with latest head CI before merge.
-- Continue stage 61 only after stage 60 passes.
+- Read the latest docs/progress/CURRENT.md first, then verify GitHub.
+- Stage60A is merged and tested; do not repeat it or claim it provides a
+  production Go SQLite driver.
+- Implement Go-owned SQLite Catalog using the existing v1 schema and
+  schema checksum, explicit migration, WAL/foreign keys, backup, and
+  single-writer state. Review and pin the external driver/license.
+- Connect metadata loading to labcore.Catalog only after a separate
+  immutable scenario payload/compiler is present; metadata digest alone
+  cannot authorize actual CAN replies.
+- Add 6-8 Go synthetic tests, verify full Windows x86/native CI, then
+  merge to Virtual Car development. x64/native E2E is still pending.
+- Keep Dvinholm PR #702 x64 work separate. Never publish Virtual Car.
 
 ## Cross-chat restoration procedure
 
