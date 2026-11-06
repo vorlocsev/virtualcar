@@ -113,7 +113,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $testExe = Join-Path $env:RUNNER_TEMP 'virtualcar-c-host-tests.exe'
           $env:VIRTUALCAR_ROUTE_EVIDENCE = Join-Path $env:RUNNER_TEMP 'virtualcar-c-host-route-evidence.jsonl'
-          clang -std=c11 -O2 -Wall -Wextra -o $testExe emulator/tests/virtualcar_test.c emulator/src/p2core/p2_cem_router.c emulator/src/p2core/p2_ls_observer.c emulator/src/p2core/p2_vehicle_core.c emulator/src/p2core/p2_j2534_bridge.c
+          clang -std=c11 -O2 -Wall -Wextra -D_CRT_SECURE_NO_WARNINGS -o $testExe emulator/tests/virtualcar_test.c emulator/src/p2core/p2_cem_router.c emulator/src/p2core/p2_ls_observer.c emulator/src/p2core/p2_vehicle_core.c emulator/src/p2core/p2_j2534_bridge.c
           if ($LASTEXITCODE -ne 0) { throw 'Legacy C host regression compilation failed' }
           & $testExe
           if ($LASTEXITCODE -ne 0) { throw 'Legacy C host regression failed' }
