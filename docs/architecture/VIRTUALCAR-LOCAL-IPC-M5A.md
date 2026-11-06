@@ -21,21 +21,39 @@ Status: **DRAFT PR #85**, not M5 completion; CI result must be checked independe
   Any other command, version, bad magic, truncated frame, wrong token,
   length or timeout fails closed.
 - Single client per pipe, one incoming frame processed before any ACK;
-  3-second read timeout in integration checks; no ECU/CAN operation exists.
+  the host applies a per-frame deadline both to reads and to outbound ACK writes.
+  Integration checks configure a 3-second deadline. This is bounded IPC
+  preflight only; no ECU/CAN operation exists.
 
 ## Eight native-Windows synthetic gate groups
 1. HELLO, session allocation and authenticated KEEPALIVE ACK.
 2. No selected synthetic scenario, no session.
-3. Wrong 256-bit secret, no session.
+3. Wrong 256-bit secret or spoofed initial generation, no session.
 4. Invalid header magic and protocol version.
-5. Oversize, negative length and truncated header.
+5. Oversize, negative length, truncated header and partial post-auth body disconnect.
 6. Stale generation after HELLO.
 7. Forged session identifier and unsupported command.
 8. Abrupt disconnect, session cleanup, new generation after reset.
 
-The managed CI compiles on Linux, cross-builds for Windows x64 and
-runs all eight native Windows pipe checks. **Only GitHub workflow runs
-may establish actual pass/fail; adding a test is not passing it.**
+The managed CI is configured to compile on Linux, cross-build for Windows
+x64 and run eight native Windows pipe check groups. **Only GitHub workflow
+runs establish actual pass/fail; adding a test is not passing it.**
+
+## CI blocker observed 2026-11-06
+- Last Windows job that executed M5A tests: **6/8** on earlier head
+  `29e54e16`. Invalid-frame injection groups 04/05 failed with
+  `IOException` during early pipe rejection. Later test code permits
+  those expected broken-pipe writes and requires no ACK, but **8/8 is
+  still unconfirmed**.
+- At head `8d193db5`, workflow [42260830270](https://github.com/vorlocsev/virtualcar/actions/runs/42260830270)
+  failed with zero job steps in all four jobs. The corresponding
+  emulator and VMware workflow runs also failed before executing
+  jobs. This is an execution/scheduling or repository-level blocker
+  of **undetermined cause**, not proof of C# test failure.
+- Changes after that head add ACK write deadlines and extra negative
+  regression cases. They also require a real Windows CI execution.
+- Do not merge M5A or mark M5 complete without green, executed CI.
+
 
 ## Not yet integrated
 - No native x86/x64 C++ J2534 client connection or positive DLL responses.
