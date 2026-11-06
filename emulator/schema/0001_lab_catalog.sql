@@ -39,7 +39,12 @@ CREATE TABLE ecu_nodes (
 
 CREATE TABLE private_artifacts (
     id TEXT PRIMARY KEY NOT NULL,
-    relative_path TEXT NOT NULL UNIQUE CHECK(length(relative_path) BETWEEN 1 AND 240),
+    relative_path TEXT NOT NULL UNIQUE CHECK(
+        length(relative_path) BETWEEN 1 AND 240
+        AND substr(relative_path, 1, 1) <> '/'
+        AND instr(relative_path, '..') = 0
+        AND instr(relative_path, ':') = 0
+        AND instr(relative_path, char(92)) = 0),
     content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
     size_bytes INTEGER NOT NULL CHECK(size_bytes BETWEEN 1 AND 1073741824),
     encryption TEXT NOT NULL CHECK(encryption IN ('dpapi_current_user')),
