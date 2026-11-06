@@ -219,7 +219,8 @@ Result Engine::receive_flow_control(
     pending_.block_size = bytes[1];
     pending_.credit = bytes[1];
     pending_.stmin_us = stmin_us;
-    pending_.next_due_us = now_us;
+    // A new block's CTS must not erase STmin spacing from the last CF.
+    pending_.next_due_us = (std::max)(pending_.next_due_us, now_us);
     pending_.wait_frames = 0;
     return Result::ok;
 }
