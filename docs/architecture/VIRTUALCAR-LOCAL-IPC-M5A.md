@@ -20,6 +20,9 @@ Status: **DRAFT PR #85**, not M5 completion; CI result must be checked independe
   Command 4 ACK: emitted by server, empty payload, issued core token.
   Any other command, version, bad magic, truncated frame, wrong token,
   length or timeout fails closed.
+- Exactly one active listener per host, enforced by an atomic guard;
+  a concurrent ServeOnceAsync call is rejected without replacing the
+  authenticated client. Guard release is protected by a finally block.
 - Single client per pipe, one incoming frame processed before any ACK;
   the host applies a per-frame deadline both to reads and to outbound ACK writes.
   Integration checks configure a 3-second deadline. This is bounded IPC
@@ -33,7 +36,7 @@ Status: **DRAFT PR #85**, not M5 completion; CI result must be checked independe
 5. Oversize, negative length, truncated header and partial post-auth body disconnect.
 6. Stale generation after HELLO.
 7. Forged session identifier and unsupported command.
-8. Abrupt disconnect, session cleanup, new generation after reset.
+8. Concurrent-listener rejection, abrupt disconnect, session cleanup, and new generation after reset.
 
 The managed CI is configured to compile on Linux, cross-build for Windows
 x64 and run eight native Windows pipe check groups. **Only GitHub workflow
