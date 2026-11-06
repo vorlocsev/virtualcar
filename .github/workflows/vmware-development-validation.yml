@@ -93,6 +93,64 @@ jobs:
           & $python -m unittest discover -s emulator/tests -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Python emulator test suite failed' }
 
+      - name: Verify LLVM and Git Bash for legacy x86 build
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($tool in @('clang','lld-link','bash','llvm-readobj')) {
+            $cmd = Get-Command $tool -ErrorAction SilentlyContinue
+            if (-not $cmd) { throw "Required tool is missing from Runner PATH: $tool" }
+            Write-Host ("AVAILABLE: {0} => {1}" -f $tool,$cmd.Source)
+          }
+          clang --version
+          if ($LASTEXITCODE -ne 0) { throw 'Clang is not executable' }
+          lld-link --version
+          if ($LASTEXITCODE -ne 0) { throw 'LLD-Link is not executable' }
+
+      - name: Run legacy C protocol regression with Clang host compiler
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testExe = Join-Path $env:RUNNER_TEMP 'virtualcar-c-host-tests.exe'
+          $env:VIRTUALCAR_ROUTE_EVIDENCE = Join-Path $env:RUNNER_TEMP 'virtualcar-c-host-route-evidence.jsonl'
+          clang -std=c11 -O2 -Wall -Wextra -o $testExe emulator/tests/virtualcar_test.c emulator/src/p2core/p2_cem_router.c emulator/src/p2core/p2_ls_observer.c emulator/src/p2core/p2_vehicle_core.c emulator/src/p2core/p2_j2534_bridge.c
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy C host regression compilation failed' }
+          & $testExe
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy C host regression failed' }
+
+      - name: Cross-build legacy J2534 C DLL for Windows x86 with Clang and LLD
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location emulator
+          try {
+            & bash ./build-cross.sh
+            if ($LASTEXITCODE -ne 0) { throw 'Clang/LLD Windows x86 legacy DLL build failed' }
+          } finally {
+            Pop-Location
+          }
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          if (-not (Test-Path -LiteralPath $dll)) { throw 'Legacy x86 J2534 DLL was not produced' }
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          & $python emulator/native-cpp/tests/verify_pe_exports.py $dll Win32
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy x86 DLL PE architecture/export verification failed' }
+
+      - name: Run legacy C x86 DLL native route regression and evidence audit
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $routeDir = Join-Path $env:RUNNER_TEMP 'virtualcar-native-route-regression'
+          $audit = Join-Path $env:RUNNER_TEMP 'virtualcar-native-route-audit.json'
+          if (Test-Path -LiteralPath $routeDir) { throw 'Refusing to reuse native route regression directory' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll -OutputDirectory $routeDir
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy x86 DLL native route regression failed' }
+          $evidence = Join-Path $routeDir 'VirtualCar\dev47-backend.jsonl'
+          if (-not (Test-Path -LiteralPath $evidence)) { throw 'Native route regression evidence is missing' }
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          & $python emulator/tools/verify_native_routes.py $evidence --output $audit
+          if ($LASTEXITCODE -ne 0) { throw 'Native route evidence audit failed' }
+
       - name: Run Go control tests and vet
         shell: powershell
         working-directory: emulator/control
@@ -114,7 +172,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'C++ x86 build failed' }
           ctest --test-dir $buildDir -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'C++ x86 CTest suite failed' }
-          Write-Host 'Note: vc_legacy_c_cpp_parity.exe is compiled only. Running it requires the independent legacy C x86 DLL from the Linux cross-build.'
+          $parityExe = Join-Path $buildDir 'Release\vc_legacy_c_cpp_parity.exe'
+          $legacyDll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $parityDir = Join-Path $env:RUNNER_TEMP 'virtualcar-m4b2-native-parity'
+          if (-not (Test-Path -LiteralPath $legacyDll)) { throw 'Independently built legacy C x86 DLL is missing' }
+          if (-not (Test-Path -LiteralPath $parityExe)) { throw 'C/C++ parity executable is missing' }
+          if (Test-Path -LiteralPath $parityDir) { throw 'Refusing to reuse C/C++ parity directory' }
+          & $parityExe $legacyDll $parityDir
+          if ($LASTEXITCODE -ne 0) { throw 'Actual legacy C DLL versus C++20 RX parity failed' }
 
       - name: Configure and build native C++ x64
         shell: powershell
@@ -167,8 +232,11 @@ jobs:
         run: |
           Write-Host ('Validated source ref: ' + '${{ inputs.source_ref || 'development' }}')
           Write-Host 'PASS: Python emulator tests'
+          Write-Host 'PASS: legacy C host regression'
+          Write-Host 'PASS: Clang/LLD legacy Windows x86 DLL build and PE export validation'
+          Write-Host 'PASS: legacy x86 DLL native route regression and evidence audit'
           Write-Host 'PASS: Go control tests and vet'
-          Write-Host 'PASS: Native C++ x86 configure/build/CTest'
+          Write-Host 'PASS: Native C++ x86 configure/build/CTest and actual C/C++ parity'
           Write-Host 'PASS: Native C++ x64 configure/build/CTest'
           Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
           Write-Host 'M5A IPC checks are run when the selected source contains the project.'
