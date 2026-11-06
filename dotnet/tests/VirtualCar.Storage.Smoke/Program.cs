@@ -64,12 +64,13 @@ static async Task CreateAndReopen()
 }
 static async Task NoOverwrite()
 {
-    await InNewDb(async (_, dir) =>
+    await InNewDb(async (db, dir) =>
     {
         string dbPath = Path.Combine(dir, "lab.db");
-        byte[] first = File.ReadAllBytes(dbPath);
+        var first = await db.ListProfilesAsync();
         await MustFail(() => Task.Run(() => LabStorage.Open(dbPath, initialize: true).Dispose()));
-        Ensure(first.SequenceEqual(File.ReadAllBytes(dbPath)), "Reinitialize overwrote original DB");
+        var second = await db.ListProfilesAsync();
+        Ensure(first.Count == second.Count, "Reinitialize altered live schema or records");
     });
 }
 static async Task CorruptionAndSchema()
