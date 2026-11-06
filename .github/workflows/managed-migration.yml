@@ -140,13 +140,31 @@ jobs:
           $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
           if (-not (Test-Path -LiteralPath $client)) { throw "Native IPC client missing: $client" }
           if (-not (Test-Path -LiteralPath $serviceDll)) { throw "C# service checks missing: $serviceDll" }
+          $rejectPipe = 'vcm5b-reject-' + $env:VC_ARCH.ToLowerInvariant() + '-' + [guid]::NewGuid().ToString('N')
+          $rejectOut = Join-Path $env:RUNNER_TEMP 'm5b-reject.stdout.log'
+          $rejectErr = Join-Path $env:RUNNER_TEMP 'm5b-reject.stderr.log'
+          $rejectServer = $null
+          try {
+            $rejectServer = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $rejectPipe) -PassThru -WindowStyle Hidden -RedirectStandardOutput $rejectOut -RedirectStandardError $rejectErr
+            $wrongPid = [uint32]($rejectServer.Id + 1)
+            & $client --reject-peer $rejectPipe $wrongPid
+            $rejectExit = $LASTEXITCODE
+            if ($rejectExit -ne 0) { throw "C++ $env:VC_ARCH client did not reject wrong server PID (exit $rejectExit)" }
+            if (-not $rejectServer.WaitForExit(10000)) { throw 'C# Host did not exit after rejected peer disconnect' }
+            if ($rejectServer.ExitCode -ne 0) { throw "C# Host after peer rejection exited with code $($rejectServer.ExitCode)" }
+          } finally {
+            if ($null -ne $rejectServer -and -not $rejectServer.HasExited) {
+              Stop-Process -Id $rejectServer.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
           $pipeName = 'vcm5b-' + $env:VC_ARCH.ToLowerInvariant() + '-' + [guid]::NewGuid().ToString('N')
           $stdout = Join-Path $env:RUNNER_TEMP 'm5b-host.stdout.log'
           $stderr = Join-Path $env:RUNNER_TEMP 'm5b-host.stderr.log'
           $server = $null
           try {
             $server = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $pipeName) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-            & $client --connect $pipeName
+            & $client --connect $pipeName $server.Id
             $clientExit = $LASTEXITCODE
             if ($clientExit -ne 0) { throw "C++ $env:VC_ARCH client failed with exit code $clientExit" }
             if (-not $server.WaitForExit(10000)) { throw 'C# Host did not exit after GOODBYE' }
