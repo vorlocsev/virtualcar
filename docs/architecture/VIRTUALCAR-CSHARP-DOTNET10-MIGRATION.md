@@ -1,5 +1,15 @@
 # Virtual Car C# rewrite | ADR VC-CSHARP-001
 
+> **Historical alternative (Native AOT): superseded for critical layers.**
+> The user's later explicit choice is native **C++20** for J2534 and
+> timing-critical CAN/ISO15765/ISO-TP, while C#/.NET10 stays the managed
+> core/storage/service/UI. The Native AOT x86/x64 PassThru DLL from PR #70
+> is a nonfunctional experimental ABI canary, not the production adapter.
+> Current decision: [ADR VC-002](VIRTUALCAR-CSHARP-CPP-MIGRATION.md).
+> M0 PR #71 and M1 PR #72 have merged and passed CI; M2 is next.
+> This older document remains as an architectural experiment record.
+
+
 Status: ACCEPTED direction, implementation **IN PROGRESS**.
 Date: 2026-11-06. Priority: **Dvinholm** first, Virtual Car is a lab.
 
