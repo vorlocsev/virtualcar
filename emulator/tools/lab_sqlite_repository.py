@@ -53,12 +53,20 @@ def _validate_path(path: Path) -> Path:
 def _connect(path: Path) -> sqlite3.Connection:
     # SQLite URI/extension loading are not enabled. Scope is local process.
     conn = sqlite3.connect(str(path), timeout=5.0, isolation_level=None)
-    conn.execute("PRAGMA trusted_schema=OFF")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        conn.execute("PRAGMA trusted_schema=OFF")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.row_factory = sqlite3.Row
+        return conn
+    except BaseException:
+        # _connect() owns the handle until it successfully returns it.
+        # In particular, a malformed database can fail while applying
+        # journal_mode=WAL. Close here so Windows can release the file before
+        # the caller handles the initialization error or removes a test DB.
+        conn.close()
+        raise
 
 
 def _migration_bytes() -> bytes:
