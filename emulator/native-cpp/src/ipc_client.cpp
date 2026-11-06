@@ -8,6 +8,7 @@
 #define _WIN32_WINNT 0x0602 // GetNamedPipeServerProcessId (Windows 8+).
 #endif
 #include <Windows.h>
+#include <namedpipeapi.h>
 
 #include "virtualcar/ipc_client.hpp"
 
