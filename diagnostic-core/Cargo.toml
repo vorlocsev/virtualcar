@@ -1,0 +1,13 @@
+[package]
+name = "diagnostic-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Portable read-only-first automotive diagnostic knowledge core"
+
+[lib]
+name = "diagnostic_core"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
