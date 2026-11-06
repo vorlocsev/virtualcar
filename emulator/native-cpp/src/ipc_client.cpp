@@ -295,8 +295,8 @@ Result Client::connect(std::wstring_view pipe_name,
     try {
         Frame hello{};
         hello.kind = static_cast<std::uint16_t>(Kind::hello);
-        hello.payload.assign(launch_secret.begin(), launch_secret.end());
         [[maybe_unused]] WipeBytes wipe_hello(hello.payload);
+        hello.payload.assign(launch_secret.begin(), launch_secret.end());
         Result result = write_frame(hello);
         if (result != Result::ok) {
             close_locked();
