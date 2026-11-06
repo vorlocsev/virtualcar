@@ -52,9 +52,9 @@ jobs:
           & $python -I --version
           if ($LASTEXITCODE -ne 0) { throw 'Isolated Python 3.12 failed to start' }
           & $python -I -m pip --version
-          if ($LASTEXITCODE -ne 0) { throw 'pip is unavailable in isolated Python 3.12' }
-          & $python -I -c "import sys,sqlite3,ssl,ctypes,venv; print('Executable:',sys.executable); print('Prefix:',sys.prefix); print('SQLite:',sqlite3.sqlite_version); print('OpenSSL:',ssl.OPENSSL_VERSION); print('ctypes: OK; venv: OK')"
-          if ($LASTEXITCODE -ne 0) { throw 'Python standard library verification failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'pip is unavailable in the runner virtual environment' }
+          & $python -I -c "import sys,site,pip,sqlite3,ssl,ctypes,venv; print('Executable:',sys.executable); print('Prefix:',sys.prefix); print('Base prefix:',sys.base_prefix); print('pip:',pip.__file__); print('SQLite:',sqlite3.sqlite_version); print('OpenSSL:',ssl.OPENSSL_VERSION); print('ctypes: OK; venv: OK'); assert sys.prefix != sys.base_prefix, 'Runner Python must be a dedicated virtual environment'"
+          if ($LASTEXITCODE -ne 0) { throw 'Python virtual environment or standard library verification failed' }
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $python)
 
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
