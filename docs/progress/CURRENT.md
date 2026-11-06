@@ -25,7 +25,7 @@ secret-buffer wiping, 8 native offline gates and planned x86/x64
 C++-to-C# integration checks (including wrong-PID rejection).
 The C++ client is **not linked into the J2534 DLL**. No CAN/ECU command,
 PassThru success, real vehicle data, or physical adapter is enabled.
-No M5B CI result is claimed until the Windows matrix executes.
+No M5B CI result is claimed until the Windows matrix executes. Manual VMware dispatch support is prepared separately in Draft PR #88.
 See docs/architecture/VIRTUALCAR-M5B-NATIVE-IPC-CLIENT.md.
 
 M5A/M5B are **not** an installed production service, production
