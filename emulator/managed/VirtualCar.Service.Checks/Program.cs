@@ -270,7 +270,14 @@ internal static class Program
         Task firstServing = host.ServeOnceAsync();
         PipeFrame first;
         await using (var client = await ConnectAsync(pipeName))
-            first = await HelloAsync(client); // Abrupt disconnect, no GOODBYE.
+        {
+            first = await HelloAsync(client);
+            bool rejectedSecondListener = false;
+            try { await host.ServeOnceAsync(); }
+            catch (InvalidOperationException) { rejectedSecondListener = true; }
+            Require(rejectedSecondListener,
+                "Concurrent listener start was not rejected");
+        } // Abrupt disconnect, no GOODBYE.
         await firstServing.WaitAsync(TimeSpan.FromSeconds(5));
         await core.ResetAsync(); // Must have no leaked session.
         Task secondServing = host.ServeOnceAsync();
