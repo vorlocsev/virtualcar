@@ -76,6 +76,35 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
   merge to Virtual Car development. x64/native E2E is still pending.
 - Keep Dvinholm PR #702 x64 work separate. Never publish Virtual Car.
 
+## Platform decision: C# / .NET 10 migration (2026-11-06)
+
+**NEW PRIORITY: reimplement Virtual Car entirely on C#**, including
+control UI, simulation, SQLite, protocols, test harness and a Native AOT
+J2534 x86/x64 adapter subject to ABI and unloading acceptance.
+Read docs/architecture/VIRTUALCAR-CSHARP-DOTNET10-MIGRATION.md.
+
+Previously planned Go 60B-2 implementation is **SUPERSEDED, NOT
+COMPLETED**; no more new Go features. Existing C/Go functionality
+is retained for parity tests until the C# rewrite has been verified.
+
+| C# stage | Objective | State |
+| --- | --- | --- |
+| CS-01 | .NET 10 core, 8 synthetic tests, Native AOT 14-export ABI probe x86/x64 | IN PROGRESS |
+| CS-02 | Microsoft.Data.Sqlite metadata and transaction/backup layer | PLANNED |
+| CS-03 | CAN/ISO-TP on C#, frame/timer/fault parity | PLANNED |
+| CS-04 | P2 D2, ECU models and immutable scenario compiler | PLANNED |
+| CS-05 | C# headless local Host and secured Named Pipes | PLANNED |
+| CS-06 | Production-capable C# J2534 Native AOT, x86/x64 | PLANNED |
+| CS-07 | WinUI 3 C# Control UI, RU/EN | PLANNED |
+| CS-08 | End-to-end tests through Dvinholm native J2534 DLL | PLANNED |
+| CS-09 | Retire old C/Go components only after approved parity | PLANNED |
+
+Evidence gate: no build/test success without CI, no real physical support
+asserted from synthetic results, no Virtual Car release publication.
+Win-x86 Native AOT J2534 DLL loading and FreeLibrary lifetime are explicit
+technical blockers until probed. The user continuation phrase stays
+**virtual car**.
+
 ## Cross-chat restoration procedure
 
 1. Fetch this file from Virtual Car development branch.
