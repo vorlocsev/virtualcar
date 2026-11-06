@@ -20,6 +20,7 @@ enum class Result : std::uint8_t {
     timed_out,
     disconnected,
     protocol_error,
+    peer_mismatch,
     not_authenticated,
     io_error
 };
@@ -71,6 +72,7 @@ public:
 
     [[nodiscard]] Result connect(std::wstring_view pipe_name,
                                  std::span<const std::uint8_t> launch_secret,
+                                 std::uint32_t expected_server_pid,
                                  std::uint32_t timeout_ms = 3000);
     [[nodiscard]] Result keep_alive();
     [[nodiscard]] Result disconnect() noexcept;
