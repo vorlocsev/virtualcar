@@ -27,18 +27,20 @@
 
 Active branch: `feature/labdb-persistence-handoff-stage60`.
 Issue: https://github.com/vorlocsev/virtualcar/issues/60.
-PR: to be recorded after PR creation.
+PR: https://github.com/vorlocsev/virtualcar/pull/61 (draft until CI verification).
 Source changes:
 - `emulator/tools/lab_catalog.py`: explicit opt-in per-user SQLite DB bootstrap, SHA-256 journal for schema 0001, existing-db validation, read-only summary and lab-only synthetic metadata CRUD; native emulator remains independent.
 - `emulator/tests/test_lab_catalog_repository.py`: 10 synthetic tests: initialization, no overwrite, path/symlink refusal, metadata round trip, CAN 11-bit bounds, FK integrity, uniqueness, checksum drift, read-only/missing DB, safe CLI output.
 - `docs/project/ROADMAP.md`: milestones and acceptance rules.
-- `docs/project/NEXT_CHAT.md`: start-up protocol for a new chat.
+- `docs/project/NEXT_CHAT.md`: detailed start-up protocol, referenced from historical root `NEXT_CHAT.md` entrypoint.
+- `docs/project/LABDB-LOCAL-USAGE.md`: opt-in synthetic-only examples.
+- `.gitignore`: exclude private lab databases, journals and encrypted artifacts.
 No integration with Go service or J2534 DLL is claimed. Native x64 shim does not yet exist.
 
 ## Test evidence
 
 - Earlier Stage 59: verified Windows x86 CI #577 success (including 8 Go labcore + 8 Python SQLite schema tests); this was BEFORE Stage 60.
-- Stage 60 CLI+SQLite tests: GitHub PR CI status must be checked before any merge claim. No local Windows GUI or real J2534 run is implied.
+- Stage 60 CLI+SQLite tests: PR #61 CI status must be checked at the latest HEAD before any merge claim. No local Windows GUI or real J2534 run is implied.
 - Current CI and PR state may change; ALWAYS fetch fresh status on continuation.
 
 ## Blockers / truth boundaries
@@ -53,6 +55,6 @@ No integration with Go service or J2534 DLL is claimed. Native x64 shim does not
 1. Check PR of Stage 60 and Windows CI; correct failing tests or schema.
 2. Merge into `development` ONLY if green and content review passes.
 3. Update this status with merged SHA/CI, then Stage 61: implement Go SQLite driver and repository; pin modules, validate schema checksum, never query SQLite per CAN frame.
-4. Maintain all progress at `docs/project/STATUS.md` and `docs/project/NEXT_CHAT.md` on `development`.
+4. Maintain current progress at root `NEXT_CHAT.md`, `docs/project/STATUS.md` and `docs/project/NEXT_CHAT.md` on `development`.
 
 **New chat quick prompt:** "Продолжи Dvinholm-first Virtual Car по `vorlocsev/virtualcar/docs/project/NEXT_CHAT.md` в ветке development, сверь GitHub PR/CI и выполни следующий P0 этап. Не публикуй Virtual Car."
