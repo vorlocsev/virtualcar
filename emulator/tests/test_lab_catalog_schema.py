@@ -3,6 +3,7 @@
 No real VIN, PIN, J2534 traffic, original VIDA XML or donor dump is used.
 """
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 import unittest
 
@@ -38,7 +39,7 @@ def seed(db):
 
 class LabCatalogSqlTests(unittest.TestCase):
     def test_01_tables_present_and_fk_enabled(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             expected = {"schema_migrations", "vehicle_profiles", "can_buses", "ecu_nodes",
                         "response_fixtures", "private_artifacts", "scenarios",
                         "scenario_revisions", "scenario_bindings", "test_cases",
@@ -48,7 +49,7 @@ class LabCatalogSqlTests(unittest.TestCase):
             self.assertEqual(db.execute("PRAGMA foreign_keys").fetchone()[0], 1)
 
     def test_02_fk_and_speed_restrictions(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("INSERT INTO can_buses VALUES(?,?,?,?,?)",
                            ("a", "missing", "HS", 500000, "11bit"))
@@ -59,7 +60,7 @@ class LabCatalogSqlTests(unittest.TestCase):
                            ("a", "p", "HS", 123456, "11bit"))
 
     def test_03_synthetic_fixture_cannot_hide_private_artifact(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             seed(db)
             db.execute("INSERT INTO private_artifacts VALUES(?,?,?,?,?,?,?)",
                        ("art", "private/trace.enc", HASH, 100, "dpapi_current_user", "private_response", NOW))
@@ -77,7 +78,7 @@ class LabCatalogSqlTests(unittest.TestCase):
                        ("captured", "ecu-1", HASH, "captured_private", "draft", None, "art"))
 
     def test_04_unapproved_fixture_cannot_be_enabled(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             seed(db)
             db.execute("UPDATE response_fixtures SET lab_approval='draft' WHERE id='fixture-1'")
             with self.assertRaises(sqlite3.IntegrityError):
@@ -90,7 +91,7 @@ class LabCatalogSqlTests(unittest.TestCase):
                 db.execute("UPDATE scenario_bindings SET enabled=1 WHERE revision_id='rev-1'")
 
     def test_05_sealed_revision_and_bound_fixture_are_immutable(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             seed(db)
             db.execute("UPDATE scenario_revisions SET sealed=1,snapshot_sha256=? WHERE id='rev-1'", (HASH,))
             with self.assertRaises(sqlite3.IntegrityError):
@@ -101,7 +102,7 @@ class LabCatalogSqlTests(unittest.TestCase):
                 db.execute("UPDATE response_fixtures SET lab_approval='draft' WHERE id='fixture-1'")
 
     def test_06_test_run_provenance_must_not_claim_physical_without_reference(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             seed(db)
             db.execute("INSERT INTO test_cases VALUES(?,?,?,?,?)",
                        ("case-1", "rev-1", "dvinholm_e2e", "{}", NOW))
@@ -117,7 +118,7 @@ class LabCatalogSqlTests(unittest.TestCase):
                            ("nonexistent", 1, "can_rx", 1))
 
     def test_07_sensitive_columns_absent_from_result_tables(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             for table in ("test_runs", "test_events", "vehicle_profiles"):
                 cols = {r[1].lower() for r in db.execute("PRAGMA table_info(" + table + ")")}
                 for secret in ("vin", "pin", "raw_payload", "eeprom", "secret", "raw_can_frame"):
@@ -125,7 +126,7 @@ class LabCatalogSqlTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM vehicle_profiles").fetchone()[0], 0)
 
     def test_08_transaction_savepoint_and_unique_revision(self):
-        with new_db() as db:
+        with closing(new_db()) as db:
             seed(db)
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("INSERT INTO scenario_revisions VALUES(?,?,?,?,?,?)",
