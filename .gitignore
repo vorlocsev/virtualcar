@@ -1,4 +1,11 @@
 # Build outputs and executable binaries (including J2534 DLLs)
+# .NET / Visual Studio build outputs
+**/bin/
+**/obj/
+**/TestResults/
+.vs/
+*.user
+*.suo
 _build/
 build/
 dist/
