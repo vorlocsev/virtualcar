@@ -54,6 +54,12 @@ jobs:
               emulator/native-cpp/src/transport.cpp emulator/native-cpp/tests/transport_checks.cpp \
               -o /tmp/virtualcar-transport-checks
           /tmp/virtualcar-transport-checks
+      - name: Eight J2534 ISO15765 RX metadata / multi-ECU tests (host)
+        run: |
+          c++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -I emulator/native-cpp/include \
+              emulator/native-cpp/src/isotp_rx.cpp emulator/native-cpp/tests/isotp_rx_checks.cpp \
+              -o /tmp/virtualcar-isotp-rx-checks
+          /tmp/virtualcar-isotp-rx-checks
   managed-windows:
     name: Windows .NET 10 core lifecycle smoke
     runs-on: windows-latest
@@ -104,11 +110,11 @@ jobs:
           $dll = Join-Path $buildDir 'Release/VirtualCarJ2534Cpp.dll'
           python emulator/native-cpp/tests/verify_pe_exports.py $dll $env:VC_ARCH
           if ($LASTEXITCODE -ne 0) { throw 'PE architecture/export contract failed' }
-      - name: Execute J2534 ABI and bounded M4A CAN ISO-TP gates in target bitness
+      - name: Execute J2534 ABI, M4A transport and M4B RX compatibility in target bitness
         shell: pwsh
         run: |
           $buildDir = Join-Path $env:RUNNER_TEMP ("virtualcar-m3-" + $env:VC_ARCH)
           ctest --test-dir $buildDir -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) { throw 'Native J2534 ABI or M4A transport regression failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Native J2534 ABI, M4A or M4B RX regression failed' }
       # NO upload-artifact step: this intentionally NONFUNCTIONAL DLL is
       # never shipped or registered as a usable physical PassThru adapter.
