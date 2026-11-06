@@ -67,4 +67,5 @@ jobs:
           if ($cmakeHelp -notmatch 'Visual Studio 17 2022') { throw 'CMake Visual Studio 17 2022 generator is unavailable' }
           Write-Host 'CMake VS 2022 generator: AVAILABLE'
 
+          foreach ($tool in @('clang','clang-cl','lld-link','llvm-objdump','llvm-readobj','gcc','objdump','file','bash','ninja')) { $cmd = Get-Command $tool -ErrorAction SilentlyContinue; if ($cmd) { Write-Host ('AVAILABLE: ' + $tool) } else { Write-Host ('MISSING: ' + $tool) } }
           Write-Host 'Connection and toolchain smoke PASS. No artifacts or releases produced.'
