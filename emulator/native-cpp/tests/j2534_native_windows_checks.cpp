@@ -58,8 +58,9 @@ bool load_exports(HMODULE library, Api& api) {
     if (!all) return false;
 
     // 32-bit clients must see undecorated J2534 names, not _Foo@N names.
-    if (sizeof(void*) == 4 && lookup("_PassThruOpen@8") != nullptr)
-        return false;
+    if constexpr (sizeof(void*) == 4) {
+        if (lookup("_PassThruOpen@8") != nullptr) return false;
+    }
     return true;
 }
 
@@ -113,11 +114,11 @@ bool group06(const Api& a) {
     abi::PASSTHRU_MSG mask{}, pattern{}, flow{};
     abi::DWORD periodic = 55U;
     abi::DWORD filter = 99U;
-    if (a.start_periodic(0, &pattern, 1000U, nullptr) != kNull) return false;
-    if (a.start_periodic(0, nullptr, 1000U, &periodic) != kNull || periodic != 0U)
+    if (a.start_periodic(0, &pattern, nullptr, 1000U) != kNull) return false;
+    if (a.start_periodic(0, nullptr, &periodic, 1000U) != kNull || periodic != 0U)
         return false;
     periodic = 55U;
-    if (a.start_periodic(0, &pattern, 1000U, &periodic) != kUnsupported || periodic != 0U)
+    if (a.start_periodic(0, &pattern, &periodic, 1000U) != kUnsupported || periodic != 0U)
         return false;
     if (a.stop_periodic(0, 1U) != kNotConnected) return false;
     if (a.start_filter(0, 1U, &mask, &pattern, &flow, nullptr) != kNull) return false;
