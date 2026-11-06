@@ -32,7 +32,7 @@ public sealed class LabStorage : IDisposable
         {
             if (initialize)
             {
-                using (File.Create(path, 1, FileOptions.None)) { }
+                using (new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
                 created = true;
             }
             else if (!File.Exists(path))
