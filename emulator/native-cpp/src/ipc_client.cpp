@@ -290,31 +290,36 @@ Result Client::connect(std::wstring_view pipe_name,
         return map_win32_error(error);
     }
 
-    Frame hello{};
-    hello.kind = static_cast<std::uint16_t>(Kind::hello);
-    hello.payload.assign(launch_secret.begin(), launch_secret.end());
-    [[maybe_unused]] WipeBytes wipe_hello(hello.payload);
-    Result result = write_frame(hello);
-    if (result != Result::ok) {
-        close_locked();
-        return result;
-    }
+    try {
+        Frame hello{};
+        hello.kind = static_cast<std::uint16_t>(Kind::hello);
+        hello.payload.assign(launch_secret.begin(), launch_secret.end());
+        [[maybe_unused]] WipeBytes wipe_hello(hello.payload);
+        Result result = write_frame(hello);
+        if (result != Result::ok) {
+            close_locked();
+            return result;
+        }
 
-    Frame response{};
-    result = read_frame(response);
-    if (result != Result::ok) {
-        close_locked();
-        return result;
-    }
-    if (response.kind != static_cast<std::uint16_t>(Kind::ack) ||
-        response.session_id == 0 || response.generation == 0 ||
-        !response.payload.empty()) {
-        close_locked();
-        return Result::protocol_error;
-    }
+        Frame response{};
+        result = read_frame(response);
+        if (result != Result::ok) {
+            close_locked();
+            return result;
+        }
+        if (response.kind != static_cast<std::uint16_t>(Kind::ack) ||
+            response.session_id == 0 || response.generation == 0 ||
+            !response.payload.empty()) {
+            close_locked();
+            return Result::protocol_error;
+        }
 
-    session_ = SessionToken{response.session_id, response.generation};
-    return Result::ok;
+        session_ = SessionToken{response.session_id, response.generation};
+        return Result::ok;
+    } catch (...) {
+        close_locked();
+        throw;
+    }
 }
 
 Result Client::keep_alive()
@@ -324,30 +329,35 @@ Result Client::keep_alive()
         session_.generation == 0)
         return Result::not_authenticated;
 
-    Frame request{};
-    request.kind = static_cast<std::uint16_t>(Kind::keep_alive);
-    request.session_id = session_.id;
-    request.generation = session_.generation;
-    Result result = write_frame(request);
-    if (result != Result::ok) {
-        close_locked();
-        return result;
-    }
+    try {
+        Frame request{};
+        request.kind = static_cast<std::uint16_t>(Kind::keep_alive);
+        request.session_id = session_.id;
+        request.generation = session_.generation;
+        Result result = write_frame(request);
+        if (result != Result::ok) {
+            close_locked();
+            return result;
+        }
 
-    Frame response{};
-    result = read_frame(response);
-    if (result != Result::ok) {
+        Frame response{};
+        result = read_frame(response);
+        if (result != Result::ok) {
+            close_locked();
+            return result;
+        }
+        if (response.kind != static_cast<std::uint16_t>(Kind::ack) ||
+            response.session_id != session_.id ||
+            response.generation != session_.generation ||
+            !response.payload.empty()) {
+            close_locked();
+            return Result::protocol_error;
+        }
+        return Result::ok;
+    } catch (...) {
         close_locked();
-        return result;
+        throw;
     }
-    if (response.kind != static_cast<std::uint16_t>(Kind::ack) ||
-        response.session_id != session_.id ||
-        response.generation != session_.generation ||
-        !response.payload.empty()) {
-        close_locked();
-        return Result::protocol_error;
-    }
-    return Result::ok;
 }
 
 Result Client::disconnect() noexcept
@@ -393,8 +403,8 @@ std::uint32_t Client::last_error() const noexcept
 Result Client::write_frame(const Frame& frame)
 {
     std::vector<std::uint8_t> bytes;
-    if (!FrameCodec::encode(frame, bytes)) return Result::protocol_error;
     [[maybe_unused]] WipeBytes wipe(bytes);
+    if (!FrameCodec::encode(frame, bytes)) return Result::protocol_error;
     return write_exact(bytes);
 }
 
