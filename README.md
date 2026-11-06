@@ -1,8 +1,10 @@
 # Virtual Car: Volvo P2 diagnostic emulator research
 
-**Status:** experimental Windows x86 J2534 emulator and diagnostic tooling. Target: a virtual Volvo XC90 V8 MY2009, read-only, tested in VMware. The project is independent of Dvinholm.
+**Status:** experimental Windows x86 J2534 emulator and diagnostic tooling. **Dvinholm is the primary product; Virtual Car is its independent development/test laboratory.** Target P2/CEM read-only identity remains evidence-gated. No successful XC90 V8 MY2009 / physical J2534 acceptance is claimed.
 
 **Starting a new ChatGPT conversation?** Read [NEXT_CHAT.md](NEXT_CHAT.md) on the **development** branch. It contains the current checkpoint, next Issue and a copyable restart prompt.
+
+**Current active plan:** [STATUS](docs/project/STATUS.md), [Dvinholm-first ROADMAP](docs/project/ROADMAP.md), [next task](docs/project/NEXT_CHAT.md), [Issue #60](https://github.com/vorlocsev/virtualcar/issues/60). The root NEXT_CHAT remains the first entrypoint and links these files.
 
 ## Two distinct components
 
