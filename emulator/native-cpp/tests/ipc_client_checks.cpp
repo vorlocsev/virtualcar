@@ -181,8 +181,9 @@ bool group08_missing_server_timeout_is_bounded()
     Client client;
     const auto secret = test_secret();
     const auto start = std::chrono::steady_clock::now();
-    const Result result = client.connect(
-        L"vcm5b-no-listener-00000000", secret, 100);
+    const std::wstring pipe_name = L"vcm5b-no-listener-" +
+        std::to_wstring(start.time_since_epoch().count());
+    const Result result = client.connect(pipe_name, secret, 100);
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start).count();
     return result == Result::timed_out && !client.connected() &&
