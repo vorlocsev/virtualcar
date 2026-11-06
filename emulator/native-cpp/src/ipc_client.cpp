@@ -205,7 +205,7 @@ bool FrameCodec::valid_pipe_name(std::wstring_view name) noexcept
 
 Client::~Client()
 {
-    disconnect();
+    (void)disconnect();
 }
 
 Result Client::connect(std::wstring_view pipe_name,
@@ -327,23 +327,25 @@ Result Client::keep_alive()
     return Result::ok;
 }
 
-void Client::disconnect() noexcept
+Result Client::disconnect() noexcept
 {
     std::lock_guard<std::mutex> guard(mutex_);
-    if (!is_invalid_handle(pipe_)) {
-        try {
-            if (session_.id != 0 && session_.generation != 0) {
-                Frame goodbye{};
-                goodbye.kind = static_cast<std::uint16_t>(Kind::goodbye);
-                goodbye.session_id = session_.id;
-                goodbye.generation = session_.generation;
-                (void)write_frame(goodbye);
-            }
-        } catch (...) {
-            // Destruction and explicit close must still release the OS handle.
+    if (is_invalid_handle(pipe_)) return Result::ok;
+
+    Result result = Result::ok;
+    try {
+        if (session_.id != 0 && session_.generation != 0) {
+            Frame goodbye{};
+            goodbye.kind = static_cast<std::uint16_t>(Kind::goodbye);
+            goodbye.session_id = session_.id;
+            goodbye.generation = session_.generation;
+            result = write_frame(goodbye);
         }
-        close_locked();
+    } catch (...) {
+        result = Result::io_error;
     }
+    close_locked();
+    return result;
 }
 
 bool Client::connected() const noexcept
