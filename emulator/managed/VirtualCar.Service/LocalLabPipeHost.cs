@@ -51,9 +51,8 @@ public sealed class LocalLabPipeHost
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("M5 local pipe host requires Windows.");
 
-        // The host is a single-instance preflight endpoint. Concurrent start
-        // attempts must fail deterministically instead of competing for
-        // the same named pipe path or silently opening extra instances.
+        // Only one active listener may own this private pipe host at a time.
+        // Reset the guard even if creating the OS pipe itself fails.
         if (Interlocked.CompareExchange(ref _serving, 1, 0) != 0)
             throw new InvalidOperationException("A laboratory IPC listener is already running.");
         try
@@ -65,51 +64,62 @@ public sealed class LocalLabPipeHost
             try
             {
                 await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-            PipeFrame? hello = await ReadWithDeadlineAsync(server, cancellationToken).ConfigureAwait(false);
-            if (hello is null || hello.Kind != PipeFrameCodec.Hello ||
-                hello.SessionId != 0 || hello.Generation != 0 ||
-                hello.Payload.Length != _secret.Length ||
-                !CryptographicOperations.FixedTimeEquals(hello.Payload, _secret))
-                return;
-
-            // The only way to reach an authenticated session is through an
-            // independently verified and activated synthetic Core scenario.
-            session = await _coordinator.OpenSessionAsync(cancellationToken).ConfigureAwait(false);
-            await WriteWithDeadlineAsync(server,
-                new PipeFrame(PipeFrameCodec.Ack, session.Value.Id, session.Value.Generation, []),
-                cancellationToken).ConfigureAwait(false);
-
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                PipeFrame? frame = await ReadWithDeadlineAsync(server, cancellationToken)
+                PipeFrame? hello = await ReadWithDeadlineAsync(server, cancellationToken)
                     .ConfigureAwait(false);
-                if (frame is null) return;
-                if (frame.SessionId != session.Value.Id ||
-                    frame.Generation != session.Value.Generation ||
-                    frame.Payload.Length != 0 ||
-                    frame.Kind is not (PipeFrameCodec.KeepAlive or PipeFrameCodec.Goodbye))
+                if (hello is null || hello.Kind != PipeFrameCodec.Hello ||
+                    hello.SessionId != 0 || hello.Generation != 0 ||
+                    hello.Payload.Length != _secret.Length ||
+                    !CryptographicOperations.FixedTimeEquals(hello.Payload, _secret))
                     return;
-                await _coordinator.ValidateSessionAsync(session.Value, cancellationToken)
+
+                // Only an independently verified synthetic scenario permits
+                // the creation of a laboratory core session.
+                session = await _coordinator.OpenSessionAsync(cancellationToken)
                     .ConfigureAwait(false);
-                if (frame.Kind == PipeFrameCodec.Goodbye) return;
                 await WriteWithDeadlineAsync(server,
-                    new PipeFrame(PipeFrameCodec.Ack, session.Value.Id, session.Value.Generation, []),
+                    new PipeFrame(PipeFrameCodec.Ack, session.Value.Id,
+                        session.Value.Generation, []),
                     cancellationToken).ConfigureAwait(false);
+
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    PipeFrame? frame = await ReadWithDeadlineAsync(server, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (frame is null) return;
+                    if (frame.SessionId != session.Value.Id ||
+                        frame.Generation != session.Value.Generation ||
+                        frame.Payload.Length != 0 ||
+                        frame.Kind is not (PipeFrameCodec.KeepAlive or PipeFrameCodec.Goodbye))
+                        return;
+                    await _coordinator.ValidateSessionAsync(session.Value, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (frame.Kind == PipeFrameCodec.Goodbye) return;
+                    await WriteWithDeadlineAsync(server,
+                        new PipeFrame(PipeFrameCodec.Ack, session.Value.Id,
+                            session.Value.Generation, []),
+                        cancellationToken).ConfigureAwait(false);
+                }
             }
-        }
-        catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException
-            or IOException or InvalidOperationException ||
-            ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-        {
-            // Unexpected protocol and broken connections always fail closed.
-            // Do not log secrets, message bytes or client-controlled details.
-        }
+            catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException
+                or IOException or InvalidOperationException ||
+                ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                // Protocol failure, timeout and broken peer all fail closed.
+                // Do not log credentials or peer-controlled message bytes.
+            }
             finally
             {
                 if (session is SessionToken token)
                 {
-                    try { await _coordinator.CloseSessionAsync(token, CancellationToken.None).ConfigureAwait(false); }
-                    catch (InvalidOperationException) { /* Reset/shutdown already invalidated it. */ }
+                    try
+                    {
+                        await _coordinator.CloseSessionAsync(token, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // Core reset/shutdown may already have invalidated it.
+                    }
                 }
             }
         }
