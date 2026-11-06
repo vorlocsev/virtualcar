@@ -2,7 +2,6 @@ package labdb
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
