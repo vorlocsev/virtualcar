@@ -1,33 +1,47 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## NEW TECHNOLOGY DECISION: C# + C++20 migration (2026-11-06)
+## ACTIVE checkpoint: C#/.NET 10 + C++20 migration (2026-11-06)
 
-The user explicitly chose to rewrite **Virtual Car** to C#/.NET 10 with
-critical transport and native J2534 code on C++20. This supersedes the
-planned GO-BASED stages 61-67 as implementation plans, but the historical
-Go/C/Python implementation is retained as an immutable behavioral reference.
-The primary product remains Dvinholm and no Virtual Car release is allowed.
+**Dvinholm is the primary product.** Virtual Car remains its optional private
+read-only test lab. User-selected target: C#/.NET 10 for managed core, SQLite,
+scenario compiler, service and WinUI control; C++20 for native x86/x64 J2534
+DLL and timing-critical CAN/ISO15765/ISO-TP. Do not publish Virtual Car.
 
-Migration specification:
-docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
+Verified milestones:
+- Independent Native AOT J2534 ABI canary PR #70 MERGED (5ab1773d);
+  this is a nonfunctional experimental ABI probe only, NEVER registered
+  as a J2534 device and NOT the chosen C++ production adapter.
+- M0 PR #71 MERGED at b4b70f41b88b197ebf1c6b2626056d280052cafb.
+  C# VirtualCar.Core, 8 synthetic lifecycle checks, C++20 J2534 ABI header
+  and smoke. New managed migration CI #1 SUCCESS; legacy x86 CI #608
+  and VMware LAB packaging #439 SUCCESS.
+- M1 PR #72 MERGED at e11a15d47f3f0315605188e09edfb12f4e9f630d.
+  C# VirtualCar.Storage with Microsoft.Data.Sqlite 10.0.14 and the
+  original v1 schema, SHA-256 migration check, WAL, online backup,
+  metadata-only reads and eight real SQLite synthetic integration gates.
+  Managed migration CI #4 SUCCESS Linux+Windows; legacy x86 CI #612
+  passed all jobs, VMware LAB packaging #441 SUCCESS.
 
-Migration M0 in progress on branch
-feature/csharp-cpp-virtualcar-migration-foundation:
-- emulator/managed/VirtualCar.Core (pure C# lifecycle)
-- emulator/managed/VirtualCar.Core.Checks (8 synthetic tests)
-- emulator/native-cpp/include/virtualcar/j2534_abi.hpp (ABI declaration)
-- emulator/native-cpp/tests/j2534_abi_smoke.cpp (C++ host layout checks)
-- .github/workflows/managed-migration.yml (isolated .NET 10/C++ CI)
+Not yet implemented: C# compiled scenario runtime, functional C++20 J2534 DLL
+for x86/x64, C++ transport, authenticated local Named Pipes service,
+WinUI lab control GUI, Dvinholm x64 native E2E or physical DiCE acceptance.
+Old C/Go baseline remains in place for behavioral parity and rollback.
+A passing emulator test is not OEM Volvo XC90 MY2009 identity proof.
 
-This M0 stage DOES NOT produce a functional C++ J2534 DLL, real ECU
-replies, C# SQLite integration, GUI, or real Dvinholm client acceptance.
-Do not call it finished until CI completes and GitHub reports a merge.
-After M0, M1 migrates the SQLite catalog to C# Microsoft.Data.Sqlite;
-M2 compiles read-only scenarios; M3/M4 replace C J2534 transport by C++;
-M5/M6 implement C# service/GUI; M7 is Dvinholm-native E2E.
+**NEXT STAGE M2:** implement verified, immutable, read-only scenario compiler
+in C# from provenance-scoped SQLite v1 and scenario artifacts; validate
+complete payload bytes/hash, exact routes/bus/ECU isolation, reject
+research-only and conflicting Volvo CEM fixtures. 6-8 tests; separate PR.
+After M2: M3 native C++ x86/x64 J2534 exported DLLs and ABI tests.
+The native AOT probe #70 is historical experimental evidence, not the
+default J2534 implementation.
 
-**The exact resume phrase stays: virtual car.**
+Canonical documents:
+- docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
+- docs/architecture/VIRTUALCAR-CSHARP-SQLITE-M1.md
+- docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 
+**Resume phrase remains exactly: virtual car**.
 
 Verified checkpoint: 2026-11-06.
 This document is the canonical cross-chat continuation note. Re-read the
