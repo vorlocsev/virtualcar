@@ -1,9 +1,36 @@
-/* Linux host-side protocol test, with Win32 APIs stubbed. */
+/* Host-side protocol test, with deterministic Win32 API shims. */
 #define HOST_TEST 1
-#include "../src/virtualcar.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * Keep the simulator's Win32 shims in a private namespace. On a Windows
+ * host the UCRT itself imports several Kernel32 names (notably
+ * GetCurrentProcessId, QueryPerformanceCounter, WriteFile and CloseHandle).
+ * Defining test shims with those public names makes the Windows host linker
+ * report duplicate symbols. Renaming only this translation unit's calls and
+ * shim definitions preserves the Linux-host behavior while allowing the
+ * same deterministic regression executable to run on Windows.
+ */
+#define Sleep vc_test_Sleep
+#define GetTickCount vc_test_GetTickCount
+#define QueryPerformanceCounter vc_test_QueryPerformanceCounter
+#define QueryPerformanceFrequency vc_test_QueryPerformanceFrequency
+#define GetCurrentProcessId vc_test_GetCurrentProcessId
+#define GetModuleFileNameA vc_test_GetModuleFileNameA
+#define GetPrivateProfileStringA vc_test_GetPrivateProfileStringA
+#define GetTempPathA vc_test_GetTempPathA
+#define GetEnvironmentVariableA vc_test_GetEnvironmentVariableA
+#define CreateDirectoryA vc_test_CreateDirectoryA
+#define CreateFileA vc_test_CreateFileA
+#define SetFilePointer vc_test_SetFilePointer
+#define WriteFile vc_test_WriteFile
+#define CloseHandle vc_test_CloseHandle
+#define InterlockedCompareExchange vc_test_InterlockedCompareExchange
+#define InterlockedExchange vc_test_InterlockedExchange
+
+#include "../src/virtualcar.c"
 static U32 tick=0;static I64 qpc_offset_us=0;
 static char backend_lines[800000];static U32 backend_len=0;
 static int capture_connect_log=0;
