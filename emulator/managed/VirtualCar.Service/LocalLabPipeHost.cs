@@ -63,7 +63,8 @@ public sealed class LocalLabPipeHost
             SessionToken? session = null;
             try
             {
-                await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+                await WaitForConnectionWithDeadlineAsync(server, cancellationToken)
+                    .ConfigureAwait(false);
                 PipeFrame? hello = await ReadWithDeadlineAsync(server, cancellationToken)
                     .ConfigureAwait(false);
                 if (hello is null || hello.Kind != PipeFrameCodec.Hello ||
@@ -127,6 +128,15 @@ public sealed class LocalLabPipeHost
         {
             Volatile.Write(ref _serving, 0);
         }
+    }
+
+    private async Task WaitForConnectionWithDeadlineAsync(
+        NamedPipeServerStream server, CancellationToken cancellationToken)
+    {
+        // An idle one-shot listener must not hold a host operation open forever.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_ioDeadline);
+        await server.WaitForConnectionAsync(timeout.Token).ConfigureAwait(false);
     }
 
     private async Task WriteWithDeadlineAsync(
