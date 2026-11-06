@@ -5,6 +5,16 @@ Primary product: Dvinholm. Virtual Car is an independent test laboratory.
 This ADR supersedes the *technology choice* in prior Go-core roadmaps; it
 does not rewrite recorded historical PR/CI results.
 
+## Verified implementation progress (2026-11-06)
+
+M0 PR #71 merged and CI #1 passed; M1 PR #72 merged and CI #4 passed.
+M2 PR #75 merged at 0487fc1af236c668d2b57f7aa8cfa283c50656da;
+managed migration CI #6 (Linux/Windows), x86 legacy/native routes #619,
+VMware LAB packaging #442 passed. M2 verifies only synthetic, provenance-
+scoped UDS ReadDataByIdentifier fixtures with full source bytes and sealed
+snapshot SHA. This is NOT actual native/physical diagnostic compatibility.
+**Next M3:** functional C++20 x86/x64 J2534 DLLs; preserve old C/Go.
+
 ## Final stack
 
 | Layer | Technology | Responsibilities |
