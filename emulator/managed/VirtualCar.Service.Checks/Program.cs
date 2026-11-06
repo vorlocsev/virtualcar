@@ -27,7 +27,8 @@ internal static class Program
             ("05 Oversize, negative length and truncated frames", Test05),
             ("06 Stale session generation fails closed", Test06),
             ("07 Forged session and unrecognized command are rejected", Test07),
-            ("08 Disconnect and reconnect invalidate previous token", Test08)
+            ("08 Disconnect and reconnect invalidate previous token", Test08),
+            ("09 Idle accept deadline releases listener", Test09)
         ];
         int passed = 0;
         foreach (var (label, check) in checks)
@@ -59,9 +60,10 @@ internal static class Program
         return core;
     }
 
-    private static LocalLabPipeHost Host(ScenarioCoordinator core, string? name = null) =>
+    private static LocalLabPipeHost Host(
+        ScenarioCoordinator core, string? name = null, TimeSpan? deadline = null) =>
         new(name ?? "vcm5-" + Guid.NewGuid().ToString("N"), core, LaunchSecret,
-            TimeSpan.FromSeconds(3));
+            deadline ?? TimeSpan.FromSeconds(3));
 
     private static async Task<NamedPipeClientStream> ConnectAsync(string name)
     {
@@ -290,6 +292,21 @@ internal static class Program
                 new PipeFrame(PipeFrameCodec.Goodbye, second.SessionId, second.Generation, []));
         }
         await secondServing.WaitAsync(TimeSpan.FromSeconds(5));
+        await core.ResetAsync();
+    }
+
+    private static async Task Test09()
+    {
+        await using var core = await CoreAsync();
+        var host = Host(core, deadline: TimeSpan.FromMilliseconds(250));
+
+        // No client connects: both one-shot accepts must expire and release
+        // the listener guard rather than leaving ServeOnceAsync pending.
+        await host.ServeOnceAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await host.ServeOnceAsync().WaitAsync(TimeSpan.FromSeconds(3));
+
+        SessionToken token = await core.OpenSessionAsync();
+        await core.CloseSessionAsync(token);
         await core.ResetAsync();
     }
 
