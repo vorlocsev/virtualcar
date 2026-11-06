@@ -144,14 +144,23 @@ internal static class Program
         await ExpectClosedAsync(client);
     }, selected: false);
 
-    private static async Task Test03() => await RunClosedAsync(async client =>
+    private static async Task Test03()
     {
-        byte[] wrong = LaunchSecret.ToArray();
-        wrong[^1] ^= 0x80;
-        await PipeFrameCodec.WriteAsync(client,
-            new PipeFrame(PipeFrameCodec.Hello, 0, 0, wrong));
-        await ExpectClosedAsync(client);
-    });
+        await RunClosedAsync(async client =>
+        {
+            byte[] wrong = LaunchSecret.ToArray();
+            wrong[^1] ^= 0x80;
+            await PipeFrameCodec.WriteAsync(client,
+                new PipeFrame(PipeFrameCodec.Hello, 0, 0, wrong));
+            await ExpectClosedAsync(client);
+        });
+        await RunClosedAsync(async client =>
+        {
+            await PipeFrameCodec.WriteAsync(client,
+                new PipeFrame(PipeFrameCodec.Hello, 0, 1, LaunchSecret));
+            await ExpectClosedAsync(client);
+        });
+    }
 
     private static async Task SendRawAsync(Stream client, Action<byte[]> mutate, int? truncate = null)
     {
@@ -202,6 +211,22 @@ internal static class Program
         await RunClosedAsync(async client =>
         {
             await SendRawAsync(client, _ => { }, truncate: 8);
+        });
+        // After successful authentication, disconnect before the declared
+        // body is complete. The server must release the core session, not
+        // return an ACK for the partial keepalive.
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame authenticated = await HelloAsync(client);
+            using var buffer = new MemoryStream();
+            await PipeFrameCodec.WriteAsync(buffer,
+                new PipeFrame(PipeFrameCodec.KeepAlive, authenticated.SessionId,
+                    authenticated.Generation, []));
+            byte[] incomplete = buffer.ToArray();
+            BinaryPrimitives.WriteInt32LittleEndian(incomplete.AsSpan(8), 4);
+            await client.WriteAsync(incomplete);
+            await client.WriteAsync(new byte[] { 0x11 }); // Only 1 of 4 bytes.
+            // RunClosedAsync disposes the client here; the server must fail closed.
         });
     }
 
