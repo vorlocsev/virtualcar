@@ -39,6 +39,16 @@ jobs:
           objdump -p VirtualCarJ2534.dll | grep 'DLL Name: KERNEL32.dll'
       - name: Python fixture and profile tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Resolve pinned Go SQLite dependency (temporary checksum generation)
+        run: |
+          cd control
+          go mod tidy
+          echo '===BEGIN GENERATED GO.MOD==='
+          cat go.mod
+          echo '===END GENERATED GO.MOD==='
+          echo '===BEGIN GENERATED GO.SUM==='
+          cat go.sum
+          echo '===END GENERATED GO.SUM==='
       - name: Go tests / vet
         run: cd control && go test ./... -count=1 && go vet ./...
       - name: Build Windows x86 GUI
