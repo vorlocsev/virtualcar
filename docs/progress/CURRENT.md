@@ -29,14 +29,14 @@ Dvinholm PR #703: documentation-only lab interface OPEN draft:
   Its first head CI #5150 passed; the PR head may have changed afterward.
   Recheck actual CURRENT head CI before a merge.
 
-Current development stage: #60, SQLite Repository v1.
-Current branch: feature/lab-sqlite-repository-stage60
+Current development stage: #60A, SQLite Repository offline initializer.
+Current PR: https://github.com/vorlocsev/virtualcar/pull/62 (draft at creation).\nCurrent branch: feature/lab-sqlite-repository-stage60
 Target base: vorlocsev/virtualcar development.
-Files planned in this branch:
+Files added in this branch:
   emulator/tools/lab_sqlite_repository.py
   emulator/tests/test_lab_sqlite_repository.py
   docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
-  docs/progress/CURRENT.md
+  docs/progress/CURRENT.md\n  emulator/tools/lab_db_cli.py\n  docs/architecture/LAB-SQLITE-REPOSITORY-STAGE60.md
 No new Virtual Car releases are authorized.
 
 ## Safety and integrity
