@@ -40,6 +40,11 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
   The final Windows x86 CI #587 and VMware LAB #426 SUCCESS.
   Standard-library Python SQLite offline catalog, explicit migration
   checksum, no implicit schema creation/upgrades, eight synthetic tests.
+- Stage60B-1 PR #66: merged at 0d0ecdea, x86 CI #598 SUCCESS.
+- Stage60B-2 PR #68: merged at 4942fb41, x86 CI #604 SUCCESS,
+  VMware LAB packaging #438 SUCCESS. Pinned pure-Go SQLite v1.36.3,
+  WAL backup, 8 real SQLite tests, Windows x64 no-CGO build smoke.
+  Conflicted earlier PR #65 closed as superseded without overwrite.
 - No confirmed actual VIDA 2015A or SectorV identification of target
   XC90 V8 MY2009, no physical J2534 test, no approved release publication.
 
@@ -49,7 +54,7 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 | --- | --- | --- | --- |
 | 60A | SQLite offline catalog | explicit init, checksum, migration rejection, integrity, FK, rollback, bounded metadata, symlink safety | COMPLETED, PR #62, CI #587 |
 | 60B-1 | Go SQL metadata boundary | injected driver, checksum/integrity/FK checks, safe bounded metadata, eight synthetic tests | COMPLETED, PR #66, CI #598 |
-| 60B-2 | Real Go SQLite driver | pinned modernc and checksums, WAL backup, migrations, bounded queries, real SQLite tests, Windows x64 build | PR #68 IN REVIEW; check HEAD CI |
+| 60B-2 | Real Go SQLite driver | pinned modernc and checksums, WAL backup, migrations, bounded queries, real SQLite tests, Windows x64 build | COMPLETED, PR #68, CI #604 |
 | 61 | Scenario Compiler | exactly sourced fixtures, canonical serialization, SHA-256, sealed revision, refusal on missing evidence, bus/ECU isolation, reproducible replay, read-only policy | PLANNED |
 | 62 | Go Headless Core | lifecycle, CPU/timing, queues, no SQL in RX, reset, faults, stale session rejection, cancellation, recovery | PLANNED |
 | 63 | IPC control/data | Windows SID ACL, version negotiation, x86/x64, length caps, deadline, disconnect recovery, invalid IDs, event isolation | PLANNED |
@@ -58,18 +63,21 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 | 66 | Lab Control UI | profiles, ECU catalog, scenario revision, start/stop, fault scenarios, test history, RU/EN, privacy | PLANNED |
 | 67 | Evidence-scoped P2 | real diagnostic traces, B9FB/B9F0 provenance, identity script, VIN validation, profile resolution, ECU inventory, missing-data fail-closed, Windows acceptance | RESEARCH BLOCKED |
 
-## Active next gate: PR #68, then stage 61
+## Active next gate: stage 61 scenario compiler
 
-- PR #66 merged the safe injected database/sql metadata boundary.
-- PR #68 adds the pinned real Go SQLite driver, schema, WAL backup and
-  8 additional real SQLite tests; supports Windows x64 no-CGO build.
-- PR #65 was blocked by concurrent merge conflicts and is superseded
-  by PR #68. Do not force-merge or overwrite the existing Repository.
-- Verify PR #68 final HEAD CI and native x86 J2534 regression before
-  merging into development. Record actual merge SHA when confirmed.
-- After stage 60B-2 is merged: implement canonical scenario compiler,
-  artifact SHA-256 and provenance-bound, read-only ECU reply activation.
-- Never publish Virtual Car or claim physical MY2009 CEM acceptance.
+- Stage 60A, 60B-1 and 60B-2 are merged and CI-verified.
+- Current Go SQLite repository is metadata-only; no response fixture
+  becomes authorized from a DB hash alone.
+- Design deterministic canonical encoding for scenario snapshots
+  incorporating profile revision, bus/ECU routing, fixture provenance
+  and exact request/response bytes.
+- Independently SHA-256 verify compiled snapshot content before labcore
+  may activate synthetic, read-only ECU replies.
+- Reject missing, conflicting, research-only, unknown or unsupported
+  XC90 P2/CEM evidence rather than fabricating responses.
+- Add 6-8 synthetic tests plus Windows x86 J2534 regression; x64
+  native DLL and Dvinholm E2E remain later milestones.
+- No standalone Virtual Car release or physical support claims.
 
 ## Cross-chat restoration procedure
 
