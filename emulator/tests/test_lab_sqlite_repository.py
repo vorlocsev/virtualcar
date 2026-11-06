@@ -1,5 +1,6 @@
 """Eight offline safety/consistency tests for the SQLite lab repository."""
 import hashlib
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import sys
@@ -63,12 +64,9 @@ class SqliteRepositoryTests(unittest.TestCase):
                 conn.execute("UPDATE schema_migrations SET checksum_sha256=?", ("f" * 64,))
             with self.assertRaises(RepositoryError):
                 open_repository(p)
-            conn = sqlite3.connect(p)
-            try:
+            with closing(sqlite3.connect(p)) as conn:
                 conn.execute("UPDATE schema_migrations SET version=99,checksum_sha256=?", ("a" * 64,))
                 conn.commit()
-            finally:
-                conn.close()
             with self.assertRaises(RepositoryError):
                 open_repository(p)
 
