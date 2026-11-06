@@ -63,6 +63,16 @@ bool is_invalid_handle(void* value) noexcept
     return value == nullptr || value == INVALID_HANDLE_VALUE;
 }
 
+Result map_error(std::uint32_t error) noexcept
+{
+    if (error == WAIT_TIMEOUT || error == ERROR_SEM_TIMEOUT)
+        return Result::timed_out;
+    if (error == ERROR_BROKEN_PIPE || error == ERROR_PIPE_NOT_CONNECTED ||
+        error == ERROR_NO_DATA || error == ERROR_INVALID_HANDLE)
+        return Result::disconnected;
+    return Result::io_error;
+}
+
 Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
                       std::uint32_t timeout_ms, bool write,
                       std::uint32_t& last_error)
@@ -91,7 +101,7 @@ Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
             if (start_error != ERROR_IO_PENDING) {
                 last_error = start_error;
                 CloseHandle(event);
-                return Client::map_win32_error(start_error);
+                return map_error(start_error);
             }
 
             const DWORD wait = WaitForSingleObject(event, timeout_ms);
@@ -113,13 +123,13 @@ Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
                 (void)GetOverlappedResult(pipe, &overlapped, &ignored, FALSE);
                 last_error = wait_error;
                 CloseHandle(event);
-                return Client::map_win32_error(wait_error);
+                return map_error(wait_error);
             }
             if (GetOverlappedResult(pipe, &overlapped, &transferred, FALSE) == FALSE) {
                 const DWORD io_error = GetLastError();
                 last_error = io_error;
                 CloseHandle(event);
-                return Client::map_win32_error(io_error);
+                return map_error(io_error);
             }
         }
 
@@ -321,12 +331,16 @@ void Client::disconnect() noexcept
 {
     std::lock_guard<std::mutex> guard(mutex_);
     if (!is_invalid_handle(pipe_)) {
-        if (session_.id != 0 && session_.generation != 0) {
-            Frame goodbye{};
-            goodbye.kind = static_cast<std::uint16_t>(Kind::goodbye);
-            goodbye.session_id = session_.id;
-            goodbye.generation = session_.generation;
-            (void)write_frame(goodbye);
+        try {
+            if (session_.id != 0 && session_.generation != 0) {
+                Frame goodbye{};
+                goodbye.kind = static_cast<std::uint16_t>(Kind::goodbye);
+                goodbye.session_id = session_.id;
+                goodbye.generation = session_.generation;
+                (void)write_frame(goodbye);
+            }
+        } catch (...) {
+            // Destruction and explicit close must still release the OS handle.
         }
         close_locked();
     }
@@ -406,12 +420,7 @@ void Client::close_locked() noexcept
 
 Result Client::map_win32_error(std::uint32_t error) noexcept
 {
-    if (error == WAIT_TIMEOUT || error == ERROR_SEM_TIMEOUT)
-        return Result::timed_out;
-    if (error == ERROR_BROKEN_PIPE || error == ERROR_PIPE_NOT_CONNECTED ||
-        error == ERROR_NO_DATA || error == ERROR_INVALID_HANDLE)
-        return Result::disconnected;
-    return Result::io_error;
+    return map_error(error);
 }
 
 } // namespace virtualcar::ipc
