@@ -1,11 +1,7 @@
 name: Virtual Car CSharp migration pilot
 
 on:
-  pull_request:
-    branches: [development, main]
-    paths:
-      - "dotnet/**"
-      - ".github/workflows/csharp-migration.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
