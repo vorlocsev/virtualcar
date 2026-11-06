@@ -38,18 +38,23 @@ jobs:
               }
           }
 
-          # Python is installed machine-wide for the least-privilege runner service.
-          # Do not use actions/setup-python here: its Windows setup script attempts
-          # to edit machine-wide Python registry entries, which NETWORK SERVICE
-          # correctly cannot modify.
-          $python = 'C:\Program Files\Python312\python.exe'
-          if (-not (Test-Path -LiteralPath $python)) {
-              throw 'Machine-wide Python 3.12 not found. Run Install-VirtualCar-Python312-MachineWide.ps1 as administrator.'
+          # Python is a uv-managed, isolated runtime on E:.
+          # No Python registry entries or per-user profile paths are used.
+          $manifest = 'E:\\VirtualCar\\Tools\\python312.path'
+          if (-not (Test-Path -LiteralPath $manifest)) {
+              throw "Python runtime manifest not found: $manifest. Run Install-VirtualCar-Python312-Managed.ps1 on the VM."
           }
-          & $python --version
-          if ($LASTEXITCODE -ne 0) { throw 'Python 3.12 failed to start' }
-          & $python -c "import sqlite3; print('SQLite ' + sqlite3.sqlite_version)"
-          if ($LASTEXITCODE -ne 0) { throw 'Python SQLite module failed' }
+          $python = (Get-Content -LiteralPath $manifest -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($python) -or -not (Test-Path -LiteralPath $python)) {
+              throw "Python executable from manifest is missing: $python"
+          }
+
+          & $python -I --version
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated Python 3.12 failed to start' }
+          & $python -I -m pip --version
+          if ($LASTEXITCODE -ne 0) { throw 'pip is unavailable in isolated Python 3.12' }
+          & $python -I -c "import sys,sqlite3,ssl,ctypes,venv; print('Executable:',sys.executable); print('Prefix:',sys.prefix); print('SQLite:',sqlite3.sqlite_version); print('OpenSSL:',ssl.OPENSSL_VERSION); print('ctypes: OK; venv: OK')"
+          if ($LASTEXITCODE -ne 0) { throw 'Python standard library verification failed' }
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $python)
 
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
