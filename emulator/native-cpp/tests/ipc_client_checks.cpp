@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -183,18 +184,35 @@ bool group08_missing_server_timeout_is_bounded()
     const auto start = std::chrono::steady_clock::now();
     const std::wstring pipe_name = L"vcm5b-no-listener-" +
         std::to_wstring(start.time_since_epoch().count());
-    const Result result = client.connect(pipe_name, secret, 100);
+    if (client.connect(pipe_name, secret, 0, 100) != Result::invalid)
+        return false;
+    const Result result = client.connect(pipe_name, secret, 1, 100);
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start).count();
     return result == Result::timed_out && !client.connected() &&
         elapsed >= 80 && elapsed < 2000;
 }
 
-bool cross_language_connect(const std::wstring& pipe_name)
+bool cross_language_reject_peer(const std::wstring& pipe_name,
+                                std::uint32_t expected_server_pid)
 {
     Client client;
     const auto secret = test_secret();
-    const Result connected = client.connect(pipe_name, secret, 5000);
+    const Result result = client.connect(pipe_name, secret, expected_server_pid, 5000);
+    if (result != Result::peer_mismatch || client.connected()) {
+        std::printf("FAIL same-user pipe endpoint was not rejected before HELLO\n");
+        return false;
+    }
+    std::printf("PASS C++ client rejects a pipe hosted by the wrong process\n");
+    return true;
+}
+
+bool cross_language_connect(const std::wstring& pipe_name,
+                            std::uint32_t expected_server_pid)
+{
+    Client client;
+    const auto secret = test_secret();
+    const Result connected = client.connect(pipe_name, secret, expected_server_pid, 5000);
     if (connected != Result::ok || !client.connected()) {
         std::printf("FAIL C# host HELLO (status=%u, win32=%u)\n",
             static_cast<unsigned>(connected), client.last_error());
@@ -218,16 +236,26 @@ bool cross_language_connect(const std::wstring& pipe_name)
 
 int main(int argc, char** argv)
 {
-    if (argc == 3 && std::strcmp(argv[1], "--connect") == 0) {
+    if (argc == 4 &&
+        (std::strcmp(argv[1], "--connect") == 0 ||
+         std::strcmp(argv[1], "--reject-peer") == 0)) {
         std::wstring pipe_name;
         for (const char* p = argv[2]; *p != '\0'; ++p) {
             if (static_cast<unsigned char>(*p) > 0x7fU) return 2;
             pipe_name.push_back(static_cast<wchar_t>(*p));
         }
-        return cross_language_connect(pipe_name) ? 0 : 1;
+        std::uint32_t expected_server_pid = 0;
+        const char* pid_end = argv[3] + std::strlen(argv[3]);
+        const auto parsed = std::from_chars(argv[3], pid_end, expected_server_pid);
+        if (parsed.ec != std::errc{} || parsed.ptr != pid_end ||
+            expected_server_pid == 0)
+            return 2;
+        if (std::strcmp(argv[1], "--reject-peer") == 0)
+            return cross_language_reject_peer(pipe_name, expected_server_pid) ? 0 : 1;
+        return cross_language_connect(pipe_name, expected_server_pid) ? 0 : 1;
     }
     if (argc != 1) {
-        std::printf("Usage: vc_ipc_client_checks [--connect <pipe-name>]\n");
+        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer <pipe-name> <server-pid>]\n");
         return 2;
     }
 
