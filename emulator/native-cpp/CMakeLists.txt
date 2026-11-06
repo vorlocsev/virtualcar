@@ -35,3 +35,13 @@ target_compile_options(vc_j2534_native_checks PRIVATE /W4 /WX /permissive- /sdl)
 enable_testing()
 add_test(NAME m3_j2534_fail_closed_8_groups
   COMMAND vc_j2534_native_checks "$<TARGET_FILE:VirtualCarJ2534Cpp>")
+
+
+add_library(VirtualCarTransport STATIC src/transport.cpp)
+target_include_directories(VirtualCarTransport PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(VirtualCarTransport PRIVATE /W4 /WX /permissive- /sdl)
+
+add_executable(vc_transport_checks tests/transport_checks.cpp)
+target_link_libraries(vc_transport_checks PRIVATE VirtualCarTransport)
+target_compile_options(vc_transport_checks PRIVATE /W4 /WX /permissive- /sdl)
+add_test(NAME m4a_bounded_isotp_transport_8_groups COMMAND vc_transport_checks)
