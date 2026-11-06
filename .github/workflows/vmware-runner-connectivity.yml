@@ -16,6 +16,9 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Verify connected Windows runner
         shell: powershell
         run: |
@@ -29,13 +32,26 @@ jobs:
           Write-Host ('Architecture: ' + [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
 
           # Check commands visible to the service account without revealing paths.
-          foreach ($tool in @('git', 'go', 'dotnet', 'python', 'py', 'cmake', 'ninja')) {
+          foreach ($tool in @('git', 'go', 'dotnet', 'python', 'cmake')) {
               $cmd = Get-Command $tool -ErrorAction SilentlyContinue
               if ($cmd) {
                   Write-Host ('AVAILABLE: ' + $tool)
               } else {
-                  Write-Host ('NOT IN SERVICE PATH: ' + $tool)
+                  throw ('Required tool missing from job PATH: ' + $tool)
               }
           }
 
-          Write-Host 'Connection smoke PASS. No artifacts or releases produced.'
+          python --version
+          python -c "import sqlite3; print('SQLite ' + sqlite3.sqlite_version)"
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere.exe not found' }
+          $vs2022 = & $vswhere -latest -products '*' -version '[17.0,18.0)' -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vs2022)) { throw 'Visual Studio 2022 Build Tools not visible to runner' }
+          Write-Host ('Visual Studio 2022: ' + $vs2022)
+
+          $cmakeHelp = cmake --help | Out-String
+          if ($cmakeHelp -notmatch 'Visual Studio 17 2022') { throw 'CMake Visual Studio 17 2022 generator is unavailable' }
+          Write-Host 'CMake VS 2022 generator: AVAILABLE'
+
+          Write-Host 'Connection and toolchain smoke PASS. No artifacts or releases produced.'
