@@ -55,19 +55,44 @@ NOT IMPLEMENTED:
 - Authorized live VIDA/SectorV identification of target XC90 MY2009.
 - Physical J2534/vehicle testing.
 
-## NEXT STAGE: 60B (Go-owned SQLite Catalog)
+## Stage 60B | Go SQLite Catalog (PR #65)
 
-1. Choose a pinned, license-reviewed Go SQLite driver compatible with the
-   target Windows x64 self-contained service.
-2. Enforce exact migration checksum, foreign keys, bounded file paths, WAL,
-   single-writer transactions and database backups.
-3. Implement Go labcore.Catalog loading sealed descriptor metadata ONLY;
-   NEVER treat metadata SHA as payload verification.
-4. Implement canonical materialized snapshot content SHA-256 verification
-   in stage 61 before permitting read-only scenario activation.
-5. Add 6-8 Go tests for missing DB, migrations, corruption, private content
-   isolation, scenario revisions, concurrency, cancellation, fail closed.
-6. Run CI and submit/merge a dedicated PR to development. Do not publish.
+- Repository: https://github.com/vorlocsev/virtualcar/pull/65
+- Go package: emulator/control/labdb/catalog.go; tests:
+  emulator/control/labdb/catalog_test.go (eight synthetic Go cases).
+- Pinned modernc.org/sqlite v1.36.3, Go 1.23 (pure Go / no CGO);
+  exact transitive checksums are committed in go.mod and go.sum.
+- SQLite schema is the SAME existing schema/0001_lab_catalog.sql.
+- Functions: explicit Initialize/Open, version/SHA-256 migration checks,
+  integrity, foreign keys, bounded profile and sealed descriptor reads,
+  consistent WAL backup with VACUUM INTO.
+- Critical: returned Snapshot.ApprovedReadOnly is ALWAYS false.
+  Neither Dvinholm nor Virtual Car may activate database responses
+  before a stage 61 snapshot compiler validates actual content.
+- Windows x86 CI #594 SUCCESS, including Linux Go tests/vet,
+  native-route x86 regression, and unchanged existing C DLL;
+  VMware LAB packaging #430 SUCCESS.
+- This checkpoint is in PR #65. Check GitHub for its latest
+  head and MERGED status, plus newer CI, before claiming completion.
+- No headless Go service, named pipes, x64 J2534 DLL or
+  physical vehicle/VIDA acceptance has been implemented.
+- An older draft PR #61 overlaps completed 60A. Do not
+  substitute or merge it without reviewing differences.
+
+## NEXT STAGE: 61 (Scenario Compiler), only AFTER PR #65 merged
+
+1. Build canonical, immutable scenario payloads from approved lab
+   fixture bindings and exact ECU/bus route metadata.
+2. Verify the SHA-256 of the complete materialized snapshot artifact.
+3. Preserve synthetic/private provenance; do not fabricate MY2009
+   CEM replies, never treat metadata hash as runtime evidence.
+4. Connect verified payloads to labcore activation only when
+   the current session generation, bus, target and revision match.
+5. Add 6-8 deterministic offline tests for route conflicts, missing
+   evidence, read-only restrictions, interleaved ECU requests,
+   partial multi-frame responses and cancellation.
+6. CI + Windows native E2E remain separate acceptance stages.
+7. Update this checkpoint and ROADMAP with actual PR/CI evidence.
 
 Canonical roadmap:
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
