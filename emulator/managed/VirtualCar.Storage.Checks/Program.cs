@@ -107,7 +107,8 @@ internal static class Program
         await using (var created = await LabCatalog.CreateAsync(folder.Db)) { }
         byte[] previous = await File.ReadAllBytesAsync(folder.Db);
         await Fail<LabStorageException>(async () => { await using var _ = await LabCatalog.CreateAsync(folder.Db); });
-        Require(previous.SequenceEqual(await File.ReadAllBytesAsync(folder.Db)), "Existing DB was overwritten");
+        byte[] after = await File.ReadAllBytesAsync(folder.Db);
+        Require(previous.AsSpan().SequenceEqual(after), "Existing DB was overwritten");
     }
 
     private static async Task Test03()
