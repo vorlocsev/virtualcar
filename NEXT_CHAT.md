@@ -8,9 +8,9 @@ builds or enable programming/security-access behavior.
 
 ### Latest verified development state
 
-- Current development HEAD: `c4d436b0aae2262bce440b4b60c7b734accc895c`.
+- Current development HEAD: `e1d9dc01c1c5a4cf1ecea0cec3d9bb9d097e6299` (latest two commits only refresh handoff/progress documentation).
 - [VMware Windows runner validation #42313066763](https://github.com/vorlocsev/virtualcar/actions/runs/42313066763):
-  **SUCCESS** on source ref `development`.
+  **SUCCESS** on code source commit `c4d436b0aae2262bce440b4b60c7b734accc895c` selected from `development`.
 - Python: **252 tests passed**.
 - Legacy C host protocol regression: PASS.
 - Clang/LLD produced `VirtualCarJ2534.dll` for Windows x86.
