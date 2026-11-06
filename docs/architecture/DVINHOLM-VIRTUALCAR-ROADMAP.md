@@ -12,8 +12,8 @@ not requirements for the new architecture.
 | --- | --- | --- |
 | M0 | .NET10 C# core, 8 tests, C++ ABI and isolated CI | COMPLETED, PR #71, CI #1 |
 | M1 | Microsoft.Data.Sqlite / SQLite v1 migration with rollback | COMPLETED, PR #72, CI #4 |
-| M2 | Canonical immutable scenario compiler, evidence gates | NEXT |
-| M3 | C++20 native x86/x64 J2534 DLLs, exact 14 exports | PLANNED |
+| M2 | Canonical immutable scenario compiler, evidence gates | COMPLETED, PR #75, CI #6 |
+| M3 | C++20 native x86/x64 J2534 DLLs, exact 14 exports | NEXT |
 | M4 | C++ transport/parity: filters, FC, ISO-TP, queues, deadlines | PLANNED |
 | M5 | C# headless Windows service and secure Named Pipes IPC | PLANNED |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
@@ -24,6 +24,9 @@ Completed source and CI evidence:
 - M0: PR #71 merged b4b70f41, C#/.NET10/C++20 CI #1 passed.
 - M1: PR #72 merged e11a15d4, C#/.NET10/C++20 CI #4,
   x86 J2534 #612 and VMware LAB packaging #441 passed.
+- M2: PR #75 merged 0487fc1a, managed CI #6, emulator x86 #619,
+  VMware LAB packaging #442 all SUCCESS. Real C# SQLite-to-scenario
+  compiler, eight synthetic tests, no physical/client test.
 - Experimental prior Native AOT ABI probe PR #70 is nonfunctional
   and is not the user-selected C++20 production DLL.
 

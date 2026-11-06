@@ -1,26 +1,30 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE development checkpoint: C#/.NET10 + C++20
+## ACTIVE: M2 completed, C# / C++20 lab migration
 
-The latest user architecture choice is C# for managed Virtual Car and C++20
-for critical native J2534/CAN/ISO-TP. Dvinholm is the MAIN PRODUCT.
-Existing Go/C remain only as behavior/parity baseline.
+Dvinholm is the main product. Virtual Car is optional PRIVATE read-only
+J2534/ECU lab, not an independently published diagnostics product.
+User technology decision: C#/.NET 10 managed core, storage and GUI;
+C++20 x86/x64 J2534 DLL and performance-critical transport. Preserve
+old C x86 emulator and Go controller until parity is established.
 
-COMPLETED, GitHub verified:
-- PR #70: Native AOT ABI probe, nonfunctional experiment only.
-- PR #71: managed C# Core and C++20 ABI baseline (merge b4b70f41).
-- PR #72: C# SQLite Storage with WAL and schema v1 (merge e11a15d4).
-- Latest tested M1 commit: C# migration CI #4 SUCCESS, legacy x86 CI #612
-  SUCCESS, VMware LAB packaging #441 SUCCESS. VMware workflow != guest run.
+Verified GitHub results:
+- M0 PR #71 merged (C# core + C++20 ABI; CI #1 success).
+- M1 PR #72 merged (C# SQLite; CI #4 success).
+- M2 PR #75 merged 0487fc1a (deterministic scenario compiler from
+  original SQLite v1 with full snapshot SHA-256). CI #6 Linux/Windows
+  SUCCESS; old native emulator x86 CI #619 SUCCESS and VMware LAB package
+  #442 SUCCESS. VMware packaging != guest/hardware test.
+- Older PR #70 Native AOT DLL is an ABI probe only, NOT a functioning or
+  chosen J2534 adapter.
 
-**NEXT: migration M2 C# canonical scenario compiler**. Load only approved
-synthetic read-only profile/ECU bindings, materialize bytes, verify complete
-SHA-256 and CAN route isolation, fail closed for missing/research-only data,
-6-8 tests. Then M3 native C++ DLL for real x86/x64 J2534 exports.
-A working C++ DLL, real VIDA/SectorV recognition and physical J2534 are
-NOT yet demonstrated. Do not publish Virtual Car.
+**NEXT M3:** implement C++20 native x86/x64 J2534 DLL with all 14
+PassThru 04.04 exports and exact structure/calling conventions. Start
+fail-closed; add 6-8 ABI, load, lifecycle and error-semantics tests.
+Do not register unsupported DLLs in real J2534 device lists; no releases.
+Later M4 transport parity, M5 C# Named Pipe host and M7 Dvinholm E2E.
 
-Read first:
+Read first from development:
 - docs/progress/CURRENT.md
 - docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
 - docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
