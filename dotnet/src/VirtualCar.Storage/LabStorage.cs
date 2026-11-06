@@ -165,7 +165,16 @@ public sealed class LabStorage : IDisposable
         try
         {
             RequireOpen();
-            using (new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+            if (File.Exists(path))
+                throw new LabStorageException("Backup destination already exists.");
+            try
+            {
+                using (new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+            }
+            catch (IOException)
+            {
+                throw new LabStorageException("Backup destination cannot be created.");
+            }
             try
             {
                 using var backup = new SqliteConnection(new SqliteConnectionStringBuilder {
