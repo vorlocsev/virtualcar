@@ -81,6 +81,29 @@ NOT IMPLEMENTED:
 Canonical roadmap:
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 
+## Architecture decision: full C# rewrite (2026-11-06)
+
+The user explicitly requests rewriting Virtual Car entirely in C#.
+This **supersedes** the planned Go SQLite driver stage 60B-2;
+stage 60B-2 was never completed. Keep old Go/C as regression references.
+The main product is still Dvinholm, and Virtual Car remains test-only.
+
+ACTIVE BRANCH: feature/csharp-dotnet10-migration-foundation
+C# roadmap and compatibility investigation:
+docs/architecture/VIRTUALCAR-CSHARP-DOTNET10-MIGRATION.md
+
+CS-01 files introduced (PR/CI to be verified):
+- dotnet/src/VirtualCar.Core/ (C# 10/.NET 10 lab controller)
+- dotnet/tests/VirtualCar.Core.Smoke/ (eight synthetic gates)
+- dotnet/src/VirtualCar.J2534.AbiProbe/ (nonfunctional Native AOT ABI DLL)
+- dotnet/tests/VirtualCar.J2534.AbiSmoke/ (x86/x64 export and load checks)
+- .github/workflows/csharp-migration.yml (new isolated CI)
+No x64 J2534 functionality, real SQLite C# driver, WinUI 3 Control UI
+or actual vehicle runtime is represented as complete by these files.
+
+NEXT: check CS-01 PR and CI, repair failures; then CS-02 C# SQLite.
+Do not publish Virtual Car. Do not delete C/Go before verified parity.
+
 ## Короткая фраза для продолжения в новом чате
 
 **virtual car**
@@ -89,7 +112,7 @@ docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 проекта по этому файлу и
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md из ветки development
 репозитория vorlocsev/virtualcar, проверить актуальные PR, CI, коммиты
-и продолжить первый незавершённый этап (по состоянию этого файла: 60B-2).
+и продолжить первый незавершённый этап (по состоянию этого файла: CS-01, затем CS-02).
 
 Dvinholm остаётся основным продуктом. Virtual Car используется только
 как независимый тестовый стенд. Сборки и релизы Virtual Car не публиковать
