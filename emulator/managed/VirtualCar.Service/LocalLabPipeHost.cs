@@ -67,7 +67,7 @@ public sealed class LocalLabPipeHost
             // The only way to reach an authenticated session is through an
             // independently verified and activated synthetic Core scenario.
             session = await _coordinator.OpenSessionAsync(cancellationToken).ConfigureAwait(false);
-            await PipeFrameCodec.WriteAsync(server,
+            await WriteWithDeadlineAsync(server,
                 new PipeFrame(PipeFrameCodec.Ack, session.Value.Id, session.Value.Generation, []),
                 cancellationToken).ConfigureAwait(false);
 
@@ -84,7 +84,7 @@ public sealed class LocalLabPipeHost
                 await _coordinator.ValidateSessionAsync(session.Value, cancellationToken)
                     .ConfigureAwait(false);
                 if (frame.Kind == PipeFrameCodec.Goodbye) return;
-                await PipeFrameCodec.WriteAsync(server,
+                await WriteWithDeadlineAsync(server,
                     new PipeFrame(PipeFrameCodec.Ack, session.Value.Id, session.Value.Generation, []),
                     cancellationToken).ConfigureAwait(false);
             }
@@ -104,6 +104,16 @@ public sealed class LocalLabPipeHost
                 catch (InvalidOperationException) { /* Reset/shutdown already invalidated it. */ }
             }
         }
+    }
+
+    private async Task WriteWithDeadlineAsync(
+        Stream stream, PipeFrame frame, CancellationToken cancellationToken)
+    {
+        // A stalled client must not hold a validated synthetic session open
+        // indefinitely while the server is trying to send an ACK.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_ioDeadline);
+        await PipeFrameCodec.WriteAsync(stream, frame, timeout.Token).ConfigureAwait(false);
     }
 
     private async Task<PipeFrame?> ReadWithDeadlineAsync(
