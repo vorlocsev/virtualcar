@@ -1,5 +1,30 @@
 # DVINHOLM / VIRTUAL CAR LAB | DEVELOPMENT ROADMAP
 
+## Technology migration decision (2026-11-06): C#/.NET 10 + C++20
+
+The user has selected **C#** for all managed Virtual Car components and
+**C++20** for native J2534 and latency-critical CAN/ISO15765/ISO-TP.
+This REPLACES the future Go-based roadmap from stage 61 onward.
+Historical completed stages 60A/60B remain valid baseline evidence,
+not requirements for the new architecture.
+
+| New stage | Scope | Status |
+| --- | --- | --- |
+| M0 | .NET10 C# core, 8 tests, C++ ABI and isolated CI | IN PROGRESS |
+| M1 | Microsoft.Data.Sqlite / SQLite v1 migration with rollback | NEXT |
+| M2 | Canonical immutable scenario compiler, evidence gates | PLANNED |
+| M3 | C++20 native x86/x64 J2534 DLLs, exact 14 exports | PLANNED |
+| M4 | C++ transport/parity: filters, FC, ISO-TP, queues, deadlines | PLANNED |
+| M5 | C# headless Windows service and secure Named Pipes IPC | PLANNED |
+| M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
+| M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
+| M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
+
+Detailed decision: docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md.
+Keep existing C/Go working until cross-language regression tests pass.
+**virtual car** remains the exact cross-chat resume phrase.
+
+
 Updated: 2026-11-06. Primary product: Dvinholm. Laboratory: Virtual Car.
 Persistent source of truth: this repository, GitHub pull requests, CI run results.
 Do not depend on ChatGPT chat memory to determine whether a task is completed.
