@@ -72,11 +72,17 @@ NOT IMPLEMENTED:
 Canonical roadmap:
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 
-## Exact new-chat command
+## Короткая фраза для продолжения в новом чате
 
-"Продолжи Dvinholm и Virtual Car по
-vorlocsev/virtualcar/development/docs/progress/CURRENT.md
-и docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md.
-Проверь реальные PR и CI. Следующий этап 60B.
-Dvinholm основной продукт, Virtual Car только тестовый стенд.
-Никаких публикаций Virtual Car."
+**virtual car**
+
+Когда пользователь пишет только эту фразу, нужно восстановить контекст
+проекта по этому файлу и
+docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md из ветки development
+репозитория vorlocsev/virtualcar, проверить актуальные PR, CI, коммиты
+и продолжить первый незавершённый этап (по состоянию этого файла: 60B).
+
+Dvinholm остаётся основным продуктом. Virtual Car используется только
+как независимый тестовый стенд. Сборки и релизы Virtual Car не публиковать
+без отдельного разрешения. Не выдавать синтетические испытания за
+реальную совместимость CEM/J2534.
