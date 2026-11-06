@@ -16,8 +16,8 @@ not requirements for the new architecture.
 | M3 | C++20 native x86/x64 J2534 ABI DLLs, 14 fail-closed exports | COMPLETED, PR #77, CI #10 |
 | M4A | Isolated C++ CAN/ISO-TP FIFO, FC and STmin deterministic engine | COMPLETED, PR #79, CI #13 |
 | M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
-| M4B-2 | Black-box same-input old C/new C++ parity, multi-channel behavior | NEXT |
-| M5 | C# headless Windows service and secure Named Pipes IPC | PLANNED |
+| M4B-2 | Executed x86 old C DLL vs C++ RX module, 8 synthetic trace gates | COMPLETED, PR #83, CI #638 |
+| M5 | C# headless Windows service and secure Named Pipes IPC | NEXT |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
@@ -43,6 +43,12 @@ Completed source and CI evidence:
   8 synthetic multi-ECU and atomic queue tests on Linux/Win32/x64.
   C# + C++ CI #15, legacy x86 emulator #631, VMware packaging
   #448 SUCCESS. No live old/new DLL black-box parity yet.
+- M4B-2: PR #83 merged 49f616f3. Independently built real C x86 DLL
+  versus compiled C++20 Iso15765Rx test module with eight identical
+  synthetic ISO15765 F187/F189 cases; compare all RX J2534 fields and
+  bytes except dynamic timestamps. Actual x86 CI #638, managed
+  migration CI #21 and VMware LAB packaging #453 SUCCESS. NOT a
+  functional new C++ J2534 DLL or full original-client acceptance.
 - Experimental prior Native AOT ABI probe PR #70 is nonfunctional
   and is not the user-selected C++20 production DLL.
 
