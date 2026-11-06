@@ -64,6 +64,8 @@ Result Engine::add_filter(RuleKind action, std::uint32_t mask,
                           std::uint32_t pattern) noexcept
 {
     if (!configured_) return Result::not_ready;
+    if (action != RuleKind::pass && action != RuleKind::block)
+        return Result::invalid;
     const std::uint32_t max_id = route_.extended ?
         max_extended_id : max_standard_id;
     if (mask > max_id || pattern > max_id || (pattern & ~mask) != 0U)
