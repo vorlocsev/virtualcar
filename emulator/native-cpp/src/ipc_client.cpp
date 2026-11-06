@@ -114,11 +114,11 @@ Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
             (std::min)(remaining,
                 static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
         DWORD transferred = 0;
-        const BOOL started = write
+        const BOOL io_started = write
             ? WriteFile(pipe, bytes.data() + offset, request, &transferred, &overlapped)
             : ReadFile(pipe, bytes.data() + offset, request, &transferred, &overlapped);
 
-        if (started == FALSE) {
+        if (io_started == FALSE) {
             const DWORD start_error = GetLastError();
             if (start_error != ERROR_IO_PENDING) {
                 last_error = start_error;
