@@ -18,6 +18,16 @@ on:
       - "pyproject.toml"
       - "requirements*.txt"
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Trusted source branch to validate on the private VMware runner"
+        required: true
+        type: choice
+        default: development
+        options:
+          - development
+          - feature/m5a-secure-local-ipc-preflight
+          - feature/sqlite-10gb-vmware-runner
 
 permissions:
   contents: read
@@ -34,10 +44,10 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Checkout development source
+      - name: Checkout selected trusted source
         uses: actions/checkout@v4
         with:
-          ref: development
+          ref: ${{ inputs.source_ref || 'development' }}
           persist-credentials: false
 
       - name: Verify local toolchain
@@ -139,13 +149,27 @@ jobs:
           dotnet run --project emulator/managed/VirtualCar.Scenarios.Checks/VirtualCar.Scenarios.Checks.csproj -c Release
           if ($LASTEXITCODE -ne 0) { throw '.NET scenario compiler checks failed' }
 
+      - name: Run M5A local IPC checks when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = 'emulator/managed/VirtualCar.Service.Checks/VirtualCar.Service.Checks.csproj'
+          if (Test-Path -LiteralPath $project) {
+            dotnet run --project $project -c Release
+            if ($LASTEXITCODE -ne 0) { throw 'M5A local IPC integration checks failed' }
+          } else {
+            Write-Host 'SKIP: M5A service project is not present at this source ref.'
+          }
+
       - name: Validation summary
         if: success()
         shell: powershell
         run: |
+          Write-Host ('Validated source ref: ' + '${{ inputs.source_ref || 'development' }}')
           Write-Host 'PASS: Python emulator tests'
           Write-Host 'PASS: Go control tests and vet'
           Write-Host 'PASS: Native C++ x86 configure/build/CTest'
           Write-Host 'PASS: Native C++ x64 configure/build/CTest'
           Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
+          Write-Host 'M5A IPC checks are run when the selected source contains the project.'
           Write-Host 'No artifacts uploaded. No releases or deployments performed.'
