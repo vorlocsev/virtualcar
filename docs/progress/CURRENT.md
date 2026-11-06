@@ -1,22 +1,54 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: C# .NET10 / C++20, M4B-2 complete (2026-11-07)
+## ACTIVE checkpoint: M5A local IPC preflight validated (2026-11-07)
 
-### M5A local IPC preflight, Draft PR #85 (validated head 8/8; current ninth gate pending VMware; NOT merged)
+### M5A local IPC preflight, Draft PR #85 (9/9 VMware PASS; NOT merged)
 
 `feature/m5a-secure-local-ipc-preflight` introduces `VirtualCar.Service`:
-Windows current-user Named Pipe, 32-byte launch-secret HELLO, bounded
+a Windows current-user Named Pipe, 32-byte launch-secret HELLO, bounded
 LE v1 frames, session-generation validation, one-client fail-closed
-KEEPALIVE/GOODBYE and eight Windows synthetic integration gate groups.
-Windows VMware workflow [#42303814581 attempt 2](https://github.com/vorlocsev/virtualcar/actions/runs/42303814581)
-passed on head `e223b902903047758077546dd55a34e3861ed6cc`: Python 252
-tests (1 expected skip), Go/vet, native C++ x86/x64, .NET Core 8/8,
-SQLite 8/8, Scenario 8/8 and M5A Named Pipe 8/8.
-Commits `8b86de8` and `e223b90` also fix Windows SQLite handle cleanup.
-A follow-up hardening patch now applies the same deadline to idle pipe acceptance and adds a ninth timeout/re-arm gate. The eight-gate CI result above predates that patch; rerun current branch head before claiming 9/9.
-This is **not** an installed service, a production credential-provisioning
+KEEPALIVE/GOODBYE and bounded connection/read/write deadlines.
+
+**Latest VMware validation:** [workflow #42307844300](https://github.com/vorlocsev/virtualcar/actions/runs/42307844300)
+completed SUCCESS on runner `VirtualCar-CI-WIN`. It explicitly checked out
+`feature/m5a-secure-local-ipc-preflight` at code commit
+`55e41d4e1c8c92f5b313083ed14bde62fd415bd0`, not `main`.
+
+- Python: 252 tests, 1 expected skip.
+- Go tests and vet: PASS.
+- Native C++ x86: 3/3 CTest; x64: 3/3 CTest.
+- .NET Core: 8/8; SQLite Storage: 8/8; Scenario Compiler: 8/8.
+- **M5A Windows Named Pipe: 9/9**, including idle accept deadline and listener re-arm.
+- No artifacts uploaded, no releases or deployments.
+
+Earlier run #42303814581 attempt 2 validated the previous eight-gate head.
+The latest run #42307844300 supersedes it and validates the ninth gate.
+The PR remains Draft and unmerged. The latest follow-up documentation
+commits record this result; no M5A code changed after the validated
+code commit above.
+
+This is **not** an installed service, production credential-provisioning
 path, functional native J2534 DLL, Dvinholm integration or full M5.
-The underlying old C/Go references and existing J2534 binaries are unchanged.
+No real vehicle or physical adapter acceptance is claimed.
+
+### Next: M5B native client integration
+
+1. Design and implement the authenticated C++20 Named Pipe client.
+2. Keep x86/x64 ABI and calling conventions explicit.
+3. Add bounded request/response queues, cancellation and backpressure.
+4. Keep the J2534 DLL fail-closed until authentication and synthetic
+   scenario/session authorization succeed.
+5. Add 6–8 independent native Windows integration checks for both
+   architectures.
+6. Connect only to the approved synthetic scenario coordinator.
+7. Do not enable ECU writes, SecurityAccess, programming or physical
+   adapter operations.
+
+Follow-up cleanup: CI output still exposes the legacy Go module/package
+identifier `sectorv-virtualcar-control`. Rename this internal identifier
+in a separate reviewed change; do not mix it into the already validated
+M5A IPC code.
+
 See docs/architecture/VIRTUALCAR-LOCAL-IPC-M5A.md and PR #85.
 
 
@@ -64,13 +96,12 @@ extensions, Volvo P2 CEM B9FB replies, VIN acceptance by real software,
 VIDA/SectorV/VDASH client discovery, physical DiCE or actual vehicle.
 VMware LAB packaging != guest application test. Preserve old C/Go.
 
-**NEXT M5:** securely connect a .NET 10 C# headless test host to a
-native C++20 J2534 DLL using local Windows Named Pipes, strict current-
-user ACL, versioned bounded IPC messages, verified sealed synthetic
-scenario generation IDs, channel lifecycle/fail-closed reconnect,
-timeouts and backpressure, eight integration groups. Do not accept
-physical devices or ECU programming. New C++ DLL must remain
-fail-closed unless authentication/scenario checks succeed.
+**NEXT M5B:** implement the native C++20 client for the already
+validated M5A Named Pipe host, then connect the fail-closed J2534 ABI
+boundary only after authentication and synthetic scenario/session
+authorization. Preserve bounded IPC, x86/x64 ABI correctness, lifecycle,
+timeouts and backpressure. Keep physical devices and ECU programming
+out of scope.
 
 Read first: docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md,
 docs/architecture/VIRTUALCAR-LEGACY-C-CPP-EXEC-PARITY-M4B2.md,
