@@ -87,7 +87,7 @@ DWORD32 VC_J2534_CALL PassThruWriteMsgs(
 }
 
 DWORD32 VC_J2534_CALL PassThruStartPeriodicMsg(
-    DWORD32 /*channel_id*/, MSG* message, DWORD32 /*time_interval*/, DWORD32* message_id) noexcept
+    DWORD32 /*channel_id*/, MSG* message, DWORD32* message_id, DWORD32 /*time_interval*/) noexcept
 {
     if (message_id == nullptr) return fail(kNullParameter);
     *message_id = 0U;
