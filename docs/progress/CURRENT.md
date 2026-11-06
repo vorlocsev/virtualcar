@@ -1,6 +1,6 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: C# .NET10 / C++20, M4B-2 complete (2026-11-07)
+## ACTIVE checkpoint: C# .NET10 / C++20, M5A verified; M5B in progress (2026-11-07)
 
 ### M5A local IPC preflight, Draft PR #85 (Windows VMware CI 8/8 PASS; NOT merged)
 
@@ -9,14 +9,27 @@ Windows current-user Named Pipe, 32-byte launch-secret HELLO, bounded
 LE v1 frames, session-generation validation, one-client fail-closed
 KEEPALIVE/GOODBYE and eight Windows synthetic integration gate groups.
 Windows VMware workflow [#42303814581 attempt 2](https://github.com/vorlocsev/virtualcar/actions/runs/42303814581)
-passed on head `e223b902903047758077546dd55a34e3861ed6cc`: Python 252
+passed on code head `e223b902903047758077546dd55a34e3861ed6cc`: Python 252
 tests (1 expected skip), Go/vet, native C++ x86/x64, .NET Core 8/8,
 SQLite 8/8, Scenario 8/8 and M5A Named Pipe 8/8.
-Commits `8b86de8` and `e223b90` also fix Windows SQLite handle cleanup.
-This is **not** an installed service, a production credential-provisioning
-path, functional native J2534 DLL, Dvinholm integration or full M5.
-The underlying old C/Go references and existing J2534 binaries are unchanged.
-See docs/architecture/VIRTUALCAR-LOCAL-IPC-M5A.md and PR #85.
+Commits `8b86de8` and `e223b90` fix Windows SQLite handle cleanup.
+M5A remains a draft and is not merged.
+
+### M5B native C++20 IPC client, stacked branch
+
+Branch: `feature/m5b-cpp-named-pipe-client`, based on M5A PR #85.
+Adds strict v1 frame codec, overlapped Windows pipe I/O, total transfer
+deadlines, serialized HELLO/KEEPALIVE/GOODBYE, secret-buffer wiping,
+8 native offline gates and planned x86/x64 C++-to-C# integration checks.
+The C++ client is **not linked into the J2534 DLL**. No CAN/ECU command,
+PassThru success, real vehicle data, or physical adapter is enabled.
+No M5B CI result is claimed until the Windows matrix executes.
+See docs/architecture/VIRTUALCAR-M5B-NATIVE-IPC-CLIENT.md.
+
+M5A/M5B are **not** an installed production service, production
+credential-provisioning path, functional native J2534 DLL, Dvinholm
+integration or full M5. The underlying old C/Go references and existing
+J2534 binaries are unchanged.
 
 
 Dvinholm remains the PRIMARY product. Virtual Car is a PRIVATE,
