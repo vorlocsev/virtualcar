@@ -182,13 +182,32 @@ jobs:
 
           foreach ($arch in @('x86', 'x64')) {
             $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+
+            $rejectPipe = 'vcm5b-reject-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $rejectOut = Join-Path $env:RUNNER_TEMP ("m5b-reject-" + $arch + ".stdout.log")
+            $rejectErr = Join-Path $env:RUNNER_TEMP ("m5b-reject-" + $arch + ".stderr.log")
+            $rejectServer = $null
+            try {
+              $rejectServer = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $rejectPipe) -PassThru -WindowStyle Hidden -RedirectStandardOutput $rejectOut -RedirectStandardError $rejectErr
+              $wrongPid = [uint32]($rejectServer.Id + 1)
+              & $client --reject-peer $rejectPipe $wrongPid
+              $rejectExit = $LASTEXITCODE
+              if ($rejectExit -ne 0) { throw "C++ $arch client did not reject wrong server PID (exit $rejectExit)" }
+              if (-not $rejectServer.WaitForExit(10000)) { throw "C# Host did not exit after $arch peer rejection" }
+              if ($rejectServer.ExitCode -ne 0) { throw "C# Host ($arch) after peer rejection exited with code $($rejectServer.ExitCode)" }
+            } finally {
+              if ($null -ne $rejectServer -and -not $rejectServer.HasExited) {
+                Stop-Process -Id $rejectServer.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+
             $pipeName = 'vcm5b-' + $arch + '-' + [guid]::NewGuid().ToString('N')
             $stdout = Join-Path $env:RUNNER_TEMP ("m5b-host-" + $arch + ".stdout.log")
             $stderr = Join-Path $env:RUNNER_TEMP ("m5b-host-" + $arch + ".stderr.log")
             $server = $null
             try {
               $server = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $pipeName) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-              & $client --connect $pipeName
+              & $client --connect $pipeName $server.Id
               $clientExit = $LASTEXITCODE
               if ($clientExit -ne 0) { throw "C++ $arch client failed with exit code $clientExit" }
               if (-not $server.WaitForExit(10000)) { throw "C# Host did not exit after $arch GOODBYE" }
