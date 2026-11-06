@@ -1,41 +1,82 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: M4B-2 actual old DLL / new C++ RX parity complete, M5 next
+## ACTIVE: M4B-2 passed on Windows VMware runner; validate current M5A branch next
 
-Dvinholm remains PRIMARY. Virtual Car is a PRIVATE read-only lab,
-not a released J2534 driver. Target: C#/.NET10 for core, storage,
-scenario compiler, headless service and WinUI control; C++20 for
-x86/x64 J2534 DLL and critical CAN/ISO-TP.
+Dvinholm remains PRIMARY. Virtual Car is a PRIVATE, read-only development
+lab, not a released or registered J2534 driver. Never publish Virtual Car
+builds or enable programming/security-access behavior.
 
-M0 #71, M1 #72, M2 #75, M3 #77, M4A #79 and M4B-1 #81 merged.
-**M4B-2 PR #83 MERGED at 49f616f3af8ed266ecd793f0718ddb0b67c9792e.**
-Actual x86 executable test dynamically loaded the independently built
-legacy C J2534 DLL and compared its real PassThruReadMsgs messages
-with independently generated C++20 Iso15765Rx output for eight
-synthetic F187/F189 routes, filters, queue and lifecycle gates.
-8/8 PASS on Windows x86 emulator CI #638; managed migration CI #21
-SUCCESS; VMware LAB package #453 SUCCESS (packaging only).
+### Latest verified development state
 
-IMPORTANT: the new C++20 J2534 DLL remains FAIL-CLOSED and was not
-tested as a functional replacement. This is real legacy C DLL vs new
-compiled C++ RX **module**, with timestamp-only normalization. No
-physical hardware, real Volvo identity, VIDA/SectorV/VDASH client
-recognition or Dvinholm end-to-end proven. Keep C/Go reference code.
+- Current development HEAD: `c4d436b0aae2262bce440b4b60c7b734accc895c`.
+- [VMware Windows runner validation #42313066763](https://github.com/vorlocsev/virtualcar/actions/runs/42313066763):
+  **SUCCESS** on source ref `development`.
+- Python: **252 tests passed**.
+- Legacy C host protocol regression: PASS.
+- Clang/LLD produced `VirtualCarJ2534.dll` for Windows x86.
+- PE validation: **PE32/i386, exactly 14 undecorated J2534 exports**.
+- Native x86 legacy DLL route regression and privacy-safe evidence audit: PASS.
+- Go tests + vet: PASS.
+- Native C++20 x86 and x64 configure/build/CTest: PASS.
+- .NET 10 Core, SQLite Storage and Scenario Compiler checks: PASS.
+- **M4B-2 actual legacy C DLL vs independently generated C++20 RX parity: 8/8 PASS.**
+- No artifacts uploaded, no release/package publication or driver registration.
 
-**NEXT M5:** C# .NET10 headless host and authenticated local Named Pipes
-IPC with current-user ACL, bounded and versioned frame protocol,
-session generation, channel lifecycle, backpressure and fail-closed
-DLL/IPC behavior. 6-8 tests per PR. Do not publish/register DLL.
+### Exact proof boundary
 
-Read on development:
-- docs/progress/CURRENT.md
-- docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
-- docs/architecture/VIRTUALCAR-LEGACY-C-CPP-EXEC-PARITY-M4B2.md
+The M4B-2 test dynamically loaded the independently built legacy x86 C DLL
+and compared its J2534 messages with the separate C++20 ISO-TP RX module on
+eight explicitly synthetic F187/F189 scenarios. Compared protocol/status/
+flags/size/extra-index and every payload byte; only volatile timestamps were
+excluded. This does NOT prove a functional replacement C++ J2534 DLL,
+physical CAN/DiCE behavior, VIDA/SectorV/VDASH acceptance, a real XC90 V8
+MY2009 identity, or Dvinholm end-to-end operation.
+
+### M5A status: current feature branch requires one fresh VMware run
+
+- [PR #85](https://github.com/vorlocsev/virtualcar/pull/85) remains Draft,
+  base `development`, head
+  `42df2953cb8287eb81a1e94052020b353a80eb03`.
+- It contains the C# .NET 10 one-client Windows Named Pipe preflight:
+  current-user-only pipe, 256-bit launch secret, versioned 28-byte frame
+  header, 256-byte payload cap, session/generation binding, bounded I/O,
+  and only HELLO/KEEPALIVE/GOODBYE. No CAN/ECU commands.
+- Nine Windows integration groups are present, including idle accept
+  deadline and listener re-arm. An earlier VMware run #42307844300 passed
+  9/9 on the older source head recorded in PR #85. The latest head has since
+  received CI compatibility fixes in `virtualcar_test.c`, `build-cross.sh`
+  and `virtualcar.c`; the current M5A head has NOT yet been validated by
+  the VMware workflow.
+- The successful run #42313066763 used `source_ref=development`; M5A was
+  correctly skipped because `VirtualCar.Service.Checks` is not in
+  `development`.
+- PR CI runs #42313398352, #42313398144 and #42313398379 on the latest
+  M5A head failed before runner assignment (runner_id=0, no executed steps
+  or logs). Do not classify these as code-test failures; the current head
+  still needs a real run on the private VMware runner.
+- [PR #87](https://github.com/vorlocsev/virtualcar/pull/87) is the stacked
+  M5B C++20 named-pipe client; [PR #88](https://github.com/vorlocsev/virtualcar/pull/88)
+  adds manual M5B VMware validation. Both remain Draft and depend on M5A.
+  Do not merge them independently or mark M5 complete.
+
+### Next action
+
+Dispatch the existing owner-only VMware workflow from `main` while selecting
+the current M5A source branch:
+
+```powershell
+$repo = 'vorlocsev/virtualcar'
+gh workflow run vmware-development-validation.yml --ref main `
+    -f source_ref=feature/m5a-secure-local-ipc-preflight -R $repo
+```
+
+Watch the resulting run and confirm the M5A step reports **9/9** alongside
+the Python, native DLL, C/C++, Go and .NET gates. Only then review PR #85.
+Do not merge development to main or publish Virtual Car.
+
 Cross-chat trigger: **virtual car**.
 
 ---
-> **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
-
 
 ## Checkpoint 2026-11-06: Stage 47 VIDA identity-script and ECU resolution boundaries, PR #55 merged
 
