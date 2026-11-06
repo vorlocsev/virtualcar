@@ -48,7 +48,7 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 | Stage | Goal | Required gates | State |
 | --- | --- | --- | --- |
 | 60A | SQLite offline catalog | explicit init, checksum, migration rejection, integrity, FK, rollback, bounded metadata, symlink safety | COMPLETED, PR #62, CI #587 |
-| 60B | Go-owned catalog | pinned driver, DB backup, migration, async-safe locking, bounded queries, corrupt DB refusal, sealed metadata, cancellation | NEXT |
+| 60B | Go-owned catalog | pinned modernc driver, WAL backup, migration, single connection, bounded queries, corruption rejection, metadata-only sealed descriptors, cancellation | IMPLEMENTED PR #65; CI #594 PASS, merge to verify |
 | 61 | Scenario Compiler | exactly sourced fixtures, canonical serialization, SHA-256, sealed revision, refusal on missing evidence, bus/ECU isolation, reproducible replay, read-only policy | PLANNED |
 | 62 | Go Headless Core | lifecycle, CPU/timing, queues, no SQL in RX, reset, faults, stale session rejection, cancellation, recovery | PLANNED |
 | 63 | IPC control/data | Windows SID ACL, version negotiation, x86/x64, length caps, deadline, disconnect recovery, invalid IDs, event isolation | PLANNED |
@@ -57,20 +57,18 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
 | 66 | Lab Control UI | profiles, ECU catalog, scenario revision, start/stop, fault scenarios, test history, RU/EN, privacy | PLANNED |
 | 67 | Evidence-scoped P2 | real diagnostic traces, B9FB/B9F0 provenance, identity script, VIN validation, profile resolution, ECU inventory, missing-data fail-closed, Windows acceptance | RESEARCH BLOCKED |
 
-## Explicit next step (stage 60B)
+## Current gate: merge stage 60B, then implement stage 61
 
-- Read the latest docs/progress/CURRENT.md first, then verify GitHub.
-- Stage60A is merged and tested; do not repeat it or claim it provides a
-  production Go SQLite driver.
-- Implement Go-owned SQLite Catalog using the existing v1 schema and
-  schema checksum, explicit migration, WAL/foreign keys, backup, and
-  single-writer state. Review and pin the external driver/license.
-- Connect metadata loading to labcore.Catalog only after a separate
-  immutable scenario payload/compiler is present; metadata digest alone
-  cannot authorize actual CAN replies.
-- Add 6-8 Go synthetic tests, verify full Windows x86/native CI, then
-  merge to Virtual Car development. x64/native E2E is still pending.
-- Keep Dvinholm PR #702 x64 work separate. Never publish Virtual Car.
+- PR #65 implements Go SQLite Catalog with pinned no-CGO driver
+  and Go tests. It has a successful reference CI #594, but check the
+  ACTUAL latest PR head/CI before marking MERGED.
+- Next stage 61: deterministic scenario compiler, canonical
+  serialization, exact artifact SHA-256 and approved fixture evidence.
+- A metadata-only sealed descriptor from Go catalog intentionally
+  sets ApprovedReadOnly=false and cannot start any CAN response.
+- Include 6-8 tests, preserve C x86 native routes; add true x64
+  J2534 bridge and Dvinholm E2E only in later stages.
+- No release publication and no inferred MY2009 CEM support.
 
 ## Cross-chat restoration procedure
 
