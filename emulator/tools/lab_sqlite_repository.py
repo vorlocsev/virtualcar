@@ -38,10 +38,14 @@ def _digest(s: str) -> str:
 
 
 def _validate_path(path: Path) -> Path:
-    path = Path(path).expanduser().resolve(strict=False)
-    if path.suffix.lower() != ".db" or path.is_dir() or path.is_symlink():
+    original = Path(path).expanduser()
+    # Check symlinks before canonicalization hides their presence.
+    if original.is_symlink() or original.parent.is_symlink():
+        raise RepositoryError("database symlink paths are not permitted")
+    path = original.resolve(strict=False)
+    if path.suffix.lower() != ".db" or path.is_dir():
         raise RepositoryError("invalid local .db destination")
-    if path.parent.is_symlink() or not path.parent.is_dir():
+    if not path.parent.is_dir():
         raise RepositoryError("database parent must already exist")
     return path
 
