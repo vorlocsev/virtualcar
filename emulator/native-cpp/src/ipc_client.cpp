@@ -234,12 +234,13 @@ Client::~Client()
 
 Result Client::connect(std::wstring_view pipe_name,
                        std::span<const std::uint8_t> launch_secret,
+                       std::uint32_t expected_server_pid,
                        std::uint32_t timeout_ms)
 {
     std::lock_guard<std::mutex> guard(mutex_);
     if (!is_invalid_handle(pipe_)) return Result::busy;
     if (!FrameCodec::valid_pipe_name(pipe_name) ||
-        launch_secret.size() != 32 ||
+        launch_secret.size() != 32 || expected_server_pid == 0 ||
         timeout_ms < minimum_timeout_ms ||
         timeout_ms > maximum_timeout_ms)
         return Result::invalid;
@@ -252,7 +253,9 @@ Result Client::connect(std::wstring_view pipe_name,
 
     for (;;) {
         opened = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
-            nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+            nullptr, OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+            nullptr);
         if (opened != INVALID_HANDLE_VALUE) break;
 
         const DWORD open_error = GetLastError();
@@ -283,6 +286,25 @@ Result Client::connect(std::wstring_view pipe_name,
     }
 
     pipe_ = opened;
+
+    // Bind the pipe endpoint to the process identity supplied by the
+    // trusted launcher. Reject a same-user pipe squatter before sending
+    // the launch secret. SECURITY_IDENTIFICATION above also prevents the
+    // server from impersonating this client process.
+    ULONG actual_server_pid = 0;
+    if (GetNamedPipeServerProcessId(static_cast<HANDLE>(pipe_),
+            &actual_server_pid) == FALSE) {
+        const DWORD error = GetLastError();
+        last_error_ = error;
+        close_locked();
+        return map_win32_error(error);
+    }
+    if (actual_server_pid != static_cast<ULONG>(expected_server_pid)) {
+        last_error_ = ERROR_ACCESS_DENIED;
+        close_locked();
+        return Result::peer_mismatch;
+    }
+
     DWORD mode = PIPE_READMODE_BYTE;
     if (SetNamedPipeHandleState(static_cast<HANDLE>(pipe_), &mode,
             nullptr, nullptr) == FALSE) {
