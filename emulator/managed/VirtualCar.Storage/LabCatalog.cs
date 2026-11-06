@@ -25,7 +25,7 @@ public sealed record CatalogHealth(int SchemaVersion, long Profiles, long Sealed
 /// Local per-user SQLite control-plane catalog. It deliberately exposes ONLY
 /// metadata and cannot serve J2534 frames, private traces, VIN or PIN.
 /// </summary>
-public sealed class LabCatalog : IAsyncDisposable
+public sealed partial class LabCatalog : IAsyncDisposable
 {
     private const int Version = 1;
     private const long MaxDatabaseBytes = 64L * 1024 * 1024;
