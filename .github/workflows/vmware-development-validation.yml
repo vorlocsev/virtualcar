@@ -28,6 +28,7 @@ on:
           - development
           - feature/m5a-secure-local-ipc-preflight
           - feature/sqlite-10gb-vmware-runner
+          - feature/m5b-cpp-named-pipe-client
 
 permissions:
   contents: read
@@ -161,6 +162,45 @@ jobs:
             Write-Host 'SKIP: M5A service project is not present at this source ref.'
           }
 
+      - name: Run M5B native C++ x86/x64 clients against C# Host when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clientX86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe'
+          $clientX64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe'
+          if (-not (Test-Path -LiteralPath $clientX86) -and -not (Test-Path -LiteralPath $clientX64)) {
+            Write-Host 'SKIP: M5B native IPC client is not present at this source ref.'
+            return
+          }
+          if (-not (Test-Path -LiteralPath $clientX86) -or -not (Test-Path -LiteralPath $clientX64)) {
+            throw 'M5B requires both x86 and x64 native IPC clients.'
+          }
+          if (-not (Test-Path -LiteralPath $serviceDll)) {
+            throw "M5B C# test host is missing: $serviceDll"
+          }
+
+          foreach ($arch in @('x86', 'x64')) {
+            $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+            $pipeName = 'vcm5b-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $stdout = Join-Path $env:RUNNER_TEMP ("m5b-host-" + $arch + ".stdout.log")
+            $stderr = Join-Path $env:RUNNER_TEMP ("m5b-host-" + $arch + ".stderr.log")
+            $server = $null
+            try {
+              $server = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $pipeName) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+              & $client --connect $pipeName
+              $clientExit = $LASTEXITCODE
+              if ($clientExit -ne 0) { throw "C++ $arch client failed with exit code $clientExit" }
+              if (-not $server.WaitForExit(10000)) { throw "C# Host did not exit after $arch GOODBYE" }
+              if ($server.ExitCode -ne 0) { throw "C# Host ($arch) exited with code $($server.ExitCode)" }
+              Write-Host "PASS: native C++ $arch <-> C# Host HELLO/KEEPALIVE/GOODBYE"
+            } finally {
+              if ($null -ne $server -and -not $server.HasExited) {
+                Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }
+
       - name: Validation summary
         if: success()
         shell: powershell
@@ -171,5 +211,5 @@ jobs:
           Write-Host 'PASS: Native C++ x86 configure/build/CTest'
           Write-Host 'PASS: Native C++ x64 configure/build/CTest'
           Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
-          Write-Host 'M5A IPC checks are run when the selected source contains the project.'
+          Write-Host 'M5A IPC and M5B cross-language checks run when the selected source contains the projects.'
           Write-Host 'No artifacts uploaded. No releases or deployments performed.'
