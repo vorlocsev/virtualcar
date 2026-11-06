@@ -24,11 +24,11 @@ Status: **DRAFT PR #85**. Windows VMware validation is **8/8 PASS** (run #423038
   a concurrent ServeOnceAsync call is rejected without replacing the
   authenticated client. Guard release is protected by a finally block.
 - Single client per pipe, one incoming frame processed before any ACK;
-  the host applies a per-frame deadline both to reads and to outbound ACK writes.
+  the host applies the configured deadline to connection acceptance, reads and outbound ACK writes.
   Integration checks configure a 3-second deadline. This is bounded IPC
   preflight only; no ECU/CAN operation exists.
 
-## Eight native-Windows synthetic gate groups
+## Nine native-Windows synthetic gate groups
 1. HELLO, session allocation and authenticated KEEPALIVE ACK.
 2. No selected synthetic scenario, no session.
 3. Wrong 256-bit secret or spoofed initial generation, no session.
@@ -37,6 +37,7 @@ Status: **DRAFT PR #85**. Windows VMware validation is **8/8 PASS** (run #423038
 6. Stale generation after HELLO.
 7. Forged session identifier and unsupported command.
 8. Concurrent-listener rejection, abrupt disconnect, session cleanup, and new generation after reset.
+9. Idle listener accept deadline, listener-guard release and successful re-arm.
 
 The managed CI is configured to compile on Linux, cross-build for Windows
 x64 and run eight native Windows pipe check groups. **Only GitHub workflow
@@ -69,11 +70,7 @@ runs establish actual pass/fail; adding a test is not passing it.**
   `e223b90`: failed SQLite connection setup closes its native handle,
   and the direct test connection is explicitly closed before temp cleanup.
 
-The Windows synthetic CI gate is now green. PR #85 remains Draft for
-review. Do not mark M5 complete: this proves only the bounded local IPC
-preflight with synthetic fixtures, not C++ J2534 client interop,
-production secret provisioning, Dvinholm integration, or physical adapter
-acceptance.
+The eight-group Windows synthetic CI gate is green on the validated commit above. PR #85 remains Draft for review. A subsequent hardening patch (`9479e2a`, `a50c1a3`) now also bounds idle connection acceptance and adds gate 09 for timeout/listener re-arm. **That ninth gate and the current branch head have not yet been re-run on VMware.** Do not mark M5 complete: the validated eight-group preflight does not prove C++ J2534 client interop, production secret provisioning, Dvinholm integration, or physical adapter acceptance.
 
 
 ## Not yet integrated
