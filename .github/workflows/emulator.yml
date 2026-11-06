@@ -41,6 +41,8 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Go tests / vet
         run: cd control && go test ./... -count=1 && go vet ./...
+      - name: Cross-build Go SQLite catalog for Windows x64 without CGO
+        run: cd control && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./labdb ./labcore
       - name: Build Windows x86 GUI
         run: cd control && GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H windowsgui' -o ../VirtualCarControl.exe .
       - uses: actions/upload-artifact@v4

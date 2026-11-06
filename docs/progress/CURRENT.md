@@ -54,7 +54,8 @@ Implemented and tested:
 - No private trace, VIN, PIN, EEPROM or VIDA XML committed.
 
 NOT IMPLEMENTED:
-- Go SQLite driver registration, database opening, migration transaction/backup.
+- Go SQLite metadata integration is implemented and tested but has not
+  been connected to running J2534/IPC/ECU engine.
 - Existing Go database/sql boundary is metadata-only and cannot activate a scenario.
 - Hash-verified compiled scenario snapshot and runtime fixture selection.
 - Named Pipe IPC, headless Go service, actual x64 J2534 DLL.
@@ -62,47 +63,58 @@ NOT IMPLEMENTED:
 - Authorized live VIDA/SectorV identification of target XC90 MY2009.
 - Physical J2534/vehicle testing.
 
-## NEXT STAGE: 60B-2 (real Go SQLite driver, migration and backup)
+## Stage 60B-2 COMPLETED | Real Go SQLite (PR #68)
 
-1. Verify and pin modernc.org/sqlite and aligned libc/go.sum compatible with the
-   target Windows x64 self-contained service. Review licenses and CI builds.
-2. Enforce exact migration checksum, foreign keys, bounded file paths, WAL,
-   single-writer transactions and database backups.
-3. Connect the existing Go labdb metadata boundary to the pinned driver,
-   retaining the explicit read-only descriptor contract; consider a guarded
-   labcore.Catalog only after stage61 scenario materialization.
-   NEVER treat metadata SHA as payload verification.
-4. Implement canonical materialized snapshot content SHA-256 verification
-   in stage 61 before permitting read-only scenario activation.
-5. Add 6-8 Go tests for missing DB, migrations, corruption, private content
-   isolation, scenario revisions, concurrency, cancellation, fail closed.
-6. Run CI and submit/merge a dedicated PR to development. Do not publish.
+- https://github.com/vorlocsev/virtualcar/pull/68
+- MERGED to development: 4942fb412d85c9e6e4057a7ded44542cc72e86ce
+- Final Windows x86 CI #604 SUCCESS (build + native routes).
+- VMware LAB workflow #438 SUCCESS (packaging/synthetic tests,
+  not a performed physical J2534 or actual VMware client run).
+- New Go sqlite_driver.go uses modernc.org/sqlite v1.36.3,
+  locked go.mod/go.sum, fixed local SQLite v1 schema, WAL,
+  migration checksums, exclusive initialization, consistent
+  VACUUM INTO backup and fail-closed corruption rejection.
+- Reuses stage 60B-1 labdb.Repository; both sets of eight Go
+  synthetic tests execute under CI. Windows x64 no-CGO Go
+  cross-build passed, but no x64 native J2534 DLL exists.
+- No scenario reply enabled: Snapshot.ApprovedReadOnly=false.
+- Older PR #65 was CLOSED WITHOUT MERGE as superseded by #68.
+  Its original CI #597 was successful but conflicted with
+  merged parallel PRs #66 and #67. No forced overwrite performed.
+- No real XC90 V8 MY2009 VIN/CEM/VIDA acceptance proven.
+
+## NEXT STAGE: 61 Scenario Compiler
+
+1. Create canonical, immutable scenario payloads from scoped approved
+   fixture bindings and exact ECU/CAN routes.
+2. Verify the SHA-256 of the entire materialized snapshot.
+3. Refuse missing/research-only/ambiguous Volvo CEM evidence.
+4. Add 6-8 deterministic tests and preserve J2534 native regressions.
+5. Never publish Virtual Car; keep Dvinholm the primary product.
 
 Canonical roadmap:
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 
-## Architecture decision: full C# rewrite (2026-11-06)
+## New priority (2026-11-06): full C# / .NET 10 migration
 
-The user explicitly requests rewriting Virtual Car entirely in C#.
-This **supersedes** the planned Go SQLite driver stage 60B-2;
-stage 60B-2 was never completed. Keep old Go/C as regression references.
-The main product is still Dvinholm, and Virtual Car remains test-only.
+The user requested rewriting **all Virtual Car implementation in C#**.
+This decision starts after the already completed Stage 60B-2 Go SQLite
+PR #68 (merge 4942fb41, CI #604 success). Previous Go stage 60B-2 is
+COMPLETED historically, but new Go Stage 61+ plans are SUPERSEDED.
+Keep working C/Go as parity baseline, do not delete.
 
-ACTIVE BRANCH: feature/csharp-dotnet10-migration-foundation
-C# roadmap and compatibility investigation:
+New migration ADR:
 docs/architecture/VIRTUALCAR-CSHARP-DOTNET10-MIGRATION.md
+New pilot: PR #70, branch feature/csharp-dotnet10-migration-foundation
+(CS-01). Check latest head CI before claiming build success.
+Introduced: .NET 10 C# lab controller, 8 synthetic C# tests, Native AOT
+J2534 ABI-only 14-export probe and x86/x64 matching loader check.
+The probe returns ERR_NOT_SUPPORTED and MUST NOT be registered or shipped.
+No CAN simulation, full C# SQLite, physical J2534 or Dvinholm native
+integration has been completed yet.
 
-CS-01 files introduced (PR/CI to be verified):
-- dotnet/src/VirtualCar.Core/ (C# 10/.NET 10 lab controller)
-- dotnet/tests/VirtualCar.Core.Smoke/ (eight synthetic gates)
-- dotnet/src/VirtualCar.J2534.AbiProbe/ (nonfunctional Native AOT ABI DLL)
-- dotnet/tests/VirtualCar.J2534.AbiSmoke/ (x86/x64 export and load checks)
-- .github/workflows/csharp-migration.yml (new isolated CI)
-No x64 J2534 functionality, real SQLite C# driver, WinUI 3 Control UI
-or actual vehicle runtime is represented as complete by these files.
-
-NEXT: check CS-01 PR and CI, repair failures; then CS-02 C# SQLite.
-Do not publish Virtual Car. Do not delete C/Go before verified parity.
+NEXT: complete CS-01 native x86/x64 CI, then CS-02 Microsoft.Data.Sqlite.
+Keep Dvinholm primary and NEVER publish Virtual Car without permission.
 
 ## Короткая фраза для продолжения в новом чате
 
@@ -112,7 +124,7 @@ Do not publish Virtual Car. Do not delete C/Go before verified parity.
 проекта по этому файлу и
 docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md из ветки development
 репозитория vorlocsev/virtualcar, проверить актуальные PR, CI, коммиты
-и продолжить первый незавершённый этап (по состоянию этого файла: CS-01, затем CS-02).
+и продолжить первый незавершённый этап (сейчас этап CS-01, затем CS-02).
 
 Dvinholm остаётся основным продуктом. Virtual Car используется только
 как независимый тестовый стенд. Сборки и релизы Virtual Car не публиковать
