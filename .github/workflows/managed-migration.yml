@@ -66,3 +66,43 @@ jobs:
       - name: Windows native-host M2 scenario compiler checks
         shell: pwsh
         run: dotnet run --project emulator/managed/VirtualCar.Scenarios.Checks/VirtualCar.Scenarios.Checks.csproj -c Release
+
+  m3-native-abi:
+    name: M3 native C++20 J2534 ABI (${{ matrix.arch }})
+    runs-on: windows-2022
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [Win32, x64]
+    env:
+      VC_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure separate native Windows DLL and test executable
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP ("virtualcar-m3-" + $env:VC_ARCH)
+          cmake -S emulator/native-cpp -B $buildDir -G "Visual Studio 17 2022" -A $env:VC_ARCH
+          if ($LASTEXITCODE -ne 0) { throw 'CMake native J2534 configuration failed' }
+      - name: Build private C++20 native DLL and exact-bitness test executable
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP ("virtualcar-m3-" + $env:VC_ARCH)
+          cmake --build $buildDir --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Native DLL or test executable failed to build' }
+      - name: Verify PE machine and exactly 14 undecorated PassThru exports
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP ("virtualcar-m3-" + $env:VC_ARCH)
+          $dll = Join-Path $buildDir 'Release/VirtualCarJ2534Cpp.dll'
+          python emulator/native-cpp/tests/verify_pe_exports.py $dll $env:VC_ARCH
+          if ($LASTEXITCODE -ne 0) { throw 'PE architecture/export contract failed' }
+      - name: Execute eight matching-bitness J2534 fail-closed ABI checks
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP ("virtualcar-m3-" + $env:VC_ARCH)
+          ctest --test-dir $buildDir -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Native J2534 ABI regression failed' }
+      # NO upload-artifact step: this intentionally NONFUNCTIONAL DLL is
+      # never shipped or registered as a usable physical PassThru adapter.
