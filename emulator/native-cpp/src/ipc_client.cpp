@@ -91,6 +91,8 @@ Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
                       std::uint32_t timeout_ms, bool write,
                       std::uint32_t& last_error)
 {
+    // One absolute deadline covers all partial transfers; a peer cannot
+    // extend a frame indefinitely by dribbling bytes before each timeout.
     const ULONGLONG started = GetTickCount64();
     std::size_t offset = 0;
     while (offset < bytes.size()) {
