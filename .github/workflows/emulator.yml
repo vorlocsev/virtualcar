@@ -62,7 +62,7 @@ jobs:
 
   native-routes:
     needs: build
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +103,21 @@ jobs:
           if ($dll.Count -ne 1) { throw 'Expected exactly one built x86 DLL' }
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_filter_contract.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-filter-stage43" -Mode strict_queue
           if ($LASTEXITCODE -ne 0) { throw 'Native Stage43 strict queue/extended contract failed' }
+      - name: M4B-2 actual old C x86 DLL versus new C++20 RX executable parity (8 synthetic gates)
+        shell: pwsh
+        run: |
+          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
+          if ($dll.Count -ne 1) { throw 'Expected one independently compiled C x86 DLL' }
+          $buildDir = Join-Path $env:RUNNER_TEMP 'virtualcar-m4b2-compile'
+          cmake -S emulator/native-cpp -B $buildDir -G "Visual Studio 17 2022" -A Win32
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to configure C++ x86 parity runner' }
+          cmake --build $buildDir --config Release --target vc_legacy_c_cpp_parity --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to compile C++ x86 parity runner' }
+          $exe = Join-Path $buildDir 'Release/vc_legacy_c_cpp_parity.exe'
+          $isolated = Join-Path $env:RUNNER_TEMP 'virtualcar-m4b2-native-parity'
+          if (Test-Path -LiteralPath $isolated) { throw 'Refuse reused synthetic laboratory directory' }
+          & $exe $dll[0].FullName $isolated
+          if ($LASTEXITCODE -ne 0) { throw 'Actual old C DLL versus new C++ RX outputs differ' }
       - name: Parse VIDA metadata export PowerShell without database execution
         shell: pwsh
         run: |
