@@ -150,3 +150,12 @@ func Test08SymlinkRejectionAndForeignKeys(t *testing.T) {
 	h,err:=c.Health(context.Background())
 	if err!=nil || h.ForeignKeyViolations!=0 || !h.IntegrityOK {t.Fatalf("integrity: %+v %v",h,err)}
 }
+
+// The 10 GiB target must be allowed without allocating a multi-GiB test file.
+// The physical storage, WAL checkpoint and restore load tests are separate.
+func Test09TenGiBCatalogSizeBudget(t *testing.T) {
+    const gib int64 = 1024 * 1024 * 1024
+    if maxDBBytes != 12*gib { t.Fatalf("unexpected max DB size %d", maxDBBytes) }
+    if !fitsDBBudget(10*gib) || !fitsDBBudget(maxDBBytes) { t.Fatal("valid large catalog rejected") }
+    if fitsDBBudget(maxDBBytes+1) || fitsDBBudget(-1) { t.Fatal("invalid catalog size accepted") }
+}
