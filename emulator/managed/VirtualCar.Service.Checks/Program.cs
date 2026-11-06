@@ -11,13 +11,33 @@ internal static class Program
     private static readonly byte[] LaunchSecret = Enumerable.Range(0, 32)
         .Select(i => (byte)(i * 7 + 3)).ToArray(); // Synthetic test only.
 
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
         if (!OperatingSystem.IsWindows())
         {
-            Console.Error.WriteLine("M5A integration checks must execute on Windows.");
+            Console.Error.WriteLine("M5A/M5B integration checks must execute on Windows.");
             return 1;
         }
+
+        // Cross-language test mode: host one already-approved synthetic
+        // scenario for a native C++ x86/x64 client. The fixed secret is
+        // test-only and is never used by a production launcher.
+        if (args.Length == 2 && args[0] == "--serve-once")
+        {
+            string pipeName = args[1];
+            if (string.IsNullOrEmpty(pipeName) || pipeName.Length > 80 ||
+                !pipeName.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-'))
+                return 2;
+            await using var core = await CoreAsync();
+            await Host(core, pipeName).ServeOnceAsync();
+            return 0;
+        }
+        if (args.Length != 0)
+        {
+            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name>]");
+            return 2;
+        }
+
         (string, Func<Task>)[] checks =
         [
             ("01 Authenticated HELLO and bounded keepalive", Test01),
