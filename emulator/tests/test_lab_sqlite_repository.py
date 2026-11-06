@@ -8,7 +8,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from lab_sqlite_repository import (
-    RepositoryError, database_health, get_sealed_revision, list_profiles,
+    MAX_DB_BYTES, _fits_database_budget, RepositoryError, database_health,
+    get_sealed_revision, list_profiles,
     open_repository, repository,
 )
 
@@ -138,6 +139,16 @@ class SqliteRepositoryTests(unittest.TestCase):
             else:
                 with self.assertRaises(RepositoryError):
                     open_repository(symlink)
+
+
+    def test_09_large_database_budget_without_large_file_allocation(self):
+        gib = 1024 ** 3
+        self.assertEqual(MAX_DB_BYTES, 12 * gib)
+        self.assertTrue(_fits_database_budget(10 * gib))
+        self.assertTrue(_fits_database_budget(MAX_DB_BYTES))
+        self.assertFalse(_fits_database_budget(MAX_DB_BYTES + 1))
+        self.assertFalse(_fits_database_budget(-1))
+        self.assertFalse(_fits_database_budget(True))
 
 
 if __name__ == "__main__":
