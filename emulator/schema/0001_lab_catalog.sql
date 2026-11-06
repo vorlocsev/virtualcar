@@ -108,12 +108,14 @@ CREATE TABLE test_runs (
     virtualcar_commit TEXT,
     j2534_dll_sha256 TEXT CHECK(j2534_dll_sha256 IS NULL OR length(j2534_dll_sha256) = 64),
     origin TEXT NOT NULL CHECK(origin IN ('synthetic_offline', 'vmware_virtual', 'physical_j2534')),
+    hardware_evidence_sha256 TEXT CHECK(hardware_evidence_sha256 IS NULL OR length(hardware_evidence_sha256) = 64),
     status TEXT NOT NULL CHECK(status IN ('running', 'passed', 'failed', 'inconclusive', 'cancelled')),
     started_utc TEXT NOT NULL,
     finished_utc TEXT,
     failure_category TEXT,
     CHECK ((status = 'running' AND finished_utc IS NULL)
-        OR (status <> 'running' AND finished_utc IS NOT NULL))
+        OR (status <> 'running' AND finished_utc IS NOT NULL)),
+    CHECK (origin <> 'physical_j2534' OR hardware_evidence_sha256 IS NOT NULL)
 );
 
 CREATE TABLE test_events (
@@ -167,6 +169,46 @@ BEFORE DELETE ON scenario_bindings
 WHEN (SELECT sealed FROM scenario_revisions WHERE id = OLD.revision_id) = 1
 BEGIN
     SELECT RAISE(ABORT, 'sealed scenario bindings immutable');
+END;
+
+CREATE TRIGGER binding_requires_approved_fixture_on_insert
+BEFORE INSERT ON scenario_bindings
+WHEN NEW.enabled = 1 AND
+    (SELECT lab_approval FROM response_fixtures WHERE id = NEW.fixture_id)
+    <> 'approved_for_readonly_lab'
+BEGIN
+    SELECT RAISE(ABORT, 'unapproved response fixture cannot be enabled');
+END;
+
+CREATE TRIGGER binding_requires_approved_fixture_on_update
+BEFORE UPDATE ON scenario_bindings
+WHEN NEW.enabled = 1 AND
+    (SELECT lab_approval FROM response_fixtures WHERE id = NEW.fixture_id)
+    <> 'approved_for_readonly_lab'
+BEGIN
+    SELECT RAISE(ABORT, 'unapproved response fixture cannot be enabled');
+END;
+
+CREATE TRIGGER fixture_no_update_when_sealed
+BEFORE UPDATE ON response_fixtures
+WHEN EXISTS (
+    SELECT 1 FROM scenario_bindings b
+    JOIN scenario_revisions s ON b.revision_id = s.id
+    WHERE b.fixture_id = OLD.id AND s.sealed = 1
+)
+BEGIN
+    SELECT RAISE(ABORT, 'fixture referenced by sealed scenario immutable');
+END;
+
+CREATE TRIGGER fixture_no_delete_when_sealed
+BEFORE DELETE ON response_fixtures
+WHEN EXISTS (
+    SELECT 1 FROM scenario_bindings b
+    JOIN scenario_revisions s ON b.revision_id = s.id
+    WHERE b.fixture_id = OLD.id AND s.sealed = 1
+)
+BEGIN
+    SELECT RAISE(ABORT, 'fixture referenced by sealed scenario immutable');
 END;
 
 -- NOTE: A sealed revision requires an immutable compiled, hash-verified
