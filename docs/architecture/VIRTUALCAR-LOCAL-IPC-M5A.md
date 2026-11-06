@@ -1,6 +1,6 @@
 # M5A: local, read-only Named Pipe preflight
 
-Status: **DRAFT PR #85**. Windows VMware validation is **8/8 PASS** (run #42303814581, attempt 2); not merged and not M5 completion.
+Status: **DRAFT PR #85**. Windows VMware validation is **9/9 PASS** on code commit `55e41d4e1c8c92f5b313083ed14bde62fd415bd0` (run [#42307844300](https://github.com/vorlocsev/virtualcar/actions/runs/42307844300)); not merged and not M5 completion.
 
 ## Implemented boundary
 - New `VirtualCar.Service` .NET10 library, **not** an installed Windows service.
@@ -25,8 +25,9 @@ Status: **DRAFT PR #85**. Windows VMware validation is **8/8 PASS** (run #423038
   authenticated client. Guard release is protected by a finally block.
 - Single client per pipe, one incoming frame processed before any ACK;
   the host applies the configured deadline to connection acceptance, reads and outbound ACK writes.
-  Integration checks configure a 3-second deadline. This is bounded IPC
-  preflight only; no ECU/CAN operation exists.
+  The host defaults to a 5-second deadline; standard checks use 3 seconds
+  and gate 09 uses 250 ms to prove idle-accept timeout and listener re-arm.
+  This is bounded IPC preflight only; no ECU/CAN operation exists.
 
 ## Nine native-Windows synthetic gate groups
 1. HELLO, session allocation and authenticated KEEPALIVE ACK.
@@ -39,9 +40,9 @@ Status: **DRAFT PR #85**. Windows VMware validation is **8/8 PASS** (run #423038
 8. Concurrent-listener rejection, abrupt disconnect, session cleanup, and new generation after reset.
 9. Idle listener accept deadline, listener-guard release and successful re-arm.
 
-The managed CI is configured to compile on Linux, cross-build for Windows
-x64 and run eight native Windows pipe check groups. **Only GitHub workflow
-runs establish actual pass/fail; adding a test is not passing it.**
+The VMware CI runs the native Windows pipe check groups on the private
+Windows x64 runner. **Only GitHub workflow runs establish actual pass/fail;
+adding a test is not passing it.**
 
 ## CI history and verified Windows run
 
@@ -57,6 +58,20 @@ runs establish actual pass/fail; adding a test is not passing it.**
   native handle remained open after a failed PRAGMA, and a direct test
   connection used a context manager that does not close the connection.
 
+### Latest nine-group VMware run (2026-11-07)
+- [#42307844300](https://github.com/vorlocsev/virtualcar/actions/runs/42307844300)
+  completed **SUCCESS** on private runner `VirtualCar-CI-WIN`.
+- The workflow explicitly checked out
+  `feature/m5a-secure-local-ipc-preflight` at
+  `55e41d4e1c8c92f5b313083ed14bde62fd415bd0` (not the workflow's
+  `main` branch).
+- Python: **252 tests, 1 expected skip**; Go tests and vet: PASS.
+- Native C++ x86: **3/3 CTest**; x64: **3/3 CTest**.
+- .NET Core: **8/8**; SQLite Storage: **8/8**; Scenario Compiler: **8/8**.
+- M5A Windows Named Pipe: **9/9**, including
+  `Idle accept deadline releases listener`.
+- No artifacts uploaded; no releases or deployments performed.
+
 ### Verified Windows VMware run (2026-11-07)
 - [#42303814581 attempt 2](https://github.com/vorlocsev/virtualcar/actions/runs/42303814581)
   checked out `feature/m5a-secure-local-ipc-preflight` at
@@ -70,7 +85,7 @@ runs establish actual pass/fail; adding a test is not passing it.**
   `e223b90`: failed SQLite connection setup closes its native handle,
   and the direct test connection is explicitly closed before temp cleanup.
 
-The eight-group Windows synthetic CI gate is green on the validated commit above. PR #85 remains Draft for review. A subsequent hardening patch (`9479e2a`, `a50c1a3`) now also bounds idle connection acceptance and adds gate 09 for timeout/listener re-arm. **That ninth gate and the current branch head have not yet been re-run on VMware.** Do not mark M5 complete: the validated eight-group preflight does not prove C++ J2534 client interop, production secret provisioning, Dvinholm integration, or physical adapter acceptance.
+The nine-group Windows synthetic CI gate is green on code commit `55e41d4`. PR #85 remains Draft for review and has not been merged. The current follow-up commits to this document are documentation-only; the CI run above validates the complete M5A code, including the idle-accept deadline and ninth gate. Do not mark M5 complete: this preflight does not prove native C++ J2534 client interop, production secret provisioning, Dvinholm integration, or physical adapter acceptance.
 
 
 ## Not yet integrated
