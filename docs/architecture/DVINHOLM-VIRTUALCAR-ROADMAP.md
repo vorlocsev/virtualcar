@@ -10,15 +10,22 @@ not requirements for the new architecture.
 
 | New stage | Scope | Status |
 | --- | --- | --- |
-| M0 | .NET10 C# core, 8 tests, C++ ABI and isolated CI | IN PROGRESS |
-| M1 | Microsoft.Data.Sqlite / SQLite v1 migration with rollback | NEXT |
-| M2 | Canonical immutable scenario compiler, evidence gates | PLANNED |
+| M0 | .NET10 C# core, 8 tests, C++ ABI and isolated CI | COMPLETED, PR #71, CI #1 |
+| M1 | Microsoft.Data.Sqlite / SQLite v1 migration with rollback | COMPLETED, PR #72, CI #4 |
+| M2 | Canonical immutable scenario compiler, evidence gates | NEXT |
 | M3 | C++20 native x86/x64 J2534 DLLs, exact 14 exports | PLANNED |
 | M4 | C++ transport/parity: filters, FC, ISO-TP, queues, deadlines | PLANNED |
 | M5 | C# headless Windows service and secure Named Pipes IPC | PLANNED |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
+
+Completed source and CI evidence:
+- M0: PR #71 merged b4b70f41, C#/.NET10/C++20 CI #1 passed.
+- M1: PR #72 merged e11a15d4, C#/.NET10/C++20 CI #4,
+  x86 J2534 #612 and VMware LAB packaging #441 passed.
+- Experimental prior Native AOT ABI probe PR #70 is nonfunctional
+  and is not the user-selected C++20 production DLL.
 
 Detailed decision: docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md.
 Keep existing C/Go working until cross-language regression tests pass.
