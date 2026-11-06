@@ -254,7 +254,7 @@ Result Client::connect(std::wstring_view pipe_name,
                 }
             }
         } else {
-            Sleep((std::min)(remaining, 20U));
+            Sleep((std::min)(remaining, static_cast<DWORD>(20)));
         }
     }
 
