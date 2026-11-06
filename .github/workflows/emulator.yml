@@ -2,10 +2,10 @@ name: Virtual Car Emulator Windows x86
 on:
   push:
     branches: [main]
-    paths: ["emulator/**", ".github/workflows/emulator.yml"]
+    paths: ["emulator/**", "dotnet/**", ".github/workflows/emulator.yml", ".github/workflows/csharp-migration.yml"]
   pull_request:
     branches: [main, development]
-    paths: ["emulator/**", ".github/workflows/emulator.yml"]
+    paths: ["emulator/**", "dotnet/**", ".github/workflows/emulator.yml", ".github/workflows/csharp-migration.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -118,3 +118,9 @@ jobs:
           if-no-files-found: error
 
 
+
+  csharp-pilot:
+    name: CSharp .NET10 migration gates
+    uses: ./.github/workflows/csharp-migration.yml
+    permissions:
+      contents: read

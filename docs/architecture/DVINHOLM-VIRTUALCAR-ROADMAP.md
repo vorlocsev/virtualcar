@@ -79,6 +79,34 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
   native DLL and Dvinholm E2E remain later milestones.
 - No standalone Virtual Car release or physical support claims.
 
+## 2026-11-06: All-C# migration decision SUPERSEDES future Go phases
+
+The user has selected C#/.NET 10 for the entire new Virtual Car lab:
+core, CAN/ISO-TP, Volvo D2/ECU, scenarios, SQLite, IPC, WinUI 3 and
+Native AOT J2534 x86/x64 when ABI/lifetime compatible.
+Historical Go 60B-2 was completed (PR #68, CI #604). Future Go stage 61+
+work is superseded, not completed. Keep old C/Go in source as parity
+reference until native Dvinholm tests have passed.
+
+Detailed staged architecture:
+docs/architecture/VIRTUALCAR-CSHARP-DOTNET10-MIGRATION.md
+
+| C# stage | Goal | State |
+| --- | --- | --- |
+| CS-01 | C# Core and 8 synthetic gates; native AOT 14 exports on x86/x64 | PR #70 / CI pending |
+| CS-02 | C# Microsoft.Data.Sqlite repository + migrations/backups | PLANNED |
+| CS-03 | C# CAN/ISO-TP parity | PLANNED |
+| CS-04 | C# D2 and ECU/scenario compiler | PLANNED |
+| CS-05 | .NET10 Host and named-pipe control/data channels | PLANNED |
+| CS-06 | Functional C# Native AOT J2534 DLL x86/x64 | PLANNED |
+| CS-07 | C# WinUI 3 Test Lab Control UI | PLANNED |
+| CS-08 | Dvinholm native J2534 E2E acceptance | PLANNED |
+| CS-09 | Retire C/Go ONLY after parity | PLANNED |
+
+Do not register or distribute ABI-only probe. Native AOT DLL cannot be
+unloaded with FreeLibrary, so legacy clients require separate verification.
+Exact resume keyword remains **virtual car**.
+
 ## Cross-chat restoration procedure
 
 1. Fetch this file from Virtual Car development branch.
