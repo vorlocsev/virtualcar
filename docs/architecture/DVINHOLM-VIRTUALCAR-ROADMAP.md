@@ -84,8 +84,15 @@ Do not depend on ChatGPT chat memory to determine whether a task is completed.
    outcome/CI facts. Only mark merged after GitHub confirms it.
 7. Never claim background execution or future work was already completed.
 
-A new chat can simply say:
-"Продолжи Dvinholm / Virtual Car по ROADMAP: прочитай
-vorlocsev/virtualcar docs/progress/CURRENT.md и
-docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md, проверь PR/CI
-и реализуй следующий этап. Без публикации Virtual Car."
+## Ключевая фраза продолжения
+
+**virtual car**
+
+Эта короткая фраза заменяет прежний длинный запрос для возобновления
+разработки между чатами. По ней следует прочитать из ветки development
+файлы docs/progress/CURRENT.md и этот ROADMAP, подтвердить фактическое
+состояние GitHub, выбрать следующий незавершённый этап, выполнить работу
+с проверками и обновить точку продолжения.
+
+Основной продукт: Dvinholm. Virtual Car только тестовая лаборатория,
+никакой самостоятельной публикации релизов.
