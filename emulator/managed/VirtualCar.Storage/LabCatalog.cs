@@ -28,7 +28,8 @@ public sealed record CatalogHealth(int SchemaVersion, long Profiles, long Sealed
 public sealed partial class LabCatalog : IAsyncDisposable
 {
     private const int Version = 1;
-    private const long MaxDatabaseBytes = 64L * 1024 * 1024;
+    // 10 GiB target + 2 GiB file growth headroom (not including WAL or backups).
+    private const long MaxDatabaseBytes = 12L * 1024 * 1024 * 1024;
     private static readonly Regex IdPattern = new("^[A-Za-z0-9_-]{1,96}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant,
         TimeSpan.FromMilliseconds(100));
