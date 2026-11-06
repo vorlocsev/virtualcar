@@ -22,19 +22,27 @@ internal static class Program
         // Cross-language test mode: host one already-approved synthetic
         // scenario for a native C++ x86/x64 client. The fixed secret is
         // test-only and is never used by a production launcher.
-        if (args.Length == 2 && args[0] == "--serve-once")
+        if (args.Length == 3 && args[0] == "--serve-once" &&
+            args[2] is "session" or "no-session")
         {
             string pipeName = args[1];
             if (string.IsNullOrEmpty(pipeName) || pipeName.Length > 80 ||
                 !pipeName.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-'))
                 return 2;
-            await using var core = await CoreAsync();
+            var runtime = new StubRuntime();
+            await using var core = await CoreAsync(runtime: runtime);
             await Host(core, pipeName).ServeOnceAsync();
+            int expectedPreparations = args[2] == "session" ? 1 : 0;
+            if (runtime.PrepareCount != expectedPreparations)
+            {
+                Console.Error.WriteLine("Unexpected synthetic session preparation count.");
+                return 3;
+            }
             return 0;
         }
         if (args.Length != 0)
         {
-            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name>]");
+            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session>]");
             return 2;
         }
 
@@ -72,9 +80,10 @@ internal static class Program
         if (!result) throw new InvalidOperationException(message);
     }
 
-    private static async Task<ScenarioCoordinator> CoreAsync(bool selected = true)
+    private static async Task<ScenarioCoordinator> CoreAsync(
+        bool selected = true, StubRuntime? runtime = null)
     {
-        var core = new ScenarioCoordinator(new StubCatalog(), new StubRuntime());
+        var core = new ScenarioCoordinator(new StubCatalog(), runtime ?? new StubRuntime());
         if (selected) await core.SelectAsync("ipc-synthetic", 1);
         return core;
     }
@@ -327,8 +336,14 @@ internal static class Program
 
     private sealed class StubRuntime : IScenarioRuntime
     {
-        public Task PrepareAsync(ScenarioSnapshot snapshot, CancellationToken ct) =>
-            Task.CompletedTask;
+        public int PrepareCount { get; private set; }
+
+        public Task PrepareAsync(ScenarioSnapshot snapshot, CancellationToken ct)
+        {
+            PrepareCount++;
+            return Task.CompletedTask;
+        }
+
         public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
     }
 }
