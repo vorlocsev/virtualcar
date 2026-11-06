@@ -1,6 +1,6 @@
 # M5A: local, read-only Named Pipe preflight
 
-Status: **DRAFT PR #85**, not M5 completion; CI result must be checked independently.
+Status: **DRAFT PR #85**. Windows VMware validation is **8/8 PASS** (run #42303814581, attempt 2); not merged and not M5 completion.
 
 ## Implemented boundary
 - New `VirtualCar.Service` .NET10 library, **not** an installed Windows service.
@@ -42,20 +42,38 @@ The managed CI is configured to compile on Linux, cross-build for Windows
 x64 and run eight native Windows pipe check groups. **Only GitHub workflow
 runs establish actual pass/fail; adding a test is not passing it.**
 
-## CI blocker observed 2026-11-06
-- Last Windows job that executed M5A tests: **6/8** on earlier head
-  `29e54e16`. Invalid-frame injection groups 04/05 failed with
-  `IOException` during early pipe rejection. Later test code permits
-  those expected broken-pipe writes and requires no ACK, but **8/8 is
-  still unconfirmed**.
-- At head `8d193db5`, workflow [42260830270](https://github.com/vorlocsev/virtualcar/actions/runs/42260830270)
-  failed with zero job steps in all four jobs. The corresponding
-  emulator and VMware workflow runs also failed before executing
-  jobs. This is an execution/scheduling or repository-level blocker
-  of **undetermined cause**, not proof of C# test failure.
-- Changes after that head add ACK write deadlines and extra negative
-  regression cases. They also require a real Windows CI execution.
-- Do not merge M5A or mark M5 complete without green, executed CI.
+## CI history and verified Windows run
+
+### Earlier blockers (2026-11-06)
+- Earlier M5A head `29e54e16` executed **6/8** groups; invalid-frame
+  groups 04/05 exposed broken-pipe handling in the test harness.
+- Workflow [42260830270](https://github.com/vorlocsev/virtualcar/actions/runs/42260830270)
+  failed before job steps executed; it did not establish a code-level
+  pass or failure.
+- First run against the M5A branch,
+  [#42303814581 attempt 1](https://github.com/vorlocsev/virtualcar/actions/runs/42303814581),
+  stopped in the Python suite with Windows `WinError 32`: an SQLite
+  native handle remained open after a failed PRAGMA, and a direct test
+  connection used a context manager that does not close the connection.
+
+### Verified Windows VMware run (2026-11-07)
+- [#42303814581 attempt 2](https://github.com/vorlocsev/virtualcar/actions/runs/42303814581)
+  checked out `feature/m5a-secure-local-ipc-preflight` at
+  `e223b902903047758077546dd55a34e3861ed6cc` and completed **SUCCESS**.
+- Python: **252 tests, 1 expected skip**.
+- Go tests and vet: PASS.
+- Native C++ x86 and x64 configure/build/CTest: PASS.
+- .NET Core: **8/8**; SQLite Storage: **8/8**; Scenario Compiler: **8/8**.
+- M5A Windows Named Pipe integration: **8/8**, all eight groups PASS.
+- The WinError 32 fix is included in commits `8b86de8` and
+  `e223b90`: failed SQLite connection setup closes its native handle,
+  and the direct test connection is explicitly closed before temp cleanup.
+
+The Windows synthetic CI gate is now green. PR #85 remains Draft for
+review. Do not mark M5 complete: this proves only the bounded local IPC
+preflight with synthetic fixtures, not C++ J2534 client interop,
+production secret provisioning, Dvinholm integration, or physical adapter
+acceptance.
 
 
 ## Not yet integrated
