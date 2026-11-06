@@ -2,7 +2,7 @@
 
 ## ACTIVE checkpoint: C# .NET10 / C++20, M4B-2 complete (2026-11-07)
 
-### M5A local IPC preflight, Draft PR #85 (Windows VMware CI 8/8 PASS; NOT merged)
+### M5A local IPC preflight, Draft PR #85 (validated head 8/8; current ninth gate pending VMware; NOT merged)
 
 `feature/m5a-secure-local-ipc-preflight` introduces `VirtualCar.Service`:
 Windows current-user Named Pipe, 32-byte launch-secret HELLO, bounded
@@ -13,6 +13,7 @@ passed on head `e223b902903047758077546dd55a34e3861ed6cc`: Python 252
 tests (1 expected skip), Go/vet, native C++ x86/x64, .NET Core 8/8,
 SQLite 8/8, Scenario 8/8 and M5A Named Pipe 8/8.
 Commits `8b86de8` and `e223b90` also fix Windows SQLite handle cleanup.
+A follow-up hardening patch now applies the same deadline to idle pipe acceptance and adds a ninth timeout/re-arm gate. The eight-gate CI result above predates that patch; rerun current branch head before claiming 9/9.
 This is **not** an installed service, a production credential-provisioning
 path, functional native J2534 DLL, Dvinholm integration or full M5.
 The underlying old C/Go references and existing J2534 binaries are unchanged.
