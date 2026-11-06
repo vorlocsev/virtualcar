@@ -17,7 +17,7 @@ M5A remains a draft and is not merged.
 
 ### M5B native C++20 IPC client, stacked branch
 
-Branch: `feature/m5b-cpp-named-pipe-client`, based on M5A PR #85.
+Branch: `feature/m5b-cpp-named-pipe-client`, Draft PR #87 stacked on M5A PR #85.
 Adds strict v1 frame codec, overlapped Windows pipe I/O, total transfer
 deadlines, serialized HELLO/KEEPALIVE/GOODBYE, secret-buffer wiping,
 8 native offline gates and planned x86/x64 C++-to-C# integration checks.
