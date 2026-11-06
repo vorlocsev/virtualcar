@@ -1,53 +1,58 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: C# .NET 10 / C++20; M2 completed (2026-11-06)
+## ACTIVE checkpoint: C#/.NET 10 + C++20, M3 completed (2026-11-06)
 
-Dvinholm is the PRIMARY product. Virtual Car is its independent PRIVATE
-read-only laboratory. The user selected C# for core/storage/scenarios/GUI and
-native C++20 for critical CAN/ISO15765/ISO-TP and J2534 x86/x64 DLLs.
-Do not publish Virtual Car builds/releases.
+**Primary product Dvinholm.** Virtual Car remains its private, optional,
+read-only J2534 simulation laboratory. Do not publish Virtual Car releases.
 
-Verified migration milestones:
-- M0 PR #71: C# Core and C++20 J2534 ABI declarations merged
-  b4b70f41b88b197ebf1c6b2626056d280052cafb; new CI #1 SUCCESS.
-- M1 PR #72: C# SQLite v1 catalog and online backup merged
-  e11a15d47f3f0315605188e09edfb12f4e9f630d; managed CI #4 SUCCESS.
-- M2 PR #75: deterministic C# read-only scenario compiler merged
-  0487fc1af236c668d2b57f7aa8cfa283c50656da. Managed migration CI
-  #6 SUCCESS on Linux/Windows (eight synthetic SQLite-to-scenario groups).
-  Legacy emulator x86 CI #619 SUCCESS, including native routes. VMware
-  LAB workflow #442 SUCCESS (packaging only, NOT guest/client/hardware).
-  Implementation: emulator/managed/VirtualCar.Scenarios and
-  emulator/managed/VirtualCar.Storage/ScenarioMaterial.cs.
-- Prior Native AOT PR #70 remains a NONFUNCTIONAL experimental ABI canary,
-  not the chosen functional C++20 J2534 DLL.
+Verified milestones:
+- M0 PR #71 merged b4b70f41 (C# Core lifecycle, C++ ABI declarations),
+  managed migration CI #1 SUCCESS.
+- M1 PR #72 merged e11a15d4 (C# SQLite catalog/backup), CI #4 SUCCESS.
+- M2 PR #75 merged 0487fc1a (synthetic read-only immutable scenario
+  compiler), managed CI #6 and legacy native x86 CI #619 SUCCESS.
+- M3 PR #77 merged **e835fd67a75670a3f26ebd370aab946015fd814e**.
+  C++20 native DLLs built separately in Windows PE32 x86 and PE32+ x64;
+  exact 14 undecorated J2534 v04.04 exports, x86 stdcall and x64 ABI.
+  M3 Windows loader/PE audit and eight per-architecture fail-closed
+  native test groups completed successfully.
+  Final managed/native CI **#10 SUCCESS**; legacy x86 J2534 regression
+  **#624 SUCCESS**, VMware LAB packaging **#445 SUCCESS**.
+  Initial CI #8 failed from a C++ test/build signature mismatch: the
+  third/fourth arguments of PassThruStartPeriodicMsg were corrected
+  throughout header/export/tests; the final CI #10 is green.
+- M3 implementation and test instructions:
+  docs/architecture/VIRTUALCAR-CPP-J2534-M3.md.
+- Previous Native AOT J2534 PR #70 is NONFUNCTIONAL experiment, not
+  the selected C++ adapter implementation.
 
-M2 requires actual source bytes because SQLite v1 only records request hash.
-An explicitly approved synthetic request manifest resolves those bytes and
-SHA-256 validation rejects missing or changed bytes. Only synthetic UDS
-ReadDataByIdentifier (0x22 -> 0x62) is enabled for compilation; no Volvo
-B9FB/A3 positive fabrication, security access, PIN, or ECU programming.
-The canonical bytes must match the sealed revision hash. Preview never
-authorizes replies. Existing C/Go implementation remains a parity baseline.
+M3 DLL: emulator/native-cpp/src/j2534_fail_closed.cpp, CMakeLists.txt,
+x86/x64 .DEF export maps, exact-bitness Windows tests and PE verification.
+It **cannot open channels, transmit CAN frames or imitate hardware**.
+The DLL is intentionally named VirtualCarJ2534Cpp.dll to avoid replacing
+the current legacy VirtualCarJ2534.dll. It has NOT been registered under
+PassThruSupport, released, uploaded as a new public artifact or used by
+Dvinholm. All C/Go legacy source remains as the independent parity baseline.
 
-**NEXT: M3 native C++20 J2534 DLL x86/x64.**
-Implement actual PE32 and PE32+ native binaries with 14 correct PassThru
-04.04 exports and calling conventions; initial operations fail closed, then
-add filters, queues, CAN/ISO15765, IPC to C# host in later stages. Verify
-exports, struct layout, x86 stdcall, x64 loader and channel lifecycle with
-8 separate ABI/native test groups. Never register a nonfunctional DLL as a
-real adapter, and do not claim Dvinholm/native/physical J2534 compatibility.
+**NEXT STAGE M4:** implement and verify bounded native C++ CAN and
+ISO15765/ISO-TP transport/filters/flow-control state and timeouts.
+Compare behavior with existing C x86 reference using 6-8 distinct gates,
+include 11bit/29bit addressing, RX queue atomicity, FC, STmin/deadlines,
+reset generation and no cross-ECU reply leakage. Keep this synthetic and
+read-only. Do not fabricate Volvo P2 CEM diagnostic responses.
+M5 then adds authenticated local Named Pipe IPC to C# headless service;
+M7 is actual Dvinholm x64 loader/read-only E2E acceptance.
 
-Still NOT verified: functional C++ J2534 DLL, host IPC, WinUI lab GUI,
-Dvinholm native x64 E2E, original VIDA/SectorV target vehicle detection,
-physical DiCE/J2534 or real Volvo XC90 V8 MY2009 identity.
+NOT VERIFIED: functional new C++ J2534 transport, local host IPC, WinUI lab
+UI, Dvinholm x64 native end-to-end, real VIDA/SectorV XC90 MY2009 identity,
+physical Volvo DiCE/J2534. Successful VMware packaging is NOT guest testing.
 
-Canonical documents:
+Canonical docs:
 - docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
-- docs/architecture/VIRTUALCAR-CSHARP-SCENARIO-M2.md
+- docs/architecture/VIRTUALCAR-CPP-J2534-M3.md
 - docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
 
-**Cross-chat phrase remains exactly: virtual car**.
+**Exact continuation phrase: virtual car**
 
 Verified checkpoint: 2026-11-06.
 This document is the canonical cross-chat continuation note. Re-read the

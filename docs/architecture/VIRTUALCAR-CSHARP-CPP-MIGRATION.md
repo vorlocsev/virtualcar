@@ -13,7 +13,13 @@ managed migration CI #6 (Linux/Windows), x86 legacy/native routes #619,
 VMware LAB packaging #442 passed. M2 verifies only synthetic, provenance-
 scoped UDS ReadDataByIdentifier fixtures with full source bytes and sealed
 snapshot SHA. This is NOT actual native/physical diagnostic compatibility.
-**Next M3:** functional C++20 x86/x64 J2534 DLLs; preserve old C/Go.
+**M3 completed:** PR #77 merged e835fd67, native x86/x64 C++20
+J2534 fail-closed DLL ABI exported, 14 exact symbols, PE32/PE32+ and
+8 per-arch native checks. CI #10, #624 and VMware LAB package #445 SUCCESS.
+The DLL remains NONFUNCTIONAL as a diagnostic device; no CAN/IPC/ECU
+transport, no registration and no client acceptance yet.
+**Next M4:** bounded C++ CAN/ISO-TP/filter parity versus legacy C.
+Preserve old C/Go until independent functional parity is verified.
 
 ## Final stack
 
