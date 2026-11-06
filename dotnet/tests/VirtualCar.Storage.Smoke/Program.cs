@@ -134,7 +134,8 @@ INSERT INTO scenario_revisions VALUES('r1','demo',1,1,$hash,'2026-11-06T00:00:00
             cmd.ExecuteNonQuery();
         }
         var read = await db.ReadSealedMetadataAsync("demo", 1);
-        Ensure(read is not null && read.Id == "r1", "Missing sealed metadata");
+        if (read is null) throw new Exception("Missing sealed metadata");
+        Ensure(read.Id == "r1", "Unexpected scenario revision");
         Ensure(!read.SnapshotBytesVerified && !read.RuntimeSelected && !read.PhysicalVehicleVerified,
             "SQL digest falsely authorized an ECU scenario");
     });
