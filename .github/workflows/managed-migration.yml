@@ -145,7 +145,7 @@ jobs:
           $rejectErr = Join-Path $env:RUNNER_TEMP 'm5b-reject.stderr.log'
           $rejectServer = $null
           try {
-            $rejectServer = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $rejectPipe) -PassThru -WindowStyle Hidden -RedirectStandardOutput $rejectOut -RedirectStandardError $rejectErr
+            $rejectServer = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $rejectPipe, 'no-session') -PassThru -WindowStyle Hidden -RedirectStandardOutput $rejectOut -RedirectStandardError $rejectErr
             $wrongPid = [uint32]($rejectServer.Id + 1)
             & $client --reject-peer $rejectPipe $wrongPid
             $rejectExit = $LASTEXITCODE
@@ -163,7 +163,7 @@ jobs:
           $stderr = Join-Path $env:RUNNER_TEMP 'm5b-host.stderr.log'
           $server = $null
           try {
-            $server = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $pipeName) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            $server = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $pipeName, 'session') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
             & $client --connect $pipeName $server.Id
             $clientExit = $LASTEXITCODE
             if ($clientExit -ne 0) { throw "C++ $env:VC_ARCH client failed with exit code $clientExit" }
