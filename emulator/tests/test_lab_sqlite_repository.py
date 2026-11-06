@@ -38,6 +38,15 @@ class SqliteRepositoryTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
             with repository(p) as conn:
                 self.assertEqual(database_health(conn)["vehicle_profile_count"], 0)
+            symlink = parent / "symlink.db"
+            try:
+                symlink.symlink_to(p)
+            except (OSError, NotImplementedError):
+                pass
+            else:
+                with self.assertRaises(RepositoryError):
+                    open_repository(symlink)
+
 
     def test_02_no_implicit_create_or_overwrite(self):
         with tempfile.TemporaryDirectory() as d:
