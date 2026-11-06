@@ -15,6 +15,7 @@ public sealed class LocalLabPipeHost
     private readonly ScenarioCoordinator _coordinator;
     private readonly byte[] _secret;
     private readonly TimeSpan _ioDeadline;
+    private int _serving;
 
     public LocalLabPipeHost(
         string pipeName,
@@ -50,13 +51,20 @@ public sealed class LocalLabPipeHost
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("M5 local pipe host requires Windows.");
 
-        using var server = new NamedPipeServerStream(
-            PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-        SessionToken? session = null;
+        // The host is a single-instance preflight endpoint. Concurrent start
+        // attempts must fail deterministically instead of competing for
+        // the same named pipe path or silently opening extra instances.
+        if (Interlocked.CompareExchange(ref _serving, 1, 0) != 0)
+            throw new InvalidOperationException("A laboratory IPC listener is already running.");
         try
         {
-            await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var server = new NamedPipeServerStream(
+                PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            SessionToken? session = null;
+            try
+            {
+                await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
             PipeFrame? hello = await ReadWithDeadlineAsync(server, cancellationToken).ConfigureAwait(false);
             if (hello is null || hello.Kind != PipeFrameCodec.Hello ||
                 hello.SessionId != 0 || hello.Generation != 0 ||
@@ -96,13 +104,18 @@ public sealed class LocalLabPipeHost
             // Unexpected protocol and broken connections always fail closed.
             // Do not log secrets, message bytes or client-controlled details.
         }
+            finally
+            {
+                if (session is SessionToken token)
+                {
+                    try { await _coordinator.CloseSessionAsync(token, CancellationToken.None).ConfigureAwait(false); }
+                    catch (InvalidOperationException) { /* Reset/shutdown already invalidated it. */ }
+                }
+            }
+        }
         finally
         {
-            if (session is SessionToken token)
-            {
-                try { await _coordinator.CloseSessionAsync(token, CancellationToken.None).ConfigureAwait(false); }
-                catch (InvalidOperationException) { /* Reset/shutdown already invalidated it. */ }
-            }
+            Volatile.Write(ref _serving, 0);
         }
     }
 
