@@ -1,0 +1,41 @@
+name: Virtual Car VMware runner connectivity
+
+# Explicitly manual, private repository only.
+# Does not checkout source, run PR code, publish files, or access vehicle data.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  connectivity:
+    name: Windows self-hosted runner connection
+    if: github.repository == 'vorlocsev/virtualcar'
+    runs-on: [self-hosted, Windows, X64, virtualcar-win]
+    timeout-minutes: 5
+
+    steps:
+      - name: Verify connected Windows runner
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_OS -ne 'Windows') {
+              throw 'Unexpected runner OS'
+          }
+
+          Write-Host 'Virtual Car VMware Runner connected.'
+          Write-Host ('Windows version: ' + [System.Environment]::OSVersion.Version.ToString())
+          Write-Host ('Architecture: ' + [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
+
+          # Check commands visible to the service account without revealing paths.
+          foreach ($tool in @('git', 'go', 'dotnet', 'python', 'py', 'cmake', 'ninja')) {
+              $cmd = Get-Command $tool -ErrorAction SilentlyContinue
+              if ($cmd) {
+                  Write-Host ('AVAILABLE: ' + $tool)
+              } else {
+                  Write-Host ('NOT IN SERVICE PATH: ' + $tool)
+              }
+          }
+
+          Write-Host 'Connection smoke PASS. No artifacts or releases produced.'
