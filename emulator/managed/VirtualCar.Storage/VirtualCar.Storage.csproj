@@ -7,6 +7,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="VirtualCar.Storage.Checks" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
     <EmbeddedResource Include="../../schema/0001_lab_catalog.sql"
                       LogicalName="VirtualCar.Storage.schema.v1.sql" />

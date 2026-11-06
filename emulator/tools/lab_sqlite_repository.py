@@ -15,7 +15,7 @@ import sqlite3
 from contextlib import contextmanager
 
 SCHEMA_VERSION = 1
-MAX_DB_BYTES = 64 * 1024 * 1024
+MAX_DB_BYTES = 12 * 1024 * 1024 * 1024  # 10 GiB catalog target plus 2 GiB file headroom
 MIGRATION = Path(__file__).resolve().parents[1] / "schema" / "0001_lab_catalog.sql"
 _ID = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 _SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
@@ -35,6 +35,11 @@ def _digest(s: str) -> str:
     if not isinstance(s, str) or not _SHA.fullmatch(s):
         raise RepositoryError("invalid SHA-256 digest")
     return s.lower()
+
+
+def _fits_database_budget(size_bytes: int) -> bool:
+    """Reject oversized files before opening SQLite, without loading their bytes."""
+    return type(size_bytes) is int and 0 <= size_bytes <= MAX_DB_BYTES
 
 
 def _validate_path(path: Path) -> Path:
@@ -80,7 +85,7 @@ def open_repository(db_path: Path, *, create: bool = False) -> sqlite3.Connectio
     private source material, or claims a scenario has been runtime-verified.
     """
     path = _validate_path(db_path)
-    if path.exists() and path.stat().st_size > MAX_DB_BYTES:
+    if path.exists() and not _fits_database_budget(path.stat().st_size):
         raise RepositoryError("database exceeds local size limit")
     if create and path.exists():
         raise RepositoryError("database already exists; use open mode")

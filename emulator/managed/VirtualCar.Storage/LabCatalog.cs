@@ -28,7 +28,11 @@ public sealed record CatalogHealth(int SchemaVersion, long Profiles, long Sealed
 public sealed partial class LabCatalog : IAsyncDisposable
 {
     private const int Version = 1;
-    private const long MaxDatabaseBytes = 64L * 1024 * 1024;
+    // 10 GiB target + 2 GiB file growth headroom (not including WAL or backups).
+    private const long MaxDatabaseBytes = 12L * 1024 * 1024 * 1024;
+
+    internal static bool FitsDatabaseBudget(long sizeBytes) =>
+        sizeBytes >= 0 && sizeBytes <= MaxDatabaseBytes;
     private static readonly Regex IdPattern = new("^[A-Za-z0-9_-]{1,96}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant,
         TimeSpan.FromMilliseconds(100));
@@ -342,7 +346,7 @@ public sealed partial class LabCatalog : IAsyncDisposable
         {
             if (!File.Exists(full) ||
                 (File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0 ||
-                new FileInfo(full).Length > MaxDatabaseBytes)
+                !FitsDatabaseBudget(new FileInfo(full).Length))
                 throw new LabStorageException("Existing local database unavailable.");
         }
         return full;

@@ -17,7 +17,8 @@ internal static class Program
             ("05 Sealed metadata never activates responses", Test05),
             ("06 WAL-compatible consistent backup", Test06),
             ("07 Corruption, bad selectors and bounds", Test07),
-            ("08 Cancellation, concurrency, disposal", Test08)
+            ("08 Cancellation, concurrency, disposal", Test08),
+            ("09 10 GiB target and 12 GiB size guard boundaries", Test09)
         ];
         int passed = 0;
         foreach ((string name, Func<Task> test) in tests)
@@ -173,6 +174,16 @@ internal static class Program
         await using var store = await LabCatalog.CreateAsync(folder.Db);
         await Fail<ArgumentException>(async () => { await store.GetSealedRevisionAsync("';DROP TABLE", 1); });
         await Fail<ArgumentOutOfRangeException>(async () => { await store.ListProfilesAsync(101); });
+    }
+
+    private static Task Test09()
+    {
+        const long gib = 1024L * 1024 * 1024;
+        Require(LabCatalog.FitsDatabaseBudget(10 * gib), "10 GiB target rejected");
+        Require(LabCatalog.FitsDatabaseBudget(12 * gib), "12 GiB guard boundary rejected");
+        Require(!LabCatalog.FitsDatabaseBudget(12 * gib + 1), "Oversized database accepted");
+        Require(!LabCatalog.FitsDatabaseBudget(-1), "Negative database size accepted");
+        return Task.CompletedTask;
     }
 
     private static async Task Test08()

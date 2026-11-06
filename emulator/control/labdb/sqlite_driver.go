@@ -22,7 +22,8 @@ var (
 	ErrExists    = errors.New("laboratory database already exists")
 	ErrMigration = errors.New("laboratory schema version or checksum mismatch")
 )
-const maxDBBytes int64 = 64 * 1024 * 1024
+// Allow a 10 GiB catalog with file growth headroom; WAL and backups need extra disk.
+const maxDBBytes int64 = 12 * 1024 * 1024 * 1024
 const maxSchemaBytes int64 = 256 * 1024
 
 
@@ -41,6 +42,8 @@ type SQLiteHealth struct {
 	PhysicalHardwareVerified bool
 }
 
+func fitsDBBudget(bytes int64) bool { return bytes >= 0 && bytes <= maxDBBytes }
+
 func validatePath(value string, exists bool) (string, error) {
 	if value == "" || (strings.ContainsRune(value, rune(0)) || strings.ContainsAny(value, "?#")) {
 		return "", ErrInvalid
@@ -54,7 +57,7 @@ func validatePath(value string, exists bool) (string, error) {
 	}
 	file, err := os.Lstat(p)
 	if exists {
-		if err != nil || !file.Mode().IsRegular() || file.Size() > maxDBBytes {
+		if err != nil || !file.Mode().IsRegular() || !fitsDBBudget(file.Size()) {
 			return "", ErrUnavailable
 		}
 	} else if err == nil || !errors.Is(err, os.ErrNotExist) {
