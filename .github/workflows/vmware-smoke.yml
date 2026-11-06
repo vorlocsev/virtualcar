@@ -1,0 +1,50 @@
+name: Virtual Car VMware self-hosted smoke
+
+# Deliberately manual: the private home runner must not execute PR code automatically.
+# This workflow does not package, upload, or publish Virtual Car binaries.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virtualcar-vmware-smoke
+  cancel-in-progress: false
+
+jobs:
+  windows-offline-lab:
+    if: github.repository == 'vorlocsev/virtualcar'
+    name: Windows VM synthetic SQLite and managed smoke
+    runs-on: [self-hosted, Windows, X64, virtualcar-win]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify required build tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git --version
+          go version
+          dotnet --version
+          python --version
+
+      - name: Python SQLite safety and size-budget tests
+        shell: pwsh
+        run: python emulator/tests/test_lab_sqlite_repository.py
+
+      - name: Go SQLite real-driver regression
+        working-directory: emulator/control
+        shell: pwsh
+        run: go test ./labdb -count=1
+
+      - name: CSharp .NET 10 SQLite integration checks
+        shell: pwsh
+        run: dotnet run --project emulator/managed/VirtualCar.Storage.Checks/VirtualCar.Storage.Checks.csproj -c Release
+
+      # Intentionally no real CAN, physical adapter, private VIN, D: data,
+      # hardware attestation, GitHub release, or artifact upload steps.
