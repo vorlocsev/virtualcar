@@ -73,12 +73,34 @@ Result map_error(std::uint32_t error) noexcept
     return Result::io_error;
 }
 
+class WipeBytes final {
+public:
+    explicit WipeBytes(std::vector<std::uint8_t>& bytes) noexcept : bytes_(bytes) {}
+    ~WipeBytes()
+    {
+        if (!bytes_.empty())
+            SecureZeroMemory(bytes_.data(), bytes_.size());
+    }
+    WipeBytes(const WipeBytes&) = delete;
+    WipeBytes& operator=(const WipeBytes&) = delete;
+private:
+    std::vector<std::uint8_t>& bytes_;
+};
+
 Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
                       std::uint32_t timeout_ms, bool write,
                       std::uint32_t& last_error)
 {
+    const ULONGLONG started = GetTickCount64();
     std::size_t offset = 0;
     while (offset < bytes.size()) {
+        const ULONGLONG elapsed = GetTickCount64() - started;
+        if (elapsed >= timeout_ms) {
+            last_error = WAIT_TIMEOUT;
+            return Result::timed_out;
+        }
+        const DWORD remaining_timeout =
+            static_cast<DWORD>(timeout_ms - elapsed);
         HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (event == nullptr) {
             last_error = GetLastError();
@@ -104,7 +126,7 @@ Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
                 return map_error(start_error);
             }
 
-            const DWORD wait = WaitForSingleObject(event, timeout_ms);
+            const DWORD wait = WaitForSingleObject(event, remaining_timeout);
             if (wait == WAIT_TIMEOUT) {
                 (void)CancelIoEx(pipe, &overlapped);
                 (void)WaitForSingleObject(event, INFINITE);
@@ -271,6 +293,7 @@ Result Client::connect(std::wstring_view pipe_name,
     Frame hello{};
     hello.kind = static_cast<std::uint16_t>(Kind::hello);
     hello.payload.assign(launch_secret.begin(), launch_secret.end());
+    [[maybe_unused]] WipeBytes wipe_hello(hello.payload);
     Result result = write_frame(hello);
     if (result != Result::ok) {
         close_locked();
@@ -371,6 +394,7 @@ Result Client::write_frame(const Frame& frame)
 {
     std::vector<std::uint8_t> bytes;
     if (!FrameCodec::encode(frame, bytes)) return Result::protocol_error;
+    [[maybe_unused]] WipeBytes wipe(bytes);
     return write_exact(bytes);
 }
 
@@ -385,16 +409,12 @@ Result Client::read_frame(Frame& frame)
         return Result::protocol_error;
 
     const std::uint32_t length = get_u32(header.data() + 8);
-    if (length > FrameCodec::maximum_payload) return Result::protocol_error;
-
-    std::vector<std::uint8_t> bytes(header.begin(), header.end());
-    bytes.resize(FrameCodec::header_length + static_cast<std::size_t>(length));
-    if (length != 0) {
-        result = read_exact(std::span<std::uint8_t>(bytes).subspan(
-            FrameCodec::header_length, static_cast<std::size_t>(length)));
-        if (result != Result::ok) return result;
-    }
-    return FrameCodec::decode(bytes, frame)
+    // This client consumes only server ACKs. ACKs must have no payload,
+    // so reject unexpected data before allocating or reading a body.
+    if (get_u16(header.data() + 6) != static_cast<std::uint16_t>(Kind::ack) ||
+        length != 0)
+        return Result::protocol_error;
+    return FrameCodec::decode(header, frame)
         ? Result::ok : Result::protocol_error;
 }
 
