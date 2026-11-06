@@ -9,9 +9,10 @@ namespace VirtualCar.Core;
 /// <summary>Where evidence came from. Never infer physical ECU support from this label.</summary>
 public enum ScenarioOrigin
 {
-    Synthetic,
-    PrivateCapture,
-    ResearchOnly
+    Unknown = 0,
+    Synthetic = 1,
+    PrivateCapture = 2,
+    ResearchOnly = 3
 }
 
 /// <summary>
@@ -203,8 +204,10 @@ public sealed class LabController(IScenarioCatalog catalog, IScenarioRuntime run
     private static VerifiedScenario Validate(ScenarioSource? source, string id, int revision)
     {
         if (source is null || source.ScenarioId != id || source.Revision != revision ||
-            source.Revision < 1 || source.Origin == ScenarioOrigin.ResearchOnly ||
-            !source.ApprovedForReadOnlyLab || source.Payload is null ||
+            source.Revision < 1 ||
+            (source.Origin != ScenarioOrigin.Synthetic && source.Origin != ScenarioOrigin.PrivateCapture) ||
+            !source.ApprovedForReadOnlyLab || string.IsNullOrWhiteSpace(source.Sha256) ||
+            source.Payload is null ||
             source.Payload.Length == 0 || source.Payload.Length > MaxSnapshotBytes)
             throw new LabException("Laboratory scenario was not approved or materialized.");
 
