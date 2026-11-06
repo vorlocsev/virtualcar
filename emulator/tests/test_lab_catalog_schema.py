@@ -63,6 +63,10 @@ class LabCatalogSqlTests(unittest.TestCase):
             seed(db)
             db.execute("INSERT INTO private_artifacts VALUES(?,?,?,?,?,?,?)",
                        ("art", "private/trace.enc", HASH, 100, "dpapi_current_user", "private_response", NOW))
+            for path in ("../escape.enc", "/absolute.enc", "C:/drive.enc", "private\\escape.enc"):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    db.execute("INSERT INTO private_artifacts VALUES(?,?,?,?,?,?,?)",
+                               ("badpath" + str(len(path)), path, HASH, 100, "dpapi_current_user", "private_response", NOW))
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("INSERT INTO response_fixtures VALUES(?,?,?,?,?,?,?)",
                            ("bad", "ecu-1", HASH, "captured_private", "draft", b"private", "art"))
