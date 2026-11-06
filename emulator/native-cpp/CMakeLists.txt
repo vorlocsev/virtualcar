@@ -56,3 +56,12 @@ add_executable(vc_isotp_rx_checks tests/isotp_rx_checks.cpp)
 target_link_libraries(vc_isotp_rx_checks PRIVATE VirtualCarIsoRx)
 target_compile_options(vc_isotp_rx_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m4b1_isotp_rx_metadata_8_groups COMMAND vc_isotp_rx_checks)
+
+# M4B-2: this runner is deliberately Win32 only. It dynamically loads the
+# existing *independently cross-built C* x86 J2534 DLL, not the new M3
+# fail-closed C++ DLL, and compares read-only synthetic J2534 RX outputs.
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+  add_executable(vc_legacy_c_cpp_parity tests/legacy_c_cpp_parity.cpp)
+  target_link_libraries(vc_legacy_c_cpp_parity PRIVATE VirtualCarIsoRx)
+  target_compile_options(vc_legacy_c_cpp_parity PRIVATE /W4 /WX /permissive- /sdl)
+endif()
