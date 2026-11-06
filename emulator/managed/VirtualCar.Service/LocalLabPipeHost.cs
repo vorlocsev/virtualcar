@@ -102,7 +102,6 @@ public sealed class LocalLabPipeHost
             {
                 try { await _coordinator.CloseSessionAsync(token, CancellationToken.None).ConfigureAwait(false); }
                 catch (InvalidOperationException) { /* Reset/shutdown already invalidated it. */ }
-                catch (ObjectDisposedException) { /* Shutdown closed the coordinator. */ }
             }
         }
     }
