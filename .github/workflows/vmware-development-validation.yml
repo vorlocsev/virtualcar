@@ -1,8 +1,22 @@
 name: Virtual Car VMware development validation
 
-# Manual-only validation of the trusted development branch on the private VMware runner.
-# No pull_request or push trigger. No artifacts, releases, or publishing.
+# Trusted development pushes run on the owner's persistent VMware runner.
+# Pull requests never execute on this self-hosted machine. Manual dispatch remains available.
+# No artifacts, releases, or publishing.
 on:
+  push:
+    branches: [development]
+    paths:
+      - "emulator/**"
+      - ".github/workflows/**"
+      - "NuGet.Config"
+      - "global.json"
+      - "go.mod"
+      - "go.sum"
+      - "Directory.Build.*"
+      - "Directory.Packages.props"
+      - "pyproject.toml"
+      - "requirements*.txt"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +29,7 @@ concurrency:
 jobs:
   validate-development:
     name: Development Python, Go, C++ and .NET gates
-    if: github.repository == 'vorlocsev/virtualcar'
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development')
     runs-on: [self-hosted, Windows, X64, virtualcar-win]
     timeout-minutes: 60
 
