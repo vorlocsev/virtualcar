@@ -1,59 +1,64 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: C# .NET 10 / C++20, M4B-1 complete (2026-11-06)
+## ACTIVE checkpoint: C# .NET10 / C++20, M4B-2 complete (2026-11-06)
 
-**Dvinholm is PRIMARY.** Virtual Car remains a PRIVATE read-only lab.
-Do not publish Virtual Car, register nonfunctional J2534 DLLs or
-change original ECU/device behavior without separate evidence.
+Dvinholm remains the PRIMARY product. Virtual Car is a PRIVATE,
+optional, read-only development lab. Never publish/register Virtual
+Car as a physical J2534 adapter without explicit direction.
 
-Verified milestones:
-- M0 PR #71: C# Core/C++ ABI, CI #1 SUCCESS.
-- M1 PR #72: C# SQLite v1 catalog, CI #4 SUCCESS.
-- M2 PR #75: C# sealed SHA-verified synthetic scenarios, CI #6 SUCCESS.
-- M3 PR #77: Windows x86/x64 native C++20 14-export J2534
-  *fail-closed* DLLs, managed native CI #10 SUCCESS.
-- M4A PR #79 merged 3719f58b: isolated C++ CAN/ISO-TP
-  FIFO, FC, STmin, deadlines, eight synthetic gates Linux/Win32/x64.
-  CI #13, legacy Windows x86 #628, VMware LAB package #447 SUCCESS.
-- **M4B-1 PR #81 MERGED** to development at
-  **1786b33e080d19b20c34b0586346263b10c14cbf**.
-  Added emulator/native-cpp/include/virtualcar/isotp_rx.hpp and
-  emulator/native-cpp/src/isotp_rx.cpp: strict, isolated J2534 v04.04
-  ISO15765 RX metadata, 8 ECU request/response routes, 24 flow filters,
-  64 bounded message entries, 4095-byte synthetic payloads, 29-bit CAN
-  flag, 32-bit wrapping microsecond timestamps, big-endian CAN IDs,
-  correct DataSize/ExtraDataIndex, and atomic START_OF_MESSAGE +
-  complete response admission. Rejects write/security responses,
-  broad filter authorization of segmented replies, cross-ECU
-  collisions and stale queued data on reset.
-  Eight new groups passed on **Linux, Windows x86 and Windows x64**.
-  Final C# + C++ Migration CI **#15 SUCCESS**, legacy x86 emulator
-  **#631 SUCCESS**, VMware LAB packaging **#448 SUCCESS**.
-  Documentation: docs/architecture/VIRTUALCAR-J2534-ISOTP-RX-M4B1.md.
+Completed:
+- M0 PR #71 C# Core and C++ ABI, CI #1 SUCCESS.
+- M1 PR #72 C# SQLite v1, CI #4 SUCCESS.
+- M2 PR #75 synthetic sealed scenario compiler, CI #6 SUCCESS.
+- M3 PR #77 C++ x86/x64 J2534 14-export FAIL-CLOSED ABI DLLs,
+  CI #10 and legacy x86 #624 SUCCESS.
+- M4A PR #79 C++ bounded CAN/ISO-TP, FIFO/FC/STmin, CI #13,
+  legacy x86 #628 SUCCESS.
+- M4B-1 PR #81 C++ isolated J2534 ISO15765 RX, 8 synthetic ECU
+  routes, exact metadata, atomic START_OF_MESSAGE pair, CI #15,
+  legacy x86 #631 SUCCESS.
+- **M4B-2 PR #83 MERGED**, SHA
+  **49f616f3af8ed266ecd793f0718ddb0b67c9792e**:
+  actual Windows x86 BLACK-BOX comparison: independently built
+  original C PassThru DLL loaded via LoadLibraryExW and called via
+  PassThruOpen/Connect/StartMsgFilter/WriteMsgs/ReadMsgs/Disconnect,
+  compared with separately built C++20 Iso15765Rx module for eight
+  identical explicitly synthetic read-only F187/F189 test traces.
+  Same synthetic INI source; C++ outputs are NOT derived from old DLL
+  received bytes. Compared ProtocolID/RxStatus/TxFlags/DataSize/
+  ExtraDataIndex and EVERY payload byte; only dynamic microsecond
+  timestamps excluded. Eight groups passed (short, long START pair,
+  two ECU, two channels, broad filter, wrong FC destination,
+  63-entry FIFO pair rejection, disconnect/reset state).
+  Final emulator x86 CI **#638 SUCCESS** (real DLL+new code 8/8),
+  managed C#/C++ CI **#21 SUCCESS**, VMware LAB packaging
+  **#453 SUCCESS**. No DLL/public releases.
+  Test source: emulator/native-cpp/tests/legacy_c_cpp_parity.cpp.
+  Scope: docs/architecture/VIRTUALCAR-LEGACY-C-CPP-EXEC-PARITY-M4B2.md.
 
-**IMPORTANT EVIDENCE LIMIT:** new RX output is checked against
-*source-derived* behavior from emulator/src/virtualcar.c and separately
-passed old x86 native CI. This is NOT yet a black-box execution of
-identical inputs against both old C and new C++ DLLs. New engine
-modules are isolated. M3 C++ J2534 DLL still returns disconnected and
-has NOT been registered as a functioning adapter. No real CAN, Dvinholm
-x64 J2534 E2E, VIDA/SectorV discovery, Volvo XC90 V8 MY2009 CEM
-response proof or physical DiCE/hardware tests. C/Go reference remains.
+**EVIDENCE LIMITS:** This is actual old C J2534 DLL versus compiled
+new C++ RX *module*, NOT old versus a FUNCTIONAL new J2534 DLL.
+The new M3 C++ PassThru DLL still deliberately returns NOT_CONNECTED;
+there is no authenticated host IPC and no J2534 CAN transport serving
+Dvinholm yet. Tested trace set is synthetic ISO15765 F187/F189 only.
+Not verified: full 29-bit/raw-CAN/physical bus parity, vendor
+extensions, Volvo P2 CEM B9FB replies, VIN acceptance by real software,
+VIDA/SectorV/VDASH client discovery, physical DiCE or actual vehicle.
+VMware LAB packaging != guest application test. Preserve old C/Go.
 
-**NEXT: M4B-2 black-box legacy-vs-new executable trace parity.**
-Under matching synthetic profiles and explicit input traces, compare
-actual old x86 C DLL outputs to new C++ test engine across 6-8 gates,
-normalizing only monotonic timestamps/dynamic handles. Add multi-channel
-filter isolation and accountable errors, then M5 authenticated local
-Named Pipes .NET10 host. No fabricated Volvo D2/CEM positive replies,
-PIN cracking, programming or real vehicle writes.
+**NEXT M5:** securely connect a .NET 10 C# headless test host to a
+native C++20 J2534 DLL using local Windows Named Pipes, strict current-
+user ACL, versioned bounded IPC messages, verified sealed synthetic
+scenario generation IDs, channel lifecycle/fail-closed reconnect,
+timeouts and backpressure, eight integration groups. Do not accept
+physical devices or ECU programming. New C++ DLL must remain
+fail-closed unless authentication/scenario checks succeed.
 
-Canonical references:
-- docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
-- docs/architecture/VIRTUALCAR-J2534-ISOTP-RX-M4B1.md
-- docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md
+Read first: docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md,
+docs/architecture/VIRTUALCAR-LEGACY-C-CPP-EXEC-PARITY-M4B2.md,
+docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md.
 
-**Exact cross-chat continuation phrase: virtual car**
+Exact cross-chat continuation phrase: **virtual car**.
 
 Verified checkpoint: 2026-11-06.
 This document is the canonical cross-chat continuation note. Re-read the

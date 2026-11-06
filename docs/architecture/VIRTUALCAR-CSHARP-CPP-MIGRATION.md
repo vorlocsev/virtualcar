@@ -29,8 +29,16 @@ J2534 ISO15765 RX metadata and atomic START_OF_MESSAGE pair,
 Managed CI #15, legacy x86 #631, VMware LAB packaging #448 SUCCESS.
 This is a SOURCE-DERIVED contract comparison, not old/new DLL
 executable parity. The native J2534 DLL still fails closed.
-**Next M4B-2:** actual identical-input old C vs new C++ black-box
-output parity and multi-channel behavior, before M5 host.
+**M4B-2 completed:** PR #83 merged 49f616f3, actual independently
+built original x86 C J2534 DLL versus C++20 Iso15765Rx test-engine
+comparison for eight synthetic F187/F189 read-only cases. Dynamic
+timestamps alone normalized; all message bytes and metadata checked.
+Emulator x86 CI #638 (8/8), managed migration CI #21, VMware LAB
+packaging #453 SUCCESS. This does NOT mean new C++ DLL can open a
+functional J2534 channel.
+**Next M5:** secure C#/.NET10 Windows headless host and local Named
+Pipes IPC, bounded versioned messages, authenticated sessions,
+fail-closed connect/reconnect, independent native x86/x64 gates.
 Preserve old C/Go until real functional parity is verified.
 
 ## Final stack

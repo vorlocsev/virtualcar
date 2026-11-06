@@ -1,34 +1,37 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: M4B-1 complete, M4B-2 black-box parity next
+## ACTIVE: M4B-2 actual old DLL / new C++ RX parity complete, M5 next
 
-Dvinholm is the PRIMARY product; Virtual Car remains PRIVATE, optional
-and read-only. C# .NET10 Core/SQLite/Scenario/Service/WinUI; C++20
-Win32/x64 native J2534 DLL and critical CAN/ISO-TP transport.
+Dvinholm remains PRIMARY. Virtual Car is a PRIVATE read-only lab,
+not a released J2534 driver. Target: C#/.NET10 for core, storage,
+scenario compiler, headless service and WinUI control; C++20 for
+x86/x64 J2534 DLL and critical CAN/ISO-TP.
 
-Verified, merged: M0 #71, M1 #72, M2 #75, M3 #77,
-M4A #79 at 3719f58b, M4B-1 #81 at
-**1786b33e080d19b20c34b0586346263b10c14cbf**.
-M4B-1 adds strict ISO15765 J2534 RX metadata, up to 8 synthetic ECU
-routes, 64 bounded J2534 RX entries, exact flow filter ownership,
-atomic START_OF_MESSAGE + full reply, timestamps, 29-bit IDs,
-fail-closed rejected services. Eight tests passed on Linux/Win32/x64;
-C# + C++ CI #15 SUCCESS; old x86 emulator CI #631 SUCCESS;
-VMware LAB packaging #448 SUCCESS.
+M0 #71, M1 #72, M2 #75, M3 #77, M4A #79 and M4B-1 #81 merged.
+**M4B-2 PR #83 MERGED at 49f616f3af8ed266ecd793f0718ddb0b67c9792e.**
+Actual x86 executable test dynamically loaded the independently built
+legacy C J2534 DLL and compared its real PassThruReadMsgs messages
+with independently generated C++20 Iso15765Rx output for eight
+synthetic F187/F189 routes, filters, queue and lifecycle gates.
+8/8 PASS on Windows x86 emulator CI #638; managed migration CI #21
+SUCCESS; VMware LAB package #453 SUCCESS (packaging only).
 
-**NEXT M4B-2:** real black-box comparison old C x86 PassThru DLL
-vs new C++ under identical synthetic CAN/UDS traces, normalize only
-timestamps/handles; add multi-route/channel isolation and error
-semantics, 6-8 gates. Only after parity comes M5 secure C# Named
-Pipes and M7 Dvinholm x64 end-to-end. DO NOT treat source-derived
-expected structures as proof of actual old/new DLL parity.
+IMPORTANT: the new C++20 J2534 DLL remains FAIL-CLOSED and was not
+tested as a functional replacement. This is real legacy C DLL vs new
+compiled C++ RX **module**, with timestamp-only normalization. No
+physical hardware, real Volvo identity, VIDA/SectorV/VDASH client
+recognition or Dvinholm end-to-end proven. Keep C/Go reference code.
 
-M3 C++ J2534 DLL remains fail-closed, no real adapter, no public release,
-no physical vehicle testing. Preserve C/Go references.
+**NEXT M5:** C# .NET10 headless host and authenticated local Named Pipes
+IPC with current-user ACL, bounded and versioned frame protocol,
+session generation, channel lifecycle, backpressure and fail-closed
+DLL/IPC behavior. 6-8 tests per PR. Do not publish/register DLL.
 
-Read docs/progress/CURRENT.md, ROADMAP, and
-docs/architecture/VIRTUALCAR-J2534-ISOTP-RX-M4B1.md on development.
-Cross-chat phrase remains exactly **virtual car**.
+Read on development:
+- docs/progress/CURRENT.md
+- docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md
+- docs/architecture/VIRTUALCAR-LEGACY-C-CPP-EXEC-PARITY-M4B2.md
+Cross-chat trigger: **virtual car**.
 
 ---
 > **Старт здесь.** Приватный репозиторий: https://github.com/vorlocsev/virtualcar. **Рабочая ветка: `development`**, а не `main` (default branch пока содержит старую dev26-базу). Документ является контрольной точкой, а не заменой фактической проверки GitHub.
