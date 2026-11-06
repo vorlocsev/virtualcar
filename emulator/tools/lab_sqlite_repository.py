@@ -61,8 +61,10 @@ def _connect(path: Path) -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         return conn
     except BaseException:
-        # A failed PRAGMA (for example, opening a corrupt DB) must not leak
-        # the native SQLite handle. On Windows that prevents temp-file cleanup.
+        # _connect() owns the handle until it successfully returns it.
+        # In particular, a malformed database can fail while applying
+        # journal_mode=WAL. Close here so Windows can release the file before
+        # the caller handles the initialization error or removes a test DB.
         conn.close()
         raise
 
