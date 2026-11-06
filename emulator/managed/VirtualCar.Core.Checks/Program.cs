@@ -73,7 +73,7 @@ internal static class Program
     private static async Task Test01()
     {
         var (core, _, runtime) = NewSystem();
-        await ExpectFailure<InvalidOperationException>(async () => await core.OpenSessionAsync());
+        await ExpectFailure<InvalidOperationException>(async () => { await core.OpenSessionAsync(); });
         Require(runtime.PrepareCount == 0, "Unselected runtime was prepared");
         await core.SelectAsync("synthetic-ecu-test", 1);
         var token = await core.OpenSessionAsync();
@@ -163,7 +163,7 @@ internal static class Program
         Require(sessions.Select(x => x.Id).Distinct().Count() == ScenarioCoordinator.MaximumSessions,
             "Duplicate session IDs");
         await ExpectFailure<InvalidOperationException>(async () => await core.OpenSessionAsync());
-        await Task.WhenAll(sessions.Select(core.CloseSessionAsync));
+        await Task.WhenAll(sessions.Select(session => core.CloseSessionAsync(session)));
         await core.ResetAsync();
     }
 
