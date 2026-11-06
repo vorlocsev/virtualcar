@@ -16,9 +16,6 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - name: Verify connected Windows runner
         shell: powershell
         run: |
@@ -32,7 +29,7 @@ jobs:
           Write-Host ('Architecture: ' + [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
 
           # Check commands visible to the service account without revealing paths.
-          foreach ($tool in @('git', 'go', 'dotnet', 'python', 'cmake')) {
+          foreach ($tool in @('git', 'go', 'dotnet', 'cmake')) {
               $cmd = Get-Command $tool -ErrorAction SilentlyContinue
               if ($cmd) {
                   Write-Host ('AVAILABLE: ' + $tool)
@@ -41,8 +38,19 @@ jobs:
               }
           }
 
-          python --version
-          python -c "import sqlite3; print('SQLite ' + sqlite3.sqlite_version)"
+          # Python is installed machine-wide for the least-privilege runner service.
+          # Do not use actions/setup-python here: its Windows setup script attempts
+          # to edit machine-wide Python registry entries, which NETWORK SERVICE
+          # correctly cannot modify.
+          $python = 'C:\Program Files\Python312\python.exe'
+          if (-not (Test-Path -LiteralPath $python)) {
+              throw 'Machine-wide Python 3.12 not found. Run Install-VirtualCar-Python312-MachineWide.ps1 as administrator.'
+          }
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Python 3.12 failed to start' }
+          & $python -c "import sqlite3; print('SQLite ' + sqlite3.sqlite_version)"
+          if ($LASTEXITCODE -ne 0) { throw 'Python SQLite module failed' }
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $python)
 
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere.exe not found' }
