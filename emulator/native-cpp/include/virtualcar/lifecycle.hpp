@@ -13,6 +13,8 @@ namespace virtualcar::lifecycle {
 struct SessionKey final {
     std::uint64_t id{};
     std::uint64_t generation{};
+    std::uint32_t server_pid{};
+    std::uint64_t server_creation_time_100ns{};
 };
 
 enum class Result : std::uint8_t {
@@ -52,6 +54,8 @@ public:
 
     [[nodiscard]] Result begin(SessionKey key, bool approved_synthetic,
                                std::uint64_t now_ms);
+    // Validate without extending the lease. Used before attempting remote I/O.
+    [[nodiscard]] Result validate(SessionKey key, std::uint64_t now_ms);
     [[nodiscard]] Result heartbeat(SessionKey key, std::uint64_t now_ms);
     [[nodiscard]] Result reserve_channel(SessionKey key, ChannelKind kind,
                                          std::uint64_t now_ms,

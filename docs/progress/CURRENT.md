@@ -15,7 +15,7 @@ only by explicitly adding its name to the core allowlist on `main`.
 
 This Windows suite executes legacy C/Python/Go, MSVC native x86/x64,
 old-C-vs-C++ synthetic RX parity, .NET 10 managed/storage/scenario,
-M5A host and M5B C++ <-> C# peer checks (when source is present).
+M5A host, M5B C++ <-> C# peer, and M5C2 authenticated lifecycle checks (when source is present).
 It does not provide identical Linux-host smoke, retired Native AOT ABI
 probe, old legacy trace-oneclick or VMware prerelease packaging coverage.
 Do not treat removal of GitHub-hosted checks as an equivalent pass
@@ -30,11 +30,62 @@ completed SUCCESS on `development` commit
 Python 252 tests, native MSVC x86/x64 5/5 CTest each (including M5C-1),
 .NET Core/SQLite/Scenarios 8/8 each, M5A 9/9, M5B C++ ↔ C#
 x86/x64, Go, legacy C and C/C++ parity PASS. GitHub Actions
-reports zero uploaded artifacts. The five manual compatibility
-aliases have not been independently dispatched yet.
+reports zero uploaded artifacts. The `managed-migration.yml` manual alias was independently dispatched
+from `main` and completed SUCCESS in #42321161342, validating
+`development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE checkpoint: M5C-1 Windows x86/x64 lifecycle preflight PASSED (2026-11-07)
+## ACTIVE checkpoint: M5C-2 authenticated Host-bound lifecycle PASSED (2026-11-07)
+
+Implementation branch: `feature/m5c2-authenticated-session-lifecycle`,
+source commit `80d144b24b29cd52691b0cfa50fdcfe2c5f309a3`
+plus documentation and workflow follow-up.
+
+The native M5B client captures the verified server PID and its
+process creation FILETIME after checking PID and before sending the
+32-byte test launch secret. The C++ session key is now
+`(sessionId, generation, serverPid, serverCreationTime)`. This is
+necessary because a new C# Host process restarts its in-memory
+coordinator counters and can legitimately issue the same numeric
+token (1,1); PID plus creation time distinguishes process instances
+even if Windows reuses a PID.
+
+New `AuthenticatedSession` composes the real M5B pipe client and
+M5C-1 bounded lifecycle. It opens local state only after a successful
+authenticated ACK from the verified Host; it has no public
+caller-controlled synthetic-approval flag. Heartbeats validate the
+local lease before remote I/O and extend it only after a matching Host
+ACK. Channel reservations remain bounded to eight and carry no frame
+or ECU/CAN API. Host loss, local lease expiry, and GOODBYE revoke local
+slots and clear the client session.
+
+Added four native process-identity tests and three cross-language
+Windows test modes: authenticated session/channel operation,
+lease expiry, and forced synthetic Host process loss followed by
+restart on the same pipe. The restart test checks that the restarted
+C# coordinator reissues the same numeric 1/1 token, while process
+creation identity differs and the old channel ID cannot be reused.
+
+**Windows verification: PASS.** Private self-hosted VMware
+[#42339519459](https://github.com/vorlocsev/virtualcar/actions/runs/42339519459) checked out exact feature source
+`7fd40d02be9561e787bb4f701a5d7609cd21ddbf` on runner `VirtualCar-CI-WIN`.
+MSVC x86: 6/6 CTest including M5C-2 process-identity four gates PASS.
+MSVC x64: 6/6 CTest including the same M5C-2 gates PASS.
+For EACH architecture, the actual C++ client and C# Host passed
+authenticated lifecycle/channel reservations, local lease expiry,
+forced loss of the owned synthetic Host process and client revocation,
+then restart on the same pipe with identical numeric session token
+but different host process identity and rejected stale channel IDs.
+M5A 9/9, M5B cross-language x86/x64, Python 252, Go, Legacy C,
+C/C++ parity and .NET checks also PASSED. Artifacts: zero.
+PR #96 is ready for merge, but the deployed J2534 DLL remains
+fail-closed and unlinked to this wrapper. No CAN/ECU data plane,
+physical adapters, PIN, SecurityAccess, programming or releases.
+J2534 DLL remains fail-closed and unlinked from this lifecycle.
+No CAN/ECU data plane, physical adapters, PIN, SecurityAccess,
+programming, artifacts, releases or deployments.
+
+## COMPLETED checkpoint: M5C-1 Windows x86/x64 lifecycle preflight PASSED (2026-11-07)
 
 ### M5A C# current-user Named Pipe host: MERGED into development
 
@@ -122,11 +173,9 @@ on the next timed operation, never authorized from `snapshot()`.
 No CAN/ECU, SecurityAccess, PIN, programming, adapter registration,
 real-vehicle or Dvinholm E2E test has occurred.
 
-**NEXT M5C-2**: bind this bounded native lifecycle to the
-*actual authenticated* M5A/M5B peer, verify host process loss,
-stale-generation revocation, heartbeat expiry and recovery on
-Windows x86/x64. Keep the J2534 DLL fail-closed and the data
-plane disabled until separately verified.
+**M5C-2 implementation** is tracked in the active checkpoint above.
+Host process identity and crash/restart behavior remain pending the
+owner-run Windows x86/x64 integration workflow.
 
 
 Completed:

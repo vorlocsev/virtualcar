@@ -7,6 +7,7 @@
 #include <Windows.h>
 
 #include "virtualcar/ipc_client.hpp"
+#include "virtualcar/authenticated_session.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <atomic>
@@ -27,6 +29,8 @@ using virtualcar::ipc::Frame;
 using virtualcar::ipc::FrameCodec;
 using virtualcar::ipc::Kind;
 using virtualcar::ipc::Result;
+using virtualcar::session::AuthenticatedSession;
+using SessionResult = virtualcar::session::Result;
 
 namespace {
 
@@ -337,13 +341,194 @@ bool cross_language_connect(const std::wstring& pipe_name,
     return true;
 }
 
+
+bool cross_language_authenticated_lifecycle(const std::wstring& pipe_name,
+                                             std::uint32_t expected_server_pid,
+                                             std::uint64_t lease_ms = 5000)
+{
+    AuthenticatedSession session(lease_ms);
+    const auto secret = test_secret();
+    const SessionResult connected = session.connect(
+        pipe_name, secret, expected_server_pid, 5000);
+    if (connected != SessionResult::ok || !session.connected()) {
+        std::printf("FAIL authenticated lifecycle HELLO (status=%u, win32=%u)\\n",
+            static_cast<unsigned>(connected), session.last_error());
+        return false;
+    }
+
+    const auto token = session.session();
+    if (token.id == 0 || token.generation == 0 ||
+        token.server_pid != expected_server_pid ||
+        token.server_creation_time_100ns == 0) {
+        std::printf("FAIL authenticated host process identity\\n");
+        return false;
+    }
+
+    std::uint32_t can_channel{};
+    std::uint32_t iso_channel{};
+    if (session.reserve_channel(virtualcar::lifecycle::ChannelKind::can,
+            can_channel) != SessionResult::ok ||
+        session.reserve_channel(virtualcar::lifecycle::ChannelKind::iso15765,
+            iso_channel) != SessionResult::ok ||
+        can_channel == 0 || iso_channel == 0 || can_channel == iso_channel) {
+        std::printf("FAIL authenticated bounded channel reservation\\n");
+        return false;
+    }
+    if (session.keep_alive() != SessionResult::ok ||
+        session.close_channel(can_channel) != SessionResult::ok ||
+        session.close_channel(iso_channel) != SessionResult::ok) {
+        std::printf("FAIL authenticated lifecycle heartbeat/channel close\\n");
+        return false;
+    }
+    if (session.disconnect() != SessionResult::ok || session.connected() ||
+        session.snapshot().active || session.snapshot().channels != 0) {
+        std::printf("FAIL authenticated lifecycle GOODBYE/cleanup\\n");
+        return false;
+    }
+    std::printf("PASS authenticated C++ lifecycle <-> C# Host PID/creation/lease/channels\\n");
+    return true;
+}
+
+bool cross_language_lifecycle_expiry(const std::wstring& pipe_name,
+                                     std::uint32_t expected_server_pid)
+{
+    AuthenticatedSession session(250);
+    const auto secret = test_secret();
+    if (session.connect(pipe_name, secret, expected_server_pid, 5000) != SessionResult::ok)
+        return false;
+    std::uint32_t channel{};
+    if (session.reserve_channel(virtualcar::lifecycle::ChannelKind::can,
+            channel) != SessionResult::ok || channel == 0)
+        return false;
+    Sleep(350);
+    std::uint32_t rejected{};
+    const SessionResult expired = session.reserve_channel(
+        virtualcar::lifecycle::ChannelKind::iso15765, rejected);
+    if (expired != SessionResult::expired || rejected != 0 ||
+        session.connected() || session.snapshot().active ||
+        session.snapshot().channels != 0) {
+        std::printf("FAIL local lease expiry did not revoke session and channels\\n");
+        return false;
+    }
+    std::printf("PASS authenticated lifecycle lease expiry sends GOODBYE and clears channels\\n");
+    return true;
+}
+
+bool cross_language_lifecycle_host_restart(const std::wstring& pipe_name,
+                                           std::uint32_t first_server_pid,
+                                           const char* ready_path,
+                                           const char* host_lost_path,
+                                           const char* next_pid_path)
+{
+    AuthenticatedSession session(5000);
+    const auto secret = test_secret();
+    if (session.connect(pipe_name, secret, first_server_pid, 5000) != SessionResult::ok)
+        return false;
+    const auto first_token = session.session();
+    std::uint32_t old_channel{};
+    if (session.reserve_channel(virtualcar::lifecycle::ChannelKind::can,
+            old_channel) != SessionResult::ok || old_channel == 0)
+        return false;
+
+    // Signal the PowerShell orchestrator that the authenticated client
+    // is connected and has an active synthetic channel. The orchestrator
+    // terminates its own retained Process handle, never a PID reopened here.
+    {
+        std::ofstream ready(ready_path, std::ios::binary | std::ios::trunc);
+        if (!ready) return false;
+        ready << "ready";
+        ready.close();
+        if (!ready) return false;
+    }
+
+    SessionResult lost = SessionResult::ok;
+    bool host_loss_detected = false;
+    for (unsigned attempt = 0; attempt < 300; ++attempt) {
+        lost = session.keep_alive();
+        if (lost != SessionResult::ok) {
+            host_loss_detected = true;
+            break;
+        }
+        Sleep(50);
+    }
+    if (!host_loss_detected ||
+        (lost != SessionResult::disconnected &&
+         lost != SessionResult::io_error &&
+         lost != SessionResult::timed_out)) {
+        std::printf("FAIL host process loss was not detected (status=%u)\\n",
+            static_cast<unsigned>(lost));
+        return false;
+    }
+    if (session.connected() || session.snapshot().active ||
+        session.snapshot().channels != 0) {
+        std::printf("FAIL host loss left local session/channel state active\\n");
+        return false;
+    }
+
+    // This marker is written only after the client has observed the broken
+    // pipe and revoked its session. The orchestrator may now start Host #2.
+    {
+        std::ofstream host_lost(host_lost_path, std::ios::binary | std::ios::trunc);
+        if (!host_lost) return false;
+        host_lost << "revoked";
+        host_lost.close();
+        if (!host_lost) return false;
+    }
+
+    std::uint32_t second_server_pid = 0;
+    for (unsigned attempt = 0; attempt < 300 && second_server_pid == 0; ++attempt) {
+        std::ifstream input(next_pid_path);
+        if (input.good()) {
+            std::uint32_t parsed = 0;
+            if (input >> parsed && parsed != 0)
+                second_server_pid = parsed;
+        }
+        if (second_server_pid == 0) Sleep(50);
+    }
+    if (second_server_pid == 0) {
+        std::printf("FAIL restarted C# Host PID was not provided\\n");
+        return false;
+    }
+
+    if (session.connect(pipe_name, secret, second_server_pid, 5000) != SessionResult::ok) {
+        std::printf("FAIL reconnect to restarted C# Host (win32=%u)\\n",
+            session.last_error());
+        return false;
+    }
+    const auto second_token = session.session();
+    if (second_token.id != first_token.id ||
+        second_token.generation != first_token.generation ||
+        second_token.server_creation_time_100ns == first_token.server_creation_time_100ns ||
+        second_token.server_pid != second_server_pid) {
+        std::printf("FAIL restarted host did not produce a distinct process-bound session\\n");
+        return false;
+    }
+
+    std::uint32_t new_channel{};
+    if (session.reserve_channel(virtualcar::lifecycle::ChannelKind::can,
+            new_channel) != SessionResult::ok ||
+        new_channel <= old_channel ||
+        session.close_channel(old_channel) != SessionResult::invalid ||
+        session.keep_alive() != SessionResult::ok ||
+        session.disconnect() != SessionResult::ok ||
+        session.snapshot().active || session.snapshot().channels != 0) {
+        std::printf("FAIL stale channel survived host restart or recovery failed\\n");
+        return false;
+    }
+    std::printf("PASS host loss revokes state; restarted Host with replayed 1/1 token recovers under new process identity\\n");
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
-    if (argc == 4 &&
-        (std::strcmp(argv[1], "--connect") == 0 ||
-         std::strcmp(argv[1], "--reject-peer") == 0)) {
+    if ((argc == 4 &&
+         (std::strcmp(argv[1], "--connect") == 0 ||
+          std::strcmp(argv[1], "--reject-peer") == 0 ||
+          std::strcmp(argv[1], "--lifecycle") == 0 ||
+          std::strcmp(argv[1], "--lifecycle-expire") == 0)) ||
+        (argc == 7 && std::strcmp(argv[1], "--lifecycle-restart") == 0)) {
         std::wstring pipe_name;
         for (const char* p = argv[2]; *p != '\0'; ++p) {
             if (static_cast<unsigned char>(*p) > 0x7fU) return 2;
@@ -357,10 +542,17 @@ int main(int argc, char** argv)
             return 2;
         if (std::strcmp(argv[1], "--reject-peer") == 0)
             return cross_language_reject_peer(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--lifecycle") == 0)
+            return cross_language_authenticated_lifecycle(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--lifecycle-expire") == 0)
+            return cross_language_lifecycle_expiry(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--lifecycle-restart") == 0)
+            return cross_language_lifecycle_host_restart(
+                pipe_name, expected_server_pid, argv[4], argv[5], argv[6]) ? 0 : 1;
         return cross_language_connect(pipe_name, expected_server_pid) ? 0 : 1;
     }
     if (argc != 1) {
-        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer <pipe-name> <server-pid>]\n");
+        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire <pipe-name> <server-pid>] | --lifecycle-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file>\n");
         return 2;
     }
 

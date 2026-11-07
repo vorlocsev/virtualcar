@@ -53,7 +53,6 @@ target_include_directories(VirtualCarIpcClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_compile_options(VirtualCarIpcClient PRIVATE /W4 /WX /permissive- /sdl)
 
 add_executable(vc_ipc_client_checks tests/ipc_client_checks.cpp)
-target_link_libraries(vc_ipc_client_checks PRIVATE VirtualCarIpcClient)
 target_compile_options(vc_ipc_client_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m5b_native_ipc_client_8_groups COMMAND vc_ipc_client_checks)
 
@@ -67,6 +66,19 @@ add_executable(vc_lifecycle_checks tests/lifecycle_checks.cpp)
 target_link_libraries(vc_lifecycle_checks PRIVATE VirtualCarLifecycle)
 target_compile_options(vc_lifecycle_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m5c1_bounded_session_lifecycle_8_groups COMMAND vc_lifecycle_checks)
+
+# M5C-2: bind lifecycle tokens to the authenticated Named Pipe host process
+# instance (PID + creation FILETIME), including PID-reuse protection.
+add_executable(vc_lifecycle_identity_checks tests/lifecycle_identity_checks.cpp)
+target_link_libraries(vc_lifecycle_identity_checks PRIVATE VirtualCarLifecycle)
+target_compile_options(vc_lifecycle_identity_checks PRIVATE /W4 /WX /permissive- /sdl)
+add_test(NAME m5c2_host_process_identity_4_groups COMMAND vc_lifecycle_identity_checks)
+
+add_library(VirtualCarAuthenticatedSession STATIC src/authenticated_session.cpp)
+target_include_directories(VirtualCarAuthenticatedSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(VirtualCarAuthenticatedSession PUBLIC VirtualCarIpcClient VirtualCarLifecycle)
+target_compile_options(VirtualCarAuthenticatedSession PRIVATE /W4 /WX /permissive- /sdl)
+target_link_libraries(vc_ipc_client_checks PRIVATE VirtualCarAuthenticatedSession)
 
 # M4B-1: isolated ISO15765/J2534 RX compatibility layer, not linked
 # into the fail-closed adapter DLL until the later M5 authenticated host.

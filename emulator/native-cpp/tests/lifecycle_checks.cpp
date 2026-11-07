@@ -14,8 +14,8 @@ using virtualcar::lifecycle::Result;
 using virtualcar::lifecycle::SessionKey;
 
 namespace {
-constexpr SessionKey good{11, 9};
-constexpr SessionKey next{12, 10};
+constexpr SessionKey good{11, 9, 100, 1000};
+constexpr SessionKey next{12, 10, 101, 2000};
 
 bool group01_default_fail_closed()
 {
@@ -78,7 +78,7 @@ bool group05_wrong_session_generation_invalidates()
     if (session.begin(good, true, 50) != Result::ok ||
         session.reserve_channel(good, ChannelKind::can, 51, id) != Result::ok)
         return false;
-    if (session.heartbeat({11, 8}, 52) != Result::not_authenticated)
+    if (session.heartbeat({11, 8, 100, 1000}, 52) != Result::not_authenticated)
         return false;
     return !session.snapshot().active && session.snapshot().channels == 0 &&
         session.close_channel(good, id, 53) == Result::not_authenticated;

@@ -7,12 +7,15 @@ namespace virtualcar::lifecycle {
 namespace {
 [[nodiscard]] bool valid_key(SessionKey key) noexcept
 {
-    return key.id != 0 && key.generation != 0;
+    return key.id != 0 && key.generation != 0 &&
+           key.server_pid != 0 && key.server_creation_time_100ns != 0;
 }
 
 [[nodiscard]] bool same_key(SessionKey left, SessionKey right) noexcept
 {
-    return left.id == right.id && left.generation == right.generation;
+    return left.id == right.id && left.generation == right.generation &&
+           left.server_pid == right.server_pid &&
+           left.server_creation_time_100ns == right.server_creation_time_100ns;
 }
 
 [[nodiscard]] bool valid_kind(ChannelKind kind) noexcept
@@ -84,6 +87,12 @@ Result BoundedSession::validate_locked(SessionKey key, std::uint64_t now_ms)
     }
     last_now_ms_ = now_ms;
     return Result::ok;
+}
+
+Result BoundedSession::validate(SessionKey key, std::uint64_t now_ms)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return validate_locked(key, now_ms);
 }
 
 Result BoundedSession::heartbeat(SessionKey key, std::uint64_t now_ms)
