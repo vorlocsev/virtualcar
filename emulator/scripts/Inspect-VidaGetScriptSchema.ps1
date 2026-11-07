@@ -112,26 +112,26 @@ function SqlTypeCategory([string]$name) {
 $procedureVisible = Visible 'ProcedureVisibleCount'
 $parameterCount = ReadCount 'ParameterVisibleCount'
 $presence = [ordered]@{
-    scriptType = Visible 'ScriptTypePresent'
-    profileList = Visible 'ProfileListPresent'
-    scriptId = Visible 'ScriptIdPresent'
-    languageCode = Visible 'LanguageCodePresent'
-    ecuType = Visible 'EcuTypePresent'
+    scriptType = (Visible 'ScriptTypePresent')
+    profileList = (Visible 'ProfileListPresent')
+    scriptId = (Visible 'ScriptIdPresent')
+    languageCode = (Visible 'LanguageCodePresent')
+    ecuType = (Visible 'EcuTypePresent')
 }
 $knownCount = @($presence.Values | Where-Object { $_ }).Count
 if ($parameterCount -lt $knownCount) { throw 'Contradictory SQL catalog parameter counts.' }
 $types = [ordered]@{
-    scriptType = SqlTypeCategory 'ScriptTypeSqlType'
-    profileList = SqlTypeCategory 'ProfileListSqlType'
-    scriptId = SqlTypeCategory 'ScriptIdSqlType'
-    languageCode = SqlTypeCategory 'LanguageCodeSqlType'
-    ecuType = SqlTypeCategory 'EcuTypeSqlType'
+    scriptType = (SqlTypeCategory 'ScriptTypeSqlType')
+    profileList = (SqlTypeCategory 'ProfileListSqlType')
+    scriptId = (SqlTypeCategory 'ScriptIdSqlType')
+    languageCode = (SqlTypeCategory 'LanguageCodeSqlType')
+    ecuType = (SqlTypeCategory 'EcuTypeSqlType')
 }
 $tables = [ordered]@{
-    Script = Visible 'ScriptTableVisibleCount'
-    ScriptType = Visible 'ScriptTypeTableVisibleCount'
-    ScriptProfileMap = Visible 'ProfileMapTableVisibleCount'
-    ScriptContent = Visible 'ScriptContentTableVisibleCount'
+    Script = (Visible 'ScriptTableVisibleCount')
+    ScriptType = (Visible 'ScriptTypeTableVisibleCount')
+    ScriptProfileMap = (Visible 'ProfileMapTableVisibleCount')
+    ScriptContent = (Visible 'ScriptContentTableVisibleCount')
 }
 $report = [ordered]@{
     schema_version = 'virtualcar-vida-getscript-catalog-v1'
