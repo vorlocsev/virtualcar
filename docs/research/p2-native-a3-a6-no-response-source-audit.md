@@ -61,10 +61,27 @@ from a generic transport timeout when the source record was available.
 8. Contradictory synthetic A6 RX cannot turn native no-response into
    a genuine delivered ECU. Output remains privacy-safe.
 
+The native text audit and the downstream
+`audit_p2_discovery_boundary.py` now both retain this evidence:
+
+- `stage_evidence.A3_40`, `A3_50`, and `A6` count
+  `native_unimplemented_no_rx` and `native_marker_followed_by_j2534_timeout`.
+- An explicitly conflicting RX is counted separately as
+  `native_marker_with_unverified_rx`, never interpreted as a positive ECU.
+- The report's first investigation priority, **only after manual same-run
+  provenance and B9FB route/matcher checks**, is
+  `native_cem_a3_a6_response_not_implemented`.
+- Older J2534 reports without the new booleans remain supported and
+  cannot acquire invented "unimplemented" evidence; a fabricated boolean
+  or contradictory route/reason fails validation.
+- A manual same-run review does not establish per-transaction cross-client
+  matching, SectorV acceptance, or the contents of an absent CEM reply.
+
 This is a **diagnostic source-evidence fix**, not a CEM response
-implementation. It should raise the full Python suite from **276
-to 284** tests; that remains an **expected**, not claimed, Windows
-result until manually validated on exact feature SHA.
+implementation. The two additional synthetic test modules contribute
+**16 tests** (8 native text and 8 downstream boundary groups). The
+expected full Python suite increases from **276 to 292** tests; this
+is **not a claimed Windows result** before exact-SHA feature validation.
 
 ## Next unblocker
 
