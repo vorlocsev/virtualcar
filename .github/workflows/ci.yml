@@ -1,26 +1,20 @@
 name: Windows x86 cross-build and tests
+
+# Legacy workflow name preserved for manual compatibility.
+# This is now a guarded alias of the owner's single Windows self-hosted CI.
+# All runs use trusted development source; no PR event or hosted runner.
+# NEVER upload/publish a Virtual Car package, installer or prerelease.
 on:
-  push:
-    branches: [main, development]
-  pull_request:
-    branches: [main, development]
+  workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  cross-build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Install C toolchain
-        run: sudo apt-get update && sudo apt-get install -y clang lld gcc file
-      - name: Compile and test source
-        run: bash build_dev26.sh
-      - name: Inspect target format
-        run: |
-          file SectorV-Trace-OneClick-v0.3.6.7-dev26.exe cmd/oneclick/assets/VirtualCarTrace32.dll
-          objdump -p cmd/oneclick/assets/VirtualCarTrace32.dll | grep -E 'DLL Name:|PassThru' | head -50
-          test "$(objdump -p cmd/oneclick/assets/VirtualCarTrace32.dll | grep -c 'PassThru')" -eq 14
+  private-windows-validation:
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/vmware-development-validation.yml
+    with:
+      source_ref: development
+    permissions:
+      contents: read
