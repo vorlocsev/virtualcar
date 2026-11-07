@@ -22,7 +22,20 @@ Specific, separately sourced observations:
 | Same `VIDA.log` | SQL login/open error names **`ImageRepository`**, in the call chain for `VehicleImageProvider.GetImage` | Failure of `DiagSwdlRepository.GetScript`; this is a **different database** |
 | Same `VIDA.log` | One `Loading J2534 driver:` log entry | Successful `PassThruOpen`, `PassThruConnect`, CAN TX/RX, DiCE compatibility, or correct CEM route |
 | `VidaMonitor.log` (Oct 29, 2026) | Monitor sees `DiagSwdlRepository`, CarCom and other named database instances; reports `VIDA started OK` | That an authorized `ReadVin` procedure ran, which VIDA release the client used, or a database principal can read every object |
-| `db_attach_log.txt` (installation log, no cross-session proof) | An `ImageRepository` database attach entry and several `ASUser` orphaned-user login remapping events, including for `DiagSwdlRepository` | That the **September** `ImageRepository` SQL error was fixed, or that these attach actions preceded/followed a particular diagnostic session |
+| `db_attach_log.txt` (installation log, no cross-session proof) | An `ImageRepository` database attach entry and several orphaned-user login remapping events, including for `DiagSwdlRepository` | That the **September** `ImageRepository` SQL error was fixed, or that these attach actions preceded/followed a particular diagnostic session |
+
+### Local exact-category counts, source files not exported
+
+| Source | Fixed-marker observations |
+| --- | --- |
+| `VIDA.log` (79 lines) | 4 exact `VIDA2014D` release declarations; 0 `VIDA2015A`; 4 session headers; 0 `SP: GetScript`; 1 `ImageRepository` login error; 1 J2534 driver load attempt; 1 CarCom `vadis_GetHwSettings` |
+| `VidaMonitor.log` (45 lines) | 2 `Found database DiagSwdlRepository`; 2 `VIDA started OK` |
+| `db_attach_log.txt` (64 lines) | 1 `DiagSwdlRepository attached`; 1 `ImageRepository attached`; 7 generic orphaned-user fix summaries reporting one user updated |
+
+The date-separated and installer observations remain **independent**.
+One or more of these logs may be incomplete; zero matches means
+**not present in the supplied excerpt**, not that an operation never
+occurred at any time in the installation.
 
 These are **not one continuous client/SQL/J2534 session**. The
 Oct 29 Monitor database inventory cannot be treated as confirmation
