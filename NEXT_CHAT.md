@@ -10,7 +10,15 @@
   `-TrustServerCertificate` because local SQL TLS certificate chain
   was untrusted; `DiagSwdlRepository` is `ONLINE` and
   `HAS_DBACCESS=1`. This confirms SQL connection and database
-  access, NOT GetScript presence, selected XML or VIDA VIN/ECU success.
+  access. Subsequent real, read-only `sys.procedures` returned
+  `dbo.GetScript`; `sys.parameters` returned exactly FIVE input
+  parameters in ordinal order: `@scriptType varchar(50)`,
+  `@profileList varchar(4000)`, `@scriptId varchar(32)`,
+  `@languageCode char(5)`, `@ecuType int` (all non-output).
+  The five names match original DLL research; text `@scriptType`
+  means actual runtime `ReadVin=4` SQL string remains unknown.
+  No GetScript was executed and no XML, VIN or ECU identity is
+  confirmed.
 - [PR #169](https://github.com/vorlocsev/virtualcar/pull/169)
   **MERGED** as `5f396cc321da8cf769453924c2cff6e197e60f36`.
   Exact-feature owner-only VMware [#42401960139](https://github.com/vorlocsev/virtualcar/actions/runs/42401960139)
