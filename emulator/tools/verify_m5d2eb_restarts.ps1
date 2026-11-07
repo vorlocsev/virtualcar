@@ -97,11 +97,11 @@ foreach ($arch in @('x86','x64')) {
       $next = $round + 1
       if ($next -lt 3) {
         $nextReady = Join-Path $work ('round-' + $next + '.ready')
-        $args = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $ServiceDll,$pipe,$nextReady)
+        $nextHostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $ServiceDll,$pipe,$nextReady)
       } else {
-        $args = ('"{0}" --serve-once "{1}" read-session' -f $ServiceDll,$pipe)
+        $nextHostArgs = ('"{0}" --serve-once "{1}" read-session' -f $ServiceDll,$pipe)
       }
-      $hostChild = Start-Child -Exe $dotnet -CommandLine $args
+      $hostChild = Start-Child -Exe $dotnet -CommandLine $nextHostArgs
       $nextPid = Join-Path $work ('round-' + $next + '.pid')
       [System.IO.File]::WriteAllText($nextPid,[string]$hostChild.Id,[System.Text.Encoding]::ASCII)
     }
