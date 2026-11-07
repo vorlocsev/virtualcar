@@ -36,7 +36,8 @@ publication, no `contents: write` credentials.
   paths, the central CI triggers automatically and checks out
   `development`.
 - For approved feature sources, the owner dispatches from `main`:
-  `gh workflow run vmware-development-validation.yml -R vorlocsev/virtualcar --ref main -f source_ref=feature/m5c1-bounded-lifecycle-preflight`
+  `gh workflow run vmware-development-validation.yml -R vorlocsev/virtualcar --ref main -f source_ref=feature/m5c2-authenticated-session-lifecycle`
+  (the current M5C-2 feature branch is an explicit hardcoded choice).
 - To manually run an old-named workflow on the shared runner:
   `gh workflow run managed-migration.yml -R vorlocsev/virtualcar --ref main`
   (the alias checks out `development`).
@@ -55,7 +56,11 @@ DLL versus C++ read-only synthetic RX parity, .NET 10
 Core/SQLite/Scenario, M5A 9-gate local Named Pipe tests, and M5B
 native x86/x64 C++ client against C# Host when the source contains
 the required projects. For M5C-1 native lifecycle, the x86/x64
-CTest targets include the new 8-gate lifecycle executable.
+CTest targets include the new 8-gate lifecycle executable. M5C-2 adds
+  four process-identity CTest gates and a separate cross-language
+  x86/x64 integration step for authenticated lifecycle, lease expiry,
+  Host process loss, revocation and restart recovery when the selected
+  source contains M5C-2.
 
 This refactor does **not** claim test-for-test equivalence with the
 retired `ubuntu-latest` C++/Go/Clang Linux smoke lane,
@@ -75,9 +80,12 @@ M5A passed 9/9 and M5B passed C++ ↔ C# for both architectures.
 Python 252, .NET Core/SQLite/Scenarios 8/8 each, Go, legacy C,
 and exact synthetic C/C++ parity also passed.
 GitHub Actions artifact listing for that run: **empty**.
-The five manual aliases exist identically on `main` and
-`development`, but their own `workflow_dispatch` calls have NOT
-yet been independently exercised; do not label the aliases tested.
+`managed-migration.yml` was independently dispatched from `main`
+and completed SUCCESS in #42321161342, validating development
+`2b5bef8`. Four other manual aliases remain untested.
+M5C-2's manual feature-branch run is pending; its new restart step
+was merged into `main` in PR #95 and its PID-safe orchestrator
+correction in PR #97.
 
 ## Safety boundary
 

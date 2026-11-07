@@ -86,8 +86,11 @@ J2534 driver, physical adapter or ECU is touched.
 ## Verification boundary
 
 The workflow entrypoint and test step were merged to `main` in
-PR #95. The feature branch is in the hardcoded owner-only source
-allowlist. A manual dispatch from `main` is required:
+PR #95; the PID-safe orchestrator correction was merged in PR #97.
+The feature branch is in the hardcoded owner-only source allowlist.
+PowerShell kills only the retained `.NET Process` object it created
+for the synthetic Host. The native client never opens a PID with
+`PROCESS_TERMINATE` and never terminates an arbitrary process. A manual dispatch from `main` is required:
 
 ```powershell
 gh workflow run vmware-development-validation.yml `
