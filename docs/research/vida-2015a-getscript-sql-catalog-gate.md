@@ -401,15 +401,29 @@ contains event/response-handling constructs while `nodes`
 contains execution nodes, but neither relationship is
 established by the XML naming alone.
 
-Next operator-only structural gate: aggregate only immediate
-child `LocalName`/counts at `XmlReader.Depth=3` grouped
-separately under `content/handlers` and `content/nodes`,
-without printing deeper text, attribute values, XML,
-CAN/J2534 bytes or script/profile IDs. Keep the XML on the
-VIDA host in bounded RAM and DTD/XXE disabled.
-Actual `GetScript` runtime selection, CEM traffic, or
-VIN/ECU acceptance remain unverified: do not change
-emulator replies or publish Virtual Car binaries.
+The owner completed the next local in-memory read-only
+XML structural pass using `XmlReader.Depth=3`. Under the
+single `content/handlers` element, it returned
+**`eventhandler` = 27** and **`propertyhandler` = 6**;
+under `content/nodes` it returned **`node` = 14**.
+This counts **47 direct elements** at depth 3 across these
+sections. It is **not** evidence that the runtime executes
+47 actions, that every node targets an ECU, or that any
+particular response is expected. Nothing below depth 3,
+including parameter/attribute values, event names, transport
+IDs, J2534 requests, XML bodies, VIN or ECU data was emitted.
+
+Next operator-controlled local-only structural gate: count
+`XmlReader.Depth=4` element `LocalName` occurrences, grouped
+under each path `handlers/eventhandler`,
+`handlers/propertyhandler`, and `nodes/node`. Read only one
+prior in-memory ZIP XML in bounded memory with XML DTD/XXE
+disabled; output *only* aggregate path and count. Semantic
+recovery of request/response bytes and original `GetScript`
+caller binding requires independent evidence and additional
+safety gates, **not** speculative emulator positive replies.
+No SQL stored procedure execution, ECU I/O, or Virtual Car
+binary publishing.
 
 
 
