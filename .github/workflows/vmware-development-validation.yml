@@ -65,6 +65,7 @@ on:
           - feature/vida-readvin-xml-graph-safe-audit
           - feature/vida-jboss-startup-provenance-audit
           - research/vida-original-vinvalidator-ascii-shape-gate
+          - fix/vida-getscript-nondbo-visibility
 
 permissions:
   contents: read
