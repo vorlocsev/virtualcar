@@ -332,16 +332,31 @@ validation, interpretation of diagnostic commands,
 execution of SQL `GetScript`, or a VIDA-accepted
 VIN/ECU identification.
 
-Next bounded local-only structural gate: inspect that
-one XML document's element/attribute **counts** and
-possibly its root element local name, without reporting
-element text, attribute values, exact proprietary
-diagnostic steps, script names, VIN, ZIP bytes or XML.
-Alternatively validate the 16 other language variants
-locally and report aggregate valid/invalid counts.
-Any emulator changes require later independently
-confirmed ECU request/response behavior and client
-acceptance; no positive replies are established here.
+The owner then ran a **local-only in-memory** full sweep of
+all 17 SQL `ReadVin` ZIP language variants. The loop imposed
+1 MiB size limits, required exactly one ZIP entry, read the
+entry stream to completion, checked its declared and actual
+uncompressed lengths match, and parsed with `XmlReader`
+(`DtdProcessing=Prohibit`, null `XmlResolver`, bounded chars).
+Reported aggregate values:
+`TotalVariants=17`, `ValidZipXmlVariants=17`,
+`FailedVariants=0`, `MinDecodedBytes=17964`,
+`MaxDecodedBytes=17964`. This confirms all 17 variants are
+readable ZIP streams containing well-formed XML with equal
+uncompressed **lengths**, but **does not prove byte equality,
+equivalent XML structure, schema validity, successful CRC
+verification, or VIDA/ECU operational compatibility**.
+No XML, diagnostics, real VIN or script/profile IDs were
+exported; original SQL `GetScript` was not executed.
+
+Next owner-local structural gate: inspect only bounded XML
+metadata (element count, attribute count, maximum depth,
+root local name or root name equality count), or compute
+an aggregate count of distinct in-memory XML payload hashes
+without exporting hashes or XML. Avoid unbounded XML parsing
+and any out-of-database diagnostic actions. Emulator positive
+responses still require independent captured request/response
+evidence and client acceptance.
 
 
 
