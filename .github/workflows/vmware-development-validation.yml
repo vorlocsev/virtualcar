@@ -53,6 +53,7 @@ on:
           - feature/m5d2c-inflight-read-cancel-recovery
           - feature/m5d2d-synthetic-read-replay-stress
           - feature/m5d2ea-synthetic-reply-faults
+          - feature/m5d2eb-offline-cancel-restart-races
 
 permissions:
   contents: read
