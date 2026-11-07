@@ -35,7 +35,20 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE: M5D-1 offline synthetic read-only VCRD contract (CI pending)
+## NEXT: M5D-2 authenticated synthetic C# Host data exchange (NOT IMPLEMENTED)
+
+After M5D-1 offline format validation, the next step is a new
+read-only request/response handler in the authenticated C# Host
+that binds each VCRD envelope to a verified M5C-2 session and a
+sealed synthetic-only scenario. It must enforce bounded frames,
+strict DID and route allowlists, cancellation, timeout/replay
+denial, backpressure and Host process-loss invalidation. It
+requires separate x86/x64 cross-language integration evidence.
+Do not link this to the fail-closed J2534 DLL before independently
+approved read-only parity and negative-path tests. No physical
+ECU, PIN, SecurityAccess, programming or Virtual Car releases.
+
+## COMPLETED: M5D-1 offline synthetic read-only VCRD contract (Windows PASS, 2026-11-07)
 
 M5C-2 provides a verified local Host and session lifecycle, but
 not a functional J2534 adapter. M5D-1 adds a standalone synthetic
@@ -50,7 +63,17 @@ A maximum-eight-operation ledger enforces strictly increasing
 operation IDs, 100..5000 ms deadlines, exact response identity/route/
 DID correlation, explicit cancel/reset, replay denial, clock rollback,
 bounded capacity and concurrent safety. Eight deterministic CTest
-groups are prepared for private Windows x86/x64 self-hosted CI.
+groups PASSED private Windows x86/x64 self-hosted CI:
+[#42341213124](https://github.com/vorlocsev/virtualcar/actions/runs/42341213124),
+which checked out exact feature source `622cd526253e6310065ebc8abceaa82b1db60242` on
+`VirtualCar-CI-WIN`. MSVC native x86: 7/7 CTest; x64:
+7/7 CTest, including `m5d1_synthetic_readonly_contract_8_groups`
+on both architectures. M5A 9/9, M5B x86/x64, M5C-2 Host
+loss/restart on x86/x64, Python 252, Go, Legacy C and
+.NET gates passed. GitHub Actions artifacts: 0. First
+attempt #42340891720 failed at /WX C4244 implicit integral
+initializer conversions in the test source only; fix commit
+`622cd526253e6310065ebc8abceaa82b1db60242` passed the complete follow-up CI.
 The caller MUST authenticate M5C-2 and the sealed synthetic
 scenario before binding the ledger: this isolated contract cannot
 prove authentication or response provenance by itself.

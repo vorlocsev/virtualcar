@@ -1,6 +1,15 @@
 # M5D-1 | Bounded synthetic read-only request/reply preflight
 
-Status: IMPLEMENTED ON FEATURE BRANCH; WINDOWS x86/x64 CI PENDING.
+Status: **SELF-HOSTED WINDOWS x86/x64 VALIDATED**.
+Private VMware [#42341213124](https://github.com/vorlocsev/virtualcar/actions/runs/42341213124)
+SUCCESS. Exact checked-out source `622cd526253e6310065ebc8abceaa82b1db60242`.
+Native MSVC x86 7/7 CTest, x64 7/7 CTest, including all 8
+M5D-1 contract gates on each architecture. All previous
+M5A/M5B/M5C-2, C, Python, Go and .NET gates also PASS.
+Zero artifacts, packages or releases. The first validation
+#42340891720 FAILED on MSVC /WX C4244 from untyped
+initializer-list test values, not the contract library.
+The explicit typed-array repair was retested and PASSED.
 This is a stand-alone offline contract. The C++ J2534 DLL stays
 fail-closed; no actual CAN/ECU command, live pipe data transport,
 driver registration, physical adapter or package publication occurs.
