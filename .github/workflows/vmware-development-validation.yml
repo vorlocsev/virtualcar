@@ -29,6 +29,7 @@ on:
           - feature/m5a-secure-local-ipc-preflight
           - feature/sqlite-10gb-vmware-runner
           - feature/m5b-cpp-named-pipe-client
+          - feature/m5c1-bounded-lifecycle-preflight
 
 permissions:
   contents: read
