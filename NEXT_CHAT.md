@@ -1,6 +1,58 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: VIDA JBoss WSL/SQL server startup evidence (2026-11-07)
+## ACTIVE: Original Util.DLL IsValidVIN shape (2026-11-07)
+
+- [PR #163](https://github.com/vorlocsev/virtualcar/pull/163)
+  **MERGED** on `development` as
+  `70f67039776b3e1ae2ef54d456ed0571ccdde959`.
+  Owner-only manual [VMware #42398799888](https://github.com/vorlocsev/virtualcar/actions/runs/42398799888)
+  **SUCCESS** on exact feature
+  `77ee751f5283b111b7ad9698e7a6303ae23fbf21`,
+  Python **316**, CTest Windows x86/x64 **8/8** each,
+  C# Host **17/17**, no artifacts. Post-merge
+  [#42399043914](https://github.com/vorlocsev/virtualcar/actions/runs/42399043914)
+  **SUCCESS** on exact squash SHA.
+  JBoss startup log analyzer and source note are merged.
+- Important new original owner-provided `Util.DLL`
+  was found in Drive folder (previous filename search
+  missed it). SHA-256
+  `a0ef808188bab12de429fcb4467a9ceadfbfc3747cfb68580664495550ce263d`.
+  Static MethodDef `0x06000278`
+  `VinValidator.IsValidVIN` requires nonnull,
+  `.Length==17` (UTF-16 code units),
+  last six decimal digits via `IsValidChassisNbr`
+  -> `IsNumeric` with `Regex.Match("\\D")`,
+  and one of four two-letter prefixes:
+  `YV`, `PN`, `LV`, `LY`. No whole-VIN
+  charset/checkdigit validation in this method.
+  The `VehicleResolverService.ResolveVin` caller
+  was verified independently.
+  **9/9 original-source static checks PASS**.
+- New standalone **synthetic ASCII-only** shape
+  reference `emulator/tools/vida_vin_shape_ascii.py`
+  is NOT wired into emulator, VIDA, CEM or J2534.
+  Its eight synthetic regression groups pass locally
+  **8/8**. Full Python expected **324** after
+  previously Windows-verified 316; exact feature
+  Windows VMware has **not** been run yet.
+  No real VIN, script XML, SQL or proprietary DLL
+  committed. See
+  [updated resolver note](docs/research/vida-vin-validator-resolver-profile-il.md).
+- Primary P0 remains unresolved: selected
+  `DiagSwdlRepository.GetScript(ReadVin=4)`
+  script XML and a continuous authorized
+  2014D-derived offline 2015A J2534/CarCom
+  client run for XC90 V8 MY2009. A string
+  matching these weak shape rules is **not**
+  VIDA vehicle identity/profile acceptance.
+  [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains OPEN. Do not synthesize A3/E3/A6,
+  use PIN/SecurityAccess or programming, or
+  publish Virtual Car builds.
+
+---
+
+## HISTORICAL: VIDA JBoss WSL/SQL server startup evidence (2026-11-07)
 
 - Source of truth `development` at the start of this task:
   `b85c73baca72207cb0bdb9182665a6651090e17c`,
