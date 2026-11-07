@@ -1,6 +1,58 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: correct 2014D log attribution and session-aware VIDA audit (2026-11-07)
+## ACTIVE: VIDA ReadVinComponent to CarCom / D2 route (2026-11-07)
+
+- [PR #155](https://github.com/vorlocsev/virtualcar/pull/155)
+  **MERGED** on `development` at
+  `cddb73072de75e3dad4020b32cc23f8c83feefd5`.
+  Trusted owner-only [VMware #42393664033](https://github.com/vorlocsev/virtualcar/actions/runs/42393664033)
+  **SUCCESS** with Source commit
+  `73c4f4f2d1436c57fa64871e0e04ea58915550ce`
+  (Python **300**, native x86/x64 CTest **8/8** each,
+  C# Host **17/17**; no generated release).
+  Post-merge [VMware #42393944365](https://github.com/vorlocsev/virtualcar/actions/runs/42393944365)
+  **SUCCESS** on exact merged SHA. The private-log VIDA
+  auditor now prevents cross-log-session `ReadVin`
+  pairing and tracks literal VIDA2014D/2015A labels
+  as **provenance only**, not incompatible engines.
+- New original-source-only research: the owner's
+  offline VIDA 2014D-derived 2015A
+  `BizServices.Scripting.ReadVinComponent.Execute`
+  configures VehComm, adds a diagnostic parameter,
+  calls SetupTester and executes a service. It does
+  **not directly call** VehicleIdentityOutput.AddVIN
+  or SetX40Serial. The actual selected XML and
+  later identity-output script component remain unknown.
+- `VehCommBase.setupVehComm` offers independent
+  ECU-variant/type/address construction, and the
+  service pipeline runs CarCom request handler,
+  `DiagnosticVehCommService.execute`, candidate
+  ECU configurations, response set and
+  `VehicleService.ParseResponse`.
+  `VehCom2.J2534.DiagConnection.Send_D2onCan`
+  has an explicit ReadVin-check branch and separate
+  HS/MS bitrate and retry sources. These are **original
+  static call edges**, not measured MY2009 route values
+  or positive ECU replies. See
+  [source audit](docs/research/vida-readvin-component-carcom-d2-source-audit.md).
+- **8/8 offline original source topology checks PASS**
+  on three exact SHA-256 pinned assemblies. None of
+  these are Windows VMware/physical/SQL/VIDA
+  execution tests; no original proprietary binary
+  or VIN/ECU data was copied.
+- Primary next P0 gate: original **selected**
+  `GetScript(ReadVin=4)` XML in an authorized
+  offline VIDA 2015A session, effective
+  `ReadVinComponent` properties, CarCom route
+  and same-run J2534/accepted VIN/ECU evidence.
+  Existing [Draft PR #143](https://github.com/vorlocsev/virtualcar/pull/143)
+  remains unmerged pending its own verified Windows
+  feature SHA; no fake E3/A6, PIN/security access,
+  writes, driver installs or published Virtual Car builds.
+
+---
+
+## HISTORICAL: correct 2014D log attribution and session-aware VIDA audit (2026-11-07)
 
 - **User build-context correction (2026-11-07): VIDA 2015A is
   a modified / relabeled offline VIDA 2014D build family**, not an
