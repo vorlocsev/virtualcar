@@ -161,12 +161,31 @@ scoped **read-only data query** `SELECT Id, Description FROM
 dbo.ScriptType WHERE Id = 4` returned exactly **`4 / CarStatus`**.
 The original .NET `ValueObjects.ScriptType.ReadVin = 4` is therefore
 **not an identity mapping to `dbo.ScriptType.Id = 4`**, at least in
-this installed VIDA database. Whether the application supplies
-`'ReadVin'` or another string to SQL parameter
-`GetScript.@scriptType varchar(50)` remains **unknown**. The next
-bounded owner-controlled lookup may search only the `ScriptType`
-`Id` and `Description` values containing `Vin` or `Ident`,
-without retrieving XML or executing `GetScript`.
+this installed VIDA database. A subsequent owner-authorized, bounded
+read-only table lookup (two `LIKE` filters on `Description`)
+returned five rows, in ordinal `Id` order:
+
+| SQL `dbo.ScriptType.Id` | `Description` |
+|---:|---|
+| 3 | `EcuIdentification` |
+| 7 | `ReadVin` |
+| 8 | `StatusIdentifier` |
+| 23 | `EcuIdentificationHighSpeed` |
+| 24 | `EcuIdentificationLowSpeed` |
+
+**Now confirmed**: the installed SQL lookup row for `ReadVin`
+is `Id = 7`, while `Id = 4` is `CarStatus`.
+These observations do **not** establish how the original .NET enum
+or `GetScript.@scriptType varchar(50)` is transformed and passed at
+runtime; in particular, `'ReadVin'` is a plausible argument,
+**not a confirmed runtime value**. The original caller research
+refers to high/low identification scenario enum values 19 and 20;
+the installed SQL rows 23 and 24 are distinct IDs and should
+not be conflated with the source enum or asserted to be an
+identity mapping. No procedure executed, script XML or VIN/ECU
+data was read. Next gate: inspect the exact original caller's
+string conversion / SQL binding, or a separately authorized
+read-only live client trace, **before** changing emulator replies.
 
 
 Microsoft SqlServer module v22 defaults to checking the SQL TLS
