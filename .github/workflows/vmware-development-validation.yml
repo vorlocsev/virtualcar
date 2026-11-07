@@ -58,6 +58,7 @@ on:
           - feature/p0-sectorv-j2534-evidence-boundaries
           - feature/p0-b9fb-target50-evidence-guard
           - feature/p0-b9fb50-protocol-metadata-gate
+          - feature/p0-explicit-a3-a6-unimplemented-evidence
 
 permissions:
   contents: read
