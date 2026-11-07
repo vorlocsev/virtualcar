@@ -38,11 +38,15 @@ jobs:
         run: dotnet build emulator/managed/VirtualCar.Scenarios.Checks/VirtualCar.Scenarios.Checks.csproj -c Release
       - name: Eight real SQLite-to-scenario compiler gates
         run: dotnet run --project emulator/managed/VirtualCar.Scenarios.Checks/VirtualCar.Scenarios.Checks.csproj -c Release --no-build
+      - name: Compile M5A bounded current-user Named Pipe host (Linux compile-only)
+        run: dotnet build emulator/managed/VirtualCar.Service.Checks/VirtualCar.Service.Checks.csproj -c Release
       - name: Cross compile managed core and storage for Windows x64 (compile only)
         run: |
           dotnet build emulator/managed/VirtualCar.Core/VirtualCar.Core.csproj -c Release -r win-x64 --self-contained false
           dotnet build emulator/managed/VirtualCar.Storage/VirtualCar.Storage.csproj -c Release -r win-x64 --self-contained false
           dotnet build emulator/managed/VirtualCar.Scenarios/VirtualCar.Scenarios.csproj -c Release -r win-x64 --self-contained false
+      - name: Cross compile M5A local IPC service for Windows x64 (compile only)
+        run: dotnet build emulator/managed/VirtualCar.Service/VirtualCar.Service.csproj -c Release -r win-x64 --self-contained false
       - name: Compile and run C++20 J2534 ABI host contract
         run: |
           c++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -I emulator/native-cpp/include \
@@ -78,6 +82,9 @@ jobs:
       - name: Windows native-host M2 scenario compiler checks
         shell: pwsh
         run: dotnet run --project emulator/managed/VirtualCar.Scenarios.Checks/VirtualCar.Scenarios.Checks.csproj -c Release
+      - name: Windows M5A local pipe authenticated session checks (8 groups)
+        shell: pwsh
+        run: dotnet run --project emulator/managed/VirtualCar.Service.Checks/VirtualCar.Service.Checks.csproj -c Release
 
   m3-native-abi:
     name: M3 native C++20 J2534 ABI (${{ matrix.arch }})
