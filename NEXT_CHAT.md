@@ -1,6 +1,55 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE checkpoint: P0 B9FB provenance corrected; protocol metadata review pending (2026-11-07)
+## ACTIVE: P0 CEM discovery evidence acquisition after verified B9FB audits (2026-11-07)
+
+**Development checkpoint:** `ba84518c7ee47b2a2d9834c57bc98a73494c3487`
+(merged [PR #139](https://github.com/vorlocsev/virtualcar/pull/139)).
+Exact feature [VMware #42381421766](https://github.com/vorlocsev/virtualcar/actions/runs/42381421766)
+**SUCCESS** on source `31be7b60c6ae5bd10df3b6b23ca7b52ca1618be6`.
+Automatic [post-merge #42381987918](https://github.com/vorlocsev/virtualcar/actions/runs/42381987918)
+**SUCCESS** on exact merge SHA. Both: Python **276** passed,
+Windows native C++ x86/x64 **8/8 CTest** each, C# Host **17/17**,
+M5D2eB accepted read/crash/cancel/crash/recovery PASS on x86/x64,
+zero uploaded artifacts. Legacy C/Go/.NET gates also passed.
+
+PR #132 added conservative SectorV↔J2534 report boundaries; PR #136
+separated B9FB CEM target **40/50/unknown**; PR #139 now separates
+`CAN`/`ISO15765`/`other`/`unknown` channel metadata. Target-50
+B9FB delivery is still **transport-only**, not a proven client VIN/ECU
+acceptance. Do **not** synthesize A3/E3 or normal-mode acceptance.
+
+**Unblocked next work:** Issue [#4](https://github.com/vorlocsev/virtualcar/issues/4)
+needs an authorized continuous **read-only** SectorV client + J2534
+same-run capture, or a verified client code path tied to the exact
+SectorV build. Use existing local source-aware tools, NOT a new
+synthetic reply:
+1. Record separately the diagnostic client/version, selected fictional or
+   authorized model and client-side outcome (B9FB matcher, Hardware CEM
+   A3 target 50/40, warning, reachable ECU count); redact at source.
+2. Preserve locally the original J2534 transport channel, CAN/ISO15765,
+   11/29-bit flags, HS/LS baud, connection and filter status, TX/RX
+   timing and read timeout. Never commit raw logs, VIN/INI, ECU dumps,
+   protected A3 operands, personal/device IDs or credentials.
+3. Run `audit_j2534_discovery.py`, `audit_sectorv_gate.py`, then
+   `audit_p2_discovery_boundary.py` on local redacted JSON reports;
+   the `--same-run-reviewed` flag is a **manual provenance assertion**,
+   never proof of per-transaction matching. Instructions:
+   [boundary audit](docs/research/p2-sectorv-j2534-boundary-audit.md).
+4. In a real MY2009 V8 session, require independent proof of SectorV
+   client VIN acceptance and separate ECU enumeration before any
+   new positive read-only fixture. Old MY2005 LAB saw B9FB 13/13
+   but A3 no RX, 0 reachable ECUs: not MY2009 acceptance.
+5. If no authorized capture exists, mark the acceptance predicate
+   **unknown** and do not add invented hardware/identity data.
+
+Dvinholm remains the primary product. Virtual Car stays private and
+read-only, with no J2534 driver install, PIN/security access, writes
+or published builds. A passing synthetic VM test is **not** a real
+DiCE, adapter or SectorV interoperability test.
+
+---
+
+## HISTORICAL checkpoint: B9FB provenance before PR #139 (2026-11-07)
 
 - Private, **read-only** Virtual Car laboratory. Never publish a release,
   register a driver, claim XC90 V8 MY2009 ECU recognition, guess A3/E3
@@ -41,7 +90,7 @@
 
 ---
 
-## ACTIVE checkpoint: M5D-2eB verified; return to P0 CEM evidence (2026-11-07)
+## HISTORICAL checkpoint: M5D-2eB verified (2026-11-07)
 
 Virtual Car remains a PRIVATE synthetic/read-only lab separate from Dvinholm.
 No releases, adapter installation, firmware writes, SecurityAccess or genuine ECU
