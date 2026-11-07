@@ -1,5 +1,9 @@
 name: Virtual Car CSharp migration pilot
 
+# Legacy workflow name preserved for manual compatibility.
+# This is now a guarded alias of the owner's single Windows self-hosted CI.
+# All runs use trusted development source; no PR event or hosted runner.
+# NEVER upload/publish a Virtual Car package, installer or prerelease.
 on:
   workflow_call:
   workflow_dispatch:
@@ -7,62 +11,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: virtualcar-csharp-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  core:
-    name: CSharp Core 8/8 synthetic regression
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-      - name: Build .NET 10 core with AOT analyzers
-        run: dotnet build dotnet/src/VirtualCar.Core/VirtualCar.Core.csproj -c Release --warnaserror
-      - name: Eight synthetic read-only control plane gates
-        run: dotnet run --project dotnet/tests/VirtualCar.Core.Smoke/VirtualCar.Core.Smoke.csproj -c Release
-      - name: Verify old C and Go sources still present
-        shell: pwsh
-        run: |
-          foreach ($file in @('emulator/src/virtualcar.c','emulator/control/main.go','emulator/src/virtualcar.def')) {
-            if (-not (Test-Path -LiteralPath $file)) { throw "Legacy reference missing: $file" }
-          }
-
-  native-aot-abi:
-    name: Native AOT J2534 ABI only (${{ matrix.rid }})
-    runs-on: windows-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        rid: [win-x86, win-x64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-      - name: Publish non-registerable J2534 ABI probe
-        shell: pwsh
-        run: |
-          dotnet publish dotnet/src/VirtualCar.J2534.AbiProbe/VirtualCar.J2534.AbiProbe.csproj -c Release -r ${{ matrix.rid }} --self-contained true -o "${{ runner.temp }}/abi-probe" -p:PublishAot=true -p:NativeLib=Shared
-          if ($LASTEXITCODE -ne 0) { throw 'Native AOT ABI probe publish failed' }
-      - name: Build matching-bitness .NET 10 test executable
-        shell: pwsh
-        run: |
-          dotnet publish dotnet/tests/VirtualCar.J2534.AbiSmoke/VirtualCar.J2534.AbiSmoke.csproj -c Release -r ${{ matrix.rid }} --self-contained true -o "${{ runner.temp }}/abi-test"
-          if ($LASTEXITCODE -ne 0) { throw 'ABI test host publish failed' }
-      - name: Load native probe, resolve all 14 exports and call Stdcall entries
-        shell: pwsh
-        run: |
-          $dll = Join-Path "${{ runner.temp }}/abi-probe" 'VirtualCarJ2534.AbiProbe.dll'
-          $hostExe = Join-Path "${{ runner.temp }}/abi-test" 'VirtualCar.J2534.AbiSmoke.exe'
-          if (-not (Test-Path $dll)) { throw 'Missing native ABI probe DLL' }
-          if (-not (Test-Path $hostExe)) { throw 'Missing matching-bitness probe host' }
-          & $hostExe $dll
-          if ($LASTEXITCODE -ne 0) { throw 'Native ABI load/export test failed' }
-      # Intentionally do not upload or distribute non-functional ABI probe.
-      # Native AOT unloading is not supported; the host exits without FreeLibrary.
+  private-windows-validation:
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/vmware-development-validation.yml
+    with:
+      source_ref: development
+    permissions:
+      contents: read

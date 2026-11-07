@@ -1,141 +1,20 @@
 name: Virtual Car Emulator Windows x86
+
+# Legacy workflow name preserved for manual compatibility.
+# This is now a guarded alias of the owner's single Windows self-hosted CI.
+# All runs use trusted development source; no PR event or hosted runner.
+# NEVER upload/publish a Virtual Car package, installer or prerelease.
 on:
-  push:
-    branches: [main]
-    paths: ["emulator/**", "dotnet/**", ".github/workflows/emulator.yml", ".github/workflows/csharp-migration.yml"]
-  pull_request:
-    branches: [main, development]
-    paths: ["emulator/**", "dotnet/**", ".github/workflows/emulator.yml", ".github/workflows/csharp-migration.yml"]
   workflow_dispatch:
+
 permissions:
   contents: read
-concurrency:
-  group: vc-emulator-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+
 jobs:
-  build:
-    timeout-minutes: 25
-    runs-on: ubuntu-latest
-    env:
-      VIRTUALCAR_ROUTE_EVIDENCE: /tmp/virtualcar-route-evidence.jsonl
-    defaults:
-      run:
-        working-directory: emulator
-    steps:
-      - uses: actions/checkout@v4
-      - name: Dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang lld binutils gcc python3
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-      - name: J2534 regression including READ128 and Vehicle Core
-        run: gcc -std=c11 -O2 -Wall -Wextra -o /tmp/virtualcar_test tests/virtualcar_test.c src/p2core/p2_cem_router.c src/p2core/p2_ls_observer.c src/p2core/p2_vehicle_core.c src/p2core/p2_j2534_bridge.c && /tmp/virtualcar_test
-      - name: Build Windows x86 J2534 DLL
-        run: bash ./build-cross.sh
-      - name: Validate architecture and PassThru exports
-        run: |
-          file VirtualCarJ2534.dll | grep 'PE32.*Intel i386'
-          test "$(objdump -p VirtualCarJ2534.dll | grep -Ec '^\s*\[ *[0-9]+\].*PassThru[A-Za-z]+$')" -ge 14
-          objdump -p VirtualCarJ2534.dll | grep 'DLL Name: KERNEL32.dll'
-      - name: Python fixture and profile tests
-        run: python3 -m unittest discover -s tests -p 'test_*.py'
-      - name: Go tests / vet
-        run: cd control && go test ./... -count=1 && go vet ./...
-      - name: Cross-build Go SQLite catalog for Windows x64 without CGO
-        run: cd control && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./labdb ./labcore
-      - name: Build Windows x86 GUI
-        run: cd control && GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -H windowsgui' -o ../VirtualCarControl.exe .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: VirtualCar-${{ github.sha }}-Windows-x86-LAB
-          path: |
-            emulator/VirtualCarJ2534.dll
-            emulator/VirtualCarControl.exe
-            emulator/virtualcar.ini
-            emulator/virtualcar-default.ini
-            emulator/virtualcar-p2.ini
-            emulator/README_DEV28.md
-            emulator/README_NATIVE_ROUTE_CHECK_RU.md
-            emulator/tools/verify_native_routes.ps1
-            emulator/tools/verify_native_routes.py
-            emulator/tools/audit_backend_evidence.py
-
-  native-routes:
-    needs: build
-    runs-on: windows-2022
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: VirtualCar-${{ github.sha }}-Windows-x86-LAB
-          path: native-input
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Actual x86 DLL route regression in an isolated synthetic profile
-        shell: pwsh
-        run: |
-          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
-          if ($dll.Count -ne 1) { throw 'Expected exactly one built DLL' }
-          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-route-regression"
-          if ($LASTEXITCODE -ne 0) { throw 'Native x86 regression failed' }
-          python emulator/tools/verify_native_routes.py "$env:RUNNER_TEMP\native-route-regression\VirtualCar\dev47-backend.jsonl" --output "$env:RUNNER_TEMP\native-route-regression-audit.json"
-          if ($LASTEXITCODE -ne 0) { throw 'Native metadata audit failed' }
-      - name: Native x86 J2534 filter API and lifecycle contract (legacy, no ECU TX)
-        shell: pwsh
-        run: |
-          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
-          if ($dll.Count -ne 1) { throw 'Expected exactly one built x86 J2534 DLL' }
-          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_filter_contract.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-filter-stage40" -Mode legacy
-          if ($LASTEXITCODE -ne 0) { throw 'Native x86 filter contract failed' }
-      - name: Native x86 J2534 filter policy (strict, synthetic UDS VIN)
-        shell: pwsh
-        run: |
-          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
-          if ($dll.Count -ne 1) { throw 'Expected exactly one built x86 J2534 DLL' }
-          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_filter_contract.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-filter-strict-stage41" -Mode strict
-          if ($LASTEXITCODE -ne 0) { throw 'Native x86 strict filter contract failed' }
-      - name: Native x86 strict ISO15765 extended address and RX FIFO atomicity
-        shell: pwsh
-        run: |
-          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
-          if ($dll.Count -ne 1) { throw 'Expected exactly one built x86 DLL' }
-          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_filter_contract.ps1 -DllPath $dll[0].FullName -OutputDirectory "$env:RUNNER_TEMP\native-filter-stage43" -Mode strict_queue
-          if ($LASTEXITCODE -ne 0) { throw 'Native Stage43 strict queue/extended contract failed' }
-      - name: M4B-2 actual old C x86 DLL versus new C++20 RX executable parity (8 synthetic gates)
-        shell: pwsh
-        run: |
-          $dll = @(Get-ChildItem -LiteralPath native-input -Recurse -Filter VirtualCarJ2534.dll)
-          if ($dll.Count -ne 1) { throw 'Expected one independently compiled C x86 DLL' }
-          $buildDir = Join-Path $env:RUNNER_TEMP 'virtualcar-m4b2-compile'
-          cmake -S emulator/native-cpp -B $buildDir -G "Visual Studio 17 2022" -A Win32
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to configure C++ x86 parity runner' }
-          cmake --build $buildDir --config Release --target vc_legacy_c_cpp_parity --parallel 2
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to compile C++ x86 parity runner' }
-          $exe = Join-Path $buildDir 'Release/vc_legacy_c_cpp_parity.exe'
-          $isolated = Join-Path $env:RUNNER_TEMP 'virtualcar-m4b2-native-parity'
-          if (Test-Path -LiteralPath $isolated) { throw 'Refuse reused synthetic laboratory directory' }
-          & $exe $dll[0].FullName $isolated
-          if ($LASTEXITCODE -ne 0) { throw 'Actual old C DLL versus new C++ RX outputs differ' }
-      - name: Parse VIDA metadata export PowerShell without database execution
-        shell: pwsh
-        run: |
-          $tokens = $null
-          $errors = $null
-          $path = (Resolve-Path emulator/scripts/Export-VidaScriptMetadata.ps1).Path
-          [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
-          if (@($errors).Count -gt 0) { throw 'VIDA metadata exporter contains PowerShell parse errors' }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: VirtualCar-native-route-audit-${{ github.sha }}
-          path: ${{ runner.temp }}/native-route-regression-audit.json
-          if-no-files-found: error
-
-
-
-  csharp-pilot:
-    name: CSharp .NET10 migration gates
-    uses: ./.github/workflows/csharp-migration.yml
+  private-windows-validation:
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/vmware-development-validation.yml
+    with:
+      source_ref: development
     permissions:
       contents: read

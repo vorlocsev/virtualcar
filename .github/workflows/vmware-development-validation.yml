@@ -1,13 +1,22 @@
 name: Virtual Car VMware development validation
 
-# Trusted development pushes run on the owner's persistent VMware runner.
-# Pull requests never execute on this self-hosted machine. Manual dispatch remains available.
-# No artifacts, releases, or publishing.
+# One authoritative owner-only Windows self-hosted CI implementation.
+# Trusted development pushes run automatically. Manual dispatch and calls
+# from legacy-named wrappers must originate at main, then checkout a trusted
+# source ref. NEVER run untrusted pull_request code on the persistent VM.
+# All old hosted runners have been retired; no artifacts or releases.
 on:
   push:
     branches: [development]
     paths:
       - "emulator/**"
+      - "proxy/**"
+      - "cmd/**"
+      - "trace_attribution/**"
+      - "tests/**"
+      - "scripts/**"
+      - "dotnet/**"
+      - "build_dev26.sh"
       - ".github/workflows/**"
       - "NuGet.Config"
       - "global.json"
@@ -17,6 +26,13 @@ on:
       - "Directory.Packages.props"
       - "pyproject.toml"
       - "requirements*.txt"
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Owner-selected trusted source ref"
+        required: false
+        type: string
+        default: development
   workflow_dispatch:
     inputs:
       source_ref:
@@ -28,6 +44,8 @@ on:
           - development
           - feature/m5a-secure-local-ipc-preflight
           - feature/sqlite-10gb-vmware-runner
+          - feature/m5b-cpp-named-pipe-client
+          - feature/m5c1-bounded-lifecycle-preflight
 
 permissions:
   contents: read
@@ -39,7 +57,7 @@ concurrency:
 jobs:
   validate-development:
     name: Development Python, Go, C++ and .NET gates
-    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development')
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && ((github.event_name == 'push' && github.ref == 'refs/heads/development') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Windows, X64, virtualcar-win]
     timeout-minutes: 60
 
@@ -228,6 +246,113 @@ jobs:
             Write-Host 'SKIP: M5A service project is not present at this source ref.'
           }
 
+      - name: Run M5B native C++ x86/x64 clients against C# Host when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clientX86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe'
+          $clientX64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe'
+          if (-not (Test-Path -LiteralPath $clientX86) -and -not (Test-Path -LiteralPath $clientX64)) {
+            Write-Host 'SKIP: M5B native IPC client is not present at this source ref.'
+            return
+          }
+          if (-not (Test-Path -LiteralPath $clientX86) -or -not (Test-Path -LiteralPath $clientX64)) {
+            throw 'M5B requires both x86 and x64 native IPC clients.'
+          }
+          if (-not (Test-Path -LiteralPath $serviceDll)) {
+            throw "M5B C# test host is missing: $serviceDll"
+          }
+
+          # Windows PowerShell 5.1 Start-Process -PassThru may expose an
+          # empty ExitCode even after WaitForExit, causing a false failure.
+          # Keep the original owning .NET Process handle and check ExitCode
+          # only after an actual successful WaitForExit.
+          function Start-M5BHost {
+            param(
+              [Parameter(Mandatory=$true)][string]$Dll,
+              [Parameter(Mandatory=$true)][string]$PipeName,
+              [Parameter(Mandatory=$true)][ValidateSet('session','no-session')][string]$Mode
+            )
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = (Get-Command dotnet -ErrorAction Stop).Source
+            $info.Arguments = ('"{0}" --serve-once "{1}" {2}' -f $Dll, $PipeName, $Mode)
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            # Child stdout/stderr are inherited so failure details remain in
+            # the Actions log. Avoid unconsumed redirected pipes/deadlocks.
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw "Could not start M5B C# host ($Mode)"
+            }
+            return $process
+          }
+
+          function Assert-M5BHostExit {
+            param(
+              [Parameter(Mandatory=$true)][System.Diagnostics.Process]$Process,
+              [Parameter(Mandatory=$true)][string]$Label
+            )
+            if (-not $Process.WaitForExit(15000)) {
+              throw "C# Host ($Label) did not terminate within deadline"
+            }
+            # ExitCode is a non-null Int32 from the retained Process handle.
+            [int]$exitCode = $Process.ExitCode
+            if ($exitCode -ne 0) {
+              throw "C# Host ($Label) exited with code $exitCode"
+            }
+            Write-Host "PASS: C# Host ($Label) exited with code 0"
+          }
+
+          function Stop-M5BHost {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally {
+              $Process.Dispose()
+            }
+          }
+
+          foreach ($arch in @('x86', 'x64')) {
+            $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+
+            $rejectPipe = 'vcm5b-reject-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $rejectServer = $null
+            try {
+              $rejectServer = Start-M5BHost -Dll $serviceDll -PipeName $rejectPipe -Mode 'no-session'
+              $wrongPid = [uint32]($rejectServer.Id + 1)
+              & $client --reject-peer $rejectPipe $wrongPid
+              $rejectExit = $LASTEXITCODE
+              if ($rejectExit -ne 0) {
+                throw "C++ $arch client did not reject wrong server PID (exit $rejectExit)"
+              }
+              Assert-M5BHostExit -Process $rejectServer -Label "$arch wrong-PID rejection"
+            } finally {
+              Stop-M5BHost -Process $rejectServer
+            }
+
+            $pipeName = 'vcm5b-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $server = $null
+            try {
+              $server = Start-M5BHost -Dll $serviceDll -PipeName $pipeName -Mode 'session'
+              & $client --connect $pipeName $server.Id
+              $clientExit = $LASTEXITCODE
+              if ($clientExit -ne 0) {
+                throw "C++ $arch client failed with exit code $clientExit"
+              }
+              Assert-M5BHostExit -Process $server -Label "$arch HELLO/KEEPALIVE/GOODBYE"
+              Write-Host "PASS: native C++ $arch <-> C# Host HELLO/KEEPALIVE/GOODBYE"
+            } finally {
+              Stop-M5BHost -Process $server
+            }
+          }
+
       - name: Validation summary
         if: success()
         shell: powershell
@@ -241,5 +366,5 @@ jobs:
           Write-Host 'PASS: Native C++ x86 configure/build/CTest and actual C/C++ parity'
           Write-Host 'PASS: Native C++ x64 configure/build/CTest'
           Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
-          Write-Host 'M5A IPC checks are run when the selected source contains the project.'
+          Write-Host 'M5A IPC and M5B cross-language checks run when the selected source contains the projects.'
           Write-Host 'No artifacts uploaded. No releases or deployments performed.'
