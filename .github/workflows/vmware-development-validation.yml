@@ -247,43 +247,92 @@ jobs:
             throw "M5B C# test host is missing: $serviceDll"
           }
 
+          # Windows PowerShell 5.1 Start-Process -PassThru may expose an
+          # empty ExitCode even after WaitForExit, causing a false failure.
+          # Keep the original owning .NET Process handle and check ExitCode
+          # only after an actual successful WaitForExit.
+          function Start-M5BHost {
+            param(
+              [Parameter(Mandatory=$true)][string]$Dll,
+              [Parameter(Mandatory=$true)][string]$PipeName,
+              [Parameter(Mandatory=$true)][ValidateSet('session','no-session')][string]$Mode
+            )
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = (Get-Command dotnet -ErrorAction Stop).Source
+            $info.Arguments = ('"{0}" --serve-once "{1}" {2}' -f $Dll, $PipeName, $Mode)
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            # Child stdout/stderr are inherited so failure details remain in
+            # the Actions log. Avoid unconsumed redirected pipes/deadlocks.
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw "Could not start M5B C# host ($Mode)"
+            }
+            return $process
+          }
+
+          function Assert-M5BHostExit {
+            param(
+              [Parameter(Mandatory=$true)][System.Diagnostics.Process]$Process,
+              [Parameter(Mandatory=$true)][string]$Label
+            )
+            if (-not $Process.WaitForExit(15000)) {
+              throw "C# Host ($Label) did not terminate within deadline"
+            }
+            # ExitCode is a non-null Int32 from the retained Process handle.
+            [int]$exitCode = $Process.ExitCode
+            if ($exitCode -ne 0) {
+              throw "C# Host ($Label) exited with code $exitCode"
+            }
+            Write-Host "PASS: C# Host ($Label) exited with code 0"
+          }
+
+          function Stop-M5BHost {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally {
+              $Process.Dispose()
+            }
+          }
+
           foreach ($arch in @('x86', 'x64')) {
             $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
 
             $rejectPipe = 'vcm5b-reject-' + $arch + '-' + [guid]::NewGuid().ToString('N')
-            $rejectOut = Join-Path $env:RUNNER_TEMP ("m5b-reject-" + $arch + ".stdout.log")
-            $rejectErr = Join-Path $env:RUNNER_TEMP ("m5b-reject-" + $arch + ".stderr.log")
             $rejectServer = $null
             try {
-              $rejectServer = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $rejectPipe, 'no-session') -PassThru -WindowStyle Hidden -RedirectStandardOutput $rejectOut -RedirectStandardError $rejectErr
+              $rejectServer = Start-M5BHost -Dll $serviceDll -PipeName $rejectPipe -Mode 'no-session'
               $wrongPid = [uint32]($rejectServer.Id + 1)
               & $client --reject-peer $rejectPipe $wrongPid
               $rejectExit = $LASTEXITCODE
-              if ($rejectExit -ne 0) { throw "C++ $arch client did not reject wrong server PID (exit $rejectExit)" }
-              if (-not $rejectServer.WaitForExit(10000)) { throw "C# Host did not exit after $arch peer rejection" }
-              if ($rejectServer.ExitCode -ne 0) { throw "C# Host ($arch) after peer rejection exited with code $($rejectServer.ExitCode)" }
-            } finally {
-              if ($null -ne $rejectServer -and -not $rejectServer.HasExited) {
-                Stop-Process -Id $rejectServer.Id -Force -ErrorAction SilentlyContinue
+              if ($rejectExit -ne 0) {
+                throw "C++ $arch client did not reject wrong server PID (exit $rejectExit)"
               }
+              Assert-M5BHostExit -Process $rejectServer -Label "$arch wrong-PID rejection"
+            } finally {
+              Stop-M5BHost -Process $rejectServer
             }
 
             $pipeName = 'vcm5b-' + $arch + '-' + [guid]::NewGuid().ToString('N')
-            $stdout = Join-Path $env:RUNNER_TEMP ("m5b-host-" + $arch + ".stdout.log")
-            $stderr = Join-Path $env:RUNNER_TEMP ("m5b-host-" + $arch + ".stderr.log")
             $server = $null
             try {
-              $server = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $pipeName, 'session') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+              $server = Start-M5BHost -Dll $serviceDll -PipeName $pipeName -Mode 'session'
               & $client --connect $pipeName $server.Id
               $clientExit = $LASTEXITCODE
-              if ($clientExit -ne 0) { throw "C++ $arch client failed with exit code $clientExit" }
-              if (-not $server.WaitForExit(10000)) { throw "C# Host did not exit after $arch GOODBYE" }
-              if ($server.ExitCode -ne 0) { throw "C# Host ($arch) exited with code $($server.ExitCode)" }
+              if ($clientExit -ne 0) {
+                throw "C++ $arch client failed with exit code $clientExit"
+              }
+              Assert-M5BHostExit -Process $server -Label "$arch HELLO/KEEPALIVE/GOODBYE"
               Write-Host "PASS: native C++ $arch <-> C# Host HELLO/KEEPALIVE/GOODBYE"
             } finally {
-              if ($null -ne $server -and -not $server.HasExited) {
-                Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
-              }
+              Stop-M5BHost -Process $server
             }
           }
 
