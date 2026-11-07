@@ -54,6 +54,7 @@ on:
           - feature/m5d2d-synthetic-read-replay-stress
           - feature/m5d2ea-synthetic-reply-faults
           - feature/m5d2eb-offline-cancel-restart-races
+          - feature/m5d2eb-host-three-epochs-x86-x64
 
 permissions:
   contents: read
@@ -775,6 +776,28 @@ jobs:
               }
             }
           }
+
+      - name: Run M5D2eB authenticated triple Host crash/cancel cycles on x86/x64 when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $doc = 'docs/architecture/VIRTUALCAR-M5D2EB-HOST-EPOCHS.md'
+          if (-not (Test-Path -LiteralPath $doc)) {
+            Write-Host 'SKIP: M5D2eB Host epoch integration feature is not present on selected source ref.'
+            return
+          }
+          $runner = 'emulator/tools/verify_m5d2eb_restarts.ps1'
+          if (-not (Test-Path -LiteralPath $runner)) {
+            throw 'M5D2eB stage exists but its runner script is missing'
+          }
+          $service = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $x86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_restarts_checks.exe'
+          $x64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_restarts_checks.exe'
+          & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $runner -ServiceDll $service -NativeX86 $x86 -NativeX64 $x64
+          if ($LASTEXITCODE -ne 0) {
+            throw ('M5D2eB x86/x64 Host epoch tests failed with code ' + $LASTEXITCODE)
+          }
+          Write-Host 'PASS: M5D2eB x86/x64 synthetic Host crash/cancel/recovery, no artifact upload'
 
       - name: Validation summary
         if: success()
