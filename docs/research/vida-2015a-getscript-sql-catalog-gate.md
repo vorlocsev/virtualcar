@@ -277,13 +277,23 @@ instance. This confirms exactly one `Script` row of the SQL
 `Script.Id`, whether `ScriptContent` or profile mappings are present,
 or which script `GetScript` returns in a real VIDA session.
 
-Next bounded read-only aggregate gate: independently count rows in
-`ScriptContent` and `ScriptProfileMap` whose `fkScript` belongs to
-the single `Script` row with `fkScriptType=7`. Optionally inspect
-`sys.foreign_keys` / `sys.foreign_key_columns` for declared
-constraints; their absence would not disprove logical application
-relationships. Never return content XML, script/profile IDs or
-other private values. No `GetScript` execution or ECU I/O.
+The owner's subsequent read-only aggregate-only query returned
+**ContentRows=17**, **LanguageVariants=17** (distinct `fkLanguage`
+values across those 17 rows), and **ProfileMappings=1** for the
+single SQL `ReadVin` script. These results establish stored
+associated records, **not** valid or nonempty `XmlDataCompressed`
+data, an XC90-specific profile or an effective runtime selection.
+No language identifiers, script/profile identifiers, VIN or XML
+bytes were returned.
+
+Next owner-controlled bounded aggregate gate: count
+`ScriptContent` rows with **non-NULL** and **nonempty**
+`XmlDataCompressed` for the SQL `ReadVin` type, without selecting
+or returning any XML/content data. A nonempty binary value is
+not proof of valid compressed XML or correct vehicle identity.
+Optionally inspect `sys.foreign_keys` / `sys.foreign_key_columns`
+for declared relationships; absence would not disprove logical
+application mapping. No `GetScript` execution or ECU I/O.
 
 
 
