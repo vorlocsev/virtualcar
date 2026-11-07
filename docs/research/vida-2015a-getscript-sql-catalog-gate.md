@@ -428,14 +428,36 @@ for; **15** remain at depths 5–6. Terms `call`, `set`,
 we have NOT seen values, function bindings, original
 script instructions, message IDs, VIN or ECU frames.
 
-Next operator-local read-only gate: aggregate only depths
-5 and 6 XML `LocalName` and counts from the same previously
-loaded ZIP in memory with a bounded stream and DTD/XXE
-prohibited. Alternatively stop at this structure gate and
-focus on independent client-selection/transport evidence.
-Avoid original script XML, attribute values or any
-proprietary binary export. No `GetScript` execution, ECU
-I/O, positive emulator reply change, or release.
+The owner completed the depths 5 and 6 XML structural
+count for **one** previously loaded local `ReadVin` ZIP:
+`Depth=5: get = 3, parameter = 3`, and
+`Depth=6: getbyid = 3, getbyname = 6`. Total deeper
+XML elements = **15** (`DeepElementsTotal=15`). The
+complete per-depth element count is now **1, 2, 2, 47,
+115, 6, 9** for depths **0–6**, summing to **182**,
+consistent with the previously reported `ElementCount=182`,
+`AttributeCount=764`, `MaxElementDepth=6`.
+No XML text, attribute values, script code, ECU message bytes,
+or original proprietary XML/binary were exported. Names
+`get`, `parameter`, `getbyid`, `getbyname` do not establish
+SQL calls, CAN requests, VIN read behavior, or real
+execution.
+
+**Completed structural metadata gate.** Shift focus away
+from adding more XML tree counts to independent evidence:
+1. Establish how the **original VIDA caller** obtains/selects
+   SQL `GetScript` with runtime string `@scriptType` (SQL
+   numeric ID 7 alone does not establish the caller string).
+2. Obtain **redacted, read-only virtual J2534 trace** from
+   an authorized offline VIDA-to-virtual-adapter session,
+   verifying actual request routing/timeouts before any
+   emulator replies are asserted as accepted.
+3. Keep hard safety boundaries: no VIN or sensitive data,
+   no proprietary complete script output, no `GetScript`
+   execution without separate approval, no physical ECU
+   writes, no positive emulator reply changes or releases.
+Draft PR #172 remains a research/helper change, not
+VIDA interoperability proof.
 
 
 
