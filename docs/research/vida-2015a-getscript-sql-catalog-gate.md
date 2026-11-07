@@ -814,15 +814,37 @@ No deployment names/paths, application content, credentials
 or VIN were printed or exported. No writes, hardware I/O,
 process starts, registry changes or emulator releases.
 
-**Next owner-local bounded read-only gate:** inspect
-**only immediate children** of each exploded EAR directory
-and existence/byte-size of each `META-INF/application.xml`
-without printing names, paths or XML. Count nested
-`.war`/`.jar`/`.rar` archives and exploded `.war`
-directories (if any). If XML inspection is needed later,
-parse descriptors using DTD/XXE-disabled local XML reader
-and output only counts/types; do not dump proprietary
-configuration, endpoints or credentials.
+**Owner-local EAR module declaration audit (read-only):**
+The two exploded EARs each have a `META-INF/application.xml`
+that was **successfully parsed** with DTD processing
+prohibited and the XML resolver disabled. Results in
+alphabetic directory order:
+
+| EAR slot | Deployed marker | Directories | Files | Exploded WAR directories | WAR archives | JAR archives | application.xml | Web modules | EJB modules | Java modules | Connector modules |
+|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| 1 | True | 2 | 0 | 1 | 0 | 0 | Parsed | 1 | 0 | 0 | 0 |
+| 2 | True | 3 | 1 | 1 | 0 | 1 | Parsed | 1 | 1 | 0 | 0 |
+
+These are **declared XML module counts and immediate
+filesystem children**, not runtime module health. EAR slot
+2 includes both a web and EJB module declaration and one
+root JAR file, making it a candidate for the backend role,
+NOT proof of ECU diagnostics, `ReadVin`, `GetScript` or
+DiCE/J2534 traffic. Both directories contain an exploded
+WAR. Actual application/deployment names, XML contents,
+paths and potentially sensitive parameters were not
+exported or published. No J2534 calls, ECU access,
+registry changes or emulator binaries.
+
+**Next local passive gate:** inspect `WEB-INF/web.xml` for
+each exploded WAR (existence and XML-safe structural counts
+of servlet/filter/listener definitions only, never actual
+names, URL mappings, endpoints or parameter values) and
+`WEB-INF/classes`, `WEB-INF/lib` existence. Presence or
+absence of optional `web.xml` is inconclusive for web
+application presence. Only if these results justify it,
+consider a separate tightly scoped, local-only EJB-module
+metadata audit; do not execute the deployed JAR.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
