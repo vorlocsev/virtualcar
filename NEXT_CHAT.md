@@ -23,6 +23,15 @@
   file, which is **not** proof those operations never ran.
   WSL is a separate login/provider problem unless
   real client linkage is established.
+- [Draft PR #163](https://github.com/vorlocsev/virtualcar/pull/163)
+  adds the bounded JBoss startup source-observer and synthetic
+  regressions. Trusted owner-only VMware source selector was
+  merged via [CI PR #164](https://github.com/vorlocsev/virtualcar/pull/164)
+  on `main` and [CI PR #165](https://github.com/vorlocsev/virtualcar/pull/165)
+  on `development`. These CI selectors do **not** prove
+  the new feature SHA passed. Manually run the existing
+  workflow with `source_ref=feature/vida-jboss-startup-provenance-audit`
+  before merging this Draft PR.
 - New offline private-log categorizer
   `emulator/tools/audit_vida_server_startup.py`:
   two-session boundary counts, strict whitelist,
