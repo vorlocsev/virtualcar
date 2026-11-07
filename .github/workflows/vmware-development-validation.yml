@@ -47,6 +47,7 @@ on:
           - feature/m5b-cpp-named-pipe-client
           - feature/m5c1-bounded-lifecycle-preflight
           - feature/m5c2-authenticated-session-lifecycle
+          - feature/m5d1-readonly-vcrd-contract
 
 permissions:
   contents: read
