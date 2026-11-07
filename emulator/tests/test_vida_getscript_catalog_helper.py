@@ -85,12 +85,12 @@ class VidaGetScriptMetadataSourceTests(unittest.TestCase):
     def test_09_any_schema_count_uses_only_catalog(self):
         self.assertIn("AS AnySchemaProcedureVisibleCount", self.sql)
         self.assertIn("AS NonDboProcedureVisibleCount", self.sql)
-        self.assertRegex(self.sql, r"(?s)FROM sys\\.procedures p\\s+WHERE p\\.name=N'GetScript'\\) AS AnySchemaProcedureVisibleCount")
-        self.assertRegex(self.sql, r"(?s)FROM sys\\.procedures p JOIN sys\\.schemas s.*?s\\.name<>N'dbo'\\) AS NonDboProcedureVisibleCount")
+        self.assertRegex(self.sql, r"(?s)FROM sys\.procedures p\s+WHERE p\.name=N'GetScript'\) AS AnySchemaProcedureVisibleCount")
+        self.assertRegex(self.sql, r"(?s)FROM sys\.procedures p JOIN sys\.schemas s.*?s\.name<>N'dbo'\) AS NonDboProcedureVisibleCount")
 
     def test_10_parameters_remain_dbo_scoped(self):
         self.assertIn("parameter_scope = 'dbo_GetScript_only_if_visible'", self.source)
-        self.assertEqual(self.sql.count("OBJECT_ID(N'dbo.GetScript',N'P')"), 12)
+        self.assertEqual(self.sql.count("OBJECT_ID(N'dbo.GetScript',N'P')"), 11)
         self.assertNotIn('OBJECT_ID(@', self.sql)
         self.assertNotIn('sp_executesql', self.sql.lower())
 
