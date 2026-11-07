@@ -236,6 +236,50 @@ not execute `GetScript` as part of the metadata audit.
 Actual runtime script selection and client identity acceptance
 remain unknown.
 
+### Owner-verified four-table catalog columns (VIDA 2015A)
+
+The owner ran a **catalog-only** query joining `sys.tables`,
+`sys.schemas`, `sys.columns` on the authorized installed
+`DiagSwdlRepository`, filtering four dbo objects:
+
+| Table | Column | SQL type | Max length | Nullable |
+|---|---|---|---:|---|
+| `Script` | `Id` | `char` | 16 | no |
+| `Script` | `fkScriptType` | `int` | 4 | no |
+| `ScriptContent` | `fkScript` | `char` | 16 | no |
+| `ScriptContent` | `fkLanguage` | `int` | 4 | no |
+| `ScriptContent` | `DisplayText` | `nvarchar` | 512 | no |
+| `ScriptContent` | `XmlDataCompressed` | `image` | 16 | yes |
+| `ScriptContent` | `checksum` | `nvarchar` | 200 | yes |
+| `ScriptProfileMap` | `fkScript` | `char` | 16 | no |
+| `ScriptProfileMap` | `fkProfile` | `char` | 32 | no |
+| `ScriptType` | `Id` | `int` | 4 | no |
+| `ScriptType` | `Description` | `varchar` | 50 | no |
+
+`ScriptContent.column_id` skipped `3` in this installation's
+output. A gap in column IDs does not establish a readable missing
+column. SQL `image` metadata `max_length=16` must **not**
+be interpreted as the compressed script payload size.
+No XML bytes, display text, checksums, script IDs, profile IDs,
+language rows, real VIN or ECU payload was retrieved.
+
+Possible relationships: `Script.fkScriptType -> ScriptType.Id`,
+`ScriptContent.fkScript -> Script.Id`, and
+`ScriptProfileMap.fkScript -> Script.Id` because their names
+and types align. These are **inferences**, not verified foreign
+key constraints. `ScriptType.Id=7 -> ReadVin` is already
+confirmed independently, but there is **no evidence yet**
+that any `Script` row has `fkScriptType=7`.
+
+Next catalog-only step: inspect `sys.foreign_keys` and
+`sys.foreign_key_columns` for the three candidate referring
+tables. No reported FK constraints would not disprove
+application-level relationships. A subsequent bounded
+`COUNT_BIG(*)` for `Script.fkScriptType=7` can establish
+script presence without exposing script IDs or XML.
+Neither step executes `GetScript`.
+
+
 
 
 Microsoft SqlServer module v22 defaults to checking the SQL TLS
