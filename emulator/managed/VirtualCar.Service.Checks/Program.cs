@@ -11,13 +11,51 @@ internal static class Program
     private static readonly byte[] LaunchSecret = Enumerable.Range(0, 32)
         .Select(i => (byte)(i * 7 + 3)).ToArray(); // Synthetic test only.
 
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
         if (!OperatingSystem.IsWindows())
         {
             Console.Error.WriteLine("M5A integration checks must execute on Windows.");
             return 1;
         }
+        // Cross-language M5B test mode. The secret is a synthetic CI fixture only.
+        // "no-session" intentionally leaves the coordinator without an active scenario,
+        // so a wrong-PID client must be rejected before it can authenticate.
+        if (args.Length == 3 && args[0] == "--serve-once" &&
+            args[2] is "session" or "no-session")
+        {
+            string pipeName = args[1];
+            if (string.IsNullOrEmpty(pipeName) || pipeName.Length > 80 ||
+                !pipeName.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-'))
+                return 2;
+
+            var runtime = new StubRuntime();
+            bool selected = args[2] == "session";
+            await using var core = await CoreAsync(selected: selected, runtime: runtime);
+            await Host(core, pipeName, TimeSpan.FromSeconds(10)).ServeOnceAsync();
+
+            int expectedPreparations = selected ? 1 : 0;
+            if (runtime.PrepareCount != expectedPreparations)
+            {
+                Console.Error.WriteLine("Unexpected synthetic scenario preparation count.");
+                return 3;
+            }
+
+            // Reset is a deliberate leak detector: it fails if GOODBYE or peer
+            // disconnect left an authenticated core session active.
+            if (selected)
+                await core.ResetAsync();
+            else
+                Require(!await core.HasSelectedScenarioAsync(),
+                    "Wrong-PID preflight unexpectedly activated a scenario.");
+            return 0;
+        }
+        if (args.Length != 0)
+        {
+            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session>]");
+            return 2;
+        }
+
         (string, Func<Task>)[] checks =
         [
             ("01 Authenticated HELLO and bounded keepalive", Test01),
@@ -53,9 +91,10 @@ internal static class Program
         if (!result) throw new InvalidOperationException(message);
     }
 
-    private static async Task<ScenarioCoordinator> CoreAsync(bool selected = true)
+    private static async Task<ScenarioCoordinator> CoreAsync(
+        bool selected = true, StubRuntime? runtime = null)
     {
-        var core = new ScenarioCoordinator(new StubCatalog(), new StubRuntime());
+        var core = new ScenarioCoordinator(new StubCatalog(), runtime ?? new StubRuntime());
         if (selected) await core.SelectAsync("ipc-synthetic", 1);
         return core;
     }
@@ -324,8 +363,14 @@ internal static class Program
 
     private sealed class StubRuntime : IScenarioRuntime
     {
-        public Task PrepareAsync(ScenarioSnapshot snapshot, CancellationToken ct) =>
-            Task.CompletedTask;
+        public int PrepareCount { get; private set; }
+
+        public Task PrepareAsync(ScenarioSnapshot snapshot, CancellationToken ct)
+        {
+            PrepareCount++;
+            return Task.CompletedTask;
+        }
+
         public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
     }
 }

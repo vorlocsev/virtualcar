@@ -17,7 +17,7 @@ not requirements for the new architecture.
 | M4A | Isolated C++ CAN/ISO-TP FIFO, FC and STmin deterministic engine | COMPLETED, PR #79, CI #13 |
 | M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
 | M4B-2 | Executed x86 old C DLL vs C++ RX module, 8 synthetic trace gates | COMPLETED, PR #83, CI #638 |
-| M5 | C# headless Windows service and secure Named Pipes IPC | M5A DRAFT PR #85, not complete |
+| M5 | C# Host + secure Named Pipes + native C++ client | M5A MERGED PR #85 (9/9 VMware); M5B x86/x64 local handshake VERIFIED #42318278748, PR #87. M5C lifecycle/data-plane work OUTSTANDING |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
@@ -49,6 +49,14 @@ Completed source and CI evidence:
   bytes except dynamic timestamps. Actual x86 CI #638, managed
   migration CI #21 and VMware LAB packaging #453 SUCCESS. NOT a
   functional new C++ J2534 DLL or full original-client acceptance.
+- M5A: PR #85 merged to development as 410ade408, Windows local IPC
+  9/9 on private VMware #42314429323 and #42318278748.
+- M5B: PR #87 source head 053e60e; private VMware #42318278748
+  SUCCESS. Native C++ x86/x64 each 4/4 CTest (including 8 M5B gates),
+  both architectures' wrong-server-PID and authenticated C++ ↔ C#
+  HELLO/KEEPALIVE/GOODBYE checks PASS. No DLL integration or release.
+- M5B CI fix: PR #89 merged to main as 84f12eb, retained .NET
+  Process handle yields real Windows PowerShell 5.1 host ExitCode.
 - Experimental prior Native AOT ABI probe PR #70 is nonfunctional
   and is not the user-selected C++20 production DLL.
 
@@ -57,7 +65,7 @@ Keep existing C/Go working until cross-language regression tests pass.
 **virtual car** remains the exact cross-chat resume phrase.
 
 
-Updated: 2026-11-06. Primary product: Dvinholm. Laboratory: Virtual Car.
+Updated: 2026-11-07. Primary product: Dvinholm. Laboratory: Virtual Car.
 Persistent source of truth: this repository, GitHub pull requests, CI run results.
 Do not depend on ChatGPT chat memory to determine whether a task is completed.
 

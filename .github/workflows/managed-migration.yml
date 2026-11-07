@@ -98,6 +98,9 @@ jobs:
       VC_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
       - name: Configure separate native Windows DLL and test executable
         shell: pwsh
         run: |
@@ -117,11 +120,60 @@ jobs:
           $dll = Join-Path $buildDir 'Release/VirtualCarJ2534Cpp.dll'
           python emulator/native-cpp/tests/verify_pe_exports.py $dll $env:VC_ARCH
           if ($LASTEXITCODE -ne 0) { throw 'PE architecture/export contract failed' }
-      - name: Execute J2534 ABI, M4A transport and M4B RX compatibility in target bitness
+      - name: Execute J2534 ABI, M4A, M4B and M5B native checks in target bitness
         shell: pwsh
         run: |
           $buildDir = Join-Path $env:RUNNER_TEMP ("virtualcar-m3-" + $env:VC_ARCH)
           ctest --test-dir $buildDir -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) { throw 'Native J2534 ABI, M4A or M4B RX regression failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Native J2534 ABI, M4A, M4B or M5B checks failed' }
+      - name: Build C# M5A host for native C++ cross-language check
+        shell: pwsh
+        run: |
+          dotnet build emulator/managed/VirtualCar.Service.Checks/VirtualCar.Service.Checks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'C# M5A host test build failed' }
+      - name: Verify native C++ client against C# Host in target bitness
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:RUNNER_TEMP ("virtualcar-m3-" + $env:VC_ARCH)
+          $client = Join-Path $buildDir 'Release/vc_ipc_client_checks.exe'
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          if (-not (Test-Path -LiteralPath $client)) { throw "Native IPC client missing: $client" }
+          if (-not (Test-Path -LiteralPath $serviceDll)) { throw "C# service checks missing: $serviceDll" }
+          $rejectPipe = 'vcm5b-reject-' + $env:VC_ARCH.ToLowerInvariant() + '-' + [guid]::NewGuid().ToString('N')
+          $rejectOut = Join-Path $env:RUNNER_TEMP 'm5b-reject.stdout.log'
+          $rejectErr = Join-Path $env:RUNNER_TEMP 'm5b-reject.stderr.log'
+          $rejectServer = $null
+          try {
+            $rejectServer = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $rejectPipe, 'no-session') -PassThru -WindowStyle Hidden -RedirectStandardOutput $rejectOut -RedirectStandardError $rejectErr
+            $wrongPid = [uint32]($rejectServer.Id + 1)
+            & $client --reject-peer $rejectPipe $wrongPid
+            $rejectExit = $LASTEXITCODE
+            if ($rejectExit -ne 0) { throw "C++ $env:VC_ARCH client did not reject wrong server PID (exit $rejectExit)" }
+            if (-not $rejectServer.WaitForExit(10000)) { throw 'C# Host did not exit after rejected peer disconnect' }
+            if ($rejectServer.ExitCode -ne 0) { throw "C# Host after peer rejection exited with code $($rejectServer.ExitCode)" }
+          } finally {
+            if ($null -ne $rejectServer -and -not $rejectServer.HasExited) {
+              Stop-Process -Id $rejectServer.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          $pipeName = 'vcm5b-' + $env:VC_ARCH.ToLowerInvariant() + '-' + [guid]::NewGuid().ToString('N')
+          $stdout = Join-Path $env:RUNNER_TEMP 'm5b-host.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'm5b-host.stderr.log'
+          $server = $null
+          try {
+            $server = Start-Process -FilePath 'dotnet' -ArgumentList @($serviceDll, '--serve-once', $pipeName, 'session') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            & $client --connect $pipeName $server.Id
+            $clientExit = $LASTEXITCODE
+            if ($clientExit -ne 0) { throw "C++ $env:VC_ARCH client failed with exit code $clientExit" }
+            if (-not $server.WaitForExit(10000)) { throw 'C# Host did not exit after GOODBYE' }
+            if ($server.ExitCode -ne 0) { throw "C# Host exited with code $($server.ExitCode)" }
+            Write-Host "PASS: native C++ $env:VC_ARCH <-> C# Host HELLO/KEEPALIVE/GOODBYE"
+          } finally {
+            if ($null -ne $server -and -not $server.HasExited) {
+              Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
       # NO upload-artifact step: this intentionally NONFUNCTIONAL DLL is
       # never shipped or registered as a usable physical PassThru adapter.

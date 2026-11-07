@@ -1,60 +1,63 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: M5A local IPC preflight validated (2026-11-07)
+## ACTIVE checkpoint: M5A/M5B IPC preflight validated on VMware (2026-11-07)
 
-### M5A local IPC preflight, Draft PR #85 (9/9 VMware PASS; NOT merged)
+### M5A C# current-user Named Pipe host: MERGED into development
 
-`feature/m5a-secure-local-ipc-preflight` introduces `VirtualCar.Service`:
-a Windows current-user Named Pipe, 32-byte launch-secret HELLO, bounded
-LE v1 frames, session-generation validation, one-client fail-closed
-KEEPALIVE/GOODBYE and bounded connection/read/write deadlines.
+PR #85 merged with ancestry preserved as
+`410ade408388468f727dceef063e1194747e8162`.
+The .NET 10 Windows test host provides current-user-only Named Pipe
+isolation, a separately provisioned 256-bit launch secret, bounded
+little-endian v1 frames, generation-bound core sessions and fail-closed
+HELLO / KEEPALIVE / GOODBYE. Private VMware #42314429323 passed M5A
+9/9; the M5B validation run below also passed M5A 9/9.
 
-**Latest VMware validation:** [workflow #42307844300](https://github.com/vorlocsev/virtualcar/actions/runs/42307844300)
-completed SUCCESS on runner `VirtualCar-CI-WIN`. It explicitly checked out
-`feature/m5a-secure-local-ipc-preflight` at code commit
-`55e41d4e1c8c92f5b313083ed14bde62fd415bd0`, not `main`.
+### M5B native C++20 IPC client: x86/x64 preflight VERIFIED
 
-- Python: 252 tests, 1 expected skip.
-- Go tests and vet: PASS.
-- Native C++ x86: 3/3 CTest; x64: 3/3 CTest.
-- .NET Core: 8/8; SQLite Storage: 8/8; Scenario Compiler: 8/8.
-- **M5A Windows Named Pipe: 9/9**, including idle accept deadline and listener re-arm.
-- No artifacts uploaded, no releases or deployments.
+PR #87, source branch `feature/m5b-cpp-named-pipe-client`, exact tested
+head `053e60e5996228b1776f4d728d61de839cad9256`.
+The isolated C++20 library checks the expected Named Pipe server PID
+**before** sending the launch secret, requests SECURITY_IDENTIFICATION,
+uses bounded overlapped I/O and an absolute deadline per transfer,
+checks a versioned 28-byte VCLB header and maximum 256-byte payload,
+serializes client operations, binds keepalives to the session generation
+and wipes temporary buffers. It is NOT linked into the J2534 DLL.
 
-Earlier run #42303814581 attempt 2 validated the previous eight-gate head.
-The latest run #42307844300 supersedes it and validates the ninth gate.
-The PR remains Draft and unmerged. The latest follow-up documentation
-commits record this result; no M5A code changed after the validated
-code commit above.
+**Private VMware SUCCESS #42318278748**
+(https://github.com/vorlocsev/virtualcar/actions/runs/42318278748).
+Workflow definition on `main` was `84f12eb22c837c32ff03728878edf3ccd10a5004`,
+while the selected checkout was the M5B branch named above.
+- Native C++ x86: 4/4 CTest; x64: 4/4 CTest; M5B eight native
+  offline test gates included on both architectures.
+- x86 and x64 separately: rejection of a wrong server PID before
+  HELLO and clean C# host exit code 0.
+- x86 and x64 separately: authenticated client/host
+  HELLO / KEEPALIVE / GOODBYE, both processes exit 0.
+- M5A: 9/9. .NET Core/Storage/Scenario: 8/8 each.
+- Python regression, legacy C host and DLL regressions, Go tests/vet,
+  legacy C/C++ parity: PASS.
+- No packages, artifacts, installers, releases or deployments.
 
-This is **not** an installed service, production credential-provisioning
-path, functional native J2534 DLL, Dvinholm integration or full M5.
-No real vehicle or physical adapter acceptance is claimed.
+Previous private VMware #42317744015 failed solely on a Windows
+PowerShell 5.1 `Start-Process -PassThru` empty ExitCode in the
+orchestrator, *after* the x86 wrong-PID denial passed. Workflow fix
+PR #89 merged into `main` as `84f12eb22c837c32ff03728878edf3ccd10a5004`;
+the subsequent full run #42318278748 passed.
 
-### Next: M5B native client integration
+### NEXT: M5C secure fail-closed session/channel lifecycle
 
-1. Design and implement the authenticated C++20 Named Pipe client.
-2. Keep x86/x64 ABI and calling conventions explicit.
-3. Add bounded request/response queues, cancellation and backpressure.
-4. Keep the J2534 DLL fail-closed until authentication and synthetic
-   scenario/session authorization succeed.
-5. Add 6–8 independent native Windows integration checks for both
-   architectures.
-6. Connect only to the approved synthetic scenario coordinator.
-7. Do not enable ECU writes, SecurityAccess, programming or physical
-   adapter operations.
+The M5A/M5B preflight proves a local *control handshake*, NOT a
+functional PassThru data plane or production credential provisioning.
+Next: define owned C# host/native DLL session hand-off, channel states,
+lease/heartbeat expiry, crash/restart invalidation, bounded outstanding
+work and rigorous failure/cleanup tests before enabling any CAN path.
+Keep SecurityAccess/programming, physical adapters, real ECU requests
+and J2534 successful routes disabled. Keep existing C/Go references
+until full parity and end-to-end acceptance.
 
-Follow-up cleanup: CI output still exposes the legacy Go module/package
-identifier `sectorv-virtualcar-control`. Rename this internal identifier
-in a separate reviewed change; do not mix it into the already validated
-M5A IPC code.
-
-See docs/architecture/VIRTUALCAR-LOCAL-IPC-M5A.md and PR #85.
-
-
-Dvinholm remains the PRIMARY product. Virtual Car is a PRIVATE,
-optional, read-only development lab. Never publish/register Virtual
-Car as a physical J2534 adapter without explicit direction.
+Dvinholm is the PRIMARY product; Virtual Car is a private, optional,
+synthetic read-only laboratory. No Virtual Car releases without a
+separate explicit instruction.
 
 Completed:
 - M0 PR #71 C# Core and C++ ABI, CI #1 SUCCESS.
@@ -121,20 +124,21 @@ driver registration or physical adapter test.
 
 **EVIDENCE LIMITS:** This is actual old C J2534 DLL versus compiled
 new C++ RX *module*, NOT old versus a FUNCTIONAL new J2534 DLL.
-The new M3 C++ PassThru DLL still deliberately returns NOT_CONNECTED;
-there is no authenticated host IPC and no J2534 CAN transport serving
+At the M4B-2 checkpoint, the M3 C++ PassThru DLL deliberately
+returned NOT_CONNECTED. Later M5A/M5B now authenticate a separate
+local host/client test harness, but no J2534 CAN transport serves
 Dvinholm yet. Tested trace set is synthetic ISO15765 F187/F189 only.
 Not verified: full 29-bit/raw-CAN/physical bus parity, vendor
 extensions, Volvo P2 CEM B9FB replies, VIN acceptance by real software,
 VIDA/SectorV/VDASH client discovery, physical DiCE or actual vehicle.
 VMware LAB packaging != guest application test. Preserve old C/Go.
 
-**NEXT M5B:** implement the native C++20 client for the already
-validated M5A Named Pipe host, then connect the fail-closed J2534 ABI
-boundary only after authentication and synthetic scenario/session
-authorization. Preserve bounded IPC, x86/x64 ABI correctness, lifecycle,
-timeouts and backpressure. Keep physical devices and ECU programming
-out of scope.
+**NEXT M5C:** M5A and M5B have verified isolated Windows
+C# ↔ C++20 local Named Pipe handshakes on x86/x64 (#42318278748).
+Implement and verify owned J2534 DLL / Host session and channel lifecycle,
+lease expiration, crash/restart invalidation, timeouts and bounded
+backpressure. The J2534 DLL remains fail-closed and unregistered;
+there is no CAN/ECU data plane, real-vehicle access or programming.
 
 Read first: docs/architecture/VIRTUALCAR-CSHARP-CPP-MIGRATION.md,
 docs/architecture/VIRTUALCAR-LEGACY-C-CPP-EXEC-PARITY-M4B2.md,
@@ -142,7 +146,7 @@ docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md.
 
 Exact cross-chat continuation phrase: **virtual car**.
 
-Verified checkpoint: 2026-11-06.
+Verified checkpoint: 2026-11-07.
 This document is the canonical cross-chat continuation note. Re-read the
 current GitHub PR/CI state before changing code; do not rely only on chat memory.
 
