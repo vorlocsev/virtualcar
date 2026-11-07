@@ -121,7 +121,7 @@ bool run(const std::wstring& pipe, std::uint32_t first_pid,
         previous = current;
 
         std::array<std::uint8_t, 61> data{};
-        data.fill(0xa5U);
+        data.fill(static_cast<std::uint8_t>(0xa5U));
         std::size_t length = 99;
         if (round == 3) {
             if (session.read_synthetic(route, 0xf187U, data, length) != Result::ok ||
