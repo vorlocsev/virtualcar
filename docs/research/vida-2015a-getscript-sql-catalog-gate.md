@@ -653,16 +653,35 @@ filter, and inaccessible EXE metadata may be omitted.
 No user program or diagnostic driver was started, no
 module injection, no registry writes, no hardware I/O.
 
-**Next owner-local read-only gate:** inventory Windows
-services whose name/display name matches VIDA/Volvo/DiCE,
-and standard IIS/HTTP publishing services (`W3SVC`, `WAS`),
-plus process-name-only presence of `w3wp`, `java`, and
-web-browser hosts; capture names, running state and PID
-only, not full paths, command lines, URLs, ports,
-credentials or vehicle data. An idle/stopped service is
-not a failure by itself; the installed GUI and actual
-transport selection remain unverified. Do not try to
-register the generic x86 J2534 proxy for VIDA yet.
+**Owner-local read-only Windows service and web-host inventory**
+confirmed:
+- `MSSQL$VIDA` Running / Auto / PID 4952;
+- `SQLAgent$VIDA` Stopped / Manual / PID 0;
+- `SQLTELEMETRY$VIDA` Running / Auto / PID 11056.
+No other names matched the scoped VIDA/Volvo/DiCE/IIS
+(`W3SVC`, `WAS`) service filter. In the specified web-host
+process-name list, the observed groups were
+`iexplore.exe` 2, `java.exe` 1, `msedge.exe` 13,
+`msedgewebview2.exe` 6. The output did **not** report
+`w3wp.exe`, `httpd.exe`, `javaw.exe`, `tomcat.exe`,
+`chrome.exe`, or `firefox.exe`. This is an idle-time
+snapshot, not proof that an HTTP server is absent; process
+names can differ. Neither one Java process nor two IE
+processes proves association with the VIDA diagnostic UI.
+The running VIDA SQL instance is consistent with prior
+read-only `DiagSwdlRepository` SQL queries. A stopped
+manual SQLAgent is not inherently a fault.
+
+**Next owner-local passive gate:** inspect `java.exe`,
+`iexplore.exe` and `VidaMonitor.exe` process parent names,
+PE architecture and version-resource manufacturer/product,
+service PID mapping and only BOOLEAN evidence of relevant
+VIDA/Volvo keywords in the locally read command line
+(without outputting command line, paths, URLs, titles,
+secrets or VIN). Avoid executing processes, loading DLLs,
+selecting physical hardware or modifying J2534 registry.
+This helps find the real VIDA process hosting the UI before
+any proposed virtual J2534 trace.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
