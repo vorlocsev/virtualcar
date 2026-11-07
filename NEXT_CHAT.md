@@ -19,6 +19,14 @@
   `Output` node. This makes a dynamic XML-directed
   `AddVIN`/`SetX40Serial` call possible, **not
   proven executed**. Original DLLs were not copied.
+- [Draft PR #159](https://github.com/vorlocsev/virtualcar/pull/159)
+  implements an offline, privacy-safe XML graph inspector.
+  Owner-only VMware feature ref allowlist was added through
+  merged CI-only [PR #160](https://github.com/vorlocsev/virtualcar/pull/160)
+  and [PR #161](https://github.com/vorlocsev/virtualcar/pull/161).
+  The **PR #159 exact source SHA** requires manual VM validation
+  and a subsequent post-merge run before promotion; do not
+  confuse development baseline with feature verification.
 - New source-bounded privacy-safe
   `emulator/tools/audit_vida_readvin_xml_graph.py`
   accepts one **authorized local UTF-8 script XML**;
