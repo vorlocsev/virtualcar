@@ -1,5 +1,46 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## ACTIVE checkpoint: P0 B9FB provenance corrected; protocol metadata review pending (2026-11-07)
+
+- Private, **read-only** Virtual Car laboratory. Never publish a release,
+  register a driver, claim XC90 V8 MY2009 ECU recognition, guess A3/E3
+  SecurityAccess, write flash or add fabricated OEM response bytes.
+- [PR #132](https://github.com/vorlocsev/virtualcar/pull/132) established
+  privacy-safe J2534-versus-SectorV evidence boundaries; post-merge Windows
+  [VMware #42378820296](https://github.com/vorlocsev/virtualcar/actions/runs/42378820296)
+  **SUCCESS**, Python **260**, native CTest **8/8** per architecture,
+  C# Host **17/17**.
+- [PR #136](https://github.com/vorlocsev/virtualcar/pull/136) fixed late-P2
+  B9FB target **0x40 / 0x50 / unknown** separation, merged as
+  `a6855672784953112d384d62b9494162cf66d122`.
+  Exact feature [VMware #42380164553](https://github.com/vorlocsev/virtualcar/actions/runs/42380164553)
+  **SUCCESS** on `9420807c57ad539746c6f108c3e368406dab5231`:
+  Python **268**, native Windows x86/x64 **8/8 CTest**, C# Host **17/17**.
+  Automatic post-merge
+  [VMware #42380456268](https://github.com/vorlocsev/virtualcar/actions/runs/42380456268)
+  **SUCCESS** on the precise merged code commit.
+- [PR #139](https://github.com/vorlocsev/virtualcar/pull/139)
+  **DRAFT / NOT YET FEATURE-VERIFIED**: adds source `protocol_categories`
+  to each J2534 stage and prevents a target-50 `delivered` response with
+  solely ISO15765/unknown metadata from skipping source-protocol review.
+  Includes eight synthetic test groups (total expected Python **276**);
+  do not merge until an **owner-only Windows VMware** run validates exact
+  feature HEAD, followed by a post-merge run. No emulator/J2534 DLL
+  implementation changed.
+- Workflow owner-only feature allowlist was mirrored to `main` and
+  `development` via CI-only PRs #140/#141. A baseline CI success
+  does **NOT** verify PR #139.
+- Issue [#4](https://github.com/vorlocsev/virtualcar/issues/4) remains
+  **unresolved**: SectorV MY2005 LAB matched B9FB frames but had no
+  accepted A3 Hardware RX, no reachable ECUs; do not generalize to XC90
+  V8 MY2009. Full authorized matched client/J2534 acquisition is still
+  missing, as is the normal-mode predicate.
+- When resuming, check exact GitHub refs, Actions/PR status and real
+  logs **before** changing code or claiming completion. Keep any
+  captured VIN/INI/CAN or private client material off GitHub.
+
+---
+
 ## ACTIVE checkpoint: M5D-2eB verified; return to P0 CEM evidence (2026-11-07)
 
 Virtual Car remains a PRIVATE synthetic/read-only lab separate from Dvinholm.

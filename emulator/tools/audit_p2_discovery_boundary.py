@@ -122,6 +122,7 @@ def summarize(items, stage, target=None):
         n, "unknown" if n is None else "other")
     return {"requests": len(selected),
             "statuses": dict(sorted(Counter(x["status"] for x in selected).items())),
+            "protocol_categories": dict(sorted(Counter(x["protocol"] for x in selected).items())),
             "baud_categories": dict(sorted(Counter(baud(x["baud_bps"]) for x in selected).items())),
             "id_formats": dict(sorted(Counter(x["id_format"] for x in selected).items())),
             "missing_channel_metadata": sum(x["channel"] is None for x in selected),
@@ -159,6 +160,14 @@ def audit(transport, gate, *, same_run_reviewed=False):
     elif gate["scenario"] in ("P2_MY2005_lab", "P2_MY2009_lab") and \
             not stages["B9FB_50"]["statuses"].get("delivered"):
         priority = "investigate_b9fb_target_50_transport"
+    elif gate["scenario"] in ("P2_MY2005_lab", "P2_MY2009_lab") and not any(
+            item["route"] == "D2" and item["service"] == "B9FB" and
+            item["target"] == "0x50" and item["status"] == "delivered" and
+            item["protocol"] == "CAN" for item in items):
+        # Delivered frames without a known CAN protocol may be a mislabelled
+        # channel or an old text trace with missing connect metadata.
+        # Require evidence review; do not claim that SectorV rejected a frame.
+        priority = "verify_b9fb_target_50_can_protocol_metadata"
     elif client_match != "complete_frame_matcher_only":
         priority = "obtain_complete_client_b9fb_matcher_evidence"
     elif any(v["outcome"] == "timeout" for v in hardware.values()):
@@ -181,6 +190,14 @@ def audit(transport, gate, *, same_run_reviewed=False):
             "client_matcher_target": "not_reported_by_gate_schema",
             "j2534_target_50_delivered": bool(stages["B9FB_50"]["statuses"].get("delivered")),
             "j2534_target_40_delivered": bool(stages["B9FB_40"]["statuses"].get("delivered")),
+            "j2534_target_50_delivered_known_can": any(
+                item["route"] == "D2" and item["service"] == "B9FB" and
+                item["target"] == "0x50" and item["status"] == "delivered" and
+                item["protocol"] == "CAN" for item in items),
+            "j2534_target_50_delivered_unverified_protocol": sum(
+                item["route"] == "D2" and item["service"] == "B9FB" and
+                item["target"] == "0x50" and item["status"] == "delivered" and
+                item["protocol"] != "CAN" for item in items),
             "target_cross_source_match": "not_established",
             "target_50_model_context": (
                 "p2_my2005plus_service_node_hypothesis_not_wire_identity"
@@ -203,6 +220,8 @@ def audit(transport, gate, *, same_run_reviewed=False):
             "J2534 delivery and B9FB frame matching do not prove accepted VIN.",
             "B9FB target 40/50/unknown are reported separately; a target 40 positive never substitutes for target 50 in the late-P2 laboratory priority.",
             "The SectorV gate schema has no B9FB matcher target field; no cross-source target correspondence is claimed.",
+            "CAN versus ISO15765 versus unknown report fields are source channel metadata, not proven ECU hardware compatibility.",
+            "B9FB target 50 with no known-CAN delivered transaction triggers protocol metadata review, not any invented client rejection.",
             "A3/E3 observations do not establish SecurityAccess or normal-mode acceptance.",
             "A6/B9F0/P3 delivery cannot establish XC90 MY2009 ECU identity."]}
 
