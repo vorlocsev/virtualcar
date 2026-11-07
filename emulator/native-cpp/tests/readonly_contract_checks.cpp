@@ -211,9 +211,12 @@ bool group05_correlate_positive_reply_by_owner_did_and_route() {
         return false;
     if (ledger.bind(owner, extended, 200, 500) != Result::ok ||
         ledger.submit(request(3, 0xf189, extended), 201) != Result::ok ||
-        ledger.complete(response(3, 0xf189, extended), 202) != Result::ok)
+        ledger.complete(response(3, 0xf189, extended), 202) != Result::ok ||
+        ledger.submit(request(4, 0xf190, extended), 203) != Result::ok)
         return false;
-    return ledger.active() && ledger.pending() == 0;
+    // Reply on a different CAN route is never accepted as another ECU.
+    return ledger.complete(response(4, 0xf190, standard), 204) == Result::denied &&
+        !ledger.active() && ledger.pending() == 0;
 }
 
 bool group06_bounded_queue_and_no_replay_after_cancel() {
