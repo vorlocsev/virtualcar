@@ -62,6 +62,20 @@ def validate_transport(source):
             raise ValueError("invalid baud")
         if not integer(item["rx_frames"], 100000):
             raise ValueError("invalid RX count")
+        marker = item.get("native_cem_response_unimplemented", False)
+        timeout_observed = item.get("j2534_timeout_observed", False)
+        if type(marker) is not bool or type(timeout_observed) is not bool:
+            raise ValueError("invalid native marker or timeout metadata")
+        if marker:
+            if not (route == "D2" and service in ("A3", "A6")
+                    and item["target"] in ("0x40", "0x50")
+                    and item["protocol"] in ("CAN", "unknown")
+                    and (state == "unsupported" and
+                         item.get("reason") == "cem_response_not_implemented"
+                         or state == "unverified")):
+                raise ValueError("contradictory CEM unimplemented marker")
+        elif item.get("reason") == "cem_response_not_implemented":
+            raise ValueError("native missing-implementation reason without marker")
         statuses[state] += 1
     if any(s not in STATUS or not integer(v, 20000) for s, v in source["counts"].items()):
         raise ValueError("invalid status counters")
@@ -122,6 +136,18 @@ def summarize(items, stage, target=None):
         n, "unknown" if n is None else "other")
     return {"requests": len(selected),
             "statuses": dict(sorted(Counter(x["status"] for x in selected).items())),
+            "native_unimplemented_no_rx": sum(
+                x.get("native_cem_response_unimplemented", False)
+                and x["status"] == "unsupported"
+                and x.get("reason") == "cem_response_not_implemented"
+                for x in selected),
+            "native_marker_with_unverified_rx": sum(
+                x.get("native_cem_response_unimplemented", False)
+                and x["status"] == "unverified" for x in selected),
+            "native_marker_followed_by_j2534_timeout": sum(
+                x.get("native_cem_response_unimplemented", False)
+                and x.get("j2534_timeout_observed", False)
+                for x in selected),
             "protocol_categories": dict(sorted(Counter(x["protocol"] for x in selected).items())),
             "baud_categories": dict(sorted(Counter(baud(x["baud_bps"]) for x in selected).items())),
             "id_formats": dict(sorted(Counter(x["id_format"] for x in selected).items())),
@@ -170,6 +196,12 @@ def audit(transport, gate, *, same_run_reviewed=False):
         priority = "verify_b9fb_target_50_can_protocol_metadata"
     elif client_match != "complete_frame_matcher_only":
         priority = "obtain_complete_client_b9fb_matcher_evidence"
+    elif any(stages[k]["native_unimplemented_no_rx"]
+             for k in ("A3_40", "A3_50", "A6")):
+        # The DLL disclosed its own unimplemented response path. This is
+        # stronger emulator evidence than a generic client read timeout,
+        # but still cannot establish any SectorV acceptance predicate.
+        priority = "native_cem_a3_a6_response_not_implemented"
     elif any(v["outcome"] == "timeout" for v in hardware.values()):
         priority = "investigate_hardware_a3_no_reply_without_emulating_security"
     elif gate["normal_mode_warning_observed"]:
@@ -223,6 +255,8 @@ def audit(transport, gate, *, same_run_reviewed=False):
             "CAN versus ISO15765 versus unknown report fields are source channel metadata, not proven ECU hardware compatibility.",
             "B9FB target 50 with no known-CAN delivered transaction triggers protocol metadata review, not any invented client rejection.",
             "A3/E3 observations do not establish SecurityAccess or normal-mode acceptance.",
+            "An exact native CEM marker proves this emulator's A3/A6 response is not implemented; it cannot prove what SectorV would accept.",
+            "The native missing-implementation flag and a later J2534 read timeout are reported as different observations.",
             "A6/B9F0/P3 delivery cannot establish XC90 MY2009 ECU identity."]}
 
 def main(argv=None):
