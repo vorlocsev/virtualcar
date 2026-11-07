@@ -1,6 +1,11 @@
 # M5D-2a | Authenticated C# synthetic fixture reads
 
-Status: **VALIDATED ON PRIVATE WINDOWS SELF-HOSTED RUNNER, PR #102 PENDING MERGE**.
+Status: **MERGED and verified on private Windows self-hosted runner**.
+PR #102 merged into development as `850cc049ac7b78316f3c6e59808e9fbe957b9e0e`.
+Post-merge [VMware #42343287172](https://github.com/vorlocsev/virtualcar/actions/runs/42343287172)
+completed SUCCESS on this exact commit: C# Host 17/17,
+native x86 and x64 7/7 CTest each, all baseline regressions PASS,
+zero uploaded artifacts. M5D-2b C++ client is NOT IMPLEMENTED.
 [VMware #42342961556](https://github.com/vorlocsev/virtualcar/actions/runs/42342961556)
 executed actual M5D-2a source `5c650ee03a2f1e73af6b7d462dacca0792cc1c38` on
 `VirtualCar-CI-WIN`: 17/17 C# Host Named Pipe checks,

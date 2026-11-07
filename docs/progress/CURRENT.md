@@ -37,6 +37,14 @@ from `main` and completed SUCCESS in #42321161342, validating
 
 ## COMPLETED: M5D-2a authenticated C# Host synthetic fixture reads (Windows PASS, 2026-11-07)
 
+**Merged and verified:** PR #102 merged into `development`
+as `850cc049ac7b78316f3c6e59808e9fbe957b9e0e`. Automatic [VMware CI #42343287172](https://github.com/vorlocsev/virtualcar/actions/runs/42343287172)
+completed **SUCCESS** on this exact merge commit: C# Host 17/17,
+Win32 7/7 CTest, x64 7/7 CTest, M5B/M5C-2 and baseline Python/C/Go/.NET
+checks PASS. Artifacts: 0. This does not expose a native read client
+or activate the J2534 data plane.
+
+
 M5D-2a introduces a strict C# VCRD v1 codec and synthetic VCRF
 fixture parser inside the existing current-user VCLB Named Pipe Host.
 After an authenticated 256-bit-secret HELLO and valid core scenario
