@@ -181,7 +181,7 @@ class VidaSelectionTraceTests(unittest.TestCase):
                     main([str(private), "--output", str(out)])
 
 
-    def test_17_vida2014d_readvin_is_not_vida2015a(self):
+    def test_17_vida2014d_literal_log_marker_not_build_incompatibility(self):
         records = ["Starting new logsession: 2026-09-25 22:22:30\n",
                    "VIDA release: VIDA2014D\n",
                    get(script_type="ReadVin"), fetched(), running()]
@@ -191,6 +191,7 @@ class VidaSelectionTraceTests(unittest.TestCase):
         self.assertEqual(ev["declared_vida2015a_release_lines"], 0)
         self.assertEqual(ev["readvin_triplets_declared_vida2014d"], 1)
         self.assertEqual(ev["readvin_triplets_declared_vida2015a"], 0)
+        self.assertTrue(audit["literal_release_marker_does_not_prove_incompatible_diagnostic_engine"])
         self.assertFalse(audit["actual_vida_client_identity_verified"])
 
     def test_18_vida2015a_explicit_tag_is_still_not_vin_acceptance(self):
