@@ -1,7 +1,9 @@
 # M5B: native C++20 client for the M5A local pipe
 
-Status: **IN PROGRESS**, stacked on Draft PR #85. This is a protocol and
-transport preflight only. The C++ J2534 DLL remains fail-closed and does
+Status: **WINDOWS x86/x64 PRE-FLIGHT VERIFIED** on private VMware run
+[#42318278748](https://github.com/vorlocsev/virtualcar/actions/runs/42318278748).
+M5A parent PR #85 merged to development as `410ade408`; M5B is PR #87.
+This is a protocol and transport preflight only. The C++ J2534 DLL remains fail-closed and does
 not link this client yet.
 
 ## Scope
@@ -58,10 +60,31 @@ Additional native integration:
   Dvinholm E2E and physical J2534 acceptance.
 - No Virtual Car release, package or artifact publication.
 
-Parent M5A is verified 9/9 on VMware workflow #42314429323 at head 42df2953. M5B itself remains unverified until its own Windows x86/x64 workflow executes.
+## Verification record and next stage
 
-The owner-only VMware dispatch selector and x86/x64 cross-language workflow are enabled by PR #88, merged to main as `80e18c201b8167612e3a8eb71e9c23eb58043b19`. The M5B VMware run is still pending.
+M5A host validated 9/9 on private VMware #42314429323 and merged
+into `development` via PR #85 (merge commit `410ade408`).
 
-CI is the authority for compile/runtime claims. Do not mark M5B complete
-until Windows x86 and x64 native builds, all 8 offline gates and both
-cross-language C++-to-C# integration runs pass.
+M5B native source head `053e60e5996228b1776f4d728d61de839cad9256`
+was exercised by private VMware workflow #42318278748, using the
+workflow definition from `main` commit `84f12eb22c837c32ff03728878edf3ccd10a5004`.
+Results:
+- C++ x86: 4/4 CTest including all eight M5B gates.
+- C++ x64: 4/4 CTest including all eight M5B gates.
+- Wrong-server-PID before HELLO: PASS separately on x86 and x64;
+  host exit code zero in both cases.
+- Client ↔ C# Host HELLO, concurrent session-bound KEEPALIVE and
+  GOODBYE: PASS independently on x86/x64; host exit code zero.
+- M5A 9/9 and baseline Python/C/Go/.NET checks: PASS.
+- No artifacts, packages, deployments or releases.
+
+Prior run #42317744015 hit an orchestrator-only Windows PowerShell
+5.1 `Start-Process -PassThru` blank ExitCode. CI-only PR #89 fixed
+the owning Process handle on `main`; re-run #42318278748 passed.
+
+**M5A + M5B are not complete M5.** Next is M5C: bind the verified
+local IPC session to deliberately fail-closed J2534 lifecycle state,
+test bounded channel ownership, lease/heartbeat expiry, restart/crash
+invalidation and backpressure, *before* any CAN/ECU data plane is
+enabled. No real vehicle, programming, PIN, external J2534
+registration, Dvinholm E2E or production launch-secret provisioning.
