@@ -103,3 +103,19 @@ Dvinholm VIN/ECU identity acceptance, functional J2534 over CAN,
 real Volvo P2 protocol compatibility, physical adapter validation
 or authorization for SecurityAccess, PIN/immobilizer functions or
 flash/programming. No Virtual Car releases without explicit direction.
+
+
+## M5D-2b native read regression coverage (2026-11-07)
+
+Private feature VMware #42344223822 passed actual x86/x64 C++↔C#
+synthetic F187/F189/F190 reads, wrong-route/missing-fixture denial,
+and lease expiry. Merged PR #105 as `08b3a9da3c6693f655b7157a68ff5ad26bdf1dda`. The first
+post-merge automatic CI #42344476899 passed but did not include
+the new read E2E step because development YAML lagged behind main.
+PR #107 synchronized the central self-hosted workflow on both refs.
+A fresh automatic [#42344666980](https://github.com/vorlocsev/virtualcar/actions/runs/42344666980)
+SUCCESS on exact `2989dcbf77676e6555b6de164539fe6a5dd2253b` then executed
+four M5D-2b cases on **each architecture**, with CTest x86/x64
+7/7 each, managed Host 17/17 and all baseline checks PASS.
+Zero artifacts/releases. Next M5D-2c pending-read cancel and
+crash/restart tests remain unimplemented; J2534 still fail-closed.
