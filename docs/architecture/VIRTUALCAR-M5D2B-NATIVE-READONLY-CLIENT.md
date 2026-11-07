@@ -1,6 +1,13 @@
 # M5D-2b | Authenticated native synthetic read client
 
-Status: **WINDOWS x86/x64 SELF-HOSTED VERIFIED**, PR #105 pending merge.
+Status: **MERGED and Windows x86/x64 SELF-HOSTED VERIFIED**.
+PR #105 merged as `08b3a9da3c6693f655b7157a68ff5ad26bdf1dda`. Initial post-merge
+#42344476899 SUCCESS omitted the new M5D-2b test step due to
+older workflow YAML on development. PR #107 synchronized it
+with main. [#42344666980](https://github.com/vorlocsev/virtualcar/actions/runs/42344666980) then
+completed SUCCESS on `2989dcbf77676e6555b6de164539fe6a5dd2253b`, including
+four native read integration tests per arch, 7/7 CTest on x86/x64,
+managed Host 17/17 and all legacy regressions. Zero artifacts.
 
 [Private VMware #42344223822](https://github.com/vorlocsev/virtualcar/actions/runs/42344223822)
 completed SUCCESS on exact feature code SHA `8742b687c388f1603b90d95af95827b86f09b92b`

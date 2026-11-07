@@ -51,6 +51,19 @@ software publication remain prohibited.
 
 ## COMPLETED: M5D-2b native authenticated synthetic VCRD reader (Windows x86/x64 PASS, 2026-11-07)
 
+**Merged and post-merge reverified:** PR #105 merged as `08b3a9da3c6693f655b7157a68ff5ad26bdf1dda`.
+Its first automatic CI #42344476899 passed baseline gates, but
+still used older `development` workflow YAML lacking the new
+cross-language M5D-2b step. PR #107 synchronized the self-hosted
+central workflow byte-for-byte with `main`. Automatic
+[CI #42344666980](https://github.com/vorlocsev/virtualcar/actions/runs/42344666980) then passed on
+`2989dcbf77676e6555b6de164539fe6a5dd2253b`, explicitly running four M5D-2b
+C++↔C# cases on each of Windows x86 and x64: sealed synthetic
+F187/F189/F190 data, wrong-route refusal, missing fixture refusal
+and pre-read lease expiry. Native CTest 7/7 each, C# Host 17/17,
+Python 252, C/Go/.NET, M5B/M5C-2 all PASS. Artifacts: 0.
+
+
 **Private VMware verified:** [#42344223822](https://github.com/vorlocsev/virtualcar/actions/runs/42344223822)
 SUCCESS on exact source `8742b687c388f1603b90d95af95827b86f09b92b` checked out by
 `VirtualCar-CI-WIN`. Native MSVC x86 7/7 and x64 7/7 CTest,
@@ -84,8 +97,7 @@ M5B/M5C-2 and native CTest must remain green. No asynchronous
 8-in-flight IPC pipeline is claimed: reads serialize by mutex;
 the eight-slot ledger is retained for exact correlation/limits.
 Live in-flight read crash/restart and cancellation tests remain for
-the next follow-up. **x86/x64 integration verified**, PR #105
-eligible for merge after documentation-only evidence commit.
+the next follow-up. **x86/x64 integration verified; PR #105 merged.**
 
 No `VirtualCarJ2534Cpp` linkage, no physical CAN, real ECU/vehicle
 identity, SecurityAccess, PIN, programming, artifacts or releases.
