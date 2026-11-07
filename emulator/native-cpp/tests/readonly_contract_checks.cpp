@@ -144,12 +144,23 @@ bool group02_framing_rejects_all_malformed_headers() {
 bool group03_read_only_service_and_did_allowlist() {
     std::array<std::uint8_t, Codec::maximum_wire_size> bytes{};
     std::size_t used{};
-    for (const std::uint16_t did : {0xf187U, 0xf189U, 0xf190U}) {
+    constexpr std::array<std::uint16_t, 3> allowed_dids{
+        static_cast<std::uint16_t>(0xf187U),
+        static_cast<std::uint16_t>(0xf189U),
+        static_cast<std::uint16_t>(0xf190U)
+    };
+    for (const std::uint16_t did : allowed_dids) {
         if (!Codec::encode(request(did, did), bytes, used) ||
             !Codec::encode(response(did, did), bytes, used))
             return false;
     }
-    for (const std::uint8_t command : {0x27U, 0x2eU, 0x31U, 0x34U}) {
+    constexpr std::array<std::uint8_t, 4> forbidden_services{
+        static_cast<std::uint8_t>(0x27U),
+        static_cast<std::uint8_t>(0x2eU),
+        static_cast<std::uint8_t>(0x31U),
+        static_cast<std::uint8_t>(0x34U)
+    };
+    for (const std::uint8_t command : forbidden_services) {
         Envelope denied = request(1);
         denied.payload[0] = command;
         if (Codec::encode(denied, bytes, used) || used != 0)
