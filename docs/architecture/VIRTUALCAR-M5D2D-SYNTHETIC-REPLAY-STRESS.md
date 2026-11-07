@@ -1,0 +1,84 @@
+# M5D-2d | Synthetic read replay, deadline and repeatability gates
+
+Status: **MERGED, feature and post-merge Windows x86/x64 CI VERIFIED**.
+
+PR #117 merged as `f3f907e98669c172edb15265ae015f222a82be7e`.
+Automatic owner-only [VMware #42369754826](https://github.com/vorlocsev/virtualcar/actions/runs/42369754826)
+completed SUCCESS on this exact merge commit. CTest x86 7/7
+and x64 7/7, 11 Ledger test groups in the source CTest
+executable, managed Host 17/17, prior read/cancel/restart
+regressions PASS, and new M5D-2d 64-read synthetic C++ ↔ C#
+Host integration explicitly PASS on both x86 and x64.
+All baseline C/Python 252/Go/.NET pass. Artifacts: zero.
+
+Private owner-dispatched [VMware #42369341323](https://github.com/vorlocsev/virtualcar/actions/runs/42369341323)
+completed SUCCESS, checking out exact M5D-2d source SHA
+`5fff8957dd6963d013be6a6f0b0fee3f78b7ac1b`. Both native Win32 and x64 passed
+7/7 CTest and the new explicit 64-read synthetic C++ ↔ C# Host
+stress step; C# Host 17/17 and M5B/M5C-2/M5D-2b/M5D-2c,
+Python 252, C/Go/.NET passed. Uploaded artifacts: 0.
+The 11 internal M5D-1 Ledger groups are covered by the native
+CTest target on this feature source. Actual per-group printout
+is not separately present in the normal summary log.
+
+This is an incremental validation stage for the authenticated,
+single-client synthetic VCRD read path completed at M5D-2c.
+No new production CAN/J2534 features are added, no route/DID
+allowlist is expanded, and no physical adapter, vehicle, PIN,
+SecurityAccess or programming is invoked.
+
+## Standalone VCRD ledger tests
+
+`readonly_contract_checks.cpp` has three additional gates (11 total):
+
+9. **Reused numeric session, new Host process**: a previous
+   response from an old creation FILETIME is denied even if
+   numeric session ID/generation and PID match. Old operation
+   IDs cannot be replayed into a re-bound Ledger. A new,
+   higher operation ID with the new owner is accepted.
+10. **Serial repeated identification under ownership changes**:
+    256 offline synthetic requests across eight epochs with
+    strictly increasing operations, synthetic DID cycling
+    F187/F189/F190 and zero pending entries after every reply.
+    Replayed prior operation IDs are denied across revoke/rebind.
+11. **Exact timeout boundary repeatability**: 40 synthetic
+    pending operations each expire at their exact deadline,
+    and replies cannot resurrect the expired slot.
+
+The C++ Ledger is an offline synthetic correlator; these unit
+tests do not communicate with a real vehicle or Host.
+
+## Native to C# Host integration stress
+
+New native CLI mode `--readonly-stress <pipe> <pid>` uses one
+authenticated M5C-2 session and one C# test Host with the
+immutable, digest-verified VCRF fixture. It performs 64
+consecutive allowlisted identification requests with exact
+expected A/B/C/LAB invented bytes, and verifies pending Ledger
+count is zero after each response. It periodically heartbeats
+the session, rejects unsupported F191 without closing a healthy
+authenticated connection, then performs another F187 read and
+cleanly disconnects. The test runs independently for native
+Win32 and x64.
+
+The implementation deliberately serializes read requests.
+The Ledger maximum of eight remains defense in depth; this
+step does NOT demonstrate eight parallel requests, arbitrary
+CAN traffic, a deployed J2534 data plane or real ECU responses.
+
+## Acceptance
+
+Private owner-only Windows VMware CI must check out the exact
+feature branch source, compile native x86/x64 with MSVC /W4 /WX,
+run all 7/7 CTest each with 11/11 inner Ledger gates, managed
+Host 17/17, M5D-2b and M5D-2c prior integration cases, plus
+one successful new 64-read native ↔ managed Host stress run
+on EACH architecture. C/Python 252/Go/.NET baseline must stay
+green. All results must be checked in logs before merging.
+
+Feature acceptance and independent automatic post-merge
+development CI on exact merge commit `f3f907e98669c172edb15265ae015f222a82be7e`
+are both VERIFIED. The new 64-read integration checks
+executed on both Windows architectures. This does not establish
+a J2534 data-plane capability or parallel eight-slot IPC. No uploads, packages,
+releases, installers, public artifacts or hardware activity.

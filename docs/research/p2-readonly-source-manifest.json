@@ -1,0 +1,626 @@
+{
+  "reviewed_date": "2026-11-02",
+  "scope": "downloaded_public_sources_only",
+  "raw_sources_committed": false,
+  "files": [
+    {
+      "name": "gauge_readme",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/README.md",
+      "bytes": 5160,
+      "sha256": "b500bec7fff2c25bc5cbfe74c367e68696de9115013f66b6e9b0191663bc6c8c"
+    },
+    {
+      "name": "gauge_ignition",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/Sniffing/Logs/High-Low%20Speed%20Ignition%20Off%20On%20Off.csv",
+      "bytes": 5427524,
+      "sha256": "7efd045a5e78a5304a0c0ebb5e319ab5c5890d5e1ac16b3775228a81cc81b77c"
+    },
+    {
+      "name": "gauge_startup",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/Sniffing/Logs/Low%20Speed%20Startup%20and%20Idle.csv",
+      "bytes": 4266251,
+      "sha256": "62a9f9a107bb6629393855b32eb99e8e13993600db1a696f1e4bfc0ffc214b4b"
+    },
+    {
+      "name": "gauge_test",
+      "url": "https://raw.githubusercontent.com/Alfaa123/Volvo-CAN-Gauge/f55ab7e0a541a7b2935985acfe6cafe63216d0bd/Sniffing/Logs/Test%20log.csv",
+      "bytes": 19323,
+      "sha256": "afb8e042520247915bb91e5fe7ec14eb7aa6fc8d62e7e83d825eb90ce3aa1102"
+    },
+    {
+      "name": "sardine_readme",
+      "url": "https://raw.githubusercontent.com/hackingvolvo/SardineCAN-Win32/b87e3974f8b93f0b8268b50c0af15c558dcc9b73/README.txt",
+      "bytes": 891,
+      "sha256": "c3a8ecf553a4250bf35089daf5963c0397e6170bebe403b20791cd3c8cdbe386"
+    },
+    {
+      "name": "success_blog",
+      "url": "https://hackingvolvo.blogspot.com/2012/12/success.html",
+      "bytes": 92666,
+      "sha256": "4618e87b8625bd52491ab62f9500636ffd5eebcb7c3dab210f418fe83299dca7"
+    },
+    {
+      "name": "sardine_blog",
+      "url": "https://hackingvolvo.blogspot.com/2012/12/sardine-can-version-02-alpha-now.html",
+      "bytes": 70120,
+      "sha256": "c228b2a2e6934ae66f7de3c5591977385c0881c1f93724308bc539ba99dcaf76"
+    },
+    {
+      "name": "s60_ignition",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/09-06-2025/09-06-2025%2019-38%20---%20Key%20in%2C%20ignition%20cycle%2C%20car%20in%20standby%20%28not%20until%20shutdown%29.csv",
+      "bytes": 1047919,
+      "sha256": "49c51240690a89c3024d1809a1aae3b1151b9f7b6c3254fb07dcbb8a473f4a78"
+    },
+    {
+      "name": "v70_ignition",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2003%20Volvo%20V70%20II%20D5244T%20M56/HSCAN_accthenignthenoff.csv",
+      "bytes": 1893612,
+      "sha256": "2ed34d81a8966079738637eec47d29a8b6a8a33dc7220a0a2841756bbb2904e1"
+    },
+    {
+      "name": "spnda_readme",
+      "url": "https://raw.githubusercontent.com/spnda/volvo_vida_db/e2f8ee165e373360d7f7fd0e80298f68c25bc07e/README.md",
+      "bytes": 6709,
+      "sha256": "9985e1c52082a7659d6e22e0703e8afdbf6fd60f20a98ee4a85184f233753f47",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "e2f8ee165e373360d7f7fd0e80298f68c25bc07e",
+      "commit_date_utc": "2026-10-15T14:45:05Z"
+    },
+    {
+      "name": "spnda_d2",
+      "url": "https://raw.githubusercontent.com/spnda/volvo_vida_db/e2f8ee165e373360d7f7fd0e80298f68c25bc07e/scripts/d2.py",
+      "bytes": 15616,
+      "sha256": "48ee47cac41f23900cae40edcfb8dc2e23294406756c2d4c839a8ebe38effb7e",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "e2f8ee165e373360d7f7fd0e80298f68c25bc07e",
+      "commit_date_utc": "2026-10-15T14:45:05Z"
+    },
+    {
+      "name": "martonn_readme",
+      "url": "https://raw.githubusercontent.com/martonn98/VolvoP2_CAN/708a54499b28b591862a1b51c203839ac4ae3449/README.md",
+      "bytes": 2411,
+      "sha256": "8f240fae79eabb9fbbb4c01993b53e9f3dae4960a47e3501c3e9f657b6e6c534",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "708a54499b28b591862a1b51c203839ac4ae3449",
+      "commit_date_utc": "2022-10-16T07:45:55Z"
+    },
+    {
+      "name": "jan_diagnostic",
+      "url": "https://jan-jansen.readthedocs.io/en/latest/_sources/volvo-diagnostic.rst.txt",
+      "bytes": 5394,
+      "sha256": "d1c699884f8d1e2d9cbd6ea7e5fd951ff3215bfd3bc1387f08c59904cea2f6e8",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture"
+    },
+    {
+      "name": "jan_intro",
+      "url": "https://jan-jansen.readthedocs.io/en/latest/_sources/intro.rst.txt",
+      "bytes": 2717,
+      "sha256": "82233646e1fb9ba479331e8825aa996129ce54ddb87a341d55e441938b85393e",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture"
+    },
+    {
+      "name": "jan_modules",
+      "url": "https://jan-jansen.readthedocs.io/en/latest/_sources/canbus/volvo-modules.rst.txt",
+      "bytes": 992,
+      "sha256": "d259efc82b9c0d2b2825ae60ee6cff2b0918126bc6a5554bdfa5dc218b4e5117",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture"
+    },
+    {
+      "name": "volvotools_readme",
+      "url": "https://raw.githubusercontent.com/prometey1982/VolvoTools/e725176a936177f288234a77507781e0cd5ba2a7/README.md",
+      "bytes": 3837,
+      "sha256": "6f6c48a631abe303e7f261369f4942821b8cca8d72e75507f6c95a64da211edb",
+      "retrieved_at_utc": "2026-11-01T22:28:54+00:00",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "commit": "e725176a936177f288234a77507781e0cd5ba2a7",
+      "commit_date_utc": "2026-10-20T06:10:34Z"
+    },
+    {
+      "name": "r2_toolkit_readme",
+      "url": "https://raw.githubusercontent.com/MarvinParanoid/VolvoDiagToolkit/9a5884cc45998702d35faaa95df32784b2d349d7/README.md",
+      "commit": "9a5884cc45998702d35faaa95df32784b2d349d7",
+      "commit_date_utc": "2026-08-05T07:35:19Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 7276,
+      "sha256": "3d75988d589e298bfd583c66650f7fb23ac1ec43f57ff0296e947797b3261243",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_p2shell_readme",
+      "url": "https://raw.githubusercontent.com/h3llo0p3rator/volvo-p2-diagnostics/77bb3c18e6518ca62d93f7e6fdba84a786162aa4/README.md",
+      "commit": "77bb3c18e6518ca62d93f7e6fdba84a786162aa4",
+      "commit_date_utc": "2026-10-18T23:18:53Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 2981,
+      "sha256": "f0c3344d0a1d8cd573b25f38a12765fc4135a1000dbfa1a3964b37b3524b1637",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_trent_readme",
+      "url": "https://raw.githubusercontent.com/Trent175/P2DiCETools/25b2902c1df18352f91546634edc2057a859cd77/README.md",
+      "commit": "25b2902c1df18352f91546634edc2057a859cd77",
+      "commit_date_utc": "2026-09-01T15:43:36Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 136,
+      "sha256": "7c2324936a57724d02707fe9e8ed3e59d5217f05d7e29f29faab72b14679184b",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_waal_readme",
+      "url": "https://raw.githubusercontent.com/waal70/VolvoCANBUS/5b7c9a60c65ecf2d5cfa78cf18beabf8e5c7ae14/README.md",
+      "commit": "5b7c9a60c65ecf2d5cfa78cf18beabf8e5c7ae14",
+      "commit_date_utc": "2026-01-14T11:04:30Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 4608,
+      "sha256": "5d4b0e963d21d498904d7540ef2be9e2bfc0818486a27304efd1de711d9ff7b6",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_vlink_readme",
+      "url": "https://raw.githubusercontent.com/BoostedMoose/v-link/6e5d225e3c8ff87aab01cc83a6b422da1d07d217/README.md",
+      "commit": "6e5d225e3c8ff87aab01cc83a6b422da1d07d217",
+      "commit_date_utc": "2025-09-09T13:17:33Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 3778,
+      "sha256": "5534291dff19ae8f43d697b432e094c5cff7f762a40f4bdf2d9557e119fc2fbb",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_esp32_readme",
+      "url": "https://raw.githubusercontent.com/cozadizzle/esp32-car-tool/7eaee2d07bbdac706f496eb4ae5c653d489b7878/README.md",
+      "commit": "7eaee2d07bbdac706f496eb4ae5c653d489b7878",
+      "commit_date_utc": "2026-06-12T03:25:25Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 16017,
+      "sha256": "05f944e2cbe2bb45fdb6396f47f25763ce5484ed047e33dbdf83a747df3684fc",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_informer_readme",
+      "url": "https://raw.githubusercontent.com/drpioneer/Volvo-P2-informer/9cd3a6f603915e074ac28c73eccec6b7473e8297/README.md",
+      "commit": "9cd3a6f603915e074ac28c73eccec6b7473e8297",
+      "commit_date_utc": "2026-05-26T08:26:09Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 5088,
+      "sha256": "84c1fb0fbf37755cda27b82264cc976ca019281e92d4007c32c1b575ca748144",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_ddfe_readme",
+      "url": "https://raw.githubusercontent.com/Vaizer/DDFE/4749c5f1223ff8d8a4848b41a409229b6c5c561f/README.md",
+      "commit": "4749c5f1223ff8d8a4848b41a409229b6c5c561f",
+      "commit_date_utc": "2025-12-24T06:51:33Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 2477,
+      "sha256": "f40903ca81c27c6903d4fc47af35d87382673c18ba673091d34d912688ae0646",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_demtool_readme",
+      "url": "https://raw.githubusercontent.com/Theralley/volvodiag/ac904bf88092b3545fc7881a11ce88e406e397b4/README.md",
+      "commit": "ac904bf88092b3545fc7881a11ce88e406e397b4",
+      "commit_date_utc": "2026-11-01T16:25:59Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 9097,
+      "sha256": "b11bb0a06a82474065a389c3b7377301c3a51da0fd395cbf8fa700cfb95f854c",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_canlogger_readme",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/README.md",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 976,
+      "sha256": "110913efdb28f7933c416abbf566ecc3b8fab486ae3ee465c0a4edbfd7deaf8e",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_moosesnif_readme",
+      "url": "https://raw.githubusercontent.com/najnesnaj/moosesnif/bdedb6ec472dc86035a370942c8c4339ca2f9372/README.md",
+      "commit": "bdedb6ec472dc86035a370942c8c4339ca2f9372",
+      "commit_date_utc": "2024-10-16T12:01:01Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 1602,
+      "sha256": "968a5dd4cc9dad04d10d2ab747c8a60859392855dc01da166a2367ffbea23c47",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_p2shell_hardware",
+      "url": "https://raw.githubusercontent.com/h3llo0p3rator/volvo-p2-diagnostics/77bb3c18e6518ca62d93f7e6fdba84a786162aa4/docs/HARDWARE_TEST_RESULTS.md",
+      "commit": "77bb3c18e6518ca62d93f7e6fdba84a786162aa4",
+      "commit_date_utc": "2026-10-18T23:18:53Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 783,
+      "sha256": "d08e509c3da729e10adc075044fb70ebf05f7c4b5a77aed5d88de5ef37717990",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_vlink_lin_test",
+      "url": "https://raw.githubusercontent.com/BoostedMoose/v-link/6e5d225e3c8ff87aab01cc83a6b422da1d07d217/backend/dev/lin_test.txt",
+      "commit": "6e5d225e3c8ff87aab01cc83a6b422da1d07d217",
+      "commit_date_utc": "2025-09-09T13:17:33Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 65104,
+      "sha256": "22c36f0fe9f7023c89c8fd2d9344ce5e377e04835e34caeda5316990c7c72136",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_demtool_captures",
+      "url": "https://raw.githubusercontent.com/Theralley/volvodiag/ac904bf88092b3545fc7881a11ce88e406e397b4/captures/README.md",
+      "commit": "ac904bf88092b3545fc7881a11ce88e406e397b4",
+      "commit_date_utc": "2026-11-01T16:25:59Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 285,
+      "sha256": "cbcbff2e129446d6eecec519e13d3b8b83cdc4d82aeeb1a54bb4b228e8abc9d6",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_canlogger_filelogger",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/CanLogger/VolvoCanLogger/FileLogger.cs",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 1843,
+      "sha256": "57cca98e952f1be91957ea16bbca975b3091412820afca5b7c3d11526643722c",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_canlogger_format_errors",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/Samples/error.logdata",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "documentation_or_code_not_continuous_capture",
+      "bytes": 99,
+      "sha256": "c58ff37757baf9204e576874fab6324b723bd0dc9abb3a682665cf6efccaf43d",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "canlogger_big",
+      "url": "https://raw.githubusercontent.com/olegel/CANLogger/630049469d907a20903533a85b71ed44468871ac/Samples/big.logdata",
+      "commit": "630049469d907a20903533a85b71ed44468871ac",
+      "commit_date_utc": "2019-05-28T18:44:52Z",
+      "classification": "unattributed_slcan_sample_no_selected_diagnostic_ids",
+      "bytes": 1294591,
+      "sha256": "c3a4d35c082719ebfe2bed49986b0babc37510cc247ea23d9fdb35f40450643a",
+      "retrieved_at_utc": "2026-11-01T23:13:39+00:00"
+    },
+    {
+      "name": "r2_xc90_ids",
+      "url": "https://hackingvolvoxc90.blogspot.com/2018/01/identify-yourself.html",
+      "classification": "author_report_or_passive_excerpt_not_continuous_discovery",
+      "bytes": 47114,
+      "sha256": "f1dde597fffbe4c836c4391b3d0df92eb1cd1f2b7c2157c2187c6e9e962e82fc",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_xc90_hardware",
+      "url": "https://hackingvolvoxc90.blogspot.com/2018/01/the-hardware.html",
+      "classification": "author_report_or_passive_excerpt_not_continuous_discovery",
+      "bytes": 69129,
+      "sha256": "2b12e6b1e8a53b86694d6f11fb8cbd11474a8a016728ae50acb75865513ff19a",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "r2_xc90_day0",
+      "url": "https://hackingvolvoxc90.blogspot.com/2018/01/day-0-beginning.html",
+      "classification": "author_report_or_passive_excerpt_not_continuous_discovery",
+      "bytes": 44127,
+      "sha256": "8ec46f99d4f334077e202ec2b8c50d2f2414ae8ed6dc5b3261225ae9bc05954a",
+      "retrieved_at_utc": "2026-11-01T23:13:40+00:00"
+    },
+    {
+      "name": "p2_corpus_01",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/09-06-2025/09-06-2025%2019-36%20---%20Key%20in%2C%20ignition%20off%2C%20car%20going%20to%20sleep%20%28relay%20clicking%29.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 335891,
+      "sha256": "b1adeb03d40dc86793fe46709d7764d9fb274331a8d51e1cbbc899755ab10a4b",
+      "retrieved_at_utc": "2026-11-01T23:37:10+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_03",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/09-06-2025/09-06-2025%2019-40%20---%20car%20in%20standby%2C%20Key%20in%2C%20ignition%20cycle%20to%202%2C%20three%20times.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 1025201,
+      "sha256": "488e210c2f679533ef748bce4bb3e7c9b743d77a55677d53ccb844949a404b61",
+      "retrieved_at_utc": "2026-11-01T23:37:10+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_04",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/09-06-2025/09-06-2025%2019-52%20---%20car%20in%20standby%2C%20Key%20in%2C%20ignition%20cycle%20to%202%2C%20three%20times.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 457879,
+      "sha256": "195c282066c1d7df09331708e56ea5dbb845bf2982e7cf68443c3e00406ab9b2",
+      "retrieved_at_utc": "2026-11-01T23:37:10+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_05",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/09-06-2025/09-06-2025%2019-58%20---%20car%20in%20stdby%2C%203x%20throttle%2C%20key%20to%201%2C%203x%20throttle%2C%20key%20to%202%2C%203x%20throttle%2C%20key%20to%201%2C%20to%20off%2C%20car%20in%20stdby.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 642624,
+      "sha256": "be1bb28d7aed9417acdb15e57f7e247742351d01d5fb99b8ca252077ce29e9b4",
+      "retrieved_at_utc": "2026-11-01T23:37:10+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_06",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/09-06-2025/09-06-2025%2020-07%20---%20car%20off%2C%20ignition%20on%2C%20start%2C%20idle%2C%20rev%20to%202000%2C%20hold%20at%202000%2C%20hold%20at%202500%2C%20back%20to%20high%20idle%2C%20back%20to%20low%20idle%2C%20off.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 4414994,
+      "sha256": "9ca40c09ec91cc74fd542f9051d94a1f9d50fb4d1b919fabdd0a36b92e279c81",
+      "retrieved_at_utc": "2026-11-01T23:37:11+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_07",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/10-06-2025/10-06-2025%2015-09%20---%20car%20off%2C%20unlocked%2C%20press%20unlock%20on%20keyfob%2C%20car%20goes%20back%20to%20off.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 602468,
+      "sha256": "bfebae99c2d48cdf52e758616f981489561187beb4b38b87962a1f178ac815cd",
+      "retrieved_at_utc": "2026-11-01T23:37:11+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_08",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/10-06-2025/10-06-2025%2015-22%20---%20car%20off%2C%20start%2C%20drive%20mostly%20around%2050%2C%20accelerate%20to%20120%2C%20around%2050%2C%20shutdown%2C%20wait%20till%20car%20is%20off.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 44063032,
+      "sha256": "ee4b1957e68d31c9d179324c726776af9d8ecd8cdf4d00537abf8149bad322f5",
+      "retrieved_at_utc": "2026-11-01T23:37:15+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_09",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/10-06-2025/10-06-2025%2015-41%20---%20Key%20to%202%2C%20turn%20steering%20wheel%20right%2C%20left%2C%20Key%20off.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 1165627,
+      "sha256": "949469541e6d73aa6c10d55af0c7c07adf5bac5dc18bc020539ba950c3beea4e",
+      "retrieved_at_utc": "2026-11-01T23:37:11+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_10",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/10-06-2025/10-06-2025%2015-47%20---%20HVAC.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 5808653,
+      "sha256": "014729f10e01c7964cfd4ec01413d242f71875f7463e25412f6fcba6a175dc8f",
+      "retrieved_at_utc": "2026-11-01T23:37:12+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_11",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/10-06-2025/10-06-2025%2015-50%20---%20Driver%20Door%20Module.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 4134602,
+      "sha256": "137d0776669baf43508e805dd3d19215ec705e131cada92569d270118b5ca503",
+      "retrieved_at_utc": "2026-11-01T23:37:13+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_12",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2002%20Volvo%20S60%20B5244S2%20M56/10-06-2025/10-06-2025%2015-53%20---%20Lights.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 5985401,
+      "sha256": "3237b137d6c8c338dfbc08310890051a85ea6e2507fd2ee511836cec1e57c63f",
+      "retrieved_at_utc": "2026-11-01T23:37:14+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_14",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2003%20Volvo%20V70%20II%20D5244T%20M56/HSCAN_battconn.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 4203,
+      "sha256": "12043b61c66b82bb448318b8f27534f84f2d1fab5672bcd30cc11c5edfea4b7a",
+      "retrieved_at_utc": "2026-11-01T23:37:16+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_15",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2003%20Volvo%20V70%20II%20D5244T%20M56/HSCAN_caronly_keyignoncethenoff.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 581971,
+      "sha256": "d3f77f29dd21773a5b7c4de1b53dcfe24677c58bbc1d4abadf67cb724132c035",
+      "retrieved_at_utc": "2026-11-01T23:37:17+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_16",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2003%20Volvo%20V70%20II%20D5244T%20M56/HSCAN_ecuonly_keyigntwice.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 162237,
+      "sha256": "2a05dee532806828b81830c0925689ce0928ba784e30b9d60d6effc371c49502",
+      "retrieved_at_utc": "2026-11-01T23:37:17+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "p2_corpus_17",
+      "url": "https://raw.githubusercontent.com/damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering/90030c213e1439c6ab163af2ea87ef7d363e4f8e/2003%20Volvo%20V70%20II%20D5244T%20M56/HSCAN_keytostartthenoff.csv",
+      "commit": "90030c213e1439c6ab163af2ea87ef7d363e4f8e",
+      "bytes": 2295533,
+      "sha256": "90f6fb4d5c3a1ceeb6b646482b3369a1e1f6f3653a65ed9814eae50b8c457028",
+      "retrieved_at_utc": "2026-11-01T23:37:18+00:00",
+      "commit_date_utc": "2026-10-13T20:31:03Z",
+      "classification": "passive_p2_csv_no_selected_diagnostic_ids"
+    },
+    {
+      "name": "unattributed_trc_01",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvo.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 76435,
+      "sha256": "08c9394d7fe30f8a1fd878dcf2b81725f87edfdd7fd96a15ebb6b377bde59eff",
+      "retrieved_at_utc": "2026-11-01T23:37:18+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "unattributed_trc_02",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvo0-69.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 7929379,
+      "sha256": "56101d796123833c3917273a042d735b5443e65fbf1e20fd5ca6a45e250724ce",
+      "retrieved_at_utc": "2026-11-01T23:37:19+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "unattributed_trc_03",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvo2.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 158451,
+      "sha256": "87acec7a010413929e72a32437e17d5a02eb51aa7b02011185990b26f87a3e05",
+      "retrieved_at_utc": "2026-11-01T23:37:19+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "unattributed_trc_04",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvo69-85.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 9627471,
+      "sha256": "609200213149acfa5cc7b05ca857adc14f0a120fc07328a0709d10b5dcca1135",
+      "retrieved_at_utc": "2026-11-01T23:37:21+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "unattributed_trc_05",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvo88-2.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 10962211,
+      "sha256": "898d8e6b70b88af0e86b016fe4bb0a664cea04422336f289978fc4ccc4f2abda",
+      "retrieved_at_utc": "2026-11-01T23:37:22+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "unattributed_trc_06",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvo88.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 13471267,
+      "sha256": "dd5fd3dc3a98ae9d6442af8390c2952559432a467284ba7f32e55bdc79c539ab",
+      "retrieved_at_utc": "2026-11-01T23:37:25+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "unattributed_trc_07",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvoemptytank.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 2115351,
+      "sha256": "f05b93363acc13438d8630f9840b6261261d0b4a18c09b868cf8855d95103139",
+      "retrieved_at_utc": "2026-11-01T23:37:25+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "unattributed_trc_08",
+      "url": "https://raw.githubusercontent.com/backeliten/volvoextradisp/10003acbed6079bf2660be19685374ba56e5791e/volvostart50.trc",
+      "commit": "10003acbed6079bf2660be19685374ba56e5791e",
+      "bytes": 11213275,
+      "sha256": "5a9a26d83a08b025d6c3ec528f9d07e61d5d21bd72363ac625fdf08f9e95afcb",
+      "retrieved_at_utc": "2026-11-01T23:37:28+00:00",
+      "commit_date_utc": "2019-12-21T21:40:13Z",
+      "classification": "vehicle_unspecified_2013_custom_trc_not_p2_discovery"
+    },
+    {
+      "name": "s80_vida",
+      "url": "https://raw.githubusercontent.com/waal70/S60CAN/5676f6be5f2b1544459ae38f586c0446d6b320ce/S60CAN/LiveLogs/S80_verbinding.log",
+      "commit": "5676f6be5f2b1544459ae38f586c0446d6b320ce",
+      "commit_date_utc": "2016-10-16T11:22:46Z",
+      "bytes": 610158,
+      "sha256": "9ec562aeef8f3f95dc31b358341cdb4d4de3e3cd4cb0774ab847126ccbf1ab8f",
+      "retrieved_at_utc": "2026-11-01T23:44:33+00:00",
+      "classification": "mixed_vida_uds_log_readonly_prefix_lines_1_2040_only"
+    },
+    {
+      "name": "s80_oil",
+      "url": "https://raw.githubusercontent.com/waal70/S60CAN/5676f6be5f2b1544459ae38f586c0446d6b320ce/S60CAN/LiveLogs/S80_olie",
+      "commit": "5676f6be5f2b1544459ae38f586c0446d6b320ce",
+      "commit_date_utc": "2016-10-16T11:22:46Z",
+      "bytes": 10418,
+      "sha256": "d3d3cbfbff00c429399d429b0ee5670ef2990e2bcdb13fe81471ce2937029487",
+      "retrieved_at_utc": "2026-11-01T23:44:34+00:00",
+      "classification": "adjacent_provenance_or_parameter_excerpt_not_independent_discovery"
+    },
+    {
+      "name": "s60_s80_compare",
+      "url": "https://raw.githubusercontent.com/waal70/S60CAN/5676f6be5f2b1544459ae38f586c0446d6b320ce/S60CAN/LiveLogs/directcompares60s80.txt",
+      "commit": "5676f6be5f2b1544459ae38f586c0446d6b320ce",
+      "commit_date_utc": "2016-10-16T11:22:46Z",
+      "bytes": 1328,
+      "sha256": "e8de1c9894f0ff985d130be688ecfad0d55f263c6fa43c71ae67ba4cb5d08f46",
+      "retrieved_at_utc": "2026-11-01T23:44:35+00:00",
+      "classification": "adjacent_provenance_or_parameter_excerpt_not_independent_discovery"
+    },
+    {
+      "name": "s60_branch_readme",
+      "url": "https://raw.githubusercontent.com/waal70/S60CAN/5676f6be5f2b1544459ae38f586c0446d6b320ce/S60CAN/README.md",
+      "commit": "5676f6be5f2b1544459ae38f586c0446d6b320ce",
+      "commit_date_utc": "2016-10-16T11:22:46Z",
+      "bytes": 3281,
+      "sha256": "cd7bed49fb1d2fc5cac8847fd05a2e0fc847c8face40f42774c045115321b1bb",
+      "retrieved_at_utc": "2026-11-01T23:44:35+00:00",
+      "classification": "adjacent_provenance_or_parameter_excerpt_not_independent_discovery"
+    },
+    {
+      "name": "vida_connect_readout",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/c0b686e3ccdc643dc0a801cc043e1ef5.htm",
+      "bytes": 6523,
+      "sha256": "475c5b0ff9357b74a15980176a3c6a99e4046029ce0e2ea7e13ec427d52657bd",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
+    },
+    {
+      "name": "vida_network_colors",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/e8876eb822bc9346c0a801cc00747894.htm",
+      "bytes": 7327,
+      "sha256": "659b697b48addad22f77faea8ac7fb98f6539cf554990355212f29ef82b1bf07",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
+    },
+    {
+      "name": "vida_diagnostic_protocols",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/b5980760141034ddc0a801cc2958048c.htm",
+      "bytes": 6118,
+      "sha256": "ac05906a508f05b2d02ff85a678fd8cb29a07d9a4f9a608fcd579d5949449de6",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
+    },
+    {
+      "name": "vida_dice_connection",
+      "url": "https://vidaresources.volvocars.biz/help-wbt/us/dc558af3d7498f5ac0a801cc39204f08.htm",
+      "bytes": 5146,
+      "sha256": "c6481c375e6e927a3ab03fc4a348490356eea827d362b4b0715fa12b3122e1e7",
+      "retrieved_date": "2026-11-02",
+      "publication_version": "321US04; exact publication date unknown",
+      "classification": "official_client_documentation_not_vehicle_capture"
+    }
+  ],
+  "initial_review_date": "2026-11-01"
+}

@@ -1,0 +1,17 @@
+# SYNTHETIC VDASH 2.0-style scenario, authored from reported flow, NOT a real capture.
+# All-zero record bytes are deliberately not a valid vehicle identity. UI result remains unknown.
+[PID=DEADBEEF SyntheticVDASH.exe] PassThruOpen -> device 1
+[PID=DEADBEEF SyntheticVDASH.exe] J2534 Connect result protocol/flags/baud/status (BE) 00 00 00 06 00 00 08 00 00 07 A1 20 00 00 00 00
+[PID=DEADBEEF SyntheticVDASH.exe] J2534 SET_CONFIG channel/parameter/value/applied (BE) 00 00 00 01 00 00 00 01 00 07 A1 20 00 00 00 01
+[PID=DEADBEEF SyntheticVDASH.exe] PassThruStartMsgFilter type / id (BE) 00 00 00 03 00 00 00 01
+[PID=DEADBEEF SyntheticVDASH.exe] TX context channel/protocol/flags/baud/time-us (BE) 00 00 00 01 00 00 00 06 00 00 00 00 00 07 A1 20 00 01 86 A0
+[PID=DEADBEEF SyntheticVDASH.exe] TX (app request) 00 00 07 DF 09 02
+[PID=DEADBEEF SyntheticVDASH.exe] RX context channel/protocol/status/baud/time-us (BE) 00 00 00 01 00 00 00 06 00 00 00 02 00 07 A1 20 00 01 AD B0
+[PID=DEADBEEF SyntheticVDASH.exe] PassThruReadMsgs -> delivered 00 00 07 E8
+[PID=DEADBEEF SyntheticVDASH.exe] PassThruReadMsgs ISO15765 protocol/status/size/extra-index/timestamp-us (BE) 00 00 00 06 00 00 00 02 00 00 00 04 00 00 00 00 00 01 AD B0
+[PID=DEADBEEF SyntheticVDASH.exe] RX context channel/protocol/status/baud/time-us (BE) 00 00 00 01 00 00 00 06 00 00 00 00 00 07 A1 20 00 01 D4 C0
+[PID=DEADBEEF SyntheticVDASH.exe] PassThruReadMsgs -> delivered 00 00 07 E8 49 02 01 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30
+[PID=DEADBEEF SyntheticVDASH.exe] PassThruReadMsgs ISO15765 protocol/status/size/extra-index/timestamp-us (BE) 00 00 00 06 00 00 00 00 00 00 00 18 00 00 00 18 00 01 D4 C0
+[PID=DEADBEEF SyntheticVDASH.exe] TX context channel/protocol/flags/baud/time-us (BE) 00 00 00 02 00 00 00 05 00 00 01 00 00 07 A1 20 00 01 FB D0
+[PID=DEADBEEF SyntheticVDASH.exe] TX (app request) 18 DB 33 F1 3E 80
+[PID=DEADBEEF SyntheticVDASH.exe] PassThruClose

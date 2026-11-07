@@ -1,32 +1,48 @@
 # Virtual Car: Volvo P2 diagnostic emulator research
 
-**Status:** experimental development source. The current Windows x86 deliverable is a **J2534 tracing proxy**, not a complete vehicle emulator. Its original upstream `VirtualCarJ2534.dll` and corresponding `virtualcar.c` are **not in this repository**.
+**Status:** experimental Windows x86 J2534 emulator and diagnostic tooling. Target: a virtual Volvo XC90 V8 MY2009, read-only, tested in VMware. The project is independent of Dvinholm.
 
-The project investigates Volvo P2 CEM / HS-CAN / LS-CAN diagnostic behavior, initially for an XC90 V8 model year 2009 (virtual J2534, Windows x86, VMware). Read-only observation, ECU identification and diagnostic protocol compatibility are the current goals. This project is **separate from Dvinholm**.
+**Starting a new ChatGPT conversation?** Read [NEXT_CHAT.md](NEXT_CHAT.md) on the **development** branch. It contains the current checkpoint, next Issue and a copyable restart prompt.
 
-## Layout
+## Two distinct components
 
-- `proxy/` : C99 Windows x86 J2534 tracing proxy, CEM routing and vehicle state observers (current dev26 implementation).
-- `cmd/oneclick/` : Windows x86 GUI to run the proxy and collect sanitized diagnostic reports.
-- `trace_attribution/`, `cmd/trace_summary/`, `cmd/ignition_report/` : Go reporting tools.
-- `tests/` : C integration and classification tests.
-- `research/dev23/`, `research/dev24/`, `research/dev25/` : previous snapshots of CEM router, LS observer and combined vehicle core, for traceability.
-- `docs/` : dev26 notes and integration limitations.
-- `.github/workflows/ci.yml` : Linux CI cross-compiling Windows x86 output and running tests.
+- **emulator/**: source of the virtual J2534 adapter from user-provided v0.3.6.6, integrated with the observational CEM Vehicle Core and J2534 READ128 fix on the development branch. Includes its own Windows x86 cross-build, Go Control GUI, fixtures and tests.
+- **proxy/**, **cmd/oneclick/**: J2534 tracing/proxy and reporting tools, based on dev26; they forward calls to an existing emulator.
+- **research/**: archived experimental dev23–dev25 modules, not independent runtime versions.
+- **docs/**: roadmap, research, provenance and development workflow.
 
-## Building
+## Build from a clean checkout
 
-The canonical source-build is `bash build_dev26.sh` on Linux with Clang, `lld-link`, GCC, Go >=1.23, and `file`. It builds all four embedded assets from source, then the Windows x86 GUI. Do not call `go test ./...` on an unbuilt checkout until generating `cmd/oneclick/assets/` with the build script, because `go:embed` requires those files at compile time.
+Emulator (Linux host, LLVM/LLD, GCC, Go 1.23, Python):
 
-## Accuracy and safety
+    cd emulator
+    bash build-cross.sh
+    gcc -std=c11 -O2 -Wall -Wextra -o /tmp/virtualcar_test tests/virtualcar_test.c src/p2core/p2_cem_router.c src/p2core/p2_ls_observer.c src/p2core/p2_vehicle_core.c src/p2core/p2_j2534_bridge.c
+    /tmp/virtualcar_test
+    python3 -m unittest discover -s tests -p 'test_*.py'
+    (cd control && go test ./... && go vet ./... && GOOS=windows GOARCH=386 CGO_ENABLED=0 go build -o ../VirtualCarControl.exe .)
 
-- The proxy forwards J2534 calls to the original DLL unchanged; its classification alone does not prove a valid ECU response.
-- A3/B9F0 positive CEM responses are **not verified or synthesized**. B9FB is delegated to the original emulator.
-- An observed ignition-key broadcast does not establish D2 reference 6660 or physical ignition ON.
-- Passive VolvoCan IDs are experimental and disabled by default for the target model year.
-- No real VIN, hardware identifiers, proprietary diagnostic binaries, personal logs, passwords or ECU secrets belong in the repository.
-- The diagnostic application executable and the original emulator DLL must be provided separately by their authorized owners. Neither is redistributed here.
+Tracing proxy/OneClick (repository root):
 
-## Branches
+    bash build_dev26.sh
 
-`main` for reviewed baseline; `development` for PR integration. Do not publish a release until Windows/VMware end-to-end behavior is confirmed. See [ROADMAP](docs/ROADMAP.md).
+The OneClick Go tool uses embedded assets produced by the root build script. Building it before the assets exist will fail.
+
+## Branches and working process
+
+- **main**: reviewed baseline. **development**: integration branch; code must first pass a focused PR and tests.
+- Open focused task PRs into development. The development-to-main release-gate PR stays open until manual VMware validation.
+- See [Chat + GitHub workflow](docs/CHAT_GITHUB_WORKFLOW_RU.md), [agent instructions](AGENTS.md), and [ROADMAP](docs/ROADMAP.md).
+- CI-generated artifacts are the default place for Windows x86 binaries. Historical ZIPs are not source of truth.
+
+## Accuracy and security
+
+- No invented CEM A3, A6, B9F0, D2 normal-mode or ignition positive replies. Reproduce only validated response frames with clear provenance.
+- Preserve validated B9FB playback; distinguish synthetic fixtures and original response data.
+- VolvoCan and 2002/2003 Volvo P2 broadcast CAN maps are **not** verified for XC90 V8 MY2009.
+- Private VIN, ECU dumps, keys, personal J2534 traces, binary diagnostic software and donor profiles must never be committed.
+- A CI pass verifies code-level behavior, **not** SectorV/VDASH end-to-end operation in VMware.
+
+## Releases
+
+No Stable release is claimed without explicit approval and verified Windows/VMware behavior. Lab builds remain experimental.

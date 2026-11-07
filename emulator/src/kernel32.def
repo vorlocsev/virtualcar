@@ -1,0 +1,18 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+ Sleep
+ GetTickCount
+ GetCurrentProcessId
+ GetModuleFileNameA
+ GetPrivateProfileStringA
+ GetTempPathA
+ GetEnvironmentVariableA
+ CreateDirectoryA
+ CreateFileA
+ SetFilePointer
+ WriteFile
+ CloseHandle
+ InterlockedCompareExchange
+ InterlockedExchange
+ QueryPerformanceCounter
+ QueryPerformanceFrequency
