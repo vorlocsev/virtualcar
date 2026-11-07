@@ -1,24 +1,35 @@
-# VIDA 2014D supplied-log provenance and bounded session attribution
+# Offline VIDA 2014D / 2015A: reported version and session attribution
 
 Date: 2026-11-07. Linked to [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4).
 Source: three **different** owner-provided files, locally read without
 uploading source logs or copying credentials, driver paths, profile keys,
-or VIN. **Do not label these particular logs VIDA2015A.**
+or VIN. The logged release marker is an observation, **not a diagnostic-engine compatibility boundary**.
 
 ## Primary-source correction
 
 The supplied `VIDA.log` explicitly prints **`VIDA release: VIDA2014D`**
 in its sessions dated **2026-09-25** and **2026-09-26**.
-A prior research note referred to these supplied logs as original
-VIDA **2015A** runtime logs. That attribution was incorrect.
-Static analysis of separately sourced original VIDA 2015A DLLs
-does **not** turn a 2014D runtime log into a 2015A capture.
+**Important user-supplied build context:** the local offline VIDA
+**2015A is a modification/repackaging of the VIDA 2014D diagnostic
+software family**. Its embedded release label can remain `VIDA2014D`.
+A previous claim that the literal 2014D log marker made these logs
+unusable as evidence for the user's 2015A-labeled installation was
+**incorrect and is superseded here**.
+
+Independent community accounts also describe offline 2015A builds
+as modified VIDA 2014D, sometimes with differing SQL VIN/profile
+data. Context sources:
+[Diagnostic Laptops](https://diaglaptops.com/wp/2021/07/29/theres-two-versions-of-vida/),
+[Volvo4Life](https://www.volvo4life.es/threads/proyecto-modificar-vida-para-que-soporte-v60cc-2016.94787/).
+This **does not prove bit-identical DLLs or databases** in every
+installation. For exact IL, XML and SQL behavior, the hash and
+runtime-selected configuration still matter.
 
 Specific, separately sourced observations:
 
 | Source | Observed, source-bound statement | Does NOT establish |
 | --- | --- | --- |
-| `VIDA.log` (Sep 2026; declares 2014D) | CarCom `vadis_GetHwSettings` lookup, `DiagSwdlRepository` `GetSWDLSupportedVehicleModels` and `GetNavImage` mentions | `GetScript(ReadVin)` returned an XML, or a VIN was accepted |
+| `VIDA.log` (Sep 2026; declares 2014D, compatible with a 2015A-labeled offline build) | CarCom `vadis_GetHwSettings` lookup, `DiagSwdlRepository` `GetSWDLSupportedVehicleModels` and `GetNavImage` mentions | `GetScript(ReadVin)` returned an XML, or a VIN was accepted |
 | Same `VIDA.log` | SQL login/open error names **`ImageRepository`**, in the call chain for `VehicleImageProvider.GetImage` | Failure of `DiagSwdlRepository.GetScript`; this is a **different database** |
 | Same `VIDA.log` | One `Loading J2534 driver:` log entry | Successful `PassThruOpen`, `PassThruConnect`, CAN TX/RX, DiCE compatibility, or correct CEM route |
 | `VidaMonitor.log` (Oct 29, 2026) | Monitor sees `DiagSwdlRepository`, CarCom and other named database instances; reports `VIDA started OK` | That an authorized `ReadVin` procedure ran, which VIDA release the client used, or a database principal can read every object |
@@ -52,8 +63,11 @@ CEM A3/A6 reply, normal-mode predicate, ignition signal or
 `emulator/tools/audit_vida_script_selection.py` now:
 
 - Counts **only exact** `VIDA release: VIDA2014D` and
-  `VIDA release: VIDA2015A` declarations, not versions inferred
-  from a timestamp or which DLL was inspected.
+  `VIDA release: VIDA2015A` **literal diagnostic log markers**,
+  rather than inferring a different engine or incompatible protocol.
+  Both can belong to a 2014D-derived offline build family.
+  This grouping is for auditing source provenance, **not** for
+  denying applicability to the user's VIDA 2015A-labeled installation.
 - Resets pending `GetScript → Fetched → Running` matching on
   the `Starting new logsession:` marker or a new explicit release.
   Same thread and a <30-second elapsed time across two sessions
@@ -76,7 +90,7 @@ VIN, SQL users or connection strings are written.
 
 ## Eight synthetic regression groups
 
-1. Explicit 2014D ReadVin triplet does not become 2015A.
+1. A 2014D *marker* is counted literally, without assuming a different diagnostic engine from offline 2015A.
 2. Explicit 2015A ReadVin triplet remains just script chronology.
 3. New session resets prior thread's incomplete triplet.
 4. Release change also resets pending state.
@@ -84,7 +98,7 @@ VIN, SQL users or connection strings are written.
    to `GetScript`.
 6. Driver-loading event is **not** accepted J2534 connection.
 7. Unknown/2014D/2015A sources remain separately counted.
-8. Inexact release text cannot spoof provenance; CLI remains
+8. Inexact release text cannot spoof a literal marker; CLI remains
    redacted and refuses to overwrite an output JSON.
 
 The eight new groups extend the existing sixteen
@@ -96,12 +110,12 @@ feature-SHA run. No physical adapter/VIDA runtime tests performed.
 ## Next authorized evidence gate
 
 Run the already-merged `Inspect-VidaGetScriptSchema.ps1`
-against an authorized active SQL Server instance, **catalog
+against the user's authorized active **2014D-derived VIDA 2015A** SQL Server instance, **catalog
 metadata only**, not the stored procedure body or private XML.
 Separately obtain one continuous read-only diagnostic session
-with its **declared VIDA release**, effective connection mode,
+with its **literal declared VIDA release marker**, effective connection mode,
 actual GetScript(ReadVin) lookup/fetch/run, and J2534 connection
-outcomes. The requested live **2015A** ReadVin identity/XML and
+outcomes. The requested live **2015A-labeled offline installation's** ReadVin identity/XML and
 XC90 V8 MY2009 accepted VIN/ECU remain **unknown**.
 
 No modification of the emulator's diagnostic response,
