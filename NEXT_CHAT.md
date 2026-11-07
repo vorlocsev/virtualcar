@@ -2,14 +2,17 @@
 
 ## ACTIVE: correct 2014D log attribution and session-aware VIDA audit (2026-11-07)
 
-- Source correction for [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):
-  the three supplied *runtime/installation* logs are **not**
-  original VIDA2015A run evidence. `VIDA.log` explicitly declares
-  **VIDA2014D** four times across four log sessions (Sep 25–26, 2026);
-  no **VIDA2015A** release declaration or `SP: GetScript` was
-  observed in that bounded log. The original 2015A **DLL IL**
-  observations are a separate valid static source, not an
-  inferred version upgrade of the runtime log.
+- **User build-context correction (2026-11-07): VIDA 2015A is
+  a modified / relabeled offline VIDA 2014D build family**, not an
+  independently incompatible diagnostic platform. The earlier claim
+  that a `VIDA2014D` log marker excludes the 2015A-labeled
+  installation was **incorrect**. The same supplied `VIDA.log`
+  literally declares **VIDA2014D** four times across four sessions
+  (Sep 25–26, 2026), zero `VIDA2015A` markers and no
+  `SP: GetScript` line. These are **source metadata**, not a
+  reason to discard the log for 2015A-labeled VIDA research.
+  Static original DLL hashes and observed runtime SQL/XML
+  are still required for exact behavioral/patch identity.
 - One Sep 26 VIDA2014D SQL failure names **ImageRepository**
   via VehicleImageProvider.GetImage; **not GetScript** or
   DiagSwdlRepository. One J2534 driver **load attempt**
@@ -24,6 +27,8 @@
   and [pending feature branch](https://github.com/vorlocsev/virtualcar/tree/fix/vida-session-release-provenance-gate)
   extend existing VIDA text auditor with release/session
   boundaries and source-specific error/loading counters.
+  Versions in counters are **literal reported release labels**,
+  NOT proof of different engines or incompatible protocols.
   Eight synthetic regression groups (#17–24), expected
   Python total **300**; feature Windows VM and physical
   hardware **NOT YET VERIFIED**. Do not merge until exact
