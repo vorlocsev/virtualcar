@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -98,13 +99,18 @@ private:
 
 Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
                       std::uint32_t timeout_ms, bool write,
-                      std::uint32_t& last_error)
+                      std::uint32_t& last_error,
+                      const std::atomic<bool>* cancel = nullptr)
 {
     // One absolute deadline covers all partial transfers; a peer cannot
     // extend a frame indefinitely by dribbling bytes before each timeout.
     const ULONGLONG started = GetTickCount64();
     std::size_t offset = 0;
     while (offset < bytes.size()) {
+        if (cancel != nullptr && cancel->load(std::memory_order_acquire)) {
+            last_error = ERROR_OPERATION_ABORTED;
+            return Result::cancelled;
+        }
         const ULONGLONG elapsed = GetTickCount64() - started;
         if (elapsed >= timeout_ms) {
             last_error = WAIT_TIMEOUT;
@@ -137,7 +143,24 @@ Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
                 return map_error(start_error);
             }
 
-            const DWORD wait = WaitForSingleObject(event, remaining_timeout);
+            DWORD wait = WAIT_TIMEOUT;
+            DWORD remaining_wait = remaining_timeout;
+            while (remaining_wait != 0) {
+                if (cancel != nullptr && cancel->load(std::memory_order_acquire)) {
+                    (void)CancelIoEx(pipe, &overlapped);
+                    (void)WaitForSingleObject(event, INFINITE);
+                    DWORD ignored = 0;
+                    (void)GetOverlappedResult(pipe, &overlapped, &ignored, FALSE);
+                    last_error = ERROR_OPERATION_ABORTED;
+                    CloseHandle(event);
+                    return Result::cancelled;
+                }
+                const DWORD slice = cancel == nullptr
+                    ? remaining_wait : (std::min)(remaining_wait, 40UL);
+                wait = WaitForSingleObject(event, slice);
+                if (wait != WAIT_TIMEOUT) break;
+                remaining_wait -= slice;
+            }
             if (wait == WAIT_TIMEOUT) {
                 (void)CancelIoEx(pipe, &overlapped);
                 (void)WaitForSingleObject(event, INFINITE);
@@ -382,6 +405,7 @@ Result Client::connect(std::wstring_view pipe_name,
         session_ = SessionToken{response.session_id, response.generation,
             static_cast<std::uint32_t>(actual_server_pid),
             server_creation_time_100ns};
+        read_cancel_requested_.store(false, std::memory_order_release);
         return Result::ok;
     } catch (...) {
         close_locked();
@@ -432,6 +456,10 @@ Result Client::read_synthetic(const readonly::Envelope& request,
 {
     std::lock_guard<std::mutex> guard(mutex_);
     response = {};
+    if (read_cancel_requested_.load(std::memory_order_acquire)) {
+        close_locked();
+        return Result::cancelled;
+    }
     if (is_invalid_handle(pipe_) || session_.id == 0 || session_.generation == 0)
         return Result::not_authenticated;
     if (request.kind != readonly::Kind::read_request ||
@@ -460,11 +488,15 @@ Result Client::read_synthetic(const readonly::Envelope& request,
             close_locked();
             return result;
         }
+        if (read_cancel_requested_.load(std::memory_order_acquire)) {
+            close_locked();
+            return Result::cancelled;
+        }
 
         // Only accept the dedicated Host VCLB read-reply kind and an exact
         // bounded 60+4..64 byte VCRD body. No general-purpose pipe messages.
         std::array<std::uint8_t, FrameCodec::header_length> header{};
-        result = read_exact(header);
+        result = read_exact(header, &read_cancel_requested_);
         if (result != Result::ok) {
             close_locked();
             return result;
@@ -483,7 +515,8 @@ Result Client::read_synthetic(const readonly::Envelope& request,
         }
 
         std::array<std::uint8_t, readonly::Codec::maximum_wire_size> raw{};
-        result = read_exact(std::span<std::uint8_t>(raw.data(), len));
+        result = read_exact(std::span<std::uint8_t>(raw.data(), len),
+            &read_cancel_requested_);
         if (result != Result::ok) {
             close_locked();
             return result;
@@ -506,12 +539,28 @@ Result Client::read_synthetic(const readonly::Envelope& request,
             close_locked();
             return Result::protocol_error;
         }
+        if (read_cancel_requested_.load(std::memory_order_acquire)) {
+            close_locked();
+            return Result::cancelled;
+        }
         response = decoded;
         return Result::ok;
     } catch (...) {
         close_locked();
         throw;
     }
+}
+
+void Client::request_cancel_read() noexcept
+{
+    // Never touch the pipe handle from this caller. Only the owning
+    // overlapped reader cancels its own I/O before revoking the pipe.
+    read_cancel_requested_.store(true, std::memory_order_release);
+}
+
+bool Client::read_cancel_requested() const noexcept
+{
+    return read_cancel_requested_.load(std::memory_order_acquire);
 }
 
 Result Client::disconnect() noexcept
@@ -590,10 +639,11 @@ Result Client::write_exact(std::span<const std::uint8_t> bytes)
         timeout_ms_, true, last_error_);
 }
 
-Result Client::read_exact(std::span<std::uint8_t> bytes)
+Result Client::read_exact(std::span<std::uint8_t> bytes,
+                          const std::atomic<bool>* cancel)
 {
     return transfer_exact(static_cast<HANDLE>(pipe_), bytes,
-        timeout_ms_, false, last_error_);
+        timeout_ms_, false, last_error_, cancel);
 }
 
 void Client::close_locked() noexcept

@@ -16,13 +16,17 @@ public sealed class LocalLabPipeHost
     private readonly ScenarioCoordinator _coordinator;
     private readonly byte[] _secret;
     private readonly TimeSpan _ioDeadline;
+    // Test-only deterministic barrier. Production builds never supply this.
+    // Only invoked after authenticated, verified synthetic fixture read.
+    private readonly Func<CancellationToken, Task>? _syntheticReadBarrier;
     private int _serving;
 
     public LocalLabPipeHost(
         string pipeName,
         ScenarioCoordinator coordinator,
         byte[] launchSecret,
-        TimeSpan? ioDeadline = null)
+        TimeSpan? ioDeadline = null,
+        Func<CancellationToken, Task>? syntheticReadBarrier = null)
     {
         if (string.IsNullOrEmpty(pipeName) || pipeName.Length > 80 ||
             !pipeName.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-'))
@@ -39,6 +43,7 @@ public sealed class LocalLabPipeHost
         _coordinator = coordinator;
         _secret = launchSecret.ToArray();
         _ioDeadline = deadline;
+        _syntheticReadBarrier = syntheticReadBarrier;
     }
 
     public string PipeName { get; }
@@ -134,6 +139,17 @@ public sealed class LocalLabPipeHost
                         request.Extended, did, cancellationToken).ConfigureAwait(false);
                     if (synthetic is null || synthetic.Length is < 1 or > 61)
                         return;
+
+                    // A restricted, test-supplied barrier makes it possible
+                    // to kill or cancel an ALREADY accepted read, not merely
+                    // a waiting HELLO. Production Host has no barrier.
+                    if (_syntheticReadBarrier is not null)
+                    {
+                        using var hold = CancellationTokenSource.CreateLinkedTokenSource(
+                            cancellationToken);
+                        hold.CancelAfter(_ioDeadline);
+                        await _syntheticReadBarrier(hold.Token).ConfigureAwait(false);
+                    }
 
                     lastReadOperationId = request.OperationId;
                     byte[] positive = new byte[3 + synthetic.Length];

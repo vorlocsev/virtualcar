@@ -21,8 +21,11 @@ internal static class Program
         // Cross-language M5B test mode. The secret is a synthetic CI fixture only.
         // "no-session" intentionally leaves the coordinator without an active scenario,
         // so a wrong-PID client must be rejected before it can authenticate.
-        if (args.Length == 3 && args[0] == "--serve-once" &&
-            args[2] is "session" or "no-session" or "read-session")
+        if ((args.Length == 3 || args.Length == 4) &&
+            args[0] == "--serve-once" &&
+            args[2] is "session" or "no-session" or "read-session" or "read-held" &&
+            (args[2] != "read-held" || args.Length == 4) &&
+            (args[2] == "read-held" || args.Length == 3))
         {
             string pipeName = args[1];
             if (string.IsNullOrEmpty(pipeName) || pipeName.Length > 80 ||
@@ -33,8 +36,25 @@ internal static class Program
             bool selected = args[2] != "no-session";
             await using var core = await CoreAsync(
                 selected: selected, runtime: runtime,
-                readFixture: args[2] == "read-session");
-            await Host(core, pipeName, TimeSpan.FromSeconds(10)).ServeOnceAsync();
+                readFixture: args[2] is "read-session" or "read-held");
+            Func<CancellationToken, Task>? barrier = null;
+            if (args[2] == "read-held")
+            {
+                string marker = args[3];
+                if (!Path.IsPathFullyQualified(marker) ||
+                    !Path.GetFileName(marker).EndsWith(".ready",
+                        StringComparison.OrdinalIgnoreCase))
+                    return 2;
+                barrier = async token =>
+                {
+                    // Mark this read accepted only after VCRD identity,
+                    // session, route and sealed fixture validation.
+                    await File.WriteAllTextAsync(marker, "accepted", token);
+                    await Task.Delay(TimeSpan.FromSeconds(6), token);
+                };
+            }
+            await Host(core, pipeName, TimeSpan.FromSeconds(10), barrier)
+                .ServeOnceAsync();
 
             int expectedPreparations = selected ? 1 : 0;
             if (runtime.PrepareCount != expectedPreparations)
@@ -54,7 +74,7 @@ internal static class Program
         }
         if (args.Length != 0)
         {
-            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session|read-session>]");
+            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session|read-session> | --serve-once <pipe-name> read-held <absolute-ready-marker>]");
             return 2;
         }
 
@@ -111,9 +131,10 @@ internal static class Program
     }
 
     private static LocalLabPipeHost Host(
-        ScenarioCoordinator core, string? name = null, TimeSpan? deadline = null) =>
+        ScenarioCoordinator core, string? name = null, TimeSpan? deadline = null,
+        Func<CancellationToken, Task>? barrier = null) =>
         new(name ?? "vcm5-" + Guid.NewGuid().ToString("N"), core, LaunchSecret,
-            deadline ?? TimeSpan.FromSeconds(3));
+            deadline ?? TimeSpan.FromSeconds(3), barrier);
 
     private static async Task<NamedPipeClientStream> ConnectAsync(string name)
     {

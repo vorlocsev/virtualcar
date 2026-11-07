@@ -591,7 +591,8 @@ bool cross_language_readonly_deny(const std::wstring& pipe_name,
         route, 0xf187U, data, count);
     if (result == SessionResult::ok || result == SessionResult::invalid ||
         count != 0 || session.connected() ||
-        session.snapshot().active || session.snapshot().channels != 0) {
+        session.snapshot().active || session.snapshot().channels != 0 ||
+        session.pending_read_count() != 0) {
         std::printf("FAIL native read did not revoke on denied Host fixture/route\\n");
         return false;
     }
@@ -617,6 +618,127 @@ bool cross_language_readonly_expiry(const std::wstring& pipe_name,
            !session.snapshot().active && session.snapshot().channels == 0;
 }
 
+
+bool wait_for_marker(const char* path, unsigned attempts = 200)
+{
+    for (unsigned i = 0; i < attempts; ++i) {
+        std::ifstream in(path, std::ios::binary);
+        if (in.good()) {
+            std::string line;
+            in >> line;
+            if (line == "accepted") return true;
+        }
+        Sleep(50);
+    }
+    return false;
+}
+
+// The Host writes its ready file only AFTER it validates the live VCRD
+// request and sealed fixture. This tests cancelling active pending I/O,
+// rather than cancelling before an operation was ever accepted.
+bool cross_language_read_cancel(const std::wstring& pipe_name,
+                                std::uint32_t server_pid,
+                                const char* accepted_file)
+{
+    AuthenticatedSession session(5000);
+    if (session.connect(pipe_name, test_secret(), server_pid, 5000) != SessionResult::ok)
+        return false;
+    const virtualcar::readonly::Route route{0x7e0U, 0x7e8U, false};
+    SessionResult result = SessionResult::ok;
+    std::size_t size = 42;
+    std::array<std::uint8_t, 61> reply{};
+    std::thread pending([&] {
+        result = session.read_synthetic(route, 0xf190U, reply, size);
+    });
+    const bool ready = wait_for_marker(accepted_file);
+    session.cancel_read();
+    pending.join();
+    if (!ready || result != SessionResult::cancelled ||
+        size != 0 || session.connected() ||
+        session.snapshot().active || session.snapshot().channels != 0 ||
+        session.pending_read_count() != 0 ||
+        !std::all_of(reply.begin(), reply.end(),
+            [](std::uint8_t b) { return b == 0; })) {
+        std::printf("FAIL M5D2c in-flight cancellation (ready=%u, result=%u)\n",
+            static_cast<unsigned>(ready), static_cast<unsigned>(result));
+        return false;
+    }
+    std::printf("PASS M5D2c cancel after Host fixture accepted, no stale response\n");
+    return true;
+}
+
+// Host #1 deliberately holds an already-authorized synthetic read.
+// The runner kills the exact owned C# process handle, waits for local
+// revocation, then starts a fresh Host on the same named pipe.
+// Reused numeric 1/1 session tokens must NOT be treated as old owner.
+bool cross_language_read_crash_restart(
+    const std::wstring& pipe_name, std::uint32_t first_pid,
+    const char* accepted_file, const char* lost_file, const char* next_pid_file)
+{
+    AuthenticatedSession session(5000);
+    const auto secret = test_secret();
+    if (session.connect(pipe_name, secret, first_pid, 5000) != SessionResult::ok)
+        return false;
+    const auto old_token = session.session();
+    const virtualcar::readonly::Route route{0x7e0U, 0x7e8U, false};
+    SessionResult result = SessionResult::ok;
+    std::size_t count = 0;
+    std::array<std::uint8_t, 61> data{};
+    std::thread pending([&] {
+        result = session.read_synthetic(route, 0xf187U, data, count);
+    });
+    // The runner awaits accepted_file and kills Host #1. Waiting for this
+    // marker here as well catches a test that merely kills an idle pipe.
+    const bool ready = wait_for_marker(accepted_file);
+    if (!ready) session.cancel_read();
+    pending.join();
+    if (!ready ||
+        (result != SessionResult::disconnected &&
+         result != SessionResult::io_error &&
+         result != SessionResult::timed_out) ||
+        count != 0 || session.connected() ||
+        session.snapshot().active || session.snapshot().channels != 0) {
+        std::printf("FAIL M5D2c active read Host loss did not revoke state\n");
+        return false;
+    }
+    {
+        std::ofstream lost(lost_file, std::ios::binary | std::ios::trunc);
+        if (!lost) return false;
+        lost << "revoked";
+        lost.close();
+        if (!lost) return false;
+    }
+    std::uint32_t next_pid = 0;
+    for (unsigned i = 0; i < 300 && next_pid == 0; ++i) {
+        std::ifstream in(next_pid_file);
+        if (in.good()) {
+            std::uint32_t parsed{};
+            if (in >> parsed && parsed != 0) next_pid = parsed;
+        }
+        if (next_pid == 0) Sleep(50);
+    }
+    if (next_pid == 0 ||
+        session.connect(pipe_name, secret, next_pid, 5000) != SessionResult::ok)
+        return false;
+    const auto new_token = session.session();
+    if (new_token.id != old_token.id ||
+        new_token.generation != old_token.generation ||
+        new_token.server_pid != next_pid ||
+        new_token.server_creation_time_100ns ==
+            old_token.server_creation_time_100ns)
+        return false;
+    std::array<std::uint8_t, 61> recovered{};
+    std::size_t recovered_count = 0;
+    if (session.read_synthetic(route, 0xf187U, recovered, recovered_count)
+            != SessionResult::ok ||
+        recovered_count != 2 || recovered[0] != 'A' || recovered[1] != 'B' ||
+        session.disconnect() != SessionResult::ok ||
+        session.snapshot().active || session.snapshot().channels != 0)
+        return false;
+    std::printf("PASS M5D2c Host crash during accepted read, revoked and recovered\n");
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -630,7 +752,9 @@ int main(int argc, char** argv)
           std::strcmp(argv[1], "--readonly-deny") == 0 ||
           std::strcmp(argv[1], "--readonly-no-fixture") == 0 ||
           std::strcmp(argv[1], "--readonly-expire") == 0)) ||
-        (argc == 7 && std::strcmp(argv[1], "--lifecycle-restart") == 0)) {
+        (argc == 5 && std::strcmp(argv[1], "--readonly-cancel") == 0) ||
+        (argc == 7 && (std::strcmp(argv[1], "--lifecycle-restart") == 0 ||
+                       std::strcmp(argv[1], "--readonly-crash-restart") == 0))) {
         std::wstring pipe_name;
         for (const char* p = argv[2]; *p != '\0'; ++p) {
             if (static_cast<unsigned char>(*p) > 0x7fU) return 2;
@@ -656,13 +780,19 @@ int main(int argc, char** argv)
             return cross_language_readonly_deny(pipe_name, expected_server_pid, true) ? 0 : 1;
         if (std::strcmp(argv[1], "--readonly-expire") == 0)
             return cross_language_readonly_expiry(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--readonly-cancel") == 0)
+            return cross_language_read_cancel(
+                pipe_name, expected_server_pid, argv[4]) ? 0 : 1;
+        if (std::strcmp(argv[1], "--readonly-crash-restart") == 0)
+            return cross_language_read_crash_restart(
+                pipe_name, expected_server_pid, argv[4], argv[5], argv[6]) ? 0 : 1;
         if (std::strcmp(argv[1], "--lifecycle-restart") == 0)
             return cross_language_lifecycle_host_restart(
                 pipe_name, expected_server_pid, argv[4], argv[5], argv[6]) ? 0 : 1;
         return cross_language_connect(pipe_name, expected_server_pid) ? 0 : 1;
     }
     if (argc != 1) {
-        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire|--readonly|--readonly-deny|--readonly-no-fixture|--readonly-expire <pipe-name> <server-pid>] | --lifecycle-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file>\n");
+        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire|--readonly|--readonly-deny|--readonly-no-fixture|--readonly-expire <pipe-name> <server-pid>] | --lifecycle-restart|--readonly-crash-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file> | --readonly-cancel <pipe-name> <server-pid> <accepted-file>\n");
         return 2;
     }
 

@@ -9,6 +9,7 @@
 #include "virtualcar/readonly_contract.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -30,7 +31,8 @@ enum class Result : std::uint8_t {
     clock_regressed,
     capacity,
     exhausted,
-    io_error
+    io_error,
+    cancelled
 };
 
 class AuthenticatedSession final {
@@ -56,12 +58,16 @@ public:
     [[nodiscard]] Result read_synthetic(readonly::Route route, std::uint16_t did,
                                         std::array<std::uint8_t, 61>& bytes,
                                         std::size_t& length);
+    // Cross-thread cooperative cancel of an in-flight synthetic read.
+    // Does not acquire the read mutex or cancel other J2534 operations.
+    void cancel_read() noexcept;
     [[nodiscard]] Result disconnect() noexcept;
 
     // Local state/lease check only; it is not a remote health probe.
     [[nodiscard]] bool connected() noexcept;
     [[nodiscard]] ipc::SessionToken session() const noexcept;
     [[nodiscard]] lifecycle::Snapshot snapshot() const noexcept;
+    [[nodiscard]] std::size_t pending_read_count() const noexcept;
     [[nodiscard]] std::uint32_t last_error() const noexcept;
 
 private:

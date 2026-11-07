@@ -204,9 +204,11 @@ Result AuthenticatedSession::read_synthetic(
 
     readonly::Envelope response{};
     const ipc::Result wire = client_.read_synthetic(request, response);
-    if (wire != ipc::Result::ok) {
+    if (wire != ipc::Result::ok || client_.read_cancel_requested()) {
+        const Result denied = client_.read_cancel_requested()
+            ? Result::cancelled : map_ipc(wire);
         revoke_locked();
-        return map_ipc(wire);
+        return denied;
     }
 
     const std::uint64_t received = static_cast<std::uint64_t>(GetTickCount64());
@@ -227,6 +229,14 @@ Result AuthenticatedSession::read_synthetic(
     std::copy_n(response.payload.begin() + 3,
         static_cast<std::ptrdiff_t>(length), bytes.begin());
     return Result::ok;
+}
+
+void AuthenticatedSession::cancel_read() noexcept
+{
+    // The read thread holds mutex_. Cancellation is a sticky atomic
+    // signal consumed by the active overlapped read in ipc::Client.
+    // The caller must keep this session object alive until it joins.
+    client_.request_cancel_read();
 }
 
 Result AuthenticatedSession::disconnect() noexcept
@@ -283,6 +293,12 @@ lifecycle::Snapshot AuthenticatedSession::snapshot() const noexcept
     return lifecycle_.snapshot();
 }
 
+std::size_t AuthenticatedSession::pending_read_count() const noexcept
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return ledger_.pending();
+}
+
 std::uint32_t AuthenticatedSession::last_error() const noexcept
 {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -301,6 +317,7 @@ Result AuthenticatedSession::map_ipc(ipc::Result value) noexcept
     case ipc::Result::peer_mismatch: return Result::peer_mismatch;
     case ipc::Result::not_authenticated: return Result::not_authenticated;
     case ipc::Result::io_error: return Result::io_error;
+    case ipc::Result::cancelled: return Result::cancelled;
     }
     return Result::io_error;
 }
