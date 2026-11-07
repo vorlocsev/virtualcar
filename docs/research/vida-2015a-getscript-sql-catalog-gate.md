@@ -619,20 +619,34 @@ whether the full VIDA UI or diagnostic module was active,
 whether a diagnostic adapter was selected, or whether one
 of these DLLs will load upon communication. A system-wide
 module-name scan also cannot rule out a differently named
-DiCE communication stack. `VidaMonitor` has been listed as
-a VIDA component in third-party process inventories, but
-we did not verify the binary manufacturer or architecture
-on the owner's installation; `DevCtrlSV3` role remains
-unverified. No process start/stop, hardware communication,
-DLL injection/load, or adapter registry modification.
+DiCE communication stack. The owner subsequently inspected EXE version resources,
+PE headers and service-PID matching locally, without
+emitting paths or command lines. Definitive host results:
+- `DevCtrlSV3.exe` PID 4644: **x64**, Company `Panasonic
+  Corporation`, Product/Description `Device Control
+  Utility Service`, direct Win32_Service association
+  `DevCtrlSV3`. This is **not** a Volvo VIDA process; remove
+  it from the presumed VIDA device stack.
+- `VidaMonitor.exe` PID 12080: **x86**, Company
+  `Volvo Cars Corporation`, Product `VIDA`, Description
+  `VidaMonitor`, **no direct Win32_Service PID match**.
+  This proves a Volvo-supplied 32-bit monitor process was
+  running, NOT that VIDA's diagnostic UI had selected
+  any DiCE/J2534 transport.
+The preceding `tasklist /M` negative results for
+`TSDiCE32.dll`, `TSDiCE64.dll` and `monpj432.dll` remain
+a point-in-time snapshot. No driver DLL observed loaded.
+No process start/stop, hardware communication, DLL
+injection/load, or adapter registry modification.
 
-Next local-only passive check: obtain version-resource
-`CompanyName`/`ProductName`/`FileDescription` and PE
-machine type **for these two running executables** without
-emitting their paths or command-line arguments, and list
-service associations by process ID. Distinguish any
-subsequent actual diagnostic UI session from mere background
-process presence before attempting a J2534 capture.
+Next local-only passive check: inventory other **running
+Volvo-authored/VIDA-named processes**, their PIDs, company
+and product fields and whether they expose a GUI window,
+without paths, window titles or command-line arguments.
+A generic browser/IIS-hosted VIDA session may not be
+Volvo-stamped; negative results are therefore inconclusive.
+The original VIDA diagnostic client process and transport
+selection must be confirmed before any J2534 trace attempt.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
