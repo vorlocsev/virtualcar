@@ -47,6 +47,9 @@ on:
           - feature/m5b-cpp-named-pipe-client
           - feature/m5c1-bounded-lifecycle-preflight
           - feature/m5c2-authenticated-session-lifecycle
+          - feature/m5d1-readonly-vcrd-contract
+          - feature/m5d2a-csharp-synthetic-read-host
+          - feature/m5d2b-native-readonly-ipc-client
 
 permissions:
   contents: read
@@ -517,6 +520,84 @@ jobs:
               if (Test-Path -LiteralPath $readyFile) { Remove-Item -LiteralPath $readyFile -Force }
               if (Test-Path -LiteralPath $lostFile) { Remove-Item -LiteralPath $lostFile -Force }
               if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
+            }
+          }
+
+      - name: Run M5D2b native synthetic read-only x86/x64 against C# Host when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'docs/architecture/VIRTUALCAR-M5D2B-NATIVE-READONLY-CLIENT.md')) {
+            Write-Host 'SKIP: M5D2b native read client is not present at this source ref.'
+            return
+          }
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clientX86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe'
+          $clientX64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe'
+          if (-not (Test-Path -LiteralPath $serviceDll) -or
+              -not (Test-Path -LiteralPath $clientX86) -or
+              -not (Test-Path -LiteralPath $clientX64)) {
+            throw 'M5D2b requires managed C# Host plus x86 and x64 native test executables.'
+          }
+
+          function Start-M5D2BHost {
+            param(
+              [Parameter(Mandatory=$true)][string]$Dll,
+              [Parameter(Mandatory=$true)][string]$PipeName,
+              [Parameter(Mandatory=$true)][ValidateSet('read-session','session')][string]$Mode
+            )
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = (Get-Command dotnet -ErrorAction Stop).Source
+            $info.Arguments = ('"{0}" --serve-once "{1}" {2}' -f $Dll, $PipeName, $Mode)
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw 'Could not start M5D2b synthetic C# Host'
+            }
+            return $process
+          }
+
+          function Stop-M5D2BHost {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally { $Process.Dispose() }
+          }
+
+          $cases = @(
+            @{label='sealed fixture reads'; flag='--readonly'; mode='read-session'},
+            @{label='wrong CAN route denial'; flag='--readonly-deny'; mode='read-session'},
+            @{label='missing fixture denial'; flag='--readonly-no-fixture'; mode='session'},
+            @{label='expired lease denial'; flag='--readonly-expire'; mode='read-session'}
+          )
+          foreach ($arch in @('x86', 'x64')) {
+            $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+            foreach ($case in $cases) {
+              $pipeName = 'vcm5d2b-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+              $server = $null
+              try {
+                $server = Start-M5D2BHost -Dll $serviceDll -PipeName $pipeName -Mode $case.mode
+                & $client $case.flag $pipeName $server.Id
+                $testExit = $LASTEXITCODE
+                if ($testExit -ne 0) {
+                  throw ("M5D2b {0} {1} failed (exit {2})" -f $arch, $case.label, $testExit)
+                }
+                if (-not $server.WaitForExit(15000)) {
+                  throw ("M5D2b {0} {1} C# Host did not exit" -f $arch, $case.label)
+                }
+                [int]$exitCode = $server.ExitCode
+                if ($exitCode -ne 0) {
+                  throw ("M5D2b {0} {1} C# Host exited with {2}" -f $arch, $case.label, $exitCode)
+                }
+                Write-Host ("PASS: M5D2b {0} {1} native C++ <-> C# Host" -f $arch, $case.label)
+              } finally { Stop-M5D2BHost -Process $server }
             }
           }
 
