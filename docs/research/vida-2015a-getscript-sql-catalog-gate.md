@@ -736,16 +736,37 @@ JBoss Modules manual: https://jboss-modules.github.io/jboss-modules/manual/
 WildFly example/guide:
 https://docs.wildfly.org/24/Developer_Guide.html
 
-**Next safe owner-side passive gate:** on the already
-running Java PID (only if still the same process),
-inspect boolean flags for JBoss module launcher
-`-mp`/`-modulepath`, `org.jboss.as.standalone`,
-`org.jboss.as.server`, `-Djboss.home.dir`, plus count of
-LISTEN TCP sockets belonging to the same PID (do not
-emit IP/port numbers or command lines). Check separately
-for loaded `TSDiCE32.dll`, `TSDiCE64.dll`,
-`monpj432.dll` only as metadata. No changes to registry,
-processes, DLLs, SQL, ECU or Virtual Car distribution.
+**Owner-local passive WildFly launcher and listener check:**
+The existing `java.exe` PID **4324** was still present
+with original parent PID **12228**. Private command-line
+flag checks yielded: `JBossModules=True`,
+`ModulePathArgument=True`, `WildFlyStandalone=True`
+(`org.jboss.as.standalone`), `JBossServerModule=False`,
+`JBossHomeConfigured=True` (`-Djboss.home.dir=`).
+`Get-NetTCPConnection` returned **3 listening TCP sockets
+owned by that Java PID, all 3 on loopback addresses**
+(`127.0.0.1` / `::1`). No full command line, JAR path,
+addresses/port numbers or response data were printed.
+
+This is strong evidence of **a standalone-mode WildFly/JBoss
+runtime launched from the VIDA monitor ancestry**.
+It is NOT evidence that the actual Volvo diagnostic
+components are deployed, that any VIDA browser is currently
+communicating with the server, or that Java loads DiCE/J2534
+DLLs. The `JBossServerModule=False` exact marker does not
+contradict the positive `WildFlyStandalone=True` launcher
+marker. The 3 listeners are point-in-time loopback-only
+sockets, not proven HTTP endpoints.
+
+**Next safe owner-side passive gate:** with PID still
+matching Java + original parent + JBoss launcher markers,
+compare existing TCP ESTABLISHED connections to the
+Java-owned loopback listening **ports in memory only**,
+then report names/PIDs of local client processes and per-
+process connection counts without displaying IPs/ports,
+URLs, paths, command lines, request payloads or secrets.
+No HTTP requests, SQL calls, J2534 changes, vehicle I/O,
+module execution or binary publication.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
