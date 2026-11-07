@@ -67,6 +67,7 @@ public:
     [[nodiscard]] bool connected() noexcept;
     [[nodiscard]] ipc::SessionToken session() const noexcept;
     [[nodiscard]] lifecycle::Snapshot snapshot() const noexcept;
+    [[nodiscard]] std::size_t pending_read_count() const noexcept;
     [[nodiscard]] std::uint32_t last_error() const noexcept;
 
 private:

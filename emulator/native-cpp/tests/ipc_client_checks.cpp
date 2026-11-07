@@ -591,7 +591,8 @@ bool cross_language_readonly_deny(const std::wstring& pipe_name,
         route, 0xf187U, data, count);
     if (result == SessionResult::ok || result == SessionResult::invalid ||
         count != 0 || session.connected() ||
-        session.snapshot().active || session.snapshot().channels != 0) {
+        session.snapshot().active || session.snapshot().channels != 0 ||
+        session.pending_read_count() != 0) {
         std::printf("FAIL native read did not revoke on denied Host fixture/route\\n");
         return false;
     }
@@ -655,6 +656,7 @@ bool cross_language_read_cancel(const std::wstring& pipe_name,
     if (!ready || result != SessionResult::cancelled ||
         size != 0 || session.connected() ||
         session.snapshot().active || session.snapshot().channels != 0 ||
+        session.pending_read_count() != 0 ||
         !std::all_of(reply.begin(), reply.end(),
             [](std::uint8_t b) { return b == 0; })) {
         std::printf("FAIL M5D2c in-flight cancellation (ready=%u, result=%u)\n",

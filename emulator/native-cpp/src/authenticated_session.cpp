@@ -293,6 +293,12 @@ lifecycle::Snapshot AuthenticatedSession::snapshot() const noexcept
     return lifecycle_.snapshot();
 }
 
+std::size_t AuthenticatedSession::pending_read_count() const noexcept
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return ledger_.pending();
+}
+
 std::uint32_t AuthenticatedSession::last_error() const noexcept
 {
     const std::lock_guard<std::mutex> lock(mutex_);
