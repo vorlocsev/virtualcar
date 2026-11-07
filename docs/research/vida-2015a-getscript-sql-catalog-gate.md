@@ -578,6 +578,36 @@ registry names and DLL **basenames** (no full paths),
 per-provider capability flags, and file architecture using
 read-only metadata. Do not register/launch/modify.
 
+**Owner-local J2534 provider identity/PE audit, read-only:**
+The three registry-view entries were mapped to actual
+provider names, DLL basenames and PE header architectures:
+
+| Registry view | Provider | DLL basename | PE Machine | CAN DWORD=1 | ISO15765 DWORD=1 |
+|---|---|---|---|---|---|
+| Registry32 | Drew Technologies Inc. - MongoosePro JLR | `monpj432.dll` | x86 | Yes | Yes |
+| Registry32 | SETEK - DiCE | `TSDiCE32.dll` | x86 | No | No |
+| Registry64 | SETEK - DiCE | `TSDiCE64.dll` | x64 | No | No |
+
+This resolves the earlier CAN and ISO15765 aggregate flags
+to **the same x86 MongoosePro JLR provider**. Both SETEK
+DiCE entries are present with architecture-matching PE
+headers, but their missing registry flags are not evidence
+that the driver cannot perform CAN or diagnostics.
+PE Machine validation establishes file architecture only,
+not DLL loadability, J2534 export availability, VIDA tool
+selection, or vehicle communication. The target
+`VirtualCar Trace VM dev26` provider remains absent in
+both views. No calls to VIDA, J2534 APIs, or hardware.
+
+Next preferred read-only evidence: while VIDA is already
+open and with **no physical DiCE/ECU connection**, inspect
+whether a relevant process has loaded `TSDiCE32.dll`,
+`TSDiCE64.dll`, or `monpj432.dll` using local process/module
+metadata. Negative evidence is inconclusive because a DLL
+may load only after communication begins; never infer
+VIDA compatibility solely from installed J2534 registration.
+Do not register the proxy or publish binaries.
+
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
 1. Establish how the **original VIDA caller** obtains/selects
