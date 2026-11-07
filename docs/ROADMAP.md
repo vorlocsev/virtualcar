@@ -7,6 +7,19 @@
 - Passive 11/29-bit CAN observation tools, early P2 source research, and read-only SavvyCAN CSV statistics.
 - Privately supplied donor profile **is not** part of the repository.
 
+## Verified migration checkpoint (2026-11-07)
+
+- M5A-M5D-2eB local C# Host and C++20 read-only synthetic IPC migration:
+  Windows VMware feature and post-merge validation SUCCESS.
+  See [PR #125](https://github.com/vorlocsev/virtualcar/pull/125),
+  [PR #128](https://github.com/vorlocsev/virtualcar/pull/128),
+  [post-merge VMware #42375477826](https://github.com/vorlocsev/virtualcar/actions/runs/42375477826).
+- Test boundary: 8/8 native CTest for x86 and x64; C# Host 17/17;
+  Python 252; three Host failures/cancellation and recovery using only
+  sealed synthetic fixtures. Fail-closed C++ J2534 DLL remains unlinked.
+- This is NOT proof that SectorV/VDASH/VIDA detects XC90 V8 MY2009
+  and not evidence of real CAN traffic, DiCE compatibility or OEM responses.
+
 ## Development priorities
 1. P0: Verified CEM identification for XC90 V8 MY2009. Investigate A3, A6, B9F0 and P3/29-bit routes using trusted response captures. Preserve existing B9FB replay.
 2. P0: Correct J2534 transport boundaries, channel/filter identity, read/write semantics, and READ128 real-world validation.
