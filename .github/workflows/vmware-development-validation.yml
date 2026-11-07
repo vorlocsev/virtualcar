@@ -62,6 +62,7 @@ on:
           - research/vida-2015a-getscript-catalog-only-inspector
           - research/vida-readvin-script-selection-evidence
           - fix/vida-session-release-provenance-gate
+          - feature/vida-readvin-xml-graph-safe-audit
 
 permissions:
   contents: read
