@@ -552,6 +552,32 @@ compatibility/VIDA-tool-selection assessment before any
 registration or execution. No `GetScript` execution,
 physical device tests or emulator reply changes.
 
+**Owner-local aggregate J2534 registry inventory, read-only:**
+using Registry32 and Registry64 views of
+`HKLM\SOFTWARE\PassThruSupport.04.04`:
+
+| View | Providers | Configured libraries | Existing library files | CAN advertised | ISO15765 advertised |
+|---|---:|---:|---:|---:|---:|
+| Registry32 | 2 | 2 | 2 | 1 | 1 |
+| Registry64 | 1 | 1 | 1 | 0 | 0 |
+
+This establishes three **registry-view entries** with
+three resolvable `FunctionLibrary` files across two views;
+it does not establish three unique physical adapters or
+three distinct DLLs. The same x86 registration might
+advertise both CAN and ISO15765 or two distinct x86
+registrations might advertise one each. Missing `CAN` and
+`ISO15765` REG_DWORD markers in Registry64 do not prove a
+provider cannot implement those protocols. Existing files
+do not establish valid DLL architecture or functional
+J2534 APIs, VIDA discovery or diagnostic compatibility.
+The separately checked exact `VirtualCar Trace VM dev26`
+provider was absent in both views. No registry changes or
+vehicle I/O occurred. Next limited gate: identify provider
+registry names and DLL **basenames** (no full paths),
+per-provider capability flags, and file architecture using
+read-only metadata. Do not register/launch/modify.
+
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
 1. Establish how the **original VIDA caller** obtains/selects
