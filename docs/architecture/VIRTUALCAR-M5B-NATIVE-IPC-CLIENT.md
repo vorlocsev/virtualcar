@@ -36,14 +36,13 @@ Eight native offline gates:
 5. Reject truncated, oversized and trailing-byte frames.
 6. Refuse unsupported commands and payloads above 256 bytes.
 7. Pipe-name allowlist rejects path injection and invalid characters.
-8. Missing server returns within a bounded connect deadline.
+8. Missing server and a peer that trickles an incomplete ACK both obey absolute connect/read deadlines.
 
 Additional native integration:
 - C# `VirtualCar.Service.Checks --serve-once <pipe>` hosts one approved
   synthetic scenario using a test-only fixed 32-byte secret.
 - Native C++ x86 and x64 clients independently connect, authenticate,
-  send session-bound KEEPALIVE, send GOODBYE and require both processes
-  to exit successfully.
+  send two concurrent session-bound KEEPALIVEs (serialized by the client), send GOODBYE, and require both processes to exit successfully. The C# host resets the coordinator afterward to prove the session was released.
 - This test secret is only for CI and must never be used by a production
   launcher. Production launcher provisioning of the expected PID and launch secret remains a separate task.
 
@@ -58,6 +57,8 @@ Additional native integration:
   policy, backpressure and crash recovery, wiring into J2534 lifecycle,
   Dvinholm E2E and physical J2534 acceptance.
 - No Virtual Car release, package or artifact publication.
+
+Parent M5A is verified 9/9 on VMware workflow #42314429323 at head 42df2953. M5B itself remains unverified until its own Windows x86/x64 workflow executes.
 
 CI is the authority for compile/runtime claims. Do not mark M5B complete
 until Windows x86 and x64 native builds, all 8 offline gates and both

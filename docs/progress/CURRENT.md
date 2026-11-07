@@ -1,33 +1,56 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: C# .NET10 / C++20, M5A verified; M5B in progress (2026-11-07)
+## ACTIVE checkpoint: M5A validated 9/9; M5B native C++20 IPC client awaiting VMware CI (2026-11-07)
 
-### M5A local IPC preflight, Draft PR #85 (Windows VMware CI 8/8 PASS; NOT merged)
+### M5A local IPC preflight, Draft PR #85 (9/9 VMware PASS; NOT merged)
 
-`feature/m5a-secure-local-ipc-preflight` introduces `VirtualCar.Service`:
-Windows current-user Named Pipe, 32-byte launch-secret HELLO, bounded
-LE v1 frames, session-generation validation, one-client fail-closed
-KEEPALIVE/GOODBYE and eight Windows synthetic integration gate groups.
-Windows VMware workflow [#42303814581 attempt 2](https://github.com/vorlocsev/virtualcar/actions/runs/42303814581)
-passed on code head `e223b902903047758077546dd55a34e3861ed6cc`: Python 252
-tests (1 expected skip), Go/vet, native C++ x86/x64, .NET Core 8/8,
-SQLite 8/8, Scenario 8/8 and M5A Named Pipe 8/8.
-Commits `8b86de8` and `e223b90` fix Windows SQLite handle cleanup.
-M5A remains a draft and is not merged.
+Branch: `feature/m5a-secure-local-ipc-preflight`. The Windows current-user
+Named Pipe host uses a 32-byte launch-secret HELLO, bounded LE v1 frames,
+session-generation validation, one-client fail-closed KEEPALIVE/GOODBYE,
+and bounded connection/read/write deadlines.
 
-### M5B native C++20 IPC client, stacked branch
+Latest private VMware run:
+[#42314429323](https://github.com/vorlocsev/virtualcar/actions/runs/42314429323)
+checked out the exact M5A branch at `42df2953cb8287eb81a1e94052020b353a80eb03`.
+Results:
+- Python: 252 tests, 1 expected skip.
+- Go tests and vet: PASS.
+- Native C++ x86: 3/3 CTest; x64: 3/3 CTest.
+- .NET Core: 8/8; SQLite Storage: 8/8; Scenario Compiler: 8/8.
+- M5A Windows Named Pipe integration: **9/9**.
+- No artifacts uploaded, no releases or deployments.
+PR #85 remains Draft and unmerged. This validates the M5A host only,
+not the native C++ client, functional J2534 DLL or Dvinholm integration.
 
-Branch: `feature/m5b-cpp-named-pipe-client`, Draft PR #87 stacked on M5A PR #85.
-Adds strict v1 frame codec, overlapped Windows pipe I/O, total transfer
-deadlines, expected server-PID verification before sending the secret,
-client anti-impersonation QoS, serialized HELLO/KEEPALIVE/GOODBYE,
-secret-buffer wiping, 8 native offline gates and wired x86/x64
-C++-to-C# integration checks (including wrong-PID rejection), awaiting
-an executed Windows CI run.
-The C++ client is **not linked into the J2534 DLL**. No CAN/ECU command,
-PassThru success, real vehicle data, or physical adapter is enabled.
-No M5B CI result is claimed until the Windows matrix executes. Manual VMware dispatch support is prepared separately in Draft PR #88.
-See docs/architecture/VIRTUALCAR-M5B-NATIVE-IPC-CLIENT.md.
+### M5B native C++20 IPC client, Draft PR #87 (stacked on #85)
+
+Branch: `feature/m5b-cpp-named-pipe-client`. The native client mirrors
+the M5A v1 frame, uses overlapped I/O with absolute transfer deadlines,
+validates the expected server PID before sending the secret, requests
+`SECURITY_IDENTIFICATION`, serializes concurrent operations, binds
+KEEPALIVE to session/generation and wipes temporary secret buffers.
+It exposes only HELLO / KEEPALIVE / GOODBYE and is **not linked** into
+the fail-closed J2534 DLL.
+
+The eight native gates now include a trickle-read deadline test; the
+cross-language Windows tests exercise concurrent KEEPALIVE, wrong-PID
+rejection before HELLO, and session cleanup after GOODBYE. M5B has not
+yet passed its own VMware x86/x64 matrix.
+
+### M5B private VMware workflow enablement, Draft PR #88
+
+PR #88 changes only `.github/workflows/vmware-development-validation.yml`:
+it adds the M5B source branch to the manual allowlist and runs the native
+x86/x64 clients against the C# host. Its earlier PR workflow attempt
+[#42306382969](https://github.com/vorlocsev/virtualcar/actions/runs/42306382969)
+failed before job steps/logs were available; this is **not** evidence of
+an M5B source-code failure or pass. PR #88 remains Draft and unmerged.
+
+No Virtual Car package, artifact, installer, adapter registration or
+release is produced. Keep all live-vehicle, SecurityAccess and programming
+paths disabled. M5A/M5B are not production credential provisioning,
+functional J2534 transport, Dvinholm E2E or physical adapter acceptance.
+
 
 M5A/M5B are **not** an installed production service, production
 credential-provisioning path, functional native J2534 DLL, Dvinholm
@@ -93,7 +116,7 @@ docs/architecture/DVINHOLM-VIRTUALCAR-ROADMAP.md.
 
 Exact cross-chat continuation phrase: **virtual car**.
 
-Verified checkpoint: 2026-11-06.
+Verified checkpoint: 2026-11-07.
 This document is the canonical cross-chat continuation note. Re-read the
 current GitHub PR/CI state before changing code; do not rely only on chat memory.
 

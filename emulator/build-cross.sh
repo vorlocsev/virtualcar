@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Cross-build on Linux with Clang/LLD for Windows 32-bit, no Windows SDK needed.
 set -euo pipefail
+# Git Bash/MSYS rewrites LLD's slash-prefixed options (/lib, /def, /out)
+# into filesystem paths. This script uses only relative paths, so disable
+# argument conversion for its Windows tool invocations.
+export MSYS2_ARG_CONV_EXCL='*'
+export MSYS_NO_PATHCONV=1
+
 cd "$(dirname "$0")"
 LLVM_CLANG="${LLVM_CLANG:-clang}"
 LLVM_LINK="${LLVM_LINK:-lld-link}"

@@ -1,3 +1,11 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+
 #include "virtualcar/ipc_client.hpp"
 
 #include <algorithm>
@@ -8,6 +16,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
+#include <atomic>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -178,20 +188,82 @@ bool group07_pipe_name_allowlist()
     return !FrameCodec::valid_pipe_name(std::wstring(81, L'a'));
 }
 
-bool group08_missing_server_timeout_is_bounded()
+bool group08_connect_and_absolute_read_deadlines_are_bounded()
 {
-    Client client;
     const auto secret = test_secret();
-    const auto start = std::chrono::steady_clock::now();
-    const std::wstring pipe_name = L"vcm5b-no-listener-" +
-        std::to_wstring(start.time_since_epoch().count());
-    if (client.connect(pipe_name, secret, 0, 100) != Result::invalid)
+
+    Client missing;
+    const std::wstring missing_name = L"vcm5b-no-listener-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" +
+        std::to_wstring(GetTickCount64());
+    if (missing.connect(missing_name, secret, 0, 100) != Result::invalid)
         return false;
-    const Result result = client.connect(pipe_name, secret, 1, 100);
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start).count();
-    return result == Result::timed_out && !client.connected() &&
-        elapsed >= 80 && elapsed < 2000;
+    const auto connect_start = std::chrono::steady_clock::now();
+    const Result connect_result = missing.connect(missing_name, secret, 1, 100);
+    const auto connect_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - connect_start).count();
+    if (connect_result != Result::timed_out || missing.connected() ||
+        connect_elapsed < 80 || connect_elapsed >= 2000)
+        return false;
+
+    // A peer that trickles an incomplete ACK must not extend the absolute
+    // whole-frame read deadline by delivering bytes just before each wait ends.
+    const std::wstring stalled_name = L"vcm5b-stall-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" +
+        std::to_wstring(GetTickCount64());
+    const std::wstring path = L"\\\\.\\pipe\\" + stalled_name;
+    HANDLE server = CreateNamedPipeW(path.c_str(), PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1, 512, 512, 0, nullptr);
+    if (server == INVALID_HANDLE_VALUE)
+        return false;
+
+    std::atomic<bool> hello_received{false};
+    std::atomic<bool> fragments_attempted{false};
+    std::thread server_thread([server, &hello_received, &fragments_attempted] {
+        const BOOL connected = ConnectNamedPipe(server, nullptr);
+        if (connected == FALSE && GetLastError() != ERROR_PIPE_CONNECTED) {
+            CloseHandle(server);
+            return;
+        }
+
+        std::array<std::uint8_t, FrameCodec::header_length + 32> hello{};
+        std::size_t offset = 0;
+        while (offset < hello.size()) {
+            DWORD received = 0;
+            const DWORD request = static_cast<DWORD>(hello.size() - offset);
+            if (ReadFile(server, hello.data() + offset, request, &received, nullptr) == FALSE ||
+                received == 0) {
+                CloseHandle(server);
+                return;
+            }
+            offset += received;
+        }
+        hello_received.store(true);
+
+        const std::uint8_t first = static_cast<std::uint8_t>('V');
+        DWORD written = 0;
+        (void)WriteFile(server, &first, 1, &written, nullptr);
+        Sleep(100);
+        const std::uint8_t second = static_cast<std::uint8_t>('C');
+        (void)WriteFile(server, &second, 1, &written, nullptr);
+        fragments_attempted.store(true);
+        Sleep(300);
+        (void)DisconnectNamedPipe(server);
+        CloseHandle(server);
+    });
+
+    Client stalled;
+    const auto read_start = std::chrono::steady_clock::now();
+    const Result read_result = stalled.connect(
+        stalled_name, secret, static_cast<std::uint32_t>(GetCurrentProcessId()), 150);
+    const auto read_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - read_start).count();
+    server_thread.join();
+
+    return read_result == Result::timed_out && !stalled.connected() &&
+        hello_received.load() && fragments_attempted.load() &&
+        read_elapsed >= 100 && read_elapsed < 2000;
 }
 
 bool cross_language_reject_peer(const std::wstring& pipe_name,
@@ -220,9 +292,22 @@ bool cross_language_connect(const std::wstring& pipe_name,
         return false;
     }
     const auto token = client.session();
-    if (token.id == 0 || token.generation == 0 ||
-        client.keep_alive() != Result::ok) {
-        std::printf("FAIL C# host session-bound KEEPALIVE\n");
+    if (token.id == 0 || token.generation == 0) {
+        std::printf("FAIL C# host session token\n");
+        return false;
+    }
+    std::atomic<bool> first_keepalive{false};
+    std::atomic<bool> second_keepalive{false};
+    std::thread first([&] {
+        first_keepalive.store(client.keep_alive() == Result::ok);
+    });
+    std::thread second([&] {
+        second_keepalive.store(client.keep_alive() == Result::ok);
+    });
+    first.join();
+    second.join();
+    if (!first_keepalive.load() || !second_keepalive.load()) {
+        std::printf("FAIL C# host concurrent session-bound KEEPALIVE\n");
         return false;
     }
     if (client.disconnect() != Result::ok || client.connected()) {
@@ -269,7 +354,7 @@ int main(int argc, char** argv)
         {"05 truncated/oversized/trailing frames rejected", group05_truncated_oversized_and_trailing_data_rejected},
         {"06 invalid frames cannot be encoded", group06_invalid_frames_cannot_be_encoded},
         {"07 pipe name allowlist rejects path injection", group07_pipe_name_allowlist},
-        {"08 missing server connect timeout is bounded", group08_missing_server_timeout_is_bounded}
+        {"08 connect and trickle-read deadlines are bounded", group08_connect_and_absolute_read_deadlines_are_bounded}
     }};
 
     int passed = 0;
