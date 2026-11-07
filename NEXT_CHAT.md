@@ -1,6 +1,65 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: Original Util.DLL IsValidVIN shape (2026-11-07)
+## ACTIVE: VIDA GetScript any-schema catalog visibility (2026-11-07)
+
+- [PR #166](https://github.com/vorlocsev/virtualcar/pull/166)
+  **MERGED** as `21d36b93e49dfb5254177b401b449a0c9493505f`.
+  Exact-feature owner-only
+  [VMware #42400692068](https://github.com/vorlocsev/virtualcar/actions/runs/42400692068)
+  **SUCCESS** with source SHA
+  `7d7c03334948e1280746b3a8988bb0175979843e`,
+  Python **324**, native x86/x64 CTest **8/8**
+  each, C# Host **17/17**, no artifacts.
+  Its ASCII shape utility is synthetic-only and
+  does not modify actual CEM or J2534 behavior.
+- [Draft PR #169](https://github.com/vorlocsev/virtualcar/pull/169)
+  carries the all-schema GetScript SQL catalog visibility
+  fix with six new source safety checks (expected
+  Python **330**, feature VMware unverified).
+  Manual trusted source selection was added through
+  merged CI-only [PR #170](https://github.com/vorlocsev/virtualcar/pull/170)
+  on `main` and [PR #171](https://github.com/vorlocsev/virtualcar/pull/171)
+  on `development`. This CI selector is NOT
+  a successful feature test; run exact-SHA
+  `vmware-development-validation.yml` manually
+  before promoting draft.
+- **Current unverified source branch**
+  `fix/vida-getscript-nondbo-visibility` extends the
+  existing read-only Windows catalog tool
+  `emulator/scripts/Inspect-VidaGetScriptSchema.ps1`:
+  `GetScript` name visibility is now counted
+  **across all SQL-visible schemas** while the five
+  parameter signatures remain explicitly
+  `dbo.GetScript`-only.
+  Reports categorical singleton, non-dbo and
+  multi-schema ambiguity, never actual schema names.
+  A zero count means absent **or hidden from the
+  current principal**, not proven missing.
+- Six new static source-safety checks extend 8
+  catalog tests to 14, expected full Python **330**
+  (previous 324 exact-feature verified), but the
+  new branch has **NOT YET PASSED** exact-SHA
+  Windows VMware/PowerShell or live SQL catalog.
+  No SQL call, procedure body, XML, connection
+  string, original DLL or VIN is committed.
+  Source note:
+  [VIDA SQL catalog boundary](docs/research/vida-2015a-getscript-sql-catalog-gate.md).
+- Main P0 blocker remains **authorized SQL
+  catalog metadata of actual installed 2014D-derived
+  offline VIDA 2015A**, selected
+  `GetScript(ReadVin=4)` XML, then continuous
+  CarCom/J2534/identity/ECU read-only session.
+  [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  is open. No manufactured CEM A3/E3/A6,
+  VIN, PIN/security access, ECU programming
+  or Virtual Car binary releases.
+- [Draft PR #143](https://github.com/vorlocsev/virtualcar/pull/143)
+  remains independently blocked on its own exact
+  source Windows VMware evidence.
+
+---
+
+## HISTORICAL: Original Util.DLL IsValidVIN shape (2026-11-07)
 
 - [PR #163](https://github.com/vorlocsev/virtualcar/pull/163)
   **MERGED** on `development` as

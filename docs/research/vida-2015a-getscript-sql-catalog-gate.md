@@ -146,9 +146,64 @@ always outputs:
 
 Microsoft explicitly documents the permission-dependent behavior of SQL
 catalog views: [metadata visibility configuration](https://learn.microsoft.com/en-us/sql/relational-databases/security/metadata-visibility-configuration).
-The observed `dbo` schema is a **working lookup assumption**;
-an empty result is not proof no `GetScript` procedure exists under
-another schema or with different casing/collation.
+The `dbo` schema remains a **working parameter-lookup assumption**.
+The updated helper checks the procedure name across **all SQL-visible
+schemas**, without exporting any schema names. It separately counts
+visible non-`dbo` candidates and classifies a sole, ambiguous, or
+missing/hidden result. Only the `dbo` candidate's **five parameters**
+are classified; an alternate schema's signature is not inferred.
+SQL default-schema resolution, app principal, permissions, selected
+script and even whether any candidate is called by VIDA remain
+**unknown**. Zero visible procedures still does not prove absence.
+
+## Fix: prevent a false absence when GetScript uses a non-dbo schema
+
+The original catalog helper only counted `dbo.GetScript`. That is
+insufficient to distinguish *not present in dbo* from *not present in
+any visible schema*. In an offline VIDA installation with modified
+SQL ownership or an account whose default schema is not `dbo`, this
+could send investigation in the wrong direction.
+
+The updated **fixed, read-only SELECT** adds two catalog-only counts:
+`AnySchemaProcedureVisibleCount` and
+`NonDboProcedureVisibleCount`. It does not query procedure bodies
+or table rows, returns no real schema names, and does not use
+dynamic SQL, `EXEC`, or `sp_helptext`.
+
+The JSON includes:
+
+- `visible_getscript_any_schema_count`: all procedures named
+  `GetScript` visible to the current SQL principal.
+- `visible_getscript_non_dbo_schema_count`: such visible
+  procedures **outside** `dbo`.
+- `getscript_schema_visibility_category`: one of
+  `single_visible_dbo`,
+  `multiple_visible_schemas_including_dbo`,
+  `single_visible_non_dbo`,
+  `multiple_visible_non_dbo_schemas`,
+  `no_visible_getscript_or_insufficient_permissions`.
+- `parameter_scope=dbo_GetScript_only_if_visible`:
+  `@scriptType`, `@profileList`, `@scriptId`,
+  `@languageCode`, `@ecuType` still describe
+  **only** the visible `dbo` procedure. They **must not**
+  be attributed to any discovered non-`dbo` procedure.
+
+The helper also rejects contradictory aggregate counts.
+A non-`dbo` candidate is **not** automatically the actual
+procedure the VIDA application calls; SQL execution
+context/default schema may select another object.
+A zero count means **not visible or absent to this
+SQL principal**, never proven database corruption.
+
+Six new cross-platform source-safety regression groups
+verify all-schema catalog-only selection, dbo-only parameter
+scope, consistency guard, distinct ambiguity categories,
+output privacy and no VIN acceptance promotion.
+The pre-existing 8 tests (including an optional
+**PowerShell syntax parse, without running the script**) remain.
+Expected Python suite: **330**, pending exact-SHA
+Windows VMware validation; no authorized live SQL
+connection has been attempted during this step.
 
 ## Eight regression gates and limitations
 

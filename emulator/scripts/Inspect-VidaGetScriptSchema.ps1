@@ -36,11 +36,16 @@ if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
 }
 
 # Only Microsoft SQL Server *catalog views*. No script/table content is read.
-# Schema is deliberately fixed to dbo. Invisible means absent OR not permitted.
+# Procedure name is checked across all visible schemas; parameter metadata remains dbo-only.
+# SQL principal metadata permissions can hide objects and schemas.
 $query = @'
 SELECT
   (SELECT COUNT(*) FROM sys.procedures p JOIN sys.schemas s ON s.schema_id=p.schema_id
    WHERE s.name=N'dbo' AND p.name=N'GetScript') AS ProcedureVisibleCount,
+  (SELECT COUNT(*) FROM sys.procedures p
+   WHERE p.name=N'GetScript') AS AnySchemaProcedureVisibleCount,
+  (SELECT COUNT(*) FROM sys.procedures p JOIN sys.schemas s ON s.schema_id=p.schema_id
+   WHERE p.name=N'GetScript' AND s.name<>N'dbo') AS NonDboProcedureVisibleCount,
   (SELECT COUNT(*) FROM sys.parameters p
    WHERE p.object_id=OBJECT_ID(N'dbo.GetScript',N'P')) AS ParameterVisibleCount,
   (SELECT COUNT(*) FROM sys.parameters p
@@ -110,6 +115,22 @@ function SqlTypeCategory([string]$name) {
     }
 }
 $procedureVisible = Visible 'ProcedureVisibleCount'
+$anySchemaCount = ReadCount 'AnySchemaProcedureVisibleCount'
+$nonDboCount = ReadCount 'NonDboProcedureVisibleCount'
+if ($anySchemaCount -ne ($nonDboCount + [int]$procedureVisible)) {
+    throw 'Contradictory GetScript schema visibility counts.'
+}
+if ($procedureVisible -and $nonDboCount -eq 0) {
+    $schemaSummary = 'single_visible_dbo'
+} elseif ($procedureVisible -and $nonDboCount -gt 0) {
+    $schemaSummary = 'multiple_visible_schemas_including_dbo'
+} elseif ($nonDboCount -eq 1) {
+    $schemaSummary = 'single_visible_non_dbo'
+} elseif ($nonDboCount -gt 1) {
+    $schemaSummary = 'multiple_visible_non_dbo_schemas'
+} else {
+    $schemaSummary = 'no_visible_getscript_or_insufficient_permissions'
+}
 $parameterCount = ReadCount 'ParameterVisibleCount'
 $presence = [ordered]@{
     scriptType = (Visible 'ScriptTypePresent')
@@ -138,6 +159,10 @@ $report = [ordered]@{
     read_only = $true
     source = 'local_authorized_sql_catalog_metadata_only'
     procedure_visibility = $(if ($procedureVisible) { 'visible_dbo_GetScript' } else { 'not_visible_or_absent' })
+    visible_getscript_any_schema_count = $anySchemaCount
+    visible_getscript_non_dbo_schema_count = $nonDboCount
+    getscript_schema_visibility_category = $schemaSummary
+    parameter_scope = 'dbo_GetScript_only_if_visible'
     visible_parameter_count = $parameterCount
     expected_parameter_presence = $presence
     expected_parameter_type_categories = $types
@@ -150,7 +175,7 @@ $report = [ordered]@{
     b9fb_to_vin_mapping = 'unknown'
     xc90_v8_my2009_identity_accepted = 'unknown'
     replay_approved = $false
-    note = 'Catalog visibility depends on SQL permissions; absence from this report does not prove database objects missing.'
+    note = 'Metadata depends on SQL permissions. Any-schema visibility is not proof of the procedure selected by the application, and dbo-only parameter details do not describe other schemas.'
 }
 $json = ConvertTo-Json -InputObject $report -Depth 6
 $utf8 = New-Object System.Text.UTF8Encoding($false)

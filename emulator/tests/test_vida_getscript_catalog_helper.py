@@ -41,7 +41,7 @@ class VidaGetScriptMetadataSourceTests(unittest.TestCase):
 
     def test_04_unknown_metadata_does_not_mean_missing(self):
         self.assertIn("'not_visible_or_absent'",self.source)
-        self.assertIn('Catalog visibility depends on SQL permissions',self.source)
+        self.assertIn('Metadata depends on SQL permissions',self.source)
         self.assertNotIn("'procedure_missing'",self.source)
 
     def test_05_no_path_identity_or_sql_credentials_exported(self):
@@ -80,6 +80,52 @@ class VidaGetScriptMetadataSourceTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, 'PowerShell parser rejected the helper')
         self.assertEqual(len(re.findall(r"(?m)^\s*\w+\s*=\s*\((?:Visible|SqlTypeCategory) '[^']+'\)", self.source)), 14)
+
+
+    def test_09_any_schema_count_uses_only_catalog(self):
+        self.assertIn("AS AnySchemaProcedureVisibleCount", self.sql)
+        self.assertIn("AS NonDboProcedureVisibleCount", self.sql)
+        self.assertRegex(self.sql, r"(?s)FROM sys\.procedures p\s+WHERE p\.name=N'GetScript'\) AS AnySchemaProcedureVisibleCount")
+        self.assertRegex(self.sql, r"(?s)FROM sys\.procedures p JOIN sys\.schemas s.*?s\.name<>N'dbo'\) AS NonDboProcedureVisibleCount")
+
+    def test_10_parameters_remain_dbo_scoped(self):
+        self.assertIn("parameter_scope = 'dbo_GetScript_only_if_visible'", self.source)
+        self.assertEqual(self.sql.count("OBJECT_ID(N'dbo.GetScript',N'P')"), 11)
+        self.assertNotIn('OBJECT_ID(@', self.sql)
+        self.assertNotIn('sp_executesql', self.sql.lower())
+
+    def test_11_schema_count_consistency_is_checked(self):
+        self.assertIn("$anySchemaCount -ne ($nonDboCount + [int]$procedureVisible)", self.source)
+        self.assertIn("throw 'Contradictory GetScript schema visibility counts.'", self.source)
+        self.assertIn("ReadCount 'AnySchemaProcedureVisibleCount'", self.source)
+        self.assertIn("ReadCount 'NonDboProcedureVisibleCount'", self.source)
+
+    def test_12_visible_dbo_and_nondbo_are_not_conflated(self):
+        for label in ('single_visible_dbo',
+                      'multiple_visible_schemas_including_dbo',
+                      'single_visible_non_dbo',
+                      'multiple_visible_non_dbo_schemas',
+                      'no_visible_getscript_or_insufficient_permissions'):
+            self.assertIn("'" + label + "'", self.source)
+        self.assertIn("procedure_visibility = $(if ($procedureVisible)", self.source)
+        self.assertIn("getscript_schema_visibility_category = $schemaSummary", self.source)
+
+    def test_13_schema_names_and_credentials_not_exported(self):
+        report = self.source.split("$report = [ordered]@{", 1)[1].split("\n}\n$json", 1)[0]
+        for token in ('sys.schemas', 's.name', '$ServerInstance', '$Credential', '$query',
+                      '$OutputFile', '$row', '@scriptType'):
+            self.assertNotIn(token, report)
+        self.assertIn('visible_getscript_any_schema_count = $anySchemaCount', report)
+        self.assertIn('visible_getscript_non_dbo_schema_count = $nonDboCount', report)
+
+    def test_14_schema_visibility_not_taken_as_accepted_vehicle(self):
+        for token in ("runtime_readvin_script_selected = 'unknown'",
+                      "xc90_v8_my2009_identity_accepted = 'unknown'",
+                      'no_stored_procedure_executed = $true',
+                      'no_table_rows_read = $true',
+                      'replay_approved = $false'):
+            self.assertIn(token, self.source)
+        self.assertIn('Any-schema visibility is not proof', self.source)
 
 
 if __name__ == '__main__':
