@@ -1,13 +1,22 @@
 name: Virtual Car VMware development validation
 
-# Trusted development pushes run on the owner's persistent VMware runner.
-# Pull requests never execute on this self-hosted machine. Manual dispatch remains available.
-# No artifacts, releases, or publishing.
+# One authoritative owner-only Windows self-hosted CI implementation.
+# Trusted development pushes run automatically. Manual dispatch and calls
+# from legacy-named wrappers must originate at main, then checkout a trusted
+# source ref. NEVER run untrusted pull_request code on the persistent VM.
+# All old hosted runners have been retired; no artifacts or releases.
 on:
   push:
     branches: [development]
     paths:
       - "emulator/**"
+      - "proxy/**"
+      - "cmd/**"
+      - "trace_attribution/**"
+      - "tests/**"
+      - "scripts/**"
+      - "dotnet/**"
+      - "build_dev26.sh"
       - ".github/workflows/**"
       - "NuGet.Config"
       - "global.json"
@@ -17,6 +26,13 @@ on:
       - "Directory.Packages.props"
       - "pyproject.toml"
       - "requirements*.txt"
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Owner-selected trusted source ref"
+        required: false
+        type: string
+        default: development
   workflow_dispatch:
     inputs:
       source_ref:
@@ -41,7 +57,7 @@ concurrency:
 jobs:
   validate-development:
     name: Development Python, Go, C++ and .NET gates
-    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development')
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && ((github.event_name == 'push' && github.ref == 'refs/heads/development') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: [self-hosted, Windows, X64, virtualcar-win]
     timeout-minutes: 60
 
