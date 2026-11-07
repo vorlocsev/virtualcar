@@ -244,5 +244,103 @@ class BoundaryTests(unittest.TestCase):
         self.assertFalse(report["replay_approved"])
 
 
+    def test_17_target50_known_can_uses_evidence_without_client_acceptance(self):
+        report = tool.audit(j2534(transaction("B9FB", "delivered", target="0x50")),
+                            sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["protocol_categories"],
+                         {"CAN": 1})
+        self.assertTrue(report["b9fb_target_evidence_boundary"]["j2534_target_50_delivered_known_can"])
+        self.assertEqual(report["first_investigation_priority"],
+                         "investigate_hardware_a3_no_reply_without_emulating_security")
+        self.assertEqual(report["vin_accepted_by_client"], "unknown")
+
+    def test_18_target50_iso15765_delivery_requires_metadata_review(self):
+        tx = transaction("B9FB", "delivered", target="0x50")
+        tx["protocol"] = "ISO15765"
+        report = tool.audit(j2534(tx), sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["protocol_categories"],
+                         {"ISO15765": 1})
+        self.assertEqual(report["first_investigation_priority"],
+                         "verify_b9fb_target_50_can_protocol_metadata")
+        self.assertEqual(report["b9fb_target_evidence_boundary"]["j2534_target_50_delivered_unverified_protocol"], 1)
+        self.assertFalse(report["b9fb_target_evidence_boundary"]["j2534_target_50_delivered_known_can"])
+
+    def test_19_unknown_protocol_is_metadata_gap_not_wrong_ecu(self):
+        tx = transaction("B9FB", "delivered", target="0x50")
+        tx["protocol"] = "unknown"
+        report = tool.audit(j2534(tx), sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["first_investigation_priority"],
+                         "verify_b9fb_target_50_can_protocol_metadata")
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["statuses"],
+                         {"delivered": 1})
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["protocol_categories"],
+                         {"unknown": 1})
+        self.assertEqual(report["cross_source_transaction_attribution"], "not_established")
+
+    def test_20_independent_can_transport_survives_other_unknown_channels(self):
+        a = transaction("B9FB", "delivered", target="0x50")
+        a["protocol"] = "ISO15765"
+        b = transaction("B9FB", "delivered", target="0x50")
+        b["protocol"] = "CAN"
+        c = transaction("B9FB", "partial_rx", target="0x50")
+        c["protocol"] = "other"
+        report = tool.audit(j2534(a, b, c), sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["protocol_categories"],
+                         {"CAN": 1, "ISO15765": 1, "other": 1})
+        self.assertEqual(report["first_investigation_priority"],
+                         "investigate_hardware_a3_no_reply_without_emulating_security")
+        self.assertEqual(report["b9fb_target_evidence_boundary"]["j2534_target_50_delivered_unverified_protocol"], 1)
+
+    def test_21_old_target_can_does_not_mask_target50_protocol_mismatch(self):
+        old = transaction("B9FB", "delivered", target="0x40", baud=125000)
+        other = transaction("B9FB", "delivered", target="0x50", baud=500000)
+        other["protocol"] = "ISO15765"
+        report = tool.audit(j2534(old, other), sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["B9FB_40"]["protocol_categories"],
+                         {"CAN": 1})
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["protocol_categories"],
+                         {"ISO15765": 1})
+        self.assertEqual(report["first_investigation_priority"],
+                         "verify_b9fb_target_50_can_protocol_metadata")
+
+    def test_22_unknown_vehicle_has_no_forced_late_p2_protocol_rule(self):
+        gate = sectorv()
+        gate["scenario"] = "unknown_lab"
+        tx = transaction("B9FB", "delivered", target="0x50")
+        tx["protocol"] = "unknown"
+        report = tool.audit(j2534(tx), gate, same_run_reviewed=True)
+        self.assertEqual(report["first_investigation_priority"],
+                         "investigate_hardware_a3_no_reply_without_emulating_security")
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["protocol_categories"],
+                         {"unknown": 1})
+
+    def test_23_protocol_count_for_a3_and_p3_stays_transport_only(self):
+        a3 = transaction("A3", "unverified", target="0x40", baud=125000)
+        a3["protocol"] = "CAN"
+        p3 = transaction("22F190", "delivered", route="P3", id_format="11bit")
+        p3["protocol"] = "ISO15765"
+        report = tool.audit(j2534(
+            transaction("B9FB", "delivered", target="0x50"), a3, p3),
+            sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["A3_40"]["protocol_categories"],
+                         {"CAN": 1})
+        self.assertEqual(report["stage_evidence"]["P3"]["protocol_categories"],
+                         {"ISO15765": 1})
+        self.assertEqual(report["ecu_identification_accepted"], "unknown")
+        self.assertFalse(report["replay_approved"])
+
+    def test_24_reject_invalid_protocol_and_no_private_values_in_report(self):
+        for invalid in (True, 5, "CAN_J2534_PRIVATE", None):
+            tx = transaction("B9FB", "delivered", target="0x50")
+            tx["protocol"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                tool.audit(j2534(tx), sectorv(), same_run_reviewed=True)
+        clean = transaction("B9FB", "delivered", target="0x50")
+        clean["untrusted_log_text"] = "SYNTHETIC-PRIVATE-NAME"
+        report = tool.audit(j2534(clean), sectorv(), same_run_reviewed=True)
+        self.assertNotIn("SYNTHETIC-PRIVATE-NAME", json.dumps(report))
+        self.assertEqual(report["normal_mode_predicate"], "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()
