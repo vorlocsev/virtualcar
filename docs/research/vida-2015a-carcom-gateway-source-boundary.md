@@ -41,6 +41,21 @@ surface/types, not the taken branch, actual SQL procedure, XML content,
 vehicle-specific gateway, authentication, live ECU, or which scripts
 were selected. No implementation was executed or modified.
 
+### Local static verification, 8/8 PASS (source-only)
+
+Eight independently asserted checks were executed **offline** against the
+owner's original files: (1) SHA-256 of all seven analyzed files,
+(2) bounded XML parsing without DTD/ENTITY, (3) seven expected DI
+interfaces, (4) explicitly disabled ScriptEngine TraceScript,
+(5) diagnostic log level and presence of two numeric tool settings,
+(6) CarCom hardware/default ECU method names, (7) gateway-versus-
+non-gateway address-construction method names, (8) separate
+ScriptProvider / identity / ECU script and D2 tester-filter names.
+**8/8 PASS.** The assertions did not run managed IL, load any original
+VIDA assembly, connect to DiCE, access a vehicle or validate an ECU
+response. They are not CI tests and must not be reported as VMware
+or VIDA end-to-end interoperability.
+
 ## Independently published VIDA 2014D research
 
 Pinned source: [spnda/volvo_vida_db @ e2f8ee165e373360d7f7fd0e80298f68c25bc07e](https://github.com/spnda/volvo_vida_db/tree/e2f8ee165e373360d7f7fd0e80298f68c25bc07e).
