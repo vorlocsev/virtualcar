@@ -59,6 +59,27 @@ Dvinholm is the PRIMARY product; Virtual Car is a private, optional,
 synthetic read-only laboratory. No Virtual Car releases without a
 separate explicit instruction.
 
+### M5C-1 branch: isolated lease/channel state machine, Windows CI pending
+
+A new C++20 `VirtualCarLifecycle` library is being developed
+separately from the J2534 DLL. Eight deterministic test groups cover
+default deny, synthetic preflight and duplicate HELLO rejection,
+heartbeat expiration at the exact deadline, monotonic clock
+regression/overflow, wrong-generation revocation, eight-slot
+capacity/opaque nonrecycled IDs, reauthentication/reset cleanup
+and parallel bounded reservations. No route to CAN, ISO15765, ECU
+requests or physical devices is enabled.
+
+Developer-local GCC 14 C++20 run (Linux): **8/8 PASS**. This is
+NOT Windows x86/x64 CI or actual Host/DLL lifecycle acceptance.
+The C++ class relies on the caller to verify the host and scenario;
+a boolean `approved_synthetic` is not a credential.
+It reports lazy expiration at the next timed operation, and its
+`snapshot()` is observability only, never permission to route frames.
+Next mandatory step: Windows x86/x64 native CTest via private VMware
+runner, then M5C-2 binding to real authenticated Host lifecycle
+without enabling the J2534 data plane.
+
 Completed:
 - M0 PR #71 C# Core and C++ ABI, CI #1 SUCCESS.
 - M1 PR #72 C# SQLite v1, CI #4 SUCCESS.
