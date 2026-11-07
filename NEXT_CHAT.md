@@ -1,6 +1,49 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: P0 CEM discovery evidence acquisition after verified B9FB audits (2026-11-07)
+## ACTIVE: VIDA 2015A ReadVin SQL and public 2014D fallback evidence (2026-11-07)
+
+- [PR #148](https://github.com/vorlocsev/virtualcar/pull/148)
+  **MERGED** as `a3052a0bfa27233a3a296ff127a3e55079151879`.
+  Exact-feature [owner-only VMware #42387634616](https://github.com/vorlocsev/virtualcar/actions/runs/42387634616)
+  **SUCCESS** on `c715acfa88af5532ea917414195f913fdcd2f244`,
+  with **284 Python**, native 8/8 x86 and 8/8 x64, C# Host 17/17 and
+  no artifacts. Post-merge
+  [#42387878814](https://github.com/vorlocsev/virtualcar/actions/runs/42387878814)
+  **SUCCESS** on the exact merge SHA. The SQL catalog helper is
+  **not** live-VIDA-2015A-tested; the actual GetScript procedure
+  signature and returned XML remain unknown.
+- Original 2015A `BizServices.ScriptRepository.DLL` static IL
+  inspection now confirms `GetOneScriptFromDb` chooses the
+  first `GetFromDb` XML if nonempty (otherwise null), with
+  a separate possible `ScriptMissingException` path, and
+  `GetZippedScriptXml` performs SQL binary -> ZIP -> XML.
+  **8/8 offline source-only checks PASS**; no original DLL is committed.
+- New external evidence: published **VIDA2014D**, **2003 S40**
+  [read-only unsuccessful trace](https://www.matthewsvolvosite.com/forums/viewtopic.php?start=10&t=102268)
+  shows `ReadVin` / `EMPTYPROFILE` GetScript-Fetched-Running,
+  P3 `22F114`, then D2 `B9FB` 0x40 and 0x50 across different
+  channel/protocol/baud settings with J2534 read errors.
+  This is NOT a successful MY2009 XC90 VIN read, script XML,
+  accepted ECU, required normal-mode sequence or universal routing.
+- [PR #151](https://github.com/vorlocsev/virtualcar/pull/151)
+  **DRAFT / FEATURE-SHA NOT YET VALIDATED**:
+  metadata-only `ReadVin` script-selection counters and explicit
+  `EMPTYPROFILE` with eight synthetic regressions. Expected full
+  Python **292**, not yet claimed. Owner-only manual VMware source
+  selector was added via CI-only PRs #152/#153; do not confuse
+  baseline run with validation of feature PR #151.
+- Older [PR #143](https://github.com/vorlocsev/virtualcar/pull/143)
+  (A3/A6 native unimplemented marker analysis) is independently
+  **DRAFT**; do not merge until verified exact feature Windows SHA.
+- Primary P0 blocker remains authorized original **VIDA2015A**
+  `GetScript(ReadVin=4, EMPTYPROFILE)` SQL metadata + selected XML
+  and a continuous read-only VIDA/DiCE/J2534 client session. Never
+  invent A3/E3, PIN, VIN acceptance, ECU inventory or publish
+  Virtual Car binaries. No new DiCE/physical adapter test exists.
+
+---
+
+## HISTORICAL: P0 CEM discovery evidence acquisition after B9FB audits (2026-11-07)
 
 **Development checkpoint:** `ba84518c7ee47b2a2d9834c57bc98a73494c3487`
 (merged [PR #139](https://github.com/vorlocsev/virtualcar/pull/139)).
