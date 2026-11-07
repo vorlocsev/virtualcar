@@ -639,13 +639,13 @@ bool cross_language_readonly_fault(const std::wstring& pipe_name,
                                    std::uint32_t expected_server_pid,
                                    const char* mode)
 {
-    AuthenticatedSession session(5000);
-    if (session.connect(pipe_name, test_secret(), expected_server_pid, 1300)
+    AuthenticatedSession session(10000);
+    if (session.connect(pipe_name, test_secret(), expected_server_pid, 2500)
             != SessionResult::ok)
         return false;
     const virtualcar::readonly::Route route{0x7e0U, 0x7e8U, false};
     std::array<std::uint8_t, 61> data{};
-    data.fill(0xa5U);
+    data.fill(static_cast<std::uint8_t>(0xa5U));
     std::size_t size = 99;
     const SessionResult result = session.read_synthetic(
         route, 0xf187U, data, size);

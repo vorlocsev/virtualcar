@@ -255,7 +255,7 @@ public sealed class LocalLabPipeHost
             .ConfigureAwait(false);
         await server.FlushAsync(deadline.Token).ConfigureAwait(false);
         if (_replyFault == SyntheticReplyFault.PartialBodyStall)
-            await Task.Delay(TimeSpan.FromSeconds(3), deadline.Token)
+            await Task.Delay(TimeSpan.FromSeconds(5), deadline.Token)
                 .ConfigureAwait(false);
         // For close cases, returning disposes the OS pipe. For the stall
         // case, client timeout occurs before the test server closes.
