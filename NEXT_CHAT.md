@@ -28,6 +28,17 @@
   The `VehicleResolverService.ResolveVin` caller
   was verified independently.
   **9/9 original-source static checks PASS**.
+- [Draft PR #166](https://github.com/vorlocsev/virtualcar/pull/166)
+  carries the source note and synthetic-only utility.
+  Trusted owner-only manual VMware source selector
+  was merged via [CI PR #167](https://github.com/vorlocsev/virtualcar/pull/167)
+  into main and [CI PR #168](https://github.com/vorlocsev/virtualcar/pull/168)
+  into development. Neither of those baseline runs
+  validates the **exact PR #166 feature SHA**.
+  Run `vmware-development-validation.yml` with
+  `source_ref=research/vida-original-vinvalidator-ascii-shape-gate`
+  from main, inspect the source commit and Python test count,
+  then and only then promote the Draft.
 - New standalone **synthetic ASCII-only** shape
   reference `emulator/tools/vida_vin_shape_ascii.py`
   is NOT wired into emulator, VIDA, CEM or J2534.
