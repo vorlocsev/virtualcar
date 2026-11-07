@@ -1,5 +1,36 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
+## VERIFIED: P0 J2534 / SectorV discovery evidence boundary and metadata (2026-11-07)
+
+- [PR #132](https://github.com/vorlocsev/virtualcar/pull/132)
+  merged: separate redacted J2534 transport from curated SectorV client
+  matcher, and explicitly deny VIN/ECU cross-process attribution.
+- [PR #136](https://github.com/vorlocsev/virtualcar/pull/136)
+  merged: late P2 B9FB target 0x40/0x50/unknown grouping, with target-40
+  delivery forbidden to mask absent target-50 evidence.
+- [PR #139](https://github.com/vorlocsev/virtualcar/pull/139)
+  merged as `ba84518c7ee47b2a2d9834c57bc98a73494c3487`.
+  Added `CAN` versus `ISO15765` versus `other`/`unknown` protocol
+  metadata grouping. Without target-50 delivered CAN source metadata,
+  report prioritizes reviewing the source route, not inventing ECU failure.
+- The exact PR #139 code SHA `31be7b60c6ae5bd10df3b6b23ca7b52ca1618be6`
+  passed manual [VMware #42381421766](https://github.com/vorlocsev/virtualcar/actions/runs/42381421766).
+  Merged SHA passed automatic
+  [VMware #42381987918](https://github.com/vorlocsev/virtualcar/actions/runs/42381987918).
+  Python **276** passed; native **8/8** CTest x86 and x64; C# Host
+  **17/17**; legacy C/Go/.NET plus Host epoch recovery PASS; **0 artifacts**.
+- **Not established:** SectorV accepts a real VIN, recognizes any ECU on
+  XC90 V8 MY2009, accepts a D2 A3/E3 response, or recognizes normal
+  ignition/mode. The previously available MY2005 LAB matcher 13/13
+  and subsequent Hardware A3 no-reply are distinct observations.
+  No raw J2534 log, private donor profile or OEM positive reply has
+  been committed.
+
+**NEXT:** Obtain one consented, continuous local read-only client+J2534
+trace with channel/baud/protocol/TX/RX and client outcome, sanitize locally,
+and analyze using the existing three auditors. No implementation of A3/E3
+SecurityAccess or unverified CEM response; no published Virtual Car build.
+
 ## VERIFIED: M5D-2eB isolated + live Host multi-epoch tests (2026-11-07)
 
 - [PR #125](https://github.com/vorlocsev/virtualcar/pull/125) merged:
