@@ -758,15 +758,32 @@ contradict the positive `WildFlyStandalone=True` launcher
 marker. The 3 listeners are point-in-time loopback-only
 sockets, not proven HTTP endpoints.
 
-**Next safe owner-side passive gate:** with PID still
-matching Java + original parent + JBoss launcher markers,
-compare existing TCP ESTABLISHED connections to the
-Java-owned loopback listening **ports in memory only**,
-then report names/PIDs of local client processes and per-
-process connection counts without displaying IPs/ports,
-URLs, paths, command lines, request payloads or secrets.
-No HTTP requests, SQL calls, J2534 changes, vehicle I/O,
-module execution or binary publication.
+**Owner-local Java-loopback client connection snapshot:**
+The original `java.exe` PID **4324**, parent PID **12228**,
+and `org.jboss.as.standalone` command-line marker were
+reconfirmed. `Get-NetTCPConnection` returned
+`LoopbackListeners=3`, `EstablishedClients=0`; the script
+printed `NoEstablishedClientsInSnapshot`. This is **not**
+a failure or proof of absent VIDA browser connectivity:
+connections may be idle or too short-lived to appear in
+a single instantaneous query, and the exact service role
+and listener types remain unidentified. No loopback
+HTTP requests were sent; no addresses/ports, command lines,
+URLs, secrets or ECU traffic were disclosed.
+
+**Next safe owner-local read-only gate:** identify whether
+the running WildFly server has a conventional
+`standalone/deployments` directory relative to its
+**locally parsed** `-Djboss.home.dir` or
+`-Djboss.server.base.dir`. Only return deployment
+artifact extension counts (`.war`/`.ear`/`.jar`) and
+marker counts (`.deployed`/`.failed`/`.isdeploying`);
+no raw command-line output, source archives, deployment
+names, full paths or HTTP requests. Note: deployments may
+be managed through server configuration/content store,
+so an empty directory is **inconclusive**, not proof that
+no applications are deployed. Do not start services,
+modify deployments, register J2534 or attempt ECU I/O.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
