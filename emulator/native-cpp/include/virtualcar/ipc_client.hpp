@@ -35,6 +35,11 @@ enum class Kind : std::uint16_t {
 struct SessionToken final {
     std::uint64_t id{};
     std::uint64_t generation{};
+    std::uint32_t server_pid{};
+    // FILETIME process creation timestamp, in 100-nanosecond intervals.
+    // Combined with PID it distinguishes a restarted host even if Windows
+    // reuses the PID and the C# coordinator restarts its token counters.
+    std::uint64_t server_creation_time_100ns{};
 };
 
 struct Frame final {

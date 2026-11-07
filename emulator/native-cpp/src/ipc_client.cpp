@@ -314,6 +314,38 @@ Result Client::connect(std::wstring_view pipe_name,
         return Result::peer_mismatch;
     }
 
+    // Capture the server process instance before sending the launch secret.
+    // PID alone is insufficient because Windows can reuse a PID after exit.
+    HANDLE server_process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE, static_cast<DWORD>(actual_server_pid));
+    if (server_process == nullptr) {
+        const DWORD error = GetLastError();
+        last_error_ = error;
+        close_locked();
+        return map_win32_error(error);
+    }
+    FILETIME process_created{};
+    FILETIME process_exited{};
+    FILETIME kernel_time{};
+    FILETIME user_time{};
+    const BOOL got_process_times = GetProcessTimes(server_process,
+        &process_created, &process_exited, &kernel_time, &user_time);
+    const DWORD process_time_error = got_process_times ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(server_process);
+    if (got_process_times == FALSE) {
+        last_error_ = process_time_error;
+        close_locked();
+        return map_win32_error(process_time_error);
+    }
+    const std::uint64_t server_creation_time_100ns =
+        (static_cast<std::uint64_t>(process_created.dwHighDateTime) << 32U) |
+        static_cast<std::uint64_t>(process_created.dwLowDateTime);
+    if (server_creation_time_100ns == 0) {
+        last_error_ = ERROR_INVALID_DATA;
+        close_locked();
+        return Result::io_error;
+    }
+
     DWORD mode = PIPE_READMODE_BYTE;
     if (SetNamedPipeHandleState(static_cast<HANDLE>(pipe_), &mode,
             nullptr, nullptr) == FALSE) {
@@ -347,7 +379,9 @@ Result Client::connect(std::wstring_view pipe_name,
             return Result::protocol_error;
         }
 
-        session_ = SessionToken{response.session_id, response.generation};
+        session_ = SessionToken{response.session_id, response.generation,
+            static_cast<std::uint32_t>(actual_server_pid),
+            server_creation_time_100ns};
         return Result::ok;
     } catch (...) {
         close_locked();
