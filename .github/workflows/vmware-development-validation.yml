@@ -437,9 +437,11 @@ jobs:
             } finally { Stop-M5C2Host -Process $expiryHost }
 
             $restartPipe = 'vcm5c2-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N')
-            $readyFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-lost-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $readyFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-ready-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $lostFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-revoked-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.lost')
             $pidFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.pid')
             if (Test-Path -LiteralPath $readyFile) { Remove-Item -LiteralPath $readyFile -Force }
+            if (Test-Path -LiteralPath $lostFile) { Remove-Item -LiteralPath $lostFile -Force }
             if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
             $firstHost = $null
             $secondHost = $null
@@ -448,7 +450,7 @@ jobs:
               $firstHost = Start-M5C2Host -Dll $serviceDll -PipeName $restartPipe
               $clientInfo = New-Object System.Diagnostics.ProcessStartInfo
               $clientInfo.FileName = $client
-              $clientInfo.Arguments = ('--lifecycle-restart "{0}" {1} "{2}" "{3}"' -f $restartPipe, $firstHost.Id, $readyFile, $pidFile)
+              $clientInfo.Arguments = ('--lifecycle-restart "{0}" {1} "{2}" "{3}" "{4}"' -f $restartPipe, $firstHost.Id, $readyFile, $lostFile, $pidFile)
               $clientInfo.UseShellExecute = $false
               $clientInfo.CreateNoWindow = $true
               $clientProcess = New-Object System.Diagnostics.Process
@@ -468,10 +470,28 @@ jobs:
                 throw "M5C2 $arch host-loss signal did not arrive"
               }
 
+              # Terminate the exact child Process object started above.
+              # The native client never reopens or kills a PID.
+              $firstHost.Kill()
               if (-not $firstHost.WaitForExit(5000)) {
-                throw "M5C2 $arch first Host was not terminated by the client"
+                throw "M5C2 $arch original Host process did not terminate"
               }
-              Write-Host "PASS: M5C2 $arch original Host process terminated"
+              Write-Host "PASS: M5C2 $arch original synthetic Host process terminated"
+
+              $lostDeadline = [DateTime]::UtcNow.AddSeconds(15)
+              while (-not (Test-Path -LiteralPath $lostFile) -and
+                     -not $clientProcess.HasExited -and
+                     [DateTime]::UtcNow -lt $lostDeadline) {
+                Start-Sleep -Milliseconds 50
+              }
+              if (-not (Test-Path -LiteralPath $lostFile)) {
+                if ($clientProcess.HasExited) {
+                  throw "M5C2 $arch client exited before confirming local revocation ($($clientProcess.ExitCode))"
+                }
+                throw "M5C2 $arch client did not confirm host-loss revocation"
+              }
+              Write-Host "PASS: M5C2 $arch client detected pipe loss and revoked session/channels"
+
               $firstHost.Dispose()
               $firstHost = $null
 
@@ -495,6 +515,7 @@ jobs:
               Stop-M5C2Host -Process $firstHost
               Stop-M5C2Host -Process $secondHost
               if (Test-Path -LiteralPath $readyFile) { Remove-Item -LiteralPath $readyFile -Force }
+              if (Test-Path -LiteralPath $lostFile) { Remove-Item -LiteralPath $lostFile -Force }
               if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
             }
           }
