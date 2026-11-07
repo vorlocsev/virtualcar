@@ -836,15 +836,42 @@ paths and potentially sensitive parameters were not
 exported or published. No J2534 calls, ECU access,
 registry changes or emulator binaries.
 
-**Next local passive gate:** inspect `WEB-INF/web.xml` for
-each exploded WAR (existence and XML-safe structural counts
-of servlet/filter/listener definitions only, never actual
-names, URL mappings, endpoints or parameter values) and
-`WEB-INF/classes`, `WEB-INF/lib` existence. Presence or
-absence of optional `web.xml` is inconclusive for web
-application presence. Only if these results justify it,
-consider a separate tightly scoped, local-only EJB-module
-metadata audit; do not execute the deployed JAR.
+**Owner-local exploded WAR `WEB-INF/web.xml` structural audit:**
+Both EARs contain one exploded `.war` directory with
+`WEB-INF` present and a **successfully parsed**
+`WEB-INF/web.xml` (XML reader with DTD prohibited, external
+resolver disabled and 1 MiB document cap). Only direct
+`web-app` child element **counts** were exported:
+
+| EAR slot / WAR slot | Servlets | Servlet mappings | Filters | Filter mappings | Listeners | WEB-INF | web.xml |
+|---|---:|---:|---:|---:|---:|---|---|
+| 1 / 1 | 1 | 1 | 0 | 0 | 0 | True | Parsed |
+| 2 / 1 | 15 | 18 | 2 | 3 | 0 | True | Parsed |
+
+The second WAR has more descriptor-declared request
+handlers/filter mappings, and its enclosing EAR also
+declares an EJB module (prior finding). This makes EAR
+slot 2 a useful **candidate for further passive metadata
+analysis**, not proof of diagnosis, SQL `ReadVin` calls,
+CAN communication or usage of DiCE/J2534. Multiple servlet
+mappings per servlet and multiple filter mappings are
+legitimate; zero descriptor listener declarations do not
+exclude annotation/programmatic registrations. No
+servlet names, URL patterns, class names, XML contents,
+credentials or VIN were exported. No active requests,
+process changes, ECU I/O or Virtual Car releases.
+
+**Next safe owner-local bounded gate:** correlate the
+EJB module reference in **EAR slot 2's** securely parsed
+`META-INF/application.xml` with the single first-level
+`.jar` archive, returning only a boolean match. If the
+archive is valid ZIP/JAR, inspect only the central-directory
+entry counts by type (`.class`, `META-INF/ejb-jar.xml`,
+properties and XML) and optional case-insensitive boolean
+hints in entry **names** for VIDA diagnostics/J2534; do not
+extract or execute classes, dump entry names, read configs
+or inspect secrets. A negative string-hint result is
+inconclusive and does not rule out a call path.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
