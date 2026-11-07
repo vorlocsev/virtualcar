@@ -520,6 +520,38 @@ proof. A subsequent real VIDA session needs separately
 verified architecture, process environment and redacted
 J2534 request/response outcome.
 
+**Owner-local J2534 registration preflight, 2026-11-07:**
+read-only Windows Registry inspection of
+`HKLM\SOFTWARE\PassThruSupport.04.04\VirtualCar Trace VM dev26`
+in both `Registry32` and `Registry64` yielded:
+`ProviderRegistered=False`, `LibraryConfigured=False`,
+`LibraryExists=False` **in both views**. This checks ONLY
+this particular provider name. The library-exists result
+is false because the provider did not specify a path;
+**it does not establish that any DLL file is missing from
+disk**, nor does it establish that there are no other
+J2534 providers installed. No DLL was loaded, no
+registration was changed, no VIDA/DiCE or ECU access.
+
+**VIDA diagnostic-path caveat from Volvo documentation:**
+Volvo's Vehicle Communication Tools guidance states that
+VIDA supports DiCE and J2534, recommends DiCE for D2/GGD,
+and that **J2534-1 cannot be used for diagnostics**;
+its J2534-2 note focuses on HS/MS-CAN software download.
+See https://www.volvospecialtools.com/index.cfm?event=info.dice
+(Volvo Special Tools, `Vehicle Communication Tools`).
+Therefore **do not equate VIDA J2534 listing with proven
+D2 ReadVin diagnostic access through the generic x86
+trace proxy**. Some vendors advertise VIDA-compatible
+J2534 drivers, but that cannot establish support for our
+unregistered generic proxy or original VIDA 2015A VIN
+read workflow. A viable next step is a read-only inventory
+of existing 32/64 J2534 registry providers by aggregate
+counts (no paths/names) and a separate architecture-
+compatibility/VIDA-tool-selection assessment before any
+registration or execution. No `GetScript` execution,
+physical device tests or emulator reply changes.
+
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
 1. Establish how the **original VIDA caller** obtains/selects
