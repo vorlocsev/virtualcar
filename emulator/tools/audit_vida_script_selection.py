@@ -180,6 +180,7 @@ def audit_lines(lines):
         "events": counts,
         "matching_scope": "same_thread_30_second_window_and_same_declared_log_session",
         "release_declarations_are_per_supplied_log_not_original_dll_version": True,
+        "literal_release_marker_does_not_prove_incompatible_diagnostic_engine": True,
         "image_repository_login_failure_is_not_getscript_failure": True,
         "j2534_driver_load_attempt_is_not_connection_success": True,
         "cross_file_or_cross_date_correlation_established": False,
