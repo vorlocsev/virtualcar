@@ -623,10 +623,13 @@ jobs:
           }
 
           function Start-M5D2CProcess {
-            param([string]$File, [string]$Args)
+            param([string]$File, [string]$CommandLine)
+            if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+              throw ('Refusing M5D2c child launch without required mode arguments: ' + $File)
+            }
             $info = New-Object System.Diagnostics.ProcessStartInfo
             $info.FileName = $File
-            $info.Arguments = $Args
+            $info.Arguments = $CommandLine
             $info.UseShellExecute = $false
             $info.CreateNoWindow = $true
             $process = New-Object System.Diagnostics.Process
@@ -684,8 +687,8 @@ jobs:
             $client = $null
             try {
               $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $service,$pipe,$ready)
-              $heldHost = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $hostArgs
-              $client = Start-M5D2CProcess -File $native -Args ('--readonly-cancel "{0}" {1} "{2}"' -f $pipe,$heldHost.Id,$ready)
+              $heldHost = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -CommandLine $hostArgs
+              $client = Start-M5D2CProcess -File $native -CommandLine ('--readonly-cancel "{0}" {1} "{2}"' -f $pipe,$heldHost.Id,$ready)
               Wait-M5D2CMarker -Path $ready -Value 'accepted' -Client $client
               Assert-M5D2CExit -Process $client -Label "$arch concurrent read cancellation"
               Assert-M5D2CExit -Process $heldHost -Label "$arch canceled Host cleanup"
@@ -705,9 +708,9 @@ jobs:
             $reader = $null
             try {
               $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $service,$pipe,$ready)
-              $first = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $hostArgs
+              $first = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -CommandLine $hostArgs
               $clientArgs = ('--readonly-crash-restart "{0}" {1} "{2}" "{3}" "{4}"' -f $pipe,$first.Id,$ready,$lost,$nextPid)
-              $reader = Start-M5D2CProcess -File $native -Args $clientArgs
+              $reader = Start-M5D2CProcess -File $native -CommandLine $clientArgs
               Wait-M5D2CMarker -Path $ready -Value 'accepted' -Client $reader
 
               $first.Kill()
@@ -719,7 +722,7 @@ jobs:
               $first = $null
 
               $secondArgs = ('"{0}" --serve-once "{1}" read-session' -f $service,$pipe)
-              $second = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $secondArgs
+              $second = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -CommandLine $secondArgs
               [System.IO.File]::WriteAllText($nextPid,[string]$second.Id,[System.Text.Encoding]::ASCII)
               Assert-M5D2CExit -Process $reader -Label "$arch read/revoke/reconnect client"
               Assert-M5D2CExit -Process $second -Label "$arch restarted Host cleanup"
