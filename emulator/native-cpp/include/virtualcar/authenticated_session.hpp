@@ -50,13 +50,15 @@ public:
     [[nodiscard]] Result close_channel(std::uint32_t channel_id);
     [[nodiscard]] Result disconnect() noexcept;
 
-    [[nodiscard]] bool connected() const noexcept;
+    // Local state/lease check only; it is not a remote health probe.
+    [[nodiscard]] bool connected() noexcept;
     [[nodiscard]] ipc::SessionToken session() const noexcept;
     [[nodiscard]] lifecycle::Snapshot snapshot() const noexcept;
     [[nodiscard]] std::uint32_t last_error() const noexcept;
 
 private:
     void revoke_locked() noexcept;
+    [[nodiscard]] Result keep_alive_locked();
     [[nodiscard]] static Result map_ipc(ipc::Result value) noexcept;
     [[nodiscard]] static Result map_lifecycle(lifecycle::Result value) noexcept;
 

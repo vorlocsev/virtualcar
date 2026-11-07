@@ -53,7 +53,6 @@ target_include_directories(VirtualCarIpcClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_compile_options(VirtualCarIpcClient PRIVATE /W4 /WX /permissive- /sdl)
 
 add_executable(vc_ipc_client_checks tests/ipc_client_checks.cpp)
-target_link_libraries(vc_ipc_client_checks PRIVATE VirtualCarAuthenticatedSession)
 target_compile_options(vc_ipc_client_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m5b_native_ipc_client_8_groups COMMAND vc_ipc_client_checks)
 
@@ -79,6 +78,7 @@ add_library(VirtualCarAuthenticatedSession STATIC src/authenticated_session.cpp)
 target_include_directories(VirtualCarAuthenticatedSession PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(VirtualCarAuthenticatedSession PUBLIC VirtualCarIpcClient VirtualCarLifecycle)
 target_compile_options(VirtualCarAuthenticatedSession PRIVATE /W4 /WX /permissive- /sdl)
+target_link_libraries(vc_ipc_client_checks PRIVATE VirtualCarAuthenticatedSession)
 
 # M4B-1: isolated ISO15765/J2534 RX compatibility layer, not linked
 # into the fail-closed adapter DLL until the later M5 authenticated host.

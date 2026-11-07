@@ -417,6 +417,7 @@ bool cross_language_lifecycle_expiry(const std::wstring& pipe_name,
 bool cross_language_lifecycle_host_restart(const std::wstring& pipe_name,
                                            std::uint32_t first_server_pid,
                                            const char* ready_path,
+                                           const char* host_lost_path,
                                            const char* next_pid_path)
 {
     AuthenticatedSession session(5000);
@@ -429,27 +430,32 @@ bool cross_language_lifecycle_host_restart(const std::wstring& pipe_name,
             old_channel) != SessionResult::ok || old_channel == 0)
         return false;
 
-    HANDLE host = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE,
-        FALSE, first_server_pid);
-    if (host == nullptr) {
-        std::printf("FAIL could not open the owned synthetic C# host process\\n");
-        return false;
-    }
-    const BOOL terminated = TerminateProcess(host, 0xC0DEU);
-    const DWORD terminate_error = terminated ? ERROR_SUCCESS : GetLastError();
-    const DWORD wait = terminated ? WaitForSingleObject(host, 5000) : WAIT_FAILED;
-    CloseHandle(host);
-    if (terminated == FALSE || wait != WAIT_OBJECT_0) {
-        std::printf("FAIL synthetic C# host process termination (win32=%u)\\n",
-            terminate_error);
-        return false;
+    // Signal the PowerShell orchestrator that the authenticated client
+    // is connected and has an active synthetic channel. The orchestrator
+    // terminates its own retained Process handle, never a PID reopened here.
+    {
+        std::ofstream ready(ready_path, std::ios::binary | std::ios::trunc);
+        if (!ready) return false;
+        ready << "ready";
+        ready.close();
+        if (!ready) return false;
     }
 
-    const SessionResult lost = session.keep_alive();
-    if (lost != SessionResult::disconnected &&
-        lost != SessionResult::io_error &&
-        lost != SessionResult::timed_out) {
-        std::printf("FAIL host loss was not detected (status=%u)\\n",
+    SessionResult lost = SessionResult::ok;
+    bool host_loss_detected = false;
+    for (unsigned attempt = 0; attempt < 300; ++attempt) {
+        lost = session.keep_alive();
+        if (lost != SessionResult::ok) {
+            host_loss_detected = true;
+            break;
+        }
+        Sleep(50);
+    }
+    if (!host_loss_detected ||
+        (lost != SessionResult::disconnected &&
+         lost != SessionResult::io_error &&
+         lost != SessionResult::timed_out)) {
+        std::printf("FAIL host process loss was not detected (status=%u)\\n",
             static_cast<unsigned>(lost));
         return false;
     }
@@ -459,16 +465,15 @@ bool cross_language_lifecycle_host_restart(const std::wstring& pipe_name,
         return false;
     }
 
-    HANDLE ready = CreateFileA(ready_path, GENERIC_WRITE, 0, nullptr,
-        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (ready == INVALID_HANDLE_VALUE) return false;
-    constexpr char ready_text[] = "host-lost";
-    DWORD written = 0;
-    const BOOL ready_written = WriteFile(ready, ready_text,
-        static_cast<DWORD>(sizeof(ready_text) - 1), &written, nullptr);
-    CloseHandle(ready);
-    if (ready_written == FALSE || written != sizeof(ready_text) - 1)
-        return false;
+    // This marker is written only after the client has observed the broken
+    // pipe and revoked its session. The orchestrator may now start Host #2.
+    {
+        std::ofstream host_lost(host_lost_path, std::ios::binary | std::ios::trunc);
+        if (!host_lost) return false;
+        host_lost << "revoked";
+        host_lost.close();
+        if (!host_lost) return false;
+    }
 
     std::uint32_t second_server_pid = 0;
     for (unsigned attempt = 0; attempt < 300 && second_server_pid == 0; ++attempt) {
@@ -523,7 +528,7 @@ int main(int argc, char** argv)
           std::strcmp(argv[1], "--reject-peer") == 0 ||
           std::strcmp(argv[1], "--lifecycle") == 0 ||
           std::strcmp(argv[1], "--lifecycle-expire") == 0)) ||
-        (argc == 6 && std::strcmp(argv[1], "--lifecycle-restart") == 0)) {
+        (argc == 7 && std::strcmp(argv[1], "--lifecycle-restart") == 0)) {
         std::wstring pipe_name;
         for (const char* p = argv[2]; *p != '\0'; ++p) {
             if (static_cast<unsigned char>(*p) > 0x7fU) return 2;
@@ -543,11 +548,11 @@ int main(int argc, char** argv)
             return cross_language_lifecycle_expiry(pipe_name, expected_server_pid) ? 0 : 1;
         if (std::strcmp(argv[1], "--lifecycle-restart") == 0)
             return cross_language_lifecycle_host_restart(
-                pipe_name, expected_server_pid, argv[4], argv[5]) ? 0 : 1;
+                pipe_name, expected_server_pid, argv[4], argv[5], argv[6]) ? 0 : 1;
         return cross_language_connect(pipe_name, expected_server_pid) ? 0 : 1;
     }
     if (argc != 1) {
-        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire <pipe-name> <server-pid>] | --lifecycle-restart <pipe-name> <server-pid> <ready-file> <next-pid-file>\n");
+        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire <pipe-name> <server-pid>] | --lifecycle-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file>\n");
         return 2;
     }
 

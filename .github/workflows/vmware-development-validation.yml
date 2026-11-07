@@ -46,6 +46,7 @@ on:
           - feature/sqlite-10gb-vmware-runner
           - feature/m5b-cpp-named-pipe-client
           - feature/m5c1-bounded-lifecycle-preflight
+          - feature/m5c2-authenticated-session-lifecycle
 
 permissions:
   contents: read
@@ -353,6 +354,172 @@ jobs:
             }
           }
 
+      - name: Run M5C2 authenticated lifecycle, host-loss and restart checks when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'emulator/native-cpp/src/authenticated_session.cpp'
+          if (-not (Test-Path -LiteralPath $source)) {
+            Write-Host 'SKIP: M5C2 authenticated lifecycle source is not present at this source ref.'
+            return
+          }
+
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clientX86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe'
+          $clientX64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe'
+          if (-not (Test-Path -LiteralPath $serviceDll)) { throw 'M5C2 C# test host is missing' }
+          if (-not (Test-Path -LiteralPath $clientX86) -or -not (Test-Path -LiteralPath $clientX64)) {
+            throw 'M5C2 requires both x86 and x64 native IPC clients.'
+          }
+
+          function Start-M5C2Host {
+            param([Parameter(Mandatory=$true)][string]$Dll,
+                  [Parameter(Mandatory=$true)][string]$PipeName)
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = (Get-Command dotnet -ErrorAction Stop).Source
+            $info.Arguments = ('"{0}" --serve-once "{1}" session' -f $Dll, $PipeName)
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw 'Could not start M5C2 C# Host'
+            }
+            return $process
+          }
+
+          function Stop-M5C2Host {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally { $Process.Dispose() }
+          }
+
+          function Assert-M5C2HostExit {
+            param([Parameter(Mandatory=$true)][System.Diagnostics.Process]$Process,
+                  [Parameter(Mandatory=$true)][string]$Label)
+            if (-not $Process.WaitForExit(15000)) {
+              throw "M5C2 C# Host ($Label) did not terminate within deadline"
+            }
+            [int]$exitCode = $Process.ExitCode
+            if ($exitCode -ne 0) { throw "M5C2 C# Host ($Label) exited with code $exitCode" }
+            Write-Host "PASS: M5C2 C# Host ($Label) exited with code 0"
+          }
+
+          foreach ($arch in @('x86', 'x64')) {
+            $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+
+            $normalPipe = 'vcm5c2-normal-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $normalHost = $null
+            try {
+              $normalHost = Start-M5C2Host -Dll $serviceDll -PipeName $normalPipe
+              & $client --lifecycle $normalPipe $normalHost.Id
+              $clientExit = $LASTEXITCODE
+              if ($clientExit -ne 0) { throw "M5C2 $arch authenticated lifecycle failed ($clientExit)" }
+              Assert-M5C2HostExit -Process $normalHost -Label "$arch authenticated lifecycle"
+              Write-Host "PASS: M5C2 $arch authenticated session, heartbeat and bounded channels"
+            } finally { Stop-M5C2Host -Process $normalHost }
+
+            $expiryPipe = 'vcm5c2-expiry-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $expiryHost = $null
+            try {
+              $expiryHost = Start-M5C2Host -Dll $serviceDll -PipeName $expiryPipe
+              & $client --lifecycle-expire $expiryPipe $expiryHost.Id
+              $clientExit = $LASTEXITCODE
+              if ($clientExit -ne 0) { throw "M5C2 $arch lease expiry failed ($clientExit)" }
+              Assert-M5C2HostExit -Process $expiryHost -Label "$arch lease expiry"
+              Write-Host "PASS: M5C2 $arch heartbeat lease expiry revokes channels and closes Host session"
+            } finally { Stop-M5C2Host -Process $expiryHost }
+
+            $restartPipe = 'vcm5c2-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $readyFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-ready-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $lostFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-revoked-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.lost')
+            $pidFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.pid')
+            if (Test-Path -LiteralPath $readyFile) { Remove-Item -LiteralPath $readyFile -Force }
+            if (Test-Path -LiteralPath $lostFile) { Remove-Item -LiteralPath $lostFile -Force }
+            if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
+            $firstHost = $null
+            $secondHost = $null
+            $clientProcess = $null
+            try {
+              $firstHost = Start-M5C2Host -Dll $serviceDll -PipeName $restartPipe
+              $clientInfo = New-Object System.Diagnostics.ProcessStartInfo
+              $clientInfo.FileName = $client
+              $clientInfo.Arguments = ('--lifecycle-restart "{0}" {1} "{2}" "{3}" "{4}"' -f $restartPipe, $firstHost.Id, $readyFile, $lostFile, $pidFile)
+              $clientInfo.UseShellExecute = $false
+              $clientInfo.CreateNoWindow = $true
+              $clientProcess = New-Object System.Diagnostics.Process
+              $clientProcess.StartInfo = $clientInfo
+              if (-not $clientProcess.Start()) { throw "Could not start M5C2 $arch restart client" }
+
+              $readyDeadline = [DateTime]::UtcNow.AddSeconds(15)
+              while (-not (Test-Path -LiteralPath $readyFile) -and
+                     -not $clientProcess.HasExited -and
+                     [DateTime]::UtcNow -lt $readyDeadline) {
+                Start-Sleep -Milliseconds 50
+              }
+              if (-not (Test-Path -LiteralPath $readyFile)) {
+                if ($clientProcess.HasExited) {
+                  throw "M5C2 $arch host-loss client exited early ($($clientProcess.ExitCode))"
+                }
+                throw "M5C2 $arch host-loss signal did not arrive"
+              }
+
+              # Terminate the exact child Process object started above.
+              # The native client never reopens or kills a PID.
+              $firstHost.Kill()
+              if (-not $firstHost.WaitForExit(5000)) {
+                throw "M5C2 $arch original Host process did not terminate"
+              }
+              Write-Host "PASS: M5C2 $arch original synthetic Host process terminated"
+
+              $lostDeadline = [DateTime]::UtcNow.AddSeconds(15)
+              while (-not (Test-Path -LiteralPath $lostFile) -and
+                     -not $clientProcess.HasExited -and
+                     [DateTime]::UtcNow -lt $lostDeadline) {
+                Start-Sleep -Milliseconds 50
+              }
+              if (-not (Test-Path -LiteralPath $lostFile)) {
+                if ($clientProcess.HasExited) {
+                  throw "M5C2 $arch client exited before confirming local revocation ($($clientProcess.ExitCode))"
+                }
+                throw "M5C2 $arch client did not confirm host-loss revocation"
+              }
+              Write-Host "PASS: M5C2 $arch client detected pipe loss and revoked session/channels"
+
+              $firstHost.Dispose()
+              $firstHost = $null
+
+              $secondHost = Start-M5C2Host -Dll $serviceDll -PipeName $restartPipe
+              [System.IO.File]::WriteAllText($pidFile, [string]$secondHost.Id, [System.Text.Encoding]::ASCII)
+              if (-not $clientProcess.WaitForExit(20000)) {
+                throw "M5C2 $arch client did not complete Host restart recovery"
+              }
+              [int]$restartExit = $clientProcess.ExitCode
+              if ($restartExit -ne 0) { throw "M5C2 $arch host restart recovery failed ($restartExit)" }
+              Assert-M5C2HostExit -Process $secondHost -Label "$arch restarted Host"
+              Write-Host "PASS: M5C2 $arch stale session revoked; restarted Host recovered with same token numbers and new process identity"
+            } finally {
+              if ($null -ne $clientProcess) {
+                if (-not $clientProcess.HasExited) {
+                  $clientProcess.Kill()
+                  [void]$clientProcess.WaitForExit(5000)
+                }
+                $clientProcess.Dispose()
+              }
+              Stop-M5C2Host -Process $firstHost
+              Stop-M5C2Host -Process $secondHost
+              if (Test-Path -LiteralPath $readyFile) { Remove-Item -LiteralPath $readyFile -Force }
+              if (Test-Path -LiteralPath $lostFile) { Remove-Item -LiteralPath $lostFile -Force }
+              if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
+            }
+          }
+
       - name: Validation summary
         if: success()
         shell: powershell
@@ -366,5 +533,5 @@ jobs:
           Write-Host 'PASS: Native C++ x86 configure/build/CTest and actual C/C++ parity'
           Write-Host 'PASS: Native C++ x64 configure/build/CTest'
           Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
-          Write-Host 'M5A IPC and M5B cross-language checks run when the selected source contains the projects.'
+          Write-Host 'M5A/M5B IPC and M5C2 authenticated lifecycle/host restart checks run when the selected source contains the projects.'
           Write-Host 'No artifacts uploaded. No releases or deployments performed.'

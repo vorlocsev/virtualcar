@@ -69,6 +69,11 @@ Result AuthenticatedSession::connect(std::wstring_view pipe_name,
 Result AuthenticatedSession::keep_alive()
 {
     const std::lock_guard<std::mutex> lock(mutex_);
+    return keep_alive_locked();
+}
+
+Result AuthenticatedSession::keep_alive_locked()
+{
     if (!active_ || !client_.connected()) {
         revoke_locked();
         return Result::not_authenticated;
@@ -105,10 +110,9 @@ Result AuthenticatedSession::reserve_channel(lifecycle::ChannelKind kind,
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     channel_id = 0;
-    if (!active_ || !client_.connected()) {
-        revoke_locked();
-        return Result::not_authenticated;
-    }
+    const Result health = keep_alive_locked();
+    if (health != Result::ok)
+        return health;
 
     const auto status = lifecycle_.reserve_channel(
         key_, kind, static_cast<std::uint64_t>(GetTickCount64()), channel_id);
@@ -124,10 +128,9 @@ Result AuthenticatedSession::reserve_channel(lifecycle::ChannelKind kind,
 Result AuthenticatedSession::close_channel(std::uint32_t channel_id)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
-    if (!active_ || !client_.connected()) {
-        revoke_locked();
-        return Result::not_authenticated;
-    }
+    const Result health = keep_alive_locked();
+    if (health != Result::ok)
+        return health;
 
     const auto status = lifecycle_.close_channel(
         key_, channel_id, static_cast<std::uint64_t>(GetTickCount64()));
@@ -159,10 +162,21 @@ void AuthenticatedSession::revoke_locked() noexcept
     active_ = false;
 }
 
-bool AuthenticatedSession::connected() const noexcept
+bool AuthenticatedSession::connected() noexcept
 {
     const std::lock_guard<std::mutex> lock(mutex_);
-    return active_ && client_.connected() && lifecycle_.snapshot().active;
+    if (!active_ || !client_.connected()) {
+        revoke_locked();
+        return false;
+    }
+    const auto state = lifecycle_.validate(
+        key_, static_cast<std::uint64_t>(GetTickCount64()));
+    if (state != lifecycle::Result::ok) {
+        (void)client_.disconnect();
+        revoke_locked();
+        return false;
+    }
+    return true;
 }
 
 ipc::SessionToken AuthenticatedSession::session() const noexcept
