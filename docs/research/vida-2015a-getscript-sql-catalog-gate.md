@@ -317,14 +317,31 @@ not structurally opened in this test. The declared size comes
 from ZIP metadata; **actual decompression, CRC, XML wellformedness,
 script selection and XC90 VIN/ECU acceptance remain unverified**.
 
-Next optional owner-local read-only gate: use the existing
-in-memory `byte[]` to open that same ZIP in read mode,
-read its single entry through a **bounded** stream into memory,
-and validate XML with external entity resolution disabled,
-reporting only success status and total decoded bytes.
-Do not output script names, XML nodes/text, XML itself,
-ZIP bytes, IDs, VIN or diagnostic messages, and do not execute
-SQL `GetScript` or touch real vehicle ECUs.
+The owner then completed this local-only read-only
+validation of the **same single-language** ZIP entry using
+`ZipArchiveEntry.Open()` and an explicit 1 MiB limit.
+Observed values: `DecompressionCompleted=True`,
+`ActualUnpackedBytes=17964`, `DeclaredUnpackedBytes=17964`,
+`LengthMatches=True`, and `XmlWellFormed=True`.
+The .NET `XmlReader` had `DtdProcessing=Prohibit`,
+`XmlResolver=$null` and a document size ceiling.
+This establishes a successful full entry stream read and
+well-formed XML **for one language variant only**.
+It is not an independent archive CRC check, XML schema
+validation, interpretation of diagnostic commands,
+execution of SQL `GetScript`, or a VIDA-accepted
+VIN/ECU identification.
+
+Next bounded local-only structural gate: inspect that
+one XML document's element/attribute **counts** and
+possibly its root element local name, without reporting
+element text, attribute values, exact proprietary
+diagnostic steps, script names, VIN, ZIP bytes or XML.
+Alternatively validate the 16 other language variants
+locally and report aggregate valid/invalid counts.
+Any emulator changes require later independently
+confirmed ECU request/response behavior and client
+acceptance; no positive replies are established here.
 
 
 
