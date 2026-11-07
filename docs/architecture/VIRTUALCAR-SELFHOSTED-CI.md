@@ -137,3 +137,23 @@ crash/restart tests remain unimplemented; J2534 still fail-closed.
 - GitHub reports zero uploaded artifacts; no releases,
   deployments, physical CAN/ECU or J2534 read bridge.
   The J2534 DLL continues fail-closed, unlinked to IPC.
+
+## M5D-2eA synthetic negative-reply fault gates (2026-11-07)
+
+- Draft feature PR #121, source
+  `263ea3fc6071d881f0e27d953629204d9c1da3e8`, validated
+  by owner-dispatched [VMware #42371326557](https://github.com/vorlocsev/virtualcar/actions/runs/42371326557):
+  five authenticated C++ ↔ C# Host synthetic faults per architecture
+  PASS, baseline native x86/x64 7/7 CTest each, Host 17/17,
+  prior M5D-2b/c/d and all C/Python 252/Go/.NET regressions PASS.
+- PR #121 merged into `development` as `97c8e429160d994b749553592db1ac785a8d70f6`.
+  Automatic [VMware #42371693670](https://github.com/vorlocsev/virtualcar/actions/runs/42371693670)
+  SUCCESS, exact merge commit, with the **same five** per-arch
+  synthetic fault tests actually executed on BOTH x86 and x64:
+  outer header truncation, inner payload truncation, partial-body
+  stall, wrong operation and wrong DID. Test harness checked the
+  exact native output plus child exit codes. Native x86/x64 7/7
+  CTest, managed Host 17/17, all previous baselines PASS.
+- Zero GitHub Actions uploaded artifacts. No release, deployment,
+  real ECU/CAN, or active J2534 transport. M5D-2eB repeated
+  restart chains and cancellation races remain NOT IMPLEMENTED.

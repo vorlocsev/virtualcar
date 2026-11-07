@@ -1,6 +1,16 @@
 # M5D-2eA | Controlled synthetic reply fault injection
 
-Status: **FEATURE Windows x86/x64 CI VERIFIED; post-merge CI PENDING**.
+Status: **MERGED; Windows x86/x64 FEATURE + POST-MERGE CI VERIFIED**.
+
+PR #121 merged into development as `97c8e429160d994b749553592db1ac785a8d70f6`.
+Automatic [owner-only VMware #42371693670](https://github.com/vorlocsev/virtualcar/actions/runs/42371693670)
+completed SUCCESS on that exact SHA. Each native x86 and x64
+executed all five fault-injection cases and checked an exact
+PASS marker, returned zero user bytes and complete ledger
+cleanup. Native CTest 7/7 per architecture, managed Host 17/17,
+M5D-2b/c/d, Python 252, Go, Legacy C and .NET PASS.
+Artifact count: zero. Feature CI #42371326557 also PASS.
+J2534 remains fail-closed and independent of these tests.
 
 [Owner-only VMware #42371326557](https://github.com/vorlocsev/virtualcar/actions/runs/42371326557)
 completed SUCCESS on exact feature source `263ea3fc6071d881f0e27d953629204d9c1da3e8`.
