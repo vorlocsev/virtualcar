@@ -50,6 +50,7 @@ on:
           - feature/m5d1-readonly-vcrd-contract
           - feature/m5d2a-csharp-synthetic-read-host
           - feature/m5d2b-native-readonly-ipc-client
+          - feature/m5d2c-inflight-read-cancel-recovery
 
 permissions:
   contents: read
@@ -598,6 +599,138 @@ jobs:
                 }
                 Write-Host ("PASS: M5D2b {0} {1} native C++ <-> C# Host" -f $arch, $case.label)
               } finally { Stop-M5D2BHost -Process $server }
+            }
+          }
+
+      - name: Run M5D2c active read cancel and Host restart x86/x64 when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'docs/architecture/VIRTUALCAR-M5D2C-INFLIGHT-CANCEL-RECOVERY.md')) {
+            Write-Host 'SKIP: M5D2c active-read code not present on selected trusted ref.'
+            return
+          }
+
+          $service = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clients = @{
+            x86 = (Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe')
+            x64 = (Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe')
+          }
+          if (-not (Test-Path -LiteralPath $service) -or
+              -not (Test-Path -LiteralPath $clients.x86) -or
+              -not (Test-Path -LiteralPath $clients.x64)) {
+            throw 'M5D2c requires the managed test Host and native Win32/x64 clients.'
+          }
+
+          function Start-M5D2CProcess {
+            param([string]$File, [string]$Args)
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = $File
+            $info.Arguments = $Args
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw ('Unable to launch synthetic child: ' + $File)
+            }
+            return $process
+          }
+
+          function Stop-M5D2CChild {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                # Kill only the exact owned Process child handle, not an
+                # arbitrary PID which might have been reused by Windows.
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally { $Process.Dispose() }
+          }
+
+          function Wait-M5D2CMarker {
+            param([string]$Path, [string]$Value, [System.Diagnostics.Process]$Client)
+            $deadline = [DateTime]::UtcNow.AddSeconds(12)
+            while ([DateTime]::UtcNow -lt $deadline) {
+              if (Test-Path -LiteralPath $Path) {
+                if ((Get-Content -LiteralPath $Path -Raw).Trim() -eq $Value) { return }
+              }
+              if ($Client.HasExited) {
+                throw ('M5D2c client exited before ' + $Value + ': ' + $Client.ExitCode)
+              }
+              Start-Sleep -Milliseconds 50
+            }
+            throw ('M5D2c timed out waiting for ' + $Value)
+          }
+
+          function Assert-M5D2CExit {
+            param([System.Diagnostics.Process]$Process, [string]$Label)
+            if (-not $Process.WaitForExit(20000)) {
+              throw ('M5D2c ' + $Label + ' did not terminate')
+            }
+            if ($Process.ExitCode -ne 0) {
+              throw ('M5D2c ' + $Label + ' exited with ' + $Process.ExitCode)
+            }
+          }
+
+          foreach ($arch in @('x86','x64')) {
+            $native = $clients[$arch]
+            $pipe = 'vcm5d2c-cancel-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $ready = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $host = $null
+            $client = $null
+            try {
+              $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $service,$pipe,$ready)
+              $host = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $hostArgs
+              $client = Start-M5D2CProcess -File $native -Args ('--readonly-cancel "{0}" {1} "{2}"' -f $pipe,$host.Id,$ready)
+              Wait-M5D2CMarker -Path $ready -Value 'accepted' -Client $client
+              Assert-M5D2CExit -Process $client -Label "$arch concurrent read cancellation"
+              Assert-M5D2CExit -Process $host -Label "$arch canceled Host cleanup"
+              Write-Host "PASS: M5D2c $arch accepted read canceled, no stale reply, Host cleanup"
+            } finally {
+              Stop-M5D2CChild -Process $client
+              Stop-M5D2CChild -Process $host
+              if (Test-Path -LiteralPath $ready) { Remove-Item -LiteralPath $ready -Force }
+            }
+
+            $pipe = 'vcm5d2c-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $ready = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $lost = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.lost')
+            $nextPid = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.pid')
+            $first = $null
+            $second = $null
+            $reader = $null
+            try {
+              $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $service,$pipe,$ready)
+              $first = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $hostArgs
+              $clientArgs = ('--readonly-crash-restart "{0}" {1} "{2}" "{3}" "{4}"' -f $pipe,$first.Id,$ready,$lost,$nextPid)
+              $reader = Start-M5D2CProcess -File $native -Args $clientArgs
+              Wait-M5D2CMarker -Path $ready -Value 'accepted' -Client $reader
+
+              $first.Kill()
+              if (-not $first.WaitForExit(5000)) {
+                throw "M5D2c $arch held Host did not stop"
+              }
+              Wait-M5D2CMarker -Path $lost -Value 'revoked' -Client $reader
+              Stop-M5D2CChild -Process $first
+              $first = $null
+
+              $secondArgs = ('"{0}" --serve-once "{1}" read-session' -f $service,$pipe)
+              $second = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $secondArgs
+              [System.IO.File]::WriteAllText($nextPid,[string]$second.Id,[System.Text.Encoding]::ASCII)
+              Assert-M5D2CExit -Process $reader -Label "$arch read/revoke/reconnect client"
+              Assert-M5D2CExit -Process $second -Label "$arch restarted Host cleanup"
+              Write-Host "PASS: M5D2c $arch killed accepted read Host, revoked, restarted with safe PID+FILETIME"
+            } finally {
+              Stop-M5D2CChild -Process $reader
+              Stop-M5D2CChild -Process $first
+              Stop-M5D2CChild -Process $second
+              foreach ($p in @($ready,$lost,$nextPid)) {
+                if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+              }
             }
           }
 
