@@ -219,8 +219,10 @@ bool group08_connect_and_absolute_read_deadlines_are_bounded()
         return false;
 
     std::atomic<bool> hello_received{false};
-    std::atomic<bool> fragments_attempted{false};
-    std::thread server_thread([server, &hello_received, &fragments_attempted] {
+    std::atomic<long long> first_fragment_ms{-1};
+    std::atomic<long long> second_fragment_ms{-1};
+    std::thread server_thread([server, &hello_received, &first_fragment_ms,
+                               &second_fragment_ms] {
         const BOOL connected = ConnectNamedPipe(server, nullptr);
         if (connected == FALSE && GetLastError() != ERROR_PIPE_CONNECTED) {
             CloseHandle(server);
@@ -240,14 +242,28 @@ bool group08_connect_and_absolute_read_deadlines_are_bounded()
             offset += received;
         }
         hello_received.store(true);
+        const auto peer_started = std::chrono::steady_clock::now();
 
         const std::uint8_t first = static_cast<std::uint8_t>('V');
         DWORD written = 0;
-        (void)WriteFile(server, &first, 1, &written, nullptr);
-        Sleep(100);
+        if (WriteFile(server, &first, 1, &written, nullptr) == FALSE || written != 1) {
+            CloseHandle(server);
+            return;
+        }
+        first_fragment_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - peer_started).count());
+
+        // The second byte arrives well before the 500 ms absolute deadline.
+        // The server closes at 600 ms: a client that incorrectly restarts a
+        // 500 ms deadline after each byte will observe disconnect, not timeout.
+        Sleep(300);
         const std::uint8_t second = static_cast<std::uint8_t>('C');
-        (void)WriteFile(server, &second, 1, &written, nullptr);
-        fragments_attempted.store(true);
+        if (WriteFile(server, &second, 1, &written, nullptr) == FALSE || written != 1) {
+            CloseHandle(server);
+            return;
+        }
+        second_fragment_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - peer_started).count());
         Sleep(300);
         (void)DisconnectNamedPipe(server);
         CloseHandle(server);
@@ -256,14 +272,17 @@ bool group08_connect_and_absolute_read_deadlines_are_bounded()
     Client stalled;
     const auto read_start = std::chrono::steady_clock::now();
     const Result read_result = stalled.connect(
-        stalled_name, secret, static_cast<std::uint32_t>(GetCurrentProcessId()), 150);
+        stalled_name, secret, static_cast<std::uint32_t>(GetCurrentProcessId()), 500);
     const auto read_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - read_start).count();
     server_thread.join();
 
+    const long long first_ms = first_fragment_ms.load();
+    const long long second_ms = second_fragment_ms.load();
     return read_result == Result::timed_out && !stalled.connected() &&
-        hello_received.load() && fragments_attempted.load() &&
-        read_elapsed >= 100 && read_elapsed < 2000;
+        hello_received.load() && first_ms >= 0 && first_ms < 200 &&
+        second_ms >= 250 && second_ms < 450 &&
+        read_elapsed >= 400 && read_elapsed < 2000;
 }
 
 bool cross_language_reject_peer(const std::wstring& pipe_name,
