@@ -297,14 +297,25 @@ non-NULL, nonempty binary payload**, but this is not a
 successful decompression or validation of XML syntax and
 does not establish any specific XC90-compatible requests.
 
-Next owner-controlled format-only gate: group the 17
-`XmlDataCompressed` values by a **locally derived**
-ZIP/GZIP/zlib/other magic-byte classification and report
-only aggregate counts and min/max byte lengths. Do not
-export the raw headers, raw binary, language/profile
-identifiers, decrypted XML, VIN or any diagnostic responses.
-Actual `GetScript` runtime selection and VIN acceptance
-remain unverified. No procedure execution or ECU I/O.
+The owner subsequently completed this **format-only SQL** gate:
+all **17 of 17** payloads start with the ZIP local-file-header
+magic bytes `0x504B0304` (SQL-derived classification `ZIP`).
+The aggregate binary lengths range from **2603** to **2604**
+bytes across the 17 language entries. These are on-disk
+compressed-container lengths, not decompressed XML sizes.
+This signature suggests ZIP but **does not yet establish**
+that the central directory parses, that an XML entry exists,
+or that any content is valid or applicable to XC90 V8.
+
+Next owner-controlled optional local-only validation: read
+**one** compressed payload into **volatile memory** on the
+licensed VIDA machine, open its ZIP central directory using
+.NET `System.IO.Compression.ZipArchive` in read-only mode,
+report only an entry count and total declared uncompressed
+length, and dispose streams. Do not export the binary,
+filenames, original script IDs, any XML, VIN or ECU data to
+GitHub or chat. Do not execute `GetScript` or diagnostic I/O.
+Actual script selection and VIDA client acceptance remain unknown.
 
 
 
