@@ -388,16 +388,28 @@ Names suggest a heading and a main content area, but this
 is only a structural inference, **not an analysis of values
 or actual VIDA script execution**.
 
-Next bounded owner-local structural gate: inspect only the
-`LocalName` and aggregate count of direct children of
-`content` (`XmlReader.Depth=2`, following the `content`
-parent at depth 1) in the previously loaded single XML,
-without displaying raw XML, text nodes, attribute values,
-CAN/J2534 requests or diagnostic instructions. The input
-should remain in RAM with a decompression bound and DTD/XXE
-disabled. Actual `GetScript` runtime selection, CEM traffic,
-and VIN/ECU acceptance remain unverified; do not change
-emulator positive replies or publish builds.
+The owner next inspected immediate children of `content`
+using the same local in-memory, DTD-disabled read-only XML
+pass. The returned `XmlReader.Depth=2` element names and
+counts are **`handlers: 1`**, **`nodes: 1`**. Combined
+with the previous observation the verified XML skeleton is
+`script` containing `title` and `content`, and `content`
+containing `handlers` and `nodes`. **No values, text,
+attribute contents or diagnostic command data were
+returned.** It is plausible from names that `handlers`
+contains event/response-handling constructs while `nodes`
+contains execution nodes, but neither relationship is
+established by the XML naming alone.
+
+Next operator-only structural gate: aggregate only immediate
+child `LocalName`/counts at `XmlReader.Depth=3` grouped
+separately under `content/handlers` and `content/nodes`,
+without printing deeper text, attribute values, XML,
+CAN/J2534 bytes or script/profile IDs. Keep the XML on the
+VIDA host in bounded RAM and DTD/XXE disabled.
+Actual `GetScript` runtime selection, CEM traffic, or
+VIN/ECU acceptance remain unverified: do not change
+emulator replies or publish Virtual Car binaries.
 
 
 
