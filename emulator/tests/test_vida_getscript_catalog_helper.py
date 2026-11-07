@@ -65,6 +65,7 @@ class VidaGetScriptMetadataSourceTests(unittest.TestCase):
             self.assertIn(token,self.source)
         self.assertIn('other_visible_parameter_count',self.source)
         self.assertIn('Get-Command Invoke-Sqlcmd',self.source)
+        self.assertEqual(len(re.findall(r"(?m)^\s*\w+\s*=\s*\((?:Visible|SqlTypeCategory) '[^']+'\)", self.source)), 14)
 
 
 if __name__ == '__main__':
