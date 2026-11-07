@@ -672,16 +672,41 @@ The running VIDA SQL instance is consistent with prior
 read-only `DiagSwdlRepository` SQL queries. A stopped
 manual SQLAgent is not inherently a fault.
 
-**Next owner-local passive gate:** inspect `java.exe`,
-`iexplore.exe` and `VidaMonitor.exe` process parent names,
-PE architecture and version-resource manufacturer/product,
-service PID mapping and only BOOLEAN evidence of relevant
-VIDA/Volvo keywords in the locally read command line
-(without outputting command line, paths, URLs, titles,
-secrets or VIN). Avoid executing processes, loading DLLs,
-selecting physical hardware or modifying J2534 registry.
-This helps find the real VIDA process hosting the UI before
-any proposed virtual J2534 trace.
+**Owner-local passive Java/IE/VIDA process ancestry and PE check:**
+- `iexplore.exe` PID **2624**, parent `iexplore.exe`,
+  PE **x86**, Microsoft Internet Explorer product,
+  `VIDAHint=False`, no Windows service association.
+- `iexplore.exe` PID **4216**, parent `msedge.exe`,
+  PE **x64**, Microsoft Internet Explorer product,
+  `VIDAHint=False`, no Windows service association.
+- `java.exe` PID **4324**, parent `cmd.exe`,
+  PE **x64**, Company `Oracle Corporation`, Product
+  `Java(TM) Platform SE 21.0.10`, `VIDAHint=True`
+  (a local regex match for `vida|volvo` in its command
+  line; original command line NOT exported), no direct
+  Windows service association.
+- `VidaMonitor.exe` PID **12080**, parent `explorer.exe`,
+  PE **x86**, Company `Volvo Cars Corporation`,
+  Product `VIDA`, `VIDAHint=True`, no direct
+  Windows service association.
+All were gathered by inspecting metadata of already
+running processes, not by launching any application.
+A Java process with a VIDA/Volvo **command-line hint**
+is a **candidate** component but NOT proof of diagnostic
+workload, J2534 provider selection, or connection to
+installed VIDA. Browser processes also remain unassigned.
+The owner pasted the script a second time with no second
+result table; treat only the first completed output as
+evidence.
+
+Next read-only gate: inspect the **Java PID 4324 process
+ancestor chain**, returning only EXE basenames/PIDs, plus
+strict boolean hints for VIDA/Volvo, `-jar`, `-cp` and
+Tomcat/Jetty/Spring in locally inspected command lines;
+never share raw command lines, full paths, URLs or secrets.
+If PID has exited or been reused, treat the result as
+inconclusive. No J2534 registry changes, adapter DLL
+loading, ECU traffic, or released binaries.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
