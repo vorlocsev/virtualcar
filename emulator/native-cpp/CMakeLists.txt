@@ -98,6 +98,13 @@ target_link_libraries(vc_readonly_contract_checks PRIVATE VirtualCarReadonlyCont
 target_compile_options(vc_readonly_contract_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m5d1_synthetic_readonly_contract_8_groups COMMAND vc_readonly_contract_checks)
 
+# M5D-2eB (part 1): seven synthetic-only cancel/restart Ledger races.
+# Separate from live Named Pipe Host/J2534 and real vehicle I/O.
+add_executable(vc_readonly_race_checks tests/readonly_race_checks.cpp)
+target_link_libraries(vc_readonly_race_checks PRIVATE VirtualCarReadonlyContract)
+target_compile_options(vc_readonly_race_checks PRIVATE /W4 /WX /permissive- /sdl)
+add_test(NAME m5d2eb_offline_ledger_cancel_restart_7_groups COMMAND vc_readonly_race_checks)
+
 # M4B-1: isolated ISO15765/J2534 RX compatibility layer, not linked
 # into the fail-closed adapter DLL until the later M5 authenticated host.
 add_library(VirtualCarIsoRx STATIC src/isotp_rx.cpp)
