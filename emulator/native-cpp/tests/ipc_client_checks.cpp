@@ -632,6 +632,46 @@ bool cross_language_readonly_stress(const std::wstring& pipe_name,
     return true;
 }
 
+// M5D-2e: injected reply faults are produced by a real authenticated
+// C# Host only after a selected sealed synthetic fixture was verified.
+// Every case must fail closed without returning any positive payload.
+bool cross_language_readonly_fault(const std::wstring& pipe_name,
+                                   std::uint32_t expected_server_pid,
+                                   const char* mode)
+{
+    AuthenticatedSession session(10000);
+    if (session.connect(pipe_name, test_secret(), expected_server_pid, 2500)
+            != SessionResult::ok)
+        return false;
+    const virtualcar::readonly::Route route{0x7e0U, 0x7e8U, false};
+    std::array<std::uint8_t, 61> data{};
+    data.fill(static_cast<std::uint8_t>(0xa5U));
+    std::size_t size = 99;
+    const SessionResult result = session.read_synthetic(
+        route, 0xf187U, data, size);
+    // Partial frames with a closed Host must disconnect; an open,
+    // deliberately stalled body must meet the client's I/O deadline.
+    // Valid-but-miscorrelated reply IDs/DIDs are protocol errors.
+    const SessionResult expected = std::strcmp(mode, "--fault-stall") == 0
+        ? SessionResult::timed_out
+        : (std::strcmp(mode, "--fault-operation") == 0 ||
+           std::strcmp(mode, "--fault-did") == 0)
+            ? SessionResult::protocol_error : SessionResult::disconnected;
+    const bool cleared = size == 0 && !session.connected() &&
+        !session.snapshot().active && session.snapshot().channels == 0 &&
+        session.pending_read_count() == 0 &&
+        std::all_of(data.begin(), data.end(),
+            [](std::uint8_t value) { return value == 0; });
+    if (result != expected || !cleared) {
+        std::printf("FAIL M5D2e %s: expected=%u actual=%u cleaned=%u\n",
+            mode, static_cast<unsigned>(expected),
+            static_cast<unsigned>(result), static_cast<unsigned>(cleared));
+        return false;
+    }
+    std::printf("PASS: M5D2e %s rejected, zero data, zero pending state\n", mode);
+    return true;
+}
+
 bool cross_language_readonly_deny(const std::wstring& pipe_name,
                                   std::uint32_t expected_server_pid,
                                   bool missing_fixture)
@@ -808,6 +848,11 @@ int main(int argc, char** argv)
           std::strcmp(argv[1], "--lifecycle-expire") == 0 ||
           std::strcmp(argv[1], "--readonly") == 0 ||
           std::strcmp(argv[1], "--readonly-stress") == 0 ||
+          std::strcmp(argv[1], "--fault-header") == 0 ||
+          std::strcmp(argv[1], "--fault-body") == 0 ||
+          std::strcmp(argv[1], "--fault-stall") == 0 ||
+          std::strcmp(argv[1], "--fault-operation") == 0 ||
+          std::strcmp(argv[1], "--fault-did") == 0 ||
           std::strcmp(argv[1], "--readonly-deny") == 0 ||
           std::strcmp(argv[1], "--readonly-no-fixture") == 0 ||
           std::strcmp(argv[1], "--readonly-expire") == 0)) ||
@@ -835,6 +880,13 @@ int main(int argc, char** argv)
             return cross_language_readonly_positive(pipe_name, expected_server_pid) ? 0 : 1;
         if (std::strcmp(argv[1], "--readonly-stress") == 0)
             return cross_language_readonly_stress(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--fault-header") == 0 ||
+            std::strcmp(argv[1], "--fault-body") == 0 ||
+            std::strcmp(argv[1], "--fault-stall") == 0 ||
+            std::strcmp(argv[1], "--fault-operation") == 0 ||
+            std::strcmp(argv[1], "--fault-did") == 0)
+            return cross_language_readonly_fault(
+                pipe_name, expected_server_pid, argv[1]) ? 0 : 1;
         if (std::strcmp(argv[1], "--readonly-deny") == 0)
             return cross_language_readonly_deny(pipe_name, expected_server_pid, false) ? 0 : 1;
         if (std::strcmp(argv[1], "--readonly-no-fixture") == 0)
@@ -853,7 +905,7 @@ int main(int argc, char** argv)
         return cross_language_connect(pipe_name, expected_server_pid) ? 0 : 1;
     }
     if (argc != 1) {
-        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire|--readonly|--readonly-stress|--readonly-deny|--readonly-no-fixture|--readonly-expire <pipe-name> <server-pid>] | --lifecycle-restart|--readonly-crash-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file> | --readonly-cancel <pipe-name> <server-pid> <accepted-file>\n");
+        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire|--readonly|--readonly-stress|--fault-header|--fault-body|--fault-stall|--fault-operation|--fault-did|--readonly-deny|--readonly-no-fixture|--readonly-expire <pipe-name> <server-pid>] | --lifecycle-restart|--readonly-crash-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file> | --readonly-cancel <pipe-name> <server-pid> <accepted-file>\n");
         return 2;
     }
 

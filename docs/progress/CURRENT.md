@@ -35,6 +35,47 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
+## VERIFIED: M5D-2eA synthetic reply fault rejection (feature x86/x64 PASS, 2026-11-07)
+
+**Private feature VMware SUCCESS:** [#42371326557](https://github.com/vorlocsev/virtualcar/actions/runs/42371326557)
+checked out exact source `263ea3fc6071d881f0e27d953629204d9c1da3e8` on
+`VirtualCar-CI-WIN`. For EACH of Windows x86 and x64, all
+five native C++ ↔ managed Host fault cases actually executed
+and PASS: truncated VCLB header, partial inner VCRD body,
+stalled body timeout, mismatched operation ID and mismatched
+allowlisted DID. Each was validated by the exact native
+per-case PASS marker plus Host exit code zero. Native
+CTest 7/7 each, C# Host 17/17, M5D-2b 64-read stress, M5D-2c
+accepted-read cancel/Host crash recovery, Python 252,
+Legacy C, Go and .NET PASS. Zero uploaded artifacts.
+Post-merge automatic CI remains required.
+
+
+An isolated test-only negative responder has been added to the managed
+C# LocalLabPipeHost, activated solely by five explicit `--serve-once`
+modes in `VirtualCar.Service.Checks`. Each starts from an
+authenticated session and selected SHA256-verified synthetic VCRF
+fixture; the outgoing response is then deliberately truncated,
+stalled or miscorrelated. Normal production Host behavior is
+unchanged with `SyntheticReplyFault.None`.
+
+The five new native C++ client test modes are `--fault-header`,
+`--fault-body`, `--fault-stall`, `--fault-operation`, and
+`--fault-did`. Each requires deterministic fail-closed behavior:
+partial header/body must disconnect, held partial body must time
+out, and well-framed but wrong operation/DID must be rejected.
+Every failure must return ZERO user bytes, leave NO authenticated
+session, NO channels and NO pending M5D-1 Ledger slots.
+No generic CAN transmit, arbitrary UDS services or J2534 bridge
+has been added.
+
+Feature VMware #42371326557 passed the required x86/x64
+integration and all baseline gates. PR #121 is eligible for
+merge after updating this evidence; a separate automatic
+development push on the exact merge commit is still required.
+Repeated restart chains and additional cancel-race timing are
+not yet covered by this substage.
+
 ## COMPLETED: M5D-2d replay/deadline and serial read stress (FEATURE + POST-MERGE CI PASS, 2026-11-07)
 
 **Merged and independently reverified:** PR #117 merged into
@@ -143,7 +184,7 @@ must remain green. There is no public arbitrary CAN/J2534
 data plane, physical ECU, writes, PIN, SecurityAccess,
 programming, package publication or Virtual Car release.
 
-## NEXT: M5D-2e additional synthetic fault-injection validation (NOT IMPLEMENTED)
+## NEXT: M5D-2eB repeated restart and cancel-race scenarios (NOT IMPLEMENTED)
 
 M5D-2c's serial read, active cancellation and Host crash/recovery
 have now passed both feature and post-merge private Windows CI.

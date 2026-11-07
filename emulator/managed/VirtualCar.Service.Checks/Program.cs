@@ -23,7 +23,9 @@ internal static class Program
         // so a wrong-PID client must be rejected before it can authenticate.
         if ((args.Length == 3 || args.Length == 4) &&
             args[0] == "--serve-once" &&
-            args[2] is "session" or "no-session" or "read-session" or "read-held" &&
+            args[2] is "session" or "no-session" or "read-session" or "read-held"
+                or "fault-header" or "fault-body" or "fault-stall"
+                or "fault-operation" or "fault-did" &&
             (args[2] != "read-held" || args.Length == 4) &&
             (args[2] == "read-held" || args.Length == 3))
         {
@@ -36,7 +38,18 @@ internal static class Program
             bool selected = args[2] != "no-session";
             await using var core = await CoreAsync(
                 selected: selected, runtime: runtime,
-                readFixture: args[2] is "read-session" or "read-held");
+                readFixture: args[2] is "read-session" or "read-held"
+                    or "fault-header" or "fault-body" or "fault-stall"
+                    or "fault-operation" or "fault-did");
+            SyntheticReplyFault fault = args[2] switch
+            {
+                "fault-header" => SyntheticReplyFault.PartialHeaderClose,
+                "fault-body" => SyntheticReplyFault.PartialBodyClose,
+                "fault-stall" => SyntheticReplyFault.PartialBodyStall,
+                "fault-operation" => SyntheticReplyFault.WrongOperation,
+                "fault-did" => SyntheticReplyFault.WrongDid,
+                _ => SyntheticReplyFault.None
+            };
             Func<CancellationToken, Task>? barrier = null;
             if (args[2] == "read-held")
             {
@@ -53,7 +66,7 @@ internal static class Program
                     await Task.Delay(TimeSpan.FromSeconds(6), token);
                 };
             }
-            await Host(core, pipeName, TimeSpan.FromSeconds(10), barrier)
+            await Host(core, pipeName, TimeSpan.FromSeconds(10), barrier, fault)
                 .ServeOnceAsync();
 
             int expectedPreparations = selected ? 1 : 0;
@@ -74,7 +87,7 @@ internal static class Program
         }
         if (args.Length != 0)
         {
-            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session|read-session> | --serve-once <pipe-name> read-held <absolute-ready-marker>]");
+            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session|read-session|fault-header|fault-body|fault-stall|fault-operation|fault-did> | --serve-once <pipe-name> read-held <absolute-ready-marker>]");
             return 2;
         }
 
@@ -132,9 +145,10 @@ internal static class Program
 
     private static LocalLabPipeHost Host(
         ScenarioCoordinator core, string? name = null, TimeSpan? deadline = null,
-        Func<CancellationToken, Task>? barrier = null) =>
+        Func<CancellationToken, Task>? barrier = null,
+        SyntheticReplyFault fault = SyntheticReplyFault.None) =>
         new(name ?? "vcm5-" + Guid.NewGuid().ToString("N"), core, LaunchSecret,
-            deadline ?? TimeSpan.FromSeconds(3), barrier);
+            deadline ?? TimeSpan.FromSeconds(3), barrier, fault);
 
     private static async Task<NamedPipeClientStream> ConnectAsync(string name)
     {
