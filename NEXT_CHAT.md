@@ -1,6 +1,59 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: VIDA ReadVinComponent to CarCom / D2 route (2026-11-07)
+## ACTIVE: original VIDA reflective XML identity graph (2026-11-07)
+
+- [PR #158](https://github.com/vorlocsev/virtualcar/pull/158)
+  **MERGED** as `4a290fc31f9807de20e005c7b00a009bf245e9a8`;
+  docs-only original-source ReadVinComponent → CarCom → D2
+  route boundary, **no emulator code changes**. Its
+  post-merge Windows run was not observed as of this audit;
+  the last code-bearing verified SHA remains PR #155.
+- New local source-only original IL evidence **8/8 PASS**:
+  `Script.Parse` reads structural `nodes/node` and
+  `handlers/eventhandler`. `EventHandlerCall.Parse` uses
+  `node`, `method`, `disabled`, `parameter`.
+  `ScriptNode.GetMethods` discovers methods via reflection;
+  `ScriptNode.CallMethodCallback` resolves target and
+  invokes `System.Reflection.MethodBase.Invoke`.
+  `ScriptEngine.GetOutput` resolves the special
+  `Output` node. This makes a dynamic XML-directed
+  `AddVIN`/`SetX40Serial` call possible, **not
+  proven executed**. Original DLLs were not copied.
+- [Draft PR #159](https://github.com/vorlocsev/virtualcar/pull/159)
+  implements an offline, privacy-safe XML graph inspector.
+  Owner-only VMware feature ref allowlist was added through
+  merged CI-only [PR #160](https://github.com/vorlocsev/virtualcar/pull/160)
+  and [PR #161](https://github.com/vorlocsev/virtualcar/pull/161).
+  The **PR #159 exact source SHA** requires manual VM validation
+  and a subsequent post-merge run before promotion; do not
+  confuse development baseline with feature verification.
+- New source-bounded privacy-safe
+  `emulator/tools/audit_vida_readvin_xml_graph.py`
+  accepts one **authorized local UTF-8 script XML**;
+  reports only categorical identity-method event edges,
+  count/disabled states and safe booleans. No original
+  XML, VIN, script/node IDs, private paths or payloads
+  are emitted. DTD/ENTITY, UTF-16, symlinks,
+  duplicate node IDs and write inside Git are rejected.
+- Eight synthetic `test_audit_vida_readvin_xml_graph.py`
+  regression groups **8/8 local PASS**, expected
+  complete Python suite **308** after previous
+  Windows-verified 300. **New branch Windows VMware
+  is NOT YET VERIFIED**. Exact SHA manual feature
+  source must pass before merge. No hardware/SQL/VIDA
+  execution.
+- The actual selected
+  `DiagSwdlRepository.GetScript(ReadVin=4)` XML,
+  callback path, client-accepted VIN/X40 and
+  XC90 V8 MY2009 alive ECU inventory remain **unknown**.
+  P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  stays open. Do not synthesize A3/E3/A6, use
+  SecurityAccess/PIN, write ECU or publish Virtual Car
+  releases. [Full source audit](docs/research/vida-readvin-reflection-xml-graph-audit.md).
+
+---
+
+## HISTORICAL: VIDA ReadVinComponent to CarCom / D2 route (2026-11-07)
 
 - [PR #155](https://github.com/vorlocsev/virtualcar/pull/155)
   **MERGED** on `development` at
