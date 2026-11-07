@@ -17,10 +17,10 @@ $dotnet = (Get-Command dotnet -ErrorAction Stop).Source
 if (-not (Test-Path -LiteralPath $env:RUNNER_TEMP -PathType Container)) {
   throw 'M5D2eB requires an isolated Windows runner temporary directory'
 }
-function Start-Child([string]$Exe, [string]$Args) {
+function Start-Child([string]$Exe, [string]$CommandLine) {
   $start = New-Object System.Diagnostics.ProcessStartInfo
   $start.FileName = $Exe
-  $start.Arguments = $Args
+  $start.Arguments = $CommandLine
   $start.UseShellExecute = $false
   $start.CreateNoWindow = $true
   $child = New-Object System.Diagnostics.Process
@@ -71,9 +71,9 @@ foreach ($arch in @('x86','x64')) {
   try {
     $marker = Join-Path $work 'round-0.ready'
     $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $ServiceDll,$pipe,$marker)
-    $hostChild = Start-Child -Exe $dotnet -Args $hostArgs
+    $hostChild = Start-Child -Exe $dotnet -CommandLine $hostArgs
     $clientArgs = ('--three-epochs "{0}" {1} "{2}"' -f $pipe,$hostChild.Id,$work)
-    $client = Start-Child -Exe $exe -Args $clientArgs
+    $client = Start-Child -Exe $exe -CommandLine $clientArgs
 
     for ($round = 0; $round -lt 3; $round++) {
       $marker = Join-Path $work ('round-' + $round + '.ready')
@@ -101,7 +101,7 @@ foreach ($arch in @('x86','x64')) {
       } else {
         $args = ('"{0}" --serve-once "{1}" read-session' -f $ServiceDll,$pipe)
       }
-      $hostChild = Start-Child -Exe $dotnet -Args $args
+      $hostChild = Start-Child -Exe $dotnet -CommandLine $args
       $nextPid = Join-Path $work ('round-' + $next + '.pid')
       [System.IO.File]::WriteAllText($nextPid,[string]$hostChild.Id,[System.Text.Encoding]::ASCII)
     }
