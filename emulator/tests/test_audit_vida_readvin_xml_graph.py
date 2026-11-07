@@ -88,7 +88,12 @@ class VidaXmlGraphAuditTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit): main([str(private), '--output', str(output)])
             other = base / 'symlink.xml'
-            other.symlink_to(private)
+            try:
+                other.symlink_to(private)
+            except (OSError, NotImplementedError):
+                # Windows runners can disable creating symlinks without elevation.
+                # CLI safety and redaction assertions above still ran.
+                return
             with self.assertRaises(ValueError): audit_file(other)
 
 
