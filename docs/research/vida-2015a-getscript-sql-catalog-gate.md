@@ -187,6 +187,37 @@ data was read. Next gate: inspect the exact original caller's
 string conversion / SQL binding, or a separately authorized
 read-only live client trace, **before** changing emulator replies.
 
+### Installed GetScript dependency-name evidence
+
+The owner then queried **only**
+`DiagSwdlRepository.sys.sql_expression_dependencies` for
+`referencing_id = OBJECT_ID(N'dbo.GetScript', N'P')`, filtered
+to four known object names. Four distinct names were returned
+with an **empty `referenced_schema_name`** field:
+
+- `Script`
+- `ScriptContent`
+- `scriptprofilemap` (case preserved exactly as returned)
+- `scriptType` (case preserved exactly as returned)
+
+This demonstrates stored dependency metadata on those four names,
+not actual read/execution behavior of `GetScript`, and **not**
+that all four resolve to `dbo`. Per Microsoft
+[`sys.sql_expression_dependencies` documentation](https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql),
+an unqualified reference in a non-schema-bound object may report
+a `NULL` referenced schema; `referenced_id` can also be `NULL`
+if unresolved. Case differences in recorded names must not be
+silently normalized into proof of identical objects.
+
+**Next catalog-only gate:** check `referenced_id`,
+`OBJECT_SCHEMA_NAME(referenced_id)` and
+`OBJECT_NAME(referenced_id)` plus
+`is_caller_dependent`/`is_ambiguous` for exactly those
+dependencies. The SQL statement and stored procedure must
+not be executed. Actual script selection and client
+acceptance remain unknown.
+
+
 
 Microsoft SqlServer module v22 defaults to checking the SQL TLS
 certificate chain. A local SQL installation with an untrusted
