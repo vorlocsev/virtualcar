@@ -63,7 +63,7 @@ class NativeUnimplementedCemTests(unittest.TestCase):
     def test_04_exact_marker_only_not_near_match_or_source_spoof(self):
         for fake in (MARKER + " CORRUPTED", "prefix " + MARKER,
                      "P2 D2 CEM A3/A6: unverified response implementation",
-                     "P2 D2 read command: no validated response fixture"):
+                     "P2 D2 CEM A3/A6: no verified response fixture"):
             with self.subTest(fake=fake):
                 one = status(a3() + [event(fake)])
                 self.assertFalse(one["native_cem_response_unimplemented"])
