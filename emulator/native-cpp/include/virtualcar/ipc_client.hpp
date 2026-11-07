@@ -5,6 +5,7 @@
 // is allowlisted synthetic 0x22 DID read, with a bounded VCRD positive reply.
 // No arbitrary CAN/ECU command, J2534, or physical transport is exposed.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -24,7 +25,8 @@ enum class Result : std::uint8_t {
     protocol_error,
     peer_mismatch,
     not_authenticated,
-    io_error
+    io_error,
+    cancelled
 };
 
 enum class Kind : std::uint16_t {
@@ -88,6 +90,11 @@ public:
     // authenticated current-user pipe. No generic CAN/J2534 transmit API.
     [[nodiscard]] Result read_synthetic(const readonly::Envelope& request,
                                         readonly::Envelope& response);
+    // May be called from another thread while read_synthetic is blocked.
+    // Sticky until the current pipe is revoked and a fresh Host is connected.
+    // The object must outlive both threads.
+    void request_cancel_read() noexcept;
+    [[nodiscard]] bool read_cancel_requested() const noexcept;
     [[nodiscard]] Result disconnect() noexcept;
 
     [[nodiscard]] bool connected() const noexcept;
@@ -98,7 +105,8 @@ private:
     [[nodiscard]] Result write_frame(const Frame& frame);
     [[nodiscard]] Result read_frame(Frame& frame);
     [[nodiscard]] Result write_exact(std::span<const std::uint8_t> bytes);
-    [[nodiscard]] Result read_exact(std::span<std::uint8_t> bytes);
+    [[nodiscard]] Result read_exact(std::span<std::uint8_t> bytes,
+                                    const std::atomic<bool>* cancel = nullptr);
     void close_locked() noexcept;
     [[nodiscard]] static Result map_win32_error(std::uint32_t error) noexcept;
 
@@ -107,6 +115,7 @@ private:
     SessionToken session_{};
     std::uint32_t timeout_ms_{3000};
     std::uint32_t last_error_{};
+    std::atomic_bool read_cancel_requested_{false};
 };
 
 } // namespace virtualcar::ipc

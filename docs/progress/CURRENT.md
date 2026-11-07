@@ -35,19 +35,43 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## NEXT: M5D-2c in-flight read cancellation, Host-loss and restart (NOT IMPLEMENTED)
+## ACTIVE: M5D-2c in-flight synthetic read cancellation and Host restart (Windows CI PENDING)
 
-M5D-2b successfully established serial, authenticated synthetic
-read-only C++ ↔ C# data exchange. The next stage must prove
-cancellation and revocation while a read is *in progress*, not
-only a pre-read lease expiration. Require bounded Host I/O
-deadlines, explicit cancels, rejected stale operation IDs after
-Host restart with reused numeric session tokens, and cleanup
-of every pending ledger slot. Re-run MSVC x86/x64 and managed
-cross-language tests. Keep C++ J2534 ABI fail-closed; physical
-CAN, real ECU/DID responses, PIN, SecurityAccess, writes and
-software publication remain prohibited.
+M5D-2c introduces a strictly read-only, cooperative cancel
+signal for the existing native `ipc::Client`. A different thread
+may atomically request cancellation while an overlapped response
+read is pending. The owning I/O thread wakes within a bounded
+40ms polling slice, cancels the exact OVERLAPPED request through
+CancelIoEx, waits for its completion, closes its pipe, and
+revokes M5C-2 channels and M5D-1 ledger state. No unsafe
+cross-thread `CloseHandle` or PID-based kill APIs are exposed.
+A cancellation signal is sticky until a fresh Host is fully
+authenticated. A reply that races cancellation is discarded
+before the caller sees synthetic bytes.
 
+The C# test Host adds an opt-in `read-held` scenario: after
+authenticating the 256-bit HELLO, validating the live process-bound
+VCRD read, and resolving a SHA256-sealed synthetic VCRF fixture,
+it writes an explicitly requested test marker and holds the
+positive reply for six seconds. Production Host has no barrier.
+This allows deterministic tests of cancellation **during** a
+validated read, and loss of Host #1 *during* the pending read.
+The runner kills only its own retained C# child Process handle,
+then starts Host #2 with the same pipe name, confirming numeric
+session IDs can be reused while process identity changes.
+
+M5D-2c adds dedicated native CLI integration modes and an
+owner-only self-hosted VMware step for BOTH x86 and x64.
+The acceptance criteria are two tests per arch: active-read
+cancel with no exposed payload, and mid-read Host kill,
+full revoke, reconnect and successful clean synthetic F187
+read on a new Host. The new source is **NOT yet Windows CI
+validated**. Do not merge the feature PR without passing
+the private VMware gates. The existing M5D-2b four per-arch
+read tests, M5C-2 restart, managed 17/17 and CTest 7/7
+must remain green. There is no public arbitrary CAN/J2534
+data plane, physical ECU, writes, PIN, SecurityAccess,
+programming, package publication or Virtual Car release.
 
 ## COMPLETED: M5D-2b native authenticated synthetic VCRD reader (Windows x86/x64 PASS, 2026-11-07)
 
