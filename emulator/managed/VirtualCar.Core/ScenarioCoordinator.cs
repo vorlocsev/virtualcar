@@ -92,6 +92,27 @@ public sealed class ScenarioCoordinator : IAsyncDisposable
         finally { _mutex.Release(); }
     }
 
+    /// <summary>
+    /// Return a COPY of strictly synthetic read fixture data only while the
+    /// authenticated coordinator session and selected immutable scenario are
+    /// current. No J2534, CAN, VIN lookup, or arbitrary request execution.
+    /// </summary>
+    public async Task<byte[]?> ReadSyntheticAsync(
+        SessionToken token, uint requestCanId, uint responseCanId,
+        bool extended, ushort did, CancellationToken cancellationToken = default)
+    {
+        await _mutex.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureRunning();
+            if (!IsCurrent(token) || _selected is null)
+                throw new InvalidOperationException("Stale laboratory session.");
+            return SyntheticReadFixture.Find(
+                _selected, requestCanId, responseCanId, extended, did);
+        }
+        finally { _mutex.Release(); }
+    }
+
     public async Task CloseSessionAsync(SessionToken token, CancellationToken cancellationToken = default)
     {
         await _mutex.WaitAsync(cancellationToken).ConfigureAwait(false);

@@ -18,7 +18,7 @@ not requirements for the new architecture.
 | M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
 | M4B-2 | Executed x86 old C DLL vs C++ RX module, 8 synthetic trace gates | COMPLETED, PR #83, CI #638 |
 | M5 | C# Host + secure Named Pipes + native C++ client | M5A/M5B/M5C-1 complete; M5C-2 PR #96 merged as 7bde901, private VMware feature #42339519459 and post-merge #42339851382 SUCCESS, native x86/x64 6/6 CTest and Host-loss/restart PASS; J2534 data plane disabled |
-| M5D | Authenticated read-only synthetic CAN/ISO15765 control/data contract, bounded routing and fail-closed J2534 bridge | M5D-1 PR #99 merged as 4485ae4; Windows x86/x64 7/7 CTest both, feature VMware #42341213124 and post-merge VMware #42341507066 SUCCESS, zero artifacts. M5D-2 authenticated C# Host exchange NOT IMPLEMENTED; J2534 DLL fail-closed |
+| M5D | Authenticated read-only synthetic CAN/ISO15765 control/data contract, bounded routing and fail-closed J2534 bridge | M5D-1 merged and Win32/x64 7/7 CTest PASS; M5D-2a Host-side sealed VCRF synthetic reads + eight managed pipe tests IMPLEMENTED ON FEATURE BRANCH, private VMware CI PENDING; M5D-2b native C++ read client NOT IMPLEMENTED; J2534 DLL fail-closed |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
