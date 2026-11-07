@@ -80,6 +80,18 @@ target_link_libraries(VirtualCarAuthenticatedSession PUBLIC VirtualCarIpcClient 
 target_compile_options(VirtualCarAuthenticatedSession PRIVATE /W4 /WX /permissive- /sdl)
 target_link_libraries(vc_ipc_client_checks PRIVATE VirtualCarAuthenticatedSession)
 
+
+# M5D-1: isolated synthetic READ-only VCRD envelope + correlation ledger.
+# This does NOT link to VirtualCarJ2534Cpp, IPC or CAN transmission.
+add_library(VirtualCarReadonlyContract STATIC src/readonly_contract.cpp)
+target_include_directories(VirtualCarReadonlyContract PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(VirtualCarReadonlyContract PRIVATE /W4 /WX /permissive- /sdl)
+
+add_executable(vc_readonly_contract_checks tests/readonly_contract_checks.cpp)
+target_link_libraries(vc_readonly_contract_checks PRIVATE VirtualCarReadonlyContract)
+target_compile_options(vc_readonly_contract_checks PRIVATE /W4 /WX /permissive- /sdl)
+add_test(NAME m5d1_synthetic_readonly_contract_8_groups COMMAND vc_readonly_contract_checks)
+
 # M4B-1: isolated ISO15765/J2534 RX compatibility layer, not linked
 # into the fail-closed adapter DLL until the later M5 authenticated host.
 add_library(VirtualCarIsoRx STATIC src/isotp_rx.cpp)
