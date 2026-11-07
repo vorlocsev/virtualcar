@@ -63,6 +63,7 @@ on:
           - research/vida-readvin-script-selection-evidence
           - fix/vida-session-release-provenance-gate
           - feature/vida-readvin-xml-graph-safe-audit
+          - feature/vida-jboss-startup-provenance-audit
 
 permissions:
   contents: read
