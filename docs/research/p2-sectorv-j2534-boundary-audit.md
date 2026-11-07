@@ -2,18 +2,18 @@
 
 The two existing tools describe **different observational layers**:
 
-- \`audit_j2534_discovery.py\` produces a redacted
-  \`virtualcar-j2534-evidence-v1\` report. A \`delivered\` transaction
+- `audit_j2534_discovery.py` produces a redacted
+  `virtualcar-j2534-evidence-v1` report. A `delivered` transaction
   proves only J2534 delivery/transport framing, never ECU/client acceptance.
-- \`audit_sectorv_gate.py\` produces a redacted
-  \`virtualcar-sectorv-gate-report-v1\` from **human-curated client events**.
+- `audit_sectorv_gate.py` produces a redacted
+  `virtualcar-sectorv-gate-report-v1` from **human-curated client events**.
   A 13/13 B9FB matcher is still not proof of VIN parsing, normal mode or
   ECU enumeration.
 
-New \`audit_p2_discovery_boundary.py\` audits these two safe summaries side
+New `audit_p2_discovery_boundary.py` audits these two safe summaries side
 by side. **No matching by timestamps, frame count, CAN ID, or session number**
 is performed because no shared request identifier is present in the inputs.
-The optional \`--same-run-reviewed\` switch records only an independent
+The optional `--same-run-reviewed` switch records only an independent
 human provenance review that both summaries belong to the same acquisition.
 It does not join their transactions or establish causality.
 
@@ -22,17 +22,17 @@ It does not join their transactions or establish causality.
 These commands operate on **local private files only**. Do not commit raw
 client logs, donor INI, VINs, ECU captures, credentials or generated reports.
 
-\`\`\`sh
+```sh
 python emulator/tools/audit_j2534_discovery.py /private/j2534.log --output /private/j2534-safe.json
 python emulator/tools/audit_sectorv_gate.py /private/curated-events.json --output /private/sectorv-safe.json
 python emulator/tools/audit_p2_discovery_boundary.py /private/j2534-safe.json /private/sectorv-safe.json --output /private/stages-safe.json
-\`\`\`
+```
 
 Only after reviewing the provenance of **both** input reports, optionally use:
 
-\`\`\`sh
+```sh
 python emulator/tools/audit_p2_discovery_boundary.py /private/j2534-safe.json /private/sectorv-safe.json --same-run-reviewed --output /private/reviewed-stages-safe.json
-\`\`\`
+```
 
 The output has only aggregate request counts, transport status categories,
 125/500 kbit/s (or unknown/other), 11/29-bit categories, missing channel
