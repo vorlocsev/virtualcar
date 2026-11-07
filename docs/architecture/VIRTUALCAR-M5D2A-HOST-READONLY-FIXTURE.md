@@ -1,6 +1,12 @@
 # M5D-2a | Authenticated C# synthetic fixture reads
 
-Status: **IMPLEMENTED ON FEATURE BRANCH, WINDOWS SELF-HOSTED CI PENDING**.
+Status: **VALIDATED ON PRIVATE WINDOWS SELF-HOSTED RUNNER, PR #102 PENDING MERGE**.
+[VMware #42342961556](https://github.com/vorlocsev/virtualcar/actions/runs/42342961556)
+executed actual M5D-2a source `5c650ee03a2f1e73af6b7d462dacca0792cc1c38` on
+`VirtualCar-CI-WIN`: 17/17 C# Host Named Pipe checks,
+MSVC x86 7/7 CTest, MSVC x64 7/7 CTest, M5B and M5C-2
+x86/x64 Host-loss/recovery, Python 252, C/Go/.NET PASS.
+Uploaded artifacts: zero. This is not native C++ read integration.
 
 This is the Host-side half of M5D-2. Native C++ authenticated
 read requests and linkage to the J2534 DLL are not implemented.
@@ -74,7 +80,8 @@ Added to the existing nine M5A checks (target 17/17):
     VCRF records are rejected.
 17. Nonzero reserved field and truncated VCRD frame rejected.
 
-Windows self-hosted CI has NOT been executed on this feature branch.
+Private Windows self-hosted CI was executed successfully for this
+feature source on 2026-11-07. It is still not a C++ VCRD data-plane test.
 M5A/B/C2 regressions and native x86/x64 CTest must still PASS before
 merging. No artifacts, packages, installs or releases.
 

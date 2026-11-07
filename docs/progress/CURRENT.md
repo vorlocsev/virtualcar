@@ -35,7 +35,7 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE: M5D-2a authenticated C# Host synthetic fixture reads (CI PENDING)
+## COMPLETED: M5D-2a authenticated C# Host synthetic fixture reads (Windows PASS, 2026-11-07)
 
 M5D-2a introduces a strict C# VCRD v1 codec and synthetic VCRF
 fixture parser inside the existing current-user VCLB Named Pipe Host.
@@ -53,7 +53,14 @@ it can be read; no captured/real-car bytes are accepted.
 Eight new managed Windows pipe checks (10..17), on top of the nine
 M5A checks, cover valid reads, Host identity, route mismatch,
 SecurityAccess denial, unknown DID/kind, replay, bad scenario and
-malformed VCRD. **Pending owner-run self-hosted Windows CI.**
+malformed VCRD. **Self-hosted Windows CI VERIFIED:** [VMware #42342961556](https://github.com/vorlocsev/virtualcar/actions/runs/42342961556)
+SUCCESS on the exact M5D-2a code commit `5c650ee03a2f1e73af6b7d462dacca0792cc1c38`.
+Runner `VirtualCar-CI-WIN`, C# Host checks 17/17 (nine pre-existing
+and eight new), native Win32 7/7 CTest, native x64 7/7 CTest,
+M5B x86/x64, M5C-2 host loss/restart x86/x64 and Python 252,
+Legacy C, Go, .NET all PASS. Zero uploaded artifacts.
+Verified only the Host-side synthetic read path; C++ read client
+M5D-2b remains unimplemented.
 This step only enables serial read-only fixture responses inside the
 C# Host; M5D-1's eight-slot native C++ ledger is still isolated.
 
