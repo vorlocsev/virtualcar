@@ -156,11 +156,17 @@ query confirmed `dbo.ScriptType` has precisely two visible columns:
 `Description varchar(50)` (column 2, `max_length=50`).
 The `Description` type matches the declared maximum width of
 `GetScript.@scriptType varchar(50)`, but equal SQL types **do not
-prove the relationship** or that `ScriptType.Id=4` exists. A narrow
-read-only lookup of only the `Id=4` entry is the next optional
-operator-controlled evidence step; unlike the catalog queries it
-**would read table data**, and it must not be mistaken for an
-executed GetScript or the effective runtime SQL argument.
+prove the relationship**. A subsequent owner-authorized, narrowly
+scoped **read-only data query** `SELECT Id, Description FROM
+dbo.ScriptType WHERE Id = 4` returned exactly **`4 / CarStatus`**.
+The original .NET `ValueObjects.ScriptType.ReadVin = 4` is therefore
+**not an identity mapping to `dbo.ScriptType.Id = 4`**, at least in
+this installed VIDA database. Whether the application supplies
+`'ReadVin'` or another string to SQL parameter
+`GetScript.@scriptType varchar(50)` remains **unknown**. The next
+bounded owner-controlled lookup may search only the `ScriptType`
+`Id` and `Description` values containing `Vin` or `Ident`,
+without retrieving XML or executing `GetScript`.
 
 
 Microsoft SqlServer module v22 defaults to checking the SQL TLS
