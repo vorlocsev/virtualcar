@@ -1,6 +1,6 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
-## ACTIVE checkpoint: M5A/M5B IPC preflight validated on VMware (2026-11-07)
+## ACTIVE checkpoint: M5C-1 Windows x86/x64 lifecycle preflight PASSED (2026-11-07)
 
 ### M5A C# current-user Named Pipe host: MERGED into development
 
@@ -59,26 +59,41 @@ Dvinholm is the PRIMARY product; Virtual Car is a private, optional,
 synthetic read-only laboratory. No Virtual Car releases without a
 separate explicit instruction.
 
-### M5C-1 branch: isolated lease/channel state machine, Windows CI pending
+### M5C-1: isolated bounded lifecycle, VMware x86 and x64 PASSED
 
-A new C++20 `VirtualCarLifecycle` library is being developed
-separately from the J2534 DLL. Eight deterministic test groups cover
-default deny, synthetic preflight and duplicate HELLO rejection,
-heartbeat expiration at the exact deadline, monotonic clock
-regression/overflow, wrong-generation revocation, eight-slot
-capacity/opaque nonrecycled IDs, reauthentication/reset cleanup
-and parallel bounded reservations. No route to CAN, ISO15765, ECU
-requests or physical devices is enabled.
+PR #90 source branch: `feature/m5c1-bounded-lifecycle-preflight`;
+exact **tested native source** commit
+`89553e37e47b86a3ced83d2c1de01827669bc039`.
+Private VMware SUCCESS [#42319530476](https://github.com/vorlocsev/virtualcar/actions/runs/42319530476)
+checked out that exact branch commit, with workflow at `main`
+`6661014373e07464b99ed02aa03f03aff3947828`.
+The workflow is owner-only, self-hosted Windows, and publishes no
+artifacts, releases, installers or deployments.
 
-Developer-local GCC 14 C++20 run (Linux): **8/8 PASS**. This is
-NOT Windows x86/x64 CI or actual Host/DLL lifecycle acceptance.
-The C++ class relies on the caller to verify the host and scenario;
-a boolean `approved_synthetic` is not a credential.
-It reports lazy expiration at the next timed operation, and its
-`snapshot()` is observability only, never permission to route frames.
-Next mandatory step: Windows x86/x64 native CTest via private VMware
-runner, then M5C-2 binding to real authenticated Host lifecycle
-without enabling the J2534 data plane.
+Windows x86: 5/5 CTest including
+`m5c1_bounded_session_lifecycle_8_groups` PASS.
+Windows x64: 5/5 CTest including the same M5C-1 group PASS.
+Each new M5C-1 CTest executable runs eight deterministic gates:
+default deny; session/generation and duplicate begin; exact heartbeat
+expiry; monotonic rollback/overflow; wrong-generation invalidation;
+eight-slot capacity/nonrecycled IDs; reauthentication/reset; and
+24 simultaneous reservations without exceeding capacity.
+M5A 9/9, C++ ↔ C# M5B x86/x64, Python, Go, legacy C,
+C/C++ parity and .NET Core/Storage/Scenarios also PASS.
+
+`VirtualCarLifecycle` remains **separate from** the fail-closed
+`VirtualCarJ2534Cpp` DLL and the IPC client. Synthetic approval is
+a caller precondition, NOT authentication. Lazy expiry is checked
+on the next timed operation, never authorized from `snapshot()`.
+No CAN/ECU, SecurityAccess, PIN, programming, adapter registration,
+real-vehicle or Dvinholm E2E test has occurred.
+
+**NEXT M5C-2**: bind this bounded native lifecycle to the
+*actual authenticated* M5A/M5B peer, verify host process loss,
+stale-generation revocation, heartbeat expiry and recovery on
+Windows x86/x64. Keep the J2534 DLL fail-closed and the data
+plane disabled until separately verified.
+
 
 Completed:
 - M0 PR #71 C# Core and C++ ABI, CI #1 SUCCESS.

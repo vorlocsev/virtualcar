@@ -1,7 +1,10 @@
 # M5C-1: bounded C++20 session/channel lifecycle preflight
 
-Status: **IN PROGRESS**. Isolated library and deterministic tests;
-developer-local GCC 14 C++20 **8/8 PASS**. Windows x86/x64 CI pending.
+Status: **WINDOWS x86/x64 VMWARE VALIDATED**.
+Private Windows VMware #42319530476 SUCCESS, M5C-1 CTest passed
+on both x86 and x64, with five total native CTest targets on each.
+Native source under test: `89553e37e47b86a3ced83d2c1de01827669bc039`.
+The isolated library is NOT connected to the J2534 DLL.
 
 ## Why
 
@@ -51,9 +54,19 @@ or registering a virtual J2534 adapter.
 8. Twenty-four concurrent reservation attempts yield at most eight
    unique nonzero channel IDs.
 
-Developer-local proof on Linux: GCC 14.2, C++20, `-Wall -Wextra
--Werror -pedantic -pthread`, 8/8 PASS. No native Windows/VMware test
-has run for M5C-1 at the time of this document's creation.
+Windows proof: private VMware workflow
+[#42319530476](https://github.com/vorlocsev/virtualcar/actions/runs/42319530476),
+which checked out source SHA `89553e3`:
+- Native x86 MSVC configure/build and 5/5 CTest: PASS, including
+  `m5c1_bounded_session_lifecycle_8_groups`.
+- Native x64 MSVC configure/build and 5/5 CTest: PASS, including
+  `m5c1_bounded_session_lifecycle_8_groups`.
+- C# M5A 9/9; C++ x86/x64 ↔ C# M5B authentication and GOODBYE;
+  Python, legacy C, Go and managed Core/Storage/Scenario: PASS.
+- No artifacts, releases, deployments or external adapter registration.
+
+The 8 M5C-1 assertions are synthetic offline tests. The test
+does NOT verify real Host lifecycle binding or J2534 routing.
 
 ## Next M5C-2 (NOT IMPLEMENTED)
 
