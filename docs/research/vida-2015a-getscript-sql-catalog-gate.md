@@ -443,6 +443,25 @@ or original proprietary XML/binary were exported. Names
 SQL calls, CAN requests, VIN read behavior, or real
 execution.
 
+Owner then ran the SQL Server **static metadata-only** query
+`sys.dm_exec_describe_first_result_set_for_object(OBJECT_ID(N'dbo.GetScript'),0)`
+on the authorized installed VIDA instance, without executing
+`GetScript`. The **first result set** was resolved as exactly
+one visible column: `Ordinal=1`, `ColumnName=XmlDataCompressed`,
+`SqlType=image`, `Nullable=True`, with no metadata error reported.
+This is consistent with the `dbo.ScriptContent.XmlDataCompressed image`
+storage column but does **not** establish which row, profile,
+script type string or language the runtime procedure returns,
+its execution result, or VIDA/J2534 compatibility.
+
+Next narrow owner-local **static source classification** gate:
+read only the local SQL module definition in memory and report
+boolean/count metadata around how `@scriptType` is referenced;
+do not send SQL body or literal strings, passwords, scripts,
+XML, vehicle identifiers or calls to `GetScript`. Simple text
+matching is heuristic and does not prove semantics; original
+client runtime argument remains an independent evidence gate.
+
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
 1. Establish how the **original VIDA caller** obtains/selects
