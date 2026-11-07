@@ -1,6 +1,55 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: original VIDA reflective XML identity graph (2026-11-07)
+## ACTIVE: validated XML graph and VIN resolver profile boundaries (2026-11-07)
+
+- [PR #159](https://github.com/vorlocsev/virtualcar/pull/159)
+  **MERGED** as `0541e8282b481da450f30329421eb13023b12994`.
+  Exact-feature owner-only
+  [VMware #42396681284](https://github.com/vorlocsev/virtualcar/actions/runs/42396681284)
+  **SUCCESS** with source SHA
+  `6774f270cd7b920bb888087c68c1cb5f1d39abb7`:
+  Python **308**, native x86 and x64 CTest **8/8** each,
+  C# Host **17/17**, no artifacts. Exact-merge
+  [post-merge VMware #42396946803](https://github.com/vorlocsev/virtualcar/actions/runs/42396946803)
+  **SUCCESS**. The new safe `audit_vida_readvin_xml_graph.py`
+  currently knows only **synthetic XML**, not an original
+  ReadVin script. Runtime identity flags stay false.
+- New original static analysis of
+  `BizServices.VehicleResolver.DLL`, pinned SHA
+  `31d107b0ca13ae22a2c2f3893c76d38550ac3ce160648d07888866ddafe46720`,
+  **8/8 source-only local checks PASS**. A `ResolveVin`
+  path calls `VinValidator.IsValidVIN`; other
+  overload/override paths consult SQL and construct
+  model/year/engine/transmission/vehicle structures.
+  `ProfileFromVin` then calls `CreateVehicleProfile`
+  with possible `VehicleProfile.Empty` fallback;
+  `profileFromComponents` uses composite-vehicle,
+  engine and gearbox attributes. **NOT proof this whole
+  pipeline executed** in one VIDA session, nor that
+  the validator's internal rules or target MY2009
+  profile have been verified. Source note:
+  [resolver IL audit](docs/research/vida-vin-validator-resolver-profile-il.md).
+- Additional owner-supplied `server.log` (1116 lines,
+  Oct 2026 JBoss/WildFly/Undertow hosting) contains no
+  literal `GetScript`, `ReadVin`, `DiagSwdlRepository`
+  or `J2534` event. This is **not** proof VIDA
+  never fetched a script; it is a different log source.
+- Authorized original `DiagSwdlRepository` SQL rows
+  and actual `GetScript(ReadVin=4)` XML are **not available**
+  in inspected Drive attachments. Need a separate,
+  consented local SQL/private read-only VIDA session to
+  test selected XML → CarCom → J2534 → returned
+  identity type → VIN resolver → non-empty vehicle
+  profile → *live* alive ECU inventory.
+- Open P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains **UNRESOLVED**. [Draft PR #143](https://github.com/vorlocsev/virtualcar/pull/143)
+  is still pending exact-feature Windows verification.
+  No fabricated CEM A3/E3/A6, SecurityAccess/PIN, ECU
+  programming, raw VIN/SQL/XML export or Virtual Car release.
+
+---
+
+## HISTORICAL: original VIDA reflective XML identity graph (2026-11-07)
 
 - [PR #158](https://github.com/vorlocsev/virtualcar/pull/158)
   **MERGED** as `4a290fc31f9807de20e005c7b00a009bf245e9a8`;
