@@ -4,6 +4,8 @@ The real Windows PowerShell / SQL behavior remains UNTESTED until owner CI
 and an authorized local instance run. These are static, not execution tests.
 """
 from pathlib import Path
+import shutil
+import subprocess
 import re
 import unittest
 
@@ -65,6 +67,18 @@ class VidaGetScriptMetadataSourceTests(unittest.TestCase):
             self.assertIn(token,self.source)
         self.assertIn('other_visible_parameter_count',self.source)
         self.assertIn('Get-Command Invoke-Sqlcmd',self.source)
+        # Parse only, NEVER invoke the source script or connect to SQL.
+        executable = shutil.which('powershell.exe') or shutil.which('pwsh')
+        if executable:
+            quoted = str(SOURCE).replace("'", "''")
+            expression = ("$tokens=$null; $parseErrors=$null; "
+                          "[System.Management.Automation.Language.Parser]::ParseFile('"
+                          + quoted + "',[ref]$tokens,[ref]$parseErrors) | Out-Null; "
+                          "if ($parseErrors.Count -gt 0) { exit 1 }")
+            result = subprocess.run([executable, '-NoProfile', '-NonInteractive',
+                                     '-Command', expression], timeout=20,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, 'PowerShell parser rejected the helper')
         self.assertEqual(len(re.findall(r"(?m)^\s*\w+\s*=\s*\((?:Visible|SqlTypeCategory) '[^']+'\)", self.source)), 14)
 
 
