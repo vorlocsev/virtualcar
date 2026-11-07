@@ -67,9 +67,17 @@ as gaps; restore unique test coverage using safe, local Windows
 test steps or a separate trusted Linux self-hosted runner if needed,
 never by executing unreviewed pull requests on the persistent VM.
 
-The original runner check #42319966445 (before migration) completed
-SUCCESS. A NEW successful run from the resulting `development`
-CI commit is needed to prove the refactor itself.
+Verification after migration: owner-run self-hosted
+[#42320812710](https://github.com/vorlocsev/virtualcar/actions/runs/42320812710)
+completed SUCCESS with source SHA `479fd0d3785869e8922adc6844dad80766808785`.
+The logged native x86 and x64 tests each passed 5/5 CTest,
+M5A passed 9/9 and M5B passed C++ ↔ C# for both architectures.
+Python 252, .NET Core/SQLite/Scenarios 8/8 each, Go, legacy C,
+and exact synthetic C/C++ parity also passed.
+GitHub Actions artifact listing for that run: **empty**.
+The five manual aliases exist identically on `main` and
+`development`, but their own `workflow_dispatch` calls have NOT
+yet been independently exercised; do not label the aliases tested.
 
 ## Safety boundary
 

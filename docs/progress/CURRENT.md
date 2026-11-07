@@ -23,9 +23,15 @@ for the retired Linux-specific steps. No artifact upload, prerelease,
 adapter install, software publication or physical ECU access is allowed.
 See `docs/architecture/VIRTUALCAR-SELFHOSTED-CI.md`.
 
-Pre-migration private VMware #42319966445: SUCCESS for merged
-M5C-1 source on `development`. Migration changes need their own
-post-merge self-hosted validation and are NOT marked verified here.
+Self-hosted migration VERIFIED after merge: private VMware
+[#42320812710](https://github.com/vorlocsev/virtualcar/actions/runs/42320812710)
+completed SUCCESS on `development` commit
+`479fd0d3785869e8922adc6844dad80766808785`.
+Python 252 tests, native MSVC x86/x64 5/5 CTest each (including M5C-1),
+.NET Core/SQLite/Scenarios 8/8 each, M5A 9/9, M5B C++ ↔ C#
+x86/x64, Go, legacy C and C/C++ parity PASS. GitHub Actions
+reports zero uploaded artifacts. The five manual compatibility
+aliases have not been independently dispatched yet.
 
 
 ## ACTIVE checkpoint: M5C-1 Windows x86/x64 lifecycle preflight PASSED (2026-11-07)
