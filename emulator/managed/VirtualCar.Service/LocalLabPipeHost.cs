@@ -4,6 +4,19 @@ using VirtualCar.Core;
 
 namespace VirtualCar.Service;
 
+ // Restricted synthetic fault types. Only the Windows test Host opts in.
+ // These faults never create a generic CAN, J2534 or ECU request surface.
+ public enum SyntheticReplyFault
+ {
+     None,
+     PartialHeaderClose,
+     PartialBodyClose,
+     PartialBodyStall,
+     WrongOperation,
+     WrongDid
+ }
+
+
 /// <summary>
 /// One-client Windows Named Pipe preflight for the private laboratory.
 /// OS current-user isolation plus a separate 256-bit launch secret are required.
@@ -19,6 +32,7 @@ public sealed class LocalLabPipeHost
     // Test-only deterministic barrier. Production builds never supply this.
     // Only invoked after authenticated, verified synthetic fixture read.
     private readonly Func<CancellationToken, Task>? _syntheticReadBarrier;
+    private readonly SyntheticReplyFault _replyFault;
     private int _serving;
 
     public LocalLabPipeHost(
@@ -26,7 +40,8 @@ public sealed class LocalLabPipeHost
         ScenarioCoordinator coordinator,
         byte[] launchSecret,
         TimeSpan? ioDeadline = null,
-        Func<CancellationToken, Task>? syntheticReadBarrier = null)
+        Func<CancellationToken, Task>? syntheticReadBarrier = null,
+        SyntheticReplyFault replyFault = SyntheticReplyFault.None)
     {
         if (string.IsNullOrEmpty(pipeName) || pipeName.Length > 80 ||
             !pipeName.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-'))
@@ -44,6 +59,9 @@ public sealed class LocalLabPipeHost
         _secret = launchSecret.ToArray();
         _ioDeadline = deadline;
         _syntheticReadBarrier = syntheticReadBarrier;
+        if (!Enum.IsDefined(replyFault))
+            throw new ArgumentOutOfRangeException(nameof(replyFault));
+        _replyFault = replyFault;
     }
 
     public string PipeName { get; }
@@ -157,14 +175,29 @@ public sealed class LocalLabPipeHost
                     positive[1] = request.Payload[1];
                     positive[2] = request.Payload[2];
                     synthetic.CopyTo(positive, 3);
-                    byte[] encoded = VcrdCodec.Encode(request with
+                    if (_replyFault == SyntheticReplyFault.WrongDid)
+                    {
+                        // Still allowlisted and otherwise well-formed: this
+                        // isolates native DID correlation, not codec parsing.
+                        positive[2] = request.Payload[2] == 0x87 ? (byte)0x89 : (byte)0x87;
+                    }
+                    VcrdEnvelope reply = request with
                     {
                         Kind = VcrdCodec.ReadResponse,
-                        Payload = positive
-                    });
-                    await WriteWithDeadlineAsync(server,
-                        new PipeFrame(PipeFrameCodec.ReadReply, session.Value.Id,
-                            session.Value.Generation, encoded),
+                        Payload = positive,
+                        OperationId = _replyFault == SyntheticReplyFault.WrongOperation
+                            ? checked(request.OperationId + 1) : request.OperationId
+                    };
+                    byte[] encoded = VcrdCodec.Encode(reply);
+                    var outer = new PipeFrame(PipeFrameCodec.ReadReply,
+                        session.Value.Id, session.Value.Generation, encoded);
+                    if (_replyFault != SyntheticReplyFault.None)
+                    {
+                        await WriteFaultReplyAsync(server, outer, cancellationToken)
+                            .ConfigureAwait(false);
+                        return; // one-shot fault response, never send another frame
+                    }
+                    await WriteWithDeadlineAsync(server, outer,
                         cancellationToken).ConfigureAwait(false);
                 }
             }
@@ -195,6 +228,37 @@ public sealed class LocalLabPipeHost
         {
             Volatile.Write(ref _serving, 0);
         }
+    }
+
+    private async Task WriteFaultReplyAsync(
+        Stream server, PipeFrame reply, CancellationToken cancellationToken)
+    {
+        // Internal test-only negative response: starts from the regular,
+        // authenticated and scenario-derived VCLB/VCRD reply. Never
+        // processes caller-supplied bytes or arbitrary CAN commands.
+        using var buffer = new MemoryStream();
+        await PipeFrameCodec.WriteAsync(buffer, reply, cancellationToken)
+            .ConfigureAwait(false);
+        byte[] wire = buffer.ToArray();
+        int prefix = _replyFault switch
+        {
+            SyntheticReplyFault.PartialHeaderClose => 11,
+            SyntheticReplyFault.PartialBodyClose or
+            SyntheticReplyFault.PartialBodyStall =>
+                PipeFrameCodec.HeaderLength + 9,
+            _ => wire.Length
+        };
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        deadline.CancelAfter(_ioDeadline);
+        await server.WriteAsync(wire.AsMemory(0, prefix), deadline.Token)
+            .ConfigureAwait(false);
+        await server.FlushAsync(deadline.Token).ConfigureAwait(false);
+        if (_replyFault == SyntheticReplyFault.PartialBodyStall)
+            await Task.Delay(TimeSpan.FromSeconds(3), deadline.Token)
+                .ConfigureAwait(false);
+        // For close cases, returning disposes the OS pipe. For the stall
+        // case, client timeout occurs before the test server closes.
     }
 
     private async Task WaitForConnectionWithDeadlineAsync(
