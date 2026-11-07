@@ -35,6 +35,32 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
+## ACTIVE: M5D-2d synthetic replay/deadline and serial read stress gates (CI PENDING)
+
+**Feature branch only; no Windows evidence yet.** M5D-2d extends
+the isolated M5D-1 Ledger C++ CTest suite from eight to eleven
+deterministic groups:
+- rebind with reused numeric session/generation but a different
+  Host FILETIME, denying a stale positive response and reused
+  operation ID;
+- 256 repeated synthetic requests across eight Host ownership
+  epochs, with zero pending slots after every response;
+- 40 exact timeout-boundary cycles rejecting expired replies
+  and preventing their resurrection after revoke/rebind.
+
+The existing native `vc_ipc_client_checks` also gains
+`--readonly-stress`, which makes 64 sequential authenticated
+F187/F189/F190 fixture requests against one real C# Host process,
+checks exact invented A/B/C/LAB bytes and zero M5D-1 pending slots
+after every response, refreshes session KEEPALIVE, rejects F191,
+then tests one final permitted read and clean disconnect.
+
+These tests stress the *existing* serial synthetic reader, not a
+new multi-request pipeline. There are no new write services,
+J2534 DLL links, real vehicle identification or physical CAN.
+A separate owner-only Windows x86/x64 private VMware run is
+required before any merge; PR must stay draft until checked.
+
 ## COMPLETED: M5D-2c in-flight synthetic read cancellation and Host restart (Windows x86/x64, 2026-11-07)
 
 **Merged and independently reverified:** PR #109 merged into

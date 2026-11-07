@@ -18,7 +18,7 @@ not requirements for the new architecture.
 | M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
 | M4B-2 | Executed x86 old C DLL vs C++ RX module, 8 synthetic trace gates | COMPLETED, PR #83, CI #638 |
 | M5 | C# Host + secure Named Pipes + native C++ client | M5A/M5B/M5C-1 complete; M5C-2 PR #96 merged as 7bde901, private VMware feature #42339519459 and post-merge #42339851382 SUCCESS, native x86/x64 6/6 CTest and Host-loss/restart PASS; J2534 data plane disabled |
-| M5D | Authenticated read-only synthetic CAN/ISO15765 control/data contract, bounded routing and fail-closed J2534 bridge | M5D-1/2a/2b/2c merged. M5D-2c PR #109 merged as 30bb9dc; feature VMware #42367882755 and automatic post-merge #42368227332 SUCCESS: x86/x64 7/7 CTest and 2 accepted synthetic-read cancellation/Host crash-recovery cases per arch, C# Host 17/17, zero artifacts. Further synthetic lifecycle hardening not implemented; J2534 DLL fail-closed, no vehicle I/O |
+| M5D | Authenticated read-only synthetic CAN/ISO15765 control/data contract, bounded routing and fail-closed J2534 bridge | M5D-1/2a/2b/2c merged, post-merge VMware #42368227332 PASS (Win32/x64); M5D-2d on feature branch adds 3 deterministic Ledger replay/deadline/epoch gates (11/11 target) and native 64-request serial C++ ↔ C# stress on both x86/x64, private CI PENDING. J2534 DLL still fail-closed, no physical vehicle I/O |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
