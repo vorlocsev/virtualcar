@@ -74,8 +74,6 @@ bool put_marker(const std::string& path, const char* value) {
     return static_cast<bool>(out);
 }
 
-bool clean(const AuthenticatedSession& /*unused*/) = delete;
-
 // Caller must only inspect session state after the pending read thread joins.
 bool fully_revoked(AuthenticatedSession& session) {
     const auto snap = session.snapshot();
