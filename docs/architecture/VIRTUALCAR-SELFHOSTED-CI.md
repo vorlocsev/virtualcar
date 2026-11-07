@@ -83,9 +83,14 @@ GitHub Actions artifact listing for that run: **empty**.
 `managed-migration.yml` was independently dispatched from `main`
 and completed SUCCESS in #42321161342, validating development
 `2b5bef8`. Four other manual aliases remain untested.
-M5C-2's manual feature-branch run is pending; its new restart step
-was merged into `main` in PR #95 and its PID-safe orchestrator
-correction in PR #97.
+M5C-2 feature source exact SHA `7fd40d02be9561e787bb4f701a5d7609cd21ddbf` was
+validated on the private runner in
+[#42339519459](https://github.com/vorlocsev/virtualcar/actions/runs/42339519459): SUCCESS, x86/x64
+6/6 CTest each including M5C-2 host identity, and each architecture
+passed live C++↔C# lifecycle, local expiry, Host process loss and
+reconnect with reused numeric token but distinct process identity.
+Zero artifacts. PR #95 added the self-hosted test and PR #97 made
+Host termination safe by using the retained child Process handle.
 
 ## Safety boundary
 

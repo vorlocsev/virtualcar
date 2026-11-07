@@ -1,6 +1,6 @@
 # M5C-2: authenticated Host-bound native lifecycle
 
-Status: **IMPLEMENTED ON FEATURE BRANCH; WINDOWS VMWARE VALIDATION PENDING**.
+Status: **WINDOWS x86/x64 SELF-HOSTED VMWARE VALIDATED**, PR #96 pending merge.
 
 Branch: `feature/m5c2-authenticated-session-lifecycle`.
 Base: development commit `2b5bef82d0ee7cd0e21d92e2acf0790b51060f7a`.
@@ -99,7 +99,29 @@ gh workflow run vmware-development-validation.yml `
   -f source_ref=feature/m5c2-authenticated-session-lifecycle
 ```
 
-Do not mark M5C-2 complete until the private VMware run shows:
+## Windows verification: PASS
+
+Private owner-only VMware GitHub Actions
+[#42339519459](https://github.com/vorlocsev/virtualcar/actions/runs/42339519459)
+completed SUCCESS. The checkout log verifies exact source commit
+`7fd40d02be9561e787bb4f701a5d7609cd21ddbf`, which is the PR #96 feature head before this
+documentation-only follow-up. Runner: `VirtualCar-CI-WIN`.
+- Windows native x86: 6/6 CTest PASS including M5C-2 identity 4 gates.
+- Windows native x64: 6/6 CTest PASS including M5C-2 identity 4 gates.
+- Windows x86 and x64 separately: C++/C# authenticated lifecycle,
+  bounded channel reservation, heartbeat, closing and GOODBYE PASS.
+- Windows x86 and x64 separately: local 250ms lease expiry revokes
+  slots; host closes and releases its core session PASS.
+- Windows x86 and x64 separately: PowerShell terminates only its
+  own retained synthetic C# child process handle; C++ reports broken
+  pipe, revokes session and channels; replacement Host on same pipe
+  reissues numeric 1/1 token with different process identity; stale
+  channel IDs are rejected and recovery succeeds PASS.
+- M5A 9/9, M5B x86/x64 C++↔C# handshake, Python 252,
+  Go, legacy C, actual read-only C/C++ parity and .NET gates PASS.
+- GitHub Actions reports **zero uploaded artifacts**. No releases.
+
+The verification criteria below are satisfied by this run:
 - MSVC x86 and x64 builds and CTest, including
   `m5c2_host_process_identity_4_groups`.
 - Normal authenticated lifecycle + bounded channels on x86/x64.

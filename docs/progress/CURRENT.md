@@ -35,7 +35,7 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE checkpoint: M5C-2 authenticated Host-bound lifecycle (Windows CI pending)
+## ACTIVE checkpoint: M5C-2 authenticated Host-bound lifecycle PASSED (2026-11-07)
 
 Implementation branch: `feature/m5c2-authenticated-session-lifecycle`,
 source commit `80d144b24b29cd52691b0cfa50fdcfe2c5f309a3`
@@ -66,9 +66,21 @@ restart on the same pipe. The restart test checks that the restarted
 C# coordinator reissues the same numeric 1/1 token, while process
 creation identity differs and the old channel ID cannot be reused.
 
-**Status:** source and workflow prepared; Windows x86/x64 VMware
-execution has NOT yet been performed for this branch. Do not mark
-M5C-2 verified or merge until the private self-hosted run passes.
+**Windows verification: PASS.** Private self-hosted VMware
+[#42339519459](https://github.com/vorlocsev/virtualcar/actions/runs/42339519459) checked out exact feature source
+`7fd40d02be9561e787bb4f701a5d7609cd21ddbf` on runner `VirtualCar-CI-WIN`.
+MSVC x86: 6/6 CTest including M5C-2 process-identity four gates PASS.
+MSVC x64: 6/6 CTest including the same M5C-2 gates PASS.
+For EACH architecture, the actual C++ client and C# Host passed
+authenticated lifecycle/channel reservations, local lease expiry,
+forced loss of the owned synthetic Host process and client revocation,
+then restart on the same pipe with identical numeric session token
+but different host process identity and rejected stale channel IDs.
+M5A 9/9, M5B cross-language x86/x64, Python 252, Go, Legacy C,
+C/C++ parity and .NET checks also PASSED. Artifacts: zero.
+PR #96 is ready for merge, but the deployed J2534 DLL remains
+fail-closed and unlinked to this wrapper. No CAN/ECU data plane,
+physical adapters, PIN, SecurityAccess, programming or releases.
 J2534 DLL remains fail-closed and unlinked from this lifecycle.
 No CAN/ECU data plane, physical adapters, PIN, SecurityAccess,
 programming, artifacts, releases or deployments.
