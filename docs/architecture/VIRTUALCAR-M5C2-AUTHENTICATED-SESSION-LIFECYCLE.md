@@ -1,6 +1,11 @@
 # M5C-2: authenticated Host-bound native lifecycle
 
-Status: **WINDOWS x86/x64 SELF-HOSTED VMWARE VALIDATED**, PR #96 pending merge.
+Status: **MERGED and Windows x86/x64 SELF-HOSTED VMWARE VALIDATED**.
+PR #96 merge SHA `7bde901cbd1cc78f1b03efecba44347acacadb10`. Feature self-hosted VMware
+#42339519459 SUCCESS; post-merge `development` VMware #42339851382
+SUCCESS on this exact merge commit. Both six-Ctest native suites
+and both architectures' live Host-loss/restart integration passed.
+No uploaded artifacts or releases.
 
 Branch: `feature/m5c2-authenticated-session-lifecycle`.
 Base: development commit `2b5bef82d0ee7cd0e21d92e2acf0790b51060f7a`.

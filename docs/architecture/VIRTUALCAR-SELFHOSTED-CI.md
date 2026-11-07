@@ -91,6 +91,10 @@ passed live C++↔C# lifecycle, local expiry, Host process loss and
 reconnect with reused numeric token but distinct process identity.
 Zero artifacts. PR #95 added the self-hosted test and PR #97 made
 Host termination safe by using the retained child Process handle.
+PR #96 then merged into development as `7bde901cbd1cc78f1b03efecba44347acacadb10`,
+and automatic push CI
+[#42339851382](https://github.com/vorlocsev/virtualcar/actions/runs/42339851382)
+also completed SUCCESS with all M5C-2 gates, without artifacts.
 
 ## Safety boundary
 

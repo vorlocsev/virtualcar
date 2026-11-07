@@ -35,7 +35,21 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE checkpoint: M5C-2 authenticated Host-bound lifecycle PASSED (2026-11-07)
+## NEXT: M5D read-only synthetic J2534 data-plane design (NOT IMPLEMENTED)
+
+M5C-2 is the authenticated control/lifecycle foundation, not a
+working PassThru adapter. Before enabling any read-only CAN/ISO15765
+route, specify a new bounded Host↔client frame/command contract:
+explicit allowlist of synthetic read requests, a maximum frame
+size, timeouts and backpressure, ownership by a live
+process-bound session, reset/cancel semantics, and no ECU writes.
+Require 6–8 negative/positive tests on both Windows x86 and x64,
+then actual C++ DLL-to-C# Host integration and black-box comparison
+with the existing safe synthetic emulator. Keep J2534 fail-closed
+until all conditions are confirmed. Dvinholm / real vehicles remain
+out of scope for this substage.
+
+## COMPLETED checkpoint: M5C-2 authenticated Host-bound lifecycle PASSED (2026-11-07)
 
 Implementation branch: `feature/m5c2-authenticated-session-lifecycle`,
 source commit `80d144b24b29cd52691b0cfa50fdcfe2c5f309a3`
@@ -78,8 +92,13 @@ then restart on the same pipe with identical numeric session token
 but different host process identity and rejected stale channel IDs.
 M5A 9/9, M5B cross-language x86/x64, Python 252, Go, Legacy C,
 C/C++ parity and .NET checks also PASSED. Artifacts: zero.
-PR #96 is ready for merge, but the deployed J2534 DLL remains
-fail-closed and unlinked to this wrapper. No CAN/ECU data plane,
+PR #96 **MERGED** into `development` as
+`7bde901cbd1cc78f1b03efecba44347acacadb10`. The post-merge private self-hosted Windows
+[#42339851382](https://github.com/vorlocsev/virtualcar/actions/runs/42339851382)
+completed **SUCCESS** on exactly that merge commit.
+Both native x86/x64, CTest, M5C-2 Host-loss/restart, M5A/M5B,
+legacy C/Python/Go/.NET checks passed, and artifact count was zero.
+The J2534 DLL remains fail-closed and unlinked to this wrapper. No CAN/ECU data plane,
 physical adapters, PIN, SecurityAccess, programming or releases.
 J2534 DLL remains fail-closed and unlinked from this lifecycle.
 No CAN/ECU data plane, physical adapters, PIN, SecurityAccess,
