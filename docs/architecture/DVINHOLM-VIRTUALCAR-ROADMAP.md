@@ -17,7 +17,7 @@ not requirements for the new architecture.
 | M4A | Isolated C++ CAN/ISO-TP FIFO, FC and STmin deterministic engine | COMPLETED, PR #79, CI #13 |
 | M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
 | M4B-2 | Executed x86 old C DLL vs C++ RX module, 8 synthetic trace gates | COMPLETED, PR #83, CI #638 |
-| M5 | C# Host + secure Named Pipes + native C++ client | M5A MERGED PR #85 (9/9 VMware); M5B x86/x64 local handshake VERIFIED #42318278748, PR #87. M5C lifecycle/data-plane work OUTSTANDING |
+| M5 | C# Host + secure Named Pipes + native C++ client | M5A/M5B merged, private VMware #42318278748 PASS; M5C-1 8 lifecycle gates on Windows x86/x64, VMware #42319530476 PASS (PR #90); M5C-2 authenticated Host/session binding and crash recovery NOT IMPLEMENTED |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
@@ -57,6 +57,13 @@ Completed source and CI evidence:
   HELLO/KEEPALIVE/GOODBYE checks PASS. No DLL integration or release.
 - M5B CI fix: PR #89 merged to main as 84f12eb, retained .NET
   Process handle yields real Windows PowerShell 5.1 host ExitCode.
+- M5C-1: PR #90 exact native source SHA 89553e3, private
+  VMware #42319530476 SUCCESS, x86 5/5 and x64 5/5 CTest;
+  `m5c1_bounded_session_lifecycle_8_groups` PASSED in each.
+  The library remains isolated from the J2534 DLL, no data plane.
+- GitHub-hosted 2-4 second failed jobs around PR #90 had no executed
+  steps and no downloadable job logs; they do not establish M5C-1
+  compile/test failures. Runner/account scheduling root cause unverified.
 - Experimental prior Native AOT ABI probe PR #70 is nonfunctional
   and is not the user-selected C++20 production DLL.
 

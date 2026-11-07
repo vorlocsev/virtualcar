@@ -57,6 +57,17 @@ target_link_libraries(vc_ipc_client_checks PRIVATE VirtualCarIpcClient)
 target_compile_options(vc_ipc_client_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m5b_native_ipc_client_8_groups COMMAND vc_ipc_client_checks)
 
+# M5C-1: isolated, deterministic, fail-closed session/channel lease
+# bookkeeping; not linked to the J2534 DLL or any CAN/ECU data plane.
+add_library(VirtualCarLifecycle STATIC src/lifecycle.cpp)
+target_include_directories(VirtualCarLifecycle PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(VirtualCarLifecycle PRIVATE /W4 /WX /permissive- /sdl)
+
+add_executable(vc_lifecycle_checks tests/lifecycle_checks.cpp)
+target_link_libraries(vc_lifecycle_checks PRIVATE VirtualCarLifecycle)
+target_compile_options(vc_lifecycle_checks PRIVATE /W4 /WX /permissive- /sdl)
+add_test(NAME m5c1_bounded_session_lifecycle_8_groups COMMAND vc_lifecycle_checks)
+
 # M4B-1: isolated ISO15765/J2534 RX compatibility layer, not linked
 # into the fail-closed adapter DLL until the later M5 authenticated host.
 add_library(VirtualCarIsoRx STATIC src/isotp_rx.cpp)
