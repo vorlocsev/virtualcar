@@ -107,6 +107,11 @@ foreach ($arch in @('x86','x64')) {
     }
 
     Assert-Exit -Child $client -Label ($arch + ' 3-epoch client')
+    $verified = Join-Path $work 'round-3.verified'
+    if (-not (Test-Path -LiteralPath $verified) -or
+        (Get-Content -LiteralPath $verified -Raw).Trim() -ne 'verified') {
+      throw ('M5D2eB ' + $arch + ' final recovery marker missing')
+    }
     Assert-Exit -Child $hostChild -Label ($arch + ' final clean Host')
     Write-Host ('PASS: M5D2eB ' + $arch + ' accepted Host crash/cancel/crash and clean fourth Host')
   } finally {
