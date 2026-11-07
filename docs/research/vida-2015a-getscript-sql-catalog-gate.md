@@ -796,16 +796,33 @@ first output. An earlier untrusted scan was invalidated
 by the Windows PowerShell 5.1 reserved `$HOME` variable;
 the new successful output uses `$jbossHomeDir`.
 
-**Next read-only operator-local gate:** correlate each
-`.deployed` marker filename stem with directory names
-**in memory only**, outputting each directory's type
-(`.war`, `.ear`, other), exact marker-match booleans,
-plus presence of top-level `WEB-INF` or `META-INF`
-folders. Do not display actual directory/marker names,
-paths, package contents, command lines, VIN or credentials;
-do not execute anything or register J2534. Even a confirmed
-WAR structure will not itself prove VIDA diagnostics or
-DiCE communication.
+**Owner-local exploded EAR deployment evidence:**
+A further no-write audit confirmed **2** immediate
+directories under the same WildFly `standalone/deployments`
+folder, **2** `.deployed` marker files and
+`UnmatchedMarkers=0`. Both enumerated directories are
+**`ExplodedEAR`** (directory name extension `.ear`),
+**`MarkedDeployed=True`** with a matching marker,
+**`HasMETAINF=True`**, **`HasWEBINF=False`**. The latter
+is normal at EAR root; web `WEB-INF` belongs inside any
+nested WAR modules. This establishes a consistent
+scanner-marker-to-exploded-EAR-directory mapping but does
+NOT prove actual currently healthy runtime deployments,
+which modules they contain, VIDA diagnostic functions,
+J2534/DiCE integration or GetScript caller string.
+No deployment names/paths, application content, credentials
+or VIN were printed or exported. No writes, hardware I/O,
+process starts, registry changes or emulator releases.
+
+**Next owner-local bounded read-only gate:** inspect
+**only immediate children** of each exploded EAR directory
+and existence/byte-size of each `META-INF/application.xml`
+without printing names, paths or XML. Count nested
+`.war`/`.jar`/`.rar` archives and exploded `.war`
+directories (if any). If XML inspection is needed later,
+parse descriptors using DTD/XXE-disabled local XML reader
+and output only counts/types; do not dump proprietary
+configuration, endpoints or credentials.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
