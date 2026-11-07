@@ -35,9 +35,16 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE: M5D-2d synthetic replay/deadline and serial read stress gates (CI PENDING)
+## VERIFIED: M5D-2d replay/deadline and serial read stress (FEATURE CI PASS, 2026-11-07)
 
-**Feature branch only; no Windows evidence yet.** M5D-2d extends
+**Private VMware feature verification SUCCESS:** [CI #42369341323](https://github.com/vorlocsev/virtualcar/actions/runs/42369341323)
+checked out exact source `5fff8957dd6963d013be6a6f0b0fee3f78b7ac1b`. Native MSVC x86 and x64
+each passed 7/7 CTest (including 11 Ledger groups in the
+M5D-1 test executable), C# Host 17/17, and new authenticated
+64-read C++ ↔ C# Host serial stress on BOTH x86 and x64 PASS.
+M5B/M5C-2/M5D-2b/M5D-2c, legacy C, Python 252, Go, and .NET
+also passed. No GitHub Actions artifact uploads, releases,
+or deployments. **Post-merge CI is still required.** M5D-2d extends
 the isolated M5D-1 Ledger C++ CTest suite from eight to eleven
 deterministic groups:
 - rebind with reused numeric session/generation but a different
@@ -58,8 +65,10 @@ then tests one final permitted read and clean disconnect.
 These tests stress the *existing* serial synthetic reader, not a
 new multi-request pipeline. There are no new write services,
 J2534 DLL links, real vehicle identification or physical CAN.
-A separate owner-only Windows x86/x64 private VMware run is
-required before any merge; PR must stay draft until checked.
+Owner-only Windows x86/x64 feature VMware gate #42369341323
+PASSED; PR #117 is now eligible for merge after the docs-only
+evidence update. Independent automatic development CI on the
+merge commit must still run the identical 64-read checks.
 
 ## COMPLETED: M5D-2c in-flight synthetic read cancellation and Host restart (Windows x86/x64, 2026-11-07)
 

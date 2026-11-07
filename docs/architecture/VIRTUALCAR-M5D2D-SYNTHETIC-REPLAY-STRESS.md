@@ -1,6 +1,16 @@
 # M5D-2d | Synthetic read replay, deadline and repeatability gates
 
-Status: **FEATURE BRANCH TESTS PREPARED; PRIVATE WINDOWS CI PENDING**.
+Status: **FEATURE CI VERIFIED on Windows x86/x64; post-merge CI PENDING**.
+
+Private owner-dispatched [VMware #42369341323](https://github.com/vorlocsev/virtualcar/actions/runs/42369341323)
+completed SUCCESS, checking out exact M5D-2d source SHA
+`5fff8957dd6963d013be6a6f0b0fee3f78b7ac1b`. Both native Win32 and x64 passed
+7/7 CTest and the new explicit 64-read synthetic C++ ↔ C# Host
+stress step; C# Host 17/17 and M5B/M5C-2/M5D-2b/M5D-2c,
+Python 252, C/Go/.NET passed. Uploaded artifacts: 0.
+The 11 internal M5D-1 Ledger groups are covered by the native
+CTest target on this feature source. Actual per-group printout
+is not separately present in the normal summary log.
 
 This is an incremental validation stage for the authenticated,
 single-client synthetic VCRD read path completed at M5D-2c.
@@ -57,6 +67,8 @@ one successful new 64-read native ↔ managed Host stress run
 on EACH architecture. C/Python 252/Go/.NET baseline must stay
 green. All results must be checked in logs before merging.
 
-The feature PR is draft until verified, and must receive a
-separate post-merge development push CI. No uploads, packages,
+Feature acceptance is verified on this source. PR #117 may
+be moved out of draft and merged, but requires a separate
+automatic post-merge development CI on the exact merge commit
+with new 64-read checks actually executed. No uploads, packages,
 releases, installers, public artifacts or hardware activity.
