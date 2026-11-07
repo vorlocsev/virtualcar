@@ -144,5 +144,105 @@ class BoundaryTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 tool.main([str(left), str(right), "--output", str(output)])
 
+    def test_09_late_p2_40_delivery_does_not_substitute_for_50(self):
+        report = tool.audit(j2534(transaction(
+            "B9FB", "delivered", target="0x40", baud=125000)),
+            sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["B9FB_40"]["statuses"],
+                         {"delivered": 1})
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["requests"], 0)
+        self.assertEqual(report["first_investigation_priority"],
+                         "verify_b9fb_target_50_transport")
+        self.assertEqual(report["vin_accepted_by_client"], "unknown")
+
+    def test_10_target_40_delivered_and_50_partial_does_not_advance(self):
+        report = tool.audit(j2534(
+            transaction("B9FB", "delivered", target="0x40", baud=125000),
+            transaction("B9FB", "partial_rx", target="0x50", baud=500000)),
+            sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["B9FB"]["statuses"],
+                         {"delivered": 1, "partial_rx": 1})
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["statuses"],
+                         {"partial_rx": 1})
+        self.assertEqual(report["first_investigation_priority"],
+                         "investigate_b9fb_target_50_transport")
+
+    def test_11_target_50_delivery_allows_next_investigation_not_identity(self):
+        report = tool.audit(j2534(
+            transaction("B9FB", "delivered", target="0x40", baud=125000),
+            transaction("B9FB", "delivered", target="0x50", baud=500000)),
+            sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["first_investigation_priority"],
+                         "investigate_hardware_a3_no_reply_without_emulating_security")
+        self.assertTrue(report["b9fb_target_evidence_boundary"]["j2534_target_50_delivered"])
+        self.assertEqual(report["b9fb_target_evidence_boundary"]["client_matcher_target"],
+                         "not_reported_by_gate_schema")
+        self.assertEqual(report["cross_source_transaction_attribution"], "not_established")
+        self.assertEqual(report["a3_security_access_authorized"], "unknown")
+
+    def test_12_unknown_target_b9fb_delivery_is_not_50_evidence(self):
+        report = tool.audit(j2534(
+            transaction("B9FB", "delivered", target=None, baud=None,
+                        channel=None, id_format="unknown")),
+            sectorv(), same_run_reviewed=True)
+        self.assertEqual(report["stage_evidence"]["B9FB_unknown_target"]["requests"], 1)
+        self.assertEqual(report["stage_evidence"]["B9FB_50"]["requests"], 0)
+        self.assertEqual(report["first_investigation_priority"],
+                         "verify_b9fb_target_50_transport")
+        self.assertFalse(report["b9fb_target_evidence_boundary"]["j2534_target_50_delivered"])
+
+    def test_13_target_level_speed_id_and_channel_metadata_separate(self):
+        report = tool.audit(j2534(
+            transaction("B9FB", "unverified", target="0x40", baud=125000,
+                        id_format="11bit", channel=2),
+            transaction("B9FB", "delivered", target="0x50", baud=500000,
+                        id_format="29bit", channel=7),
+            transaction("B9FB", "timeout", target=None, baud=None,
+                        id_format="unknown", channel=None)),
+            sectorv(), same_run_reviewed=True)
+        t = report["stage_evidence"]
+        self.assertEqual(t["B9FB_40"]["baud_categories"], {"125k": 1})
+        self.assertEqual(t["B9FB_40"]["id_formats"], {"11bit": 1})
+        self.assertEqual(t["B9FB_50"]["baud_categories"], {"500k": 1})
+        self.assertEqual(t["B9FB_50"]["id_formats"], {"29bit": 1})
+        self.assertEqual(t["B9FB_unknown_target"]["missing_channel_metadata"], 1)
+        self.assertEqual(t["B9FB"]["requests"], 3)
+
+    def test_14_unknown_lab_does_not_invent_target_50_requirement(self):
+        unknown = sectorv()
+        unknown["scenario"] = "unknown_lab"
+        report = tool.audit(j2534(transaction(
+            "B9FB", "delivered", target="0x40", baud=125000)),
+            unknown, same_run_reviewed=True)
+        self.assertEqual(report["first_investigation_priority"],
+                         "investigate_hardware_a3_no_reply_without_emulating_security")
+        self.assertEqual(report["b9fb_target_evidence_boundary"]["target_50_model_context"],
+                         "unknown_lab_no_target_assumption")
+
+    def test_15_no_delivery_and_missing_b9fb_keep_original_priority(self):
+        no_request = tool.audit(j2534(), sectorv(), same_run_reviewed=True)
+        self.assertEqual(no_request["first_investigation_priority"],
+                         "obtain_same_run_j2534_b9fb_tx")
+        bad = tool.audit(j2534(
+            transaction("B9FB", "no_fixture", target="0x40"),
+            transaction("B9FB", "timeout", target="0x50")),
+            sectorv(), same_run_reviewed=True)
+        self.assertEqual(bad["first_investigation_priority"],
+                         "investigate_b9fb_transport")
+
+    def test_16_no_private_identifiers_or_false_cross_source_link(self):
+        secret = "PRIVATE-VIN-DO-NOT-EXPORT"
+        tx = transaction("B9FB", "delivered", target="0x40")
+        tx["private_source_label"] = secret
+        report = tool.audit(j2534(tx), sectorv(), same_run_reviewed=True)
+        text = json.dumps(report)
+        self.assertNotIn(secret, text)
+        self.assertNotIn('"channel": 1', text)
+        self.assertEqual(report["b9fb_target_evidence_boundary"]["target_cross_source_match"],
+                         "not_established")
+        self.assertEqual(report["normal_mode_predicate"], "unknown")
+        self.assertFalse(report["replay_approved"])
+
+
 if __name__ == "__main__":
     unittest.main()
