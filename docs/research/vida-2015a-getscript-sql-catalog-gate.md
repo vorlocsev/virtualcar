@@ -128,6 +128,17 @@ was `ONLINE` with `HAS_DBACCESS=1`. This verifies only the
 SQL endpoint and database access; **GetScript catalog and
 ReadVin execution have not been observed**.
 
+Subsequently, the owner executed an additional **metadata-only** query
+against `DiagSwdlRepository.sys.procedures` with the same local
+connection and reported exactly one visible name match:
+`SchemaName=dbo`, `ProcedureName=GetScript`. This confirms
+**visibility of `dbo.GetScript` in the real installed database**
+for that SQL principal. Parameter names/types, permissions to execute
+it, procedure result selection, exact `ReadVin=4` XML, accepted VIN
+and ECU inventory remain **unverified**. The SQL procedure was **not
+executed** and no diagnostic data was extracted.
+
+
 Microsoft SqlServer module v22 defaults to checking the SQL TLS
 certificate chain. A local SQL installation with an untrusted
 self-signed certificate can reject login *after* successfully finding
