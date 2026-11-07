@@ -364,14 +364,28 @@ read-only validation confirmed well-formedness and a byte
 length of 17964 for each variant. No XML content, hashes,
 script/profile/language IDs or VIN were exported.
 
-Next bounded owner-local structural gate: select just one
-previously loaded XML and report only its root local name,
-number of elements, number of attributes and maximum XML
-depth, with the same 1 MiB size bound and DTD/XXE-disabled
-`XmlReader`. Do not export raw XML, node text, attribute
-values, J2534 message bytes or diagnostic script instructions.
-Actual GetScript runtime selection and ECU/VIN acceptance
-remain unverified. No emulator positive response changes.
+The owner completed this bounded local-only structural check
+for **one** of the 17 SQL `ReadVin` XML variants. The result:
+`RootElement=script`, `ElementCount=182`,
+`AttributeCount=764`, `MaxElementDepth=6`,
+`XmlWellFormed=True`. These are observed counts for one
+variant. Because the previous structural signature matches
+across all 17 XMLs, the same counts and depths are
+**expected** for the rest, but have not been individually
+reported by this specific counting step. The study has
+not exported element text, attribute values, original XML,
+private binary or real VIN/ECU frames.
+
+Next bounded owner-local structural gate: inspect **only**
+root's immediate child element `LocalName` and counts
+(`XmlReader.Depth=1`) from the same in-memory ZIP XML,
+without publishing text, any attribute values, complete
+script trees, J2534 payloads or external resources.
+Those names can reveal broad script sections, but do
+not independently prove how the original VIDA client
+binds `GetScript.@scriptType`, executes diagnostic
+logic or accepts a vehicle VIN. No emulator positive
+response changes or releases.
 
 
 
