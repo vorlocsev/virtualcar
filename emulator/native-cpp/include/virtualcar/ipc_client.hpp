@@ -1,8 +1,9 @@
 #pragma once
 
-// M5B: bounded native Windows client for the M5A local read-only pipe.
-// The public API intentionally exposes only HELLO, KEEPALIVE and GOODBYE.
-// It has no CAN, ECU, J2534 or arbitrary-command transport surface.
+// M5B/M5D-2b: bounded native Windows client for the authenticated C# Host.
+// Control verbs are HELLO, KEEPALIVE, GOODBYE. Its only additional verb
+// is allowlisted synthetic 0x22 DID read, with a bounded VCRD positive reply.
+// No arbitrary CAN/ECU command, J2534, or physical transport is exposed.
 
 #include <cstddef>
 #include <cstdint>

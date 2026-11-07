@@ -46,8 +46,9 @@ target_link_libraries(vc_transport_checks PRIVATE VirtualCarTransport)
 target_compile_options(vc_transport_checks PRIVATE /W4 /WX /permissive- /sdl)
 add_test(NAME m4a_bounded_isotp_transport_8_groups COMMAND vc_transport_checks)
 
-# M5B: bounded native C++20 Named Pipe client. It exposes only the
-# authenticated HELLO/KEEPALIVE/GOODBYE preflight, not CAN or ECU commands.
+# M5B/M5D-2b: bounded native C++20 Named Pipe client. Supports
+# authenticated HELLO/KEEPALIVE/GOODBYE and a strictly synthetic
+# allowlisted read-only VCRD verb. Never a generic CAN/J2534 API.
 add_library(VirtualCarIpcClient STATIC src/ipc_client.cpp)
 target_include_directories(VirtualCarIpcClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(VirtualCarIpcClient PRIVATE /W4 /WX /permissive- /sdl)

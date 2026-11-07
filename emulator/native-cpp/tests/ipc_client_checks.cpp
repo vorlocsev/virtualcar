@@ -662,7 +662,7 @@ int main(int argc, char** argv)
         return cross_language_connect(pipe_name, expected_server_pid) ? 0 : 1;
     }
     if (argc != 1) {
-        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire <pipe-name> <server-pid>] | --lifecycle-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file>\n");
+        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire|--readonly|--readonly-deny|--readonly-no-fixture|--readonly-expire <pipe-name> <server-pid>] | --lifecycle-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file>\n");
         return 2;
     }
 
