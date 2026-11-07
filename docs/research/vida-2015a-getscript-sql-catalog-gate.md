@@ -28,6 +28,59 @@ The original binary does **not** provide the installed database schema,
 procedure body, selected XML, VIN parser condition, completed client
 connection, or accepted CEM identity. None of those has been claimed.
 
+### Original IL: parameter-value branches (independent static check)
+
+Further **local source-only** verification of the original unmodified
+`BizServices.ScriptRepository.DLL`, SHA-256
+`f046b5fa3c8d3487fc05aa1140ac3c4ef1880eef5251c8c46b1c3d73f45a6bca`,
+and original `AppServices.Scripting.DLL`, SHA-256
+`c5f092eddceac8b9eb583fb9a54536d482402a64797bd3597fd0cc6b387f3b7f`,
+establishes these **conditional .NET caller branches**:
+
+1. `RunIdentifyVehicleScript` uses script type **4** and a
+   no-ECU-context engine; the five-argument `GetScript`
+   calls `GetOneScriptFromDb`.
+2. `GetFromDb` distinguishes a **null profile** from a
+   supplied `VehicleProfile`: for a supplied profile it calls
+   `get_Profiles` and `Strings.CommaSeparate`; the other
+   branch supplies a null/DBNull-like SQL placeholder.
+   `VehicleProfile.Empty` is an actual object in the
+   identity call. Do **not** assume the resulting SQL string
+   until its original runtime values are observed.
+3. The *script ID* follows **nonempty/empty conditional
+   branches**, rather than unconditionally being a literal
+   empty string in the stored-procedure request.
+4. ECU type uses a **-1 sentinel** versus an explicitly
+   boxed integer. This influences SQL call parameters; it
+   is **not** an ECU response value.
+5. The SQL reader tests `HasRows`. With no rows it can
+   raise `ScriptMissingException`; this is a *lookup
+   failure*, not a negative CAN response, no-ignition state,
+   or failed VIN semantic validation.
+6. `GetOneScriptFromDb` returns the **first XML in the
+   returned array**, or null if the array is empty.
+   Consequently, a table count does **not** determine
+   which XML the procedure returned first. Its `ORDER BY`
+   or actual selection policy has **not been established**.
+7. For returned binary script content, `GetZippedScriptXml`
+   invokes SQL binary extraction, decompression and XML
+   parsing. Whether the selected XML is the right
+   `ReadVin` script is not proven by these method calls.
+
+**Eight local IL consistency assertions: 8/8 PASS.** They verify
+the two pinned DLL hashes, type-4 call, five-argument handoff,
+first-or-null return, profile branch, script-ID branch,
+ECU-type sentinel and SQL/ZIP/XML/exception path.
+The assertions were executed **offline**; no VIDA process,
+SQL connection, script body, vehicle or J2534 call was
+executed. No original binary or IL body has been committed.
+
+These findings describe the existing original **2014D-derived
+offline VIDA 2015A** code path. A literal `VIDA2014D`
+log release marker is not evidence of an unrelated or
+incompatible diagnostic engine; see
+[release/session provenance](vida-supplied-logs-2014d-session-provenance.md).
+
 ## New local tool: fixed metadata-only SQL SELECT
 
 `emulator/scripts/Inspect-VidaGetScriptSchema.ps1` uses a trusted,

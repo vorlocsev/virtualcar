@@ -29,6 +29,10 @@ FETCHED = re.compile(r"\bFetched script:\s*'([^'\r\n]{1,128})'", re.IGNORECASE)
 RUNNING = re.compile(r"\bRunning script:\s*'([^'\r\n]{1,128})'", re.IGNORECASE)
 # Exact explicit diagnostic Profile label only. It is NOT a model/VIN mapping.
 EMPTY_PROFILE = re.compile(r"\bProfile:\s*'EMPTYPROFILE,'", re.IGNORECASE)
+# Log source declarations, not a guess based on the calendar date.
+SESSION_START = re.compile(r"^Starting new logsession:\s+\d{4}-\d\d-\d\d\b")
+RELEASE = re.compile(r"^VIDA release:\s*(VIDA2014D|VIDA2015A)\s*$")
+IMAGE_REPO_LOGIN_FAILURE = 'Cannot open database "ImageRepository" requested by the login.'
 
 
 def _kind(value):
@@ -67,13 +71,45 @@ def audit_lines(lines):
         "script_missing_exception_mentions": 0,
         "get_vehcomm_specification_error_mentions": 0,
         "run_identify_vehicle_method_mentions": 0,
+        "declared_vida2014d_release_lines": 0,
+        "declared_vida2015a_release_lines": 0,
+        "session_boundary_lines": 0,
+        "readvin_triplets_declared_vida2014d": 0,
+        "readvin_triplets_declared_vida2015a": 0,
+        "readvin_triplets_version_unreported": 0,
+        "image_repository_login_failure_mentions": 0,
+        "diagswdl_repository_sp_mentions": 0,
+        "j2534_driver_load_attempts": 0,
     }
     pending = {}
+    release = "unreported"
     observed = 0
     for raw in lines:
         observed += 1
         if observed > MAX_LINES or len(raw) > 8192:
             raise ValueError("too many or oversized log lines")
+        # Session boundary is stronger than a matching thread ID/time window.
+        # A subsequent release declaration also invalidates pending matches.
+        if SESSION_START.match(raw):
+            counts["session_boundary_lines"] += 1
+            pending.clear()
+            release = "unreported"
+            continue
+        declared = RELEASE.fullmatch(raw.strip())
+        if declared:
+            release = declared.group(1)
+            pending.clear()
+            if release == "VIDA2014D":
+                counts["declared_vida2014d_release_lines"] += 1
+            else:
+                counts["declared_vida2015a_release_lines"] += 1
+            continue
+        if IMAGE_REPO_LOGIN_FAILURE in raw:
+            counts["image_repository_login_failure_mentions"] += 1
+        if "Database: DiagSwdlRepository, SP:" in raw:
+            counts["diagswdl_repository_sp_mentions"] += 1
+        if "Loading J2534 driver:" in raw:
+            counts["j2534_driver_load_attempts"] += 1
         # Exception text/stack traces are intentionally not associated with a
         # specific fetch: a naked exception line contains no verified thread.
         if "ScriptMissingException" in raw:
@@ -100,7 +136,8 @@ def audit_lines(lines):
                 if explicit_empty:
                     counts["requests_read_vin_explicit_empty_profile"] += 1
                 pending[thread] = {"time": time_ms, "kind": kind, "fetched": None,
-                                   "explicit_empty_profile": explicit_empty}
+                                   "explicit_empty_profile": explicit_empty,
+                                   "release": release}
                 continue
             fetched = FETCHED.search(payload)
             if fetched:
@@ -128,6 +165,10 @@ def audit_lines(lines):
                         counts["matched_veh_comm_specification_triplets"] += 1
                     elif current["kind"] == "read_vin":
                         counts["matched_read_vin_triplets"] += 1
+                        suffix = ("declared_vida2014d" if current["release"] == "VIDA2014D"
+                                  else "declared_vida2015a" if current["release"] == "VIDA2015A"
+                                  else "version_unreported")
+                        counts["readvin_triplets_" + suffix] += 1
                         if current["explicit_empty_profile"]:
                             counts["matched_read_vin_explicit_empty_profile_triplets"] += 1
                 pending.pop(thread, None)
@@ -137,7 +178,13 @@ def audit_lines(lines):
         "input_kind": "private_vida_trace_read_only",
         "parsed_line_count": observed,
         "events": counts,
-        "matching_scope": "same_vida_component_thread_and_30_second_log_window",
+        "matching_scope": "same_thread_30_second_window_and_same_declared_log_session",
+        "release_declarations_are_per_supplied_log_not_original_dll_version": True,
+        "literal_release_marker_does_not_prove_incompatible_diagnostic_engine": True,
+        "image_repository_login_failure_is_not_getscript_failure": True,
+        "j2534_driver_load_attempt_is_not_connection_success": True,
+        "cross_file_or_cross_date_correlation_established": False,
+        "actual_j2534_connection_success_verified": False,
         "external_source_examples_are_not_my2009_evidence": True,
         "get_script_type_is_not_runtime_call_site": True,
         "read_vin_get_fetch_run_is_log_chronology_not_identity": True,

@@ -1,6 +1,71 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: VIDA 2015A VIN versus X40 and ECU-state evidence (2026-11-07)
+## ACTIVE: correct 2014D log attribution and session-aware VIDA audit (2026-11-07)
+
+- **User build-context correction (2026-11-07): VIDA 2015A is
+  a modified / relabeled offline VIDA 2014D build family**, not an
+  independently incompatible diagnostic platform. The earlier claim
+  that a `VIDA2014D` log marker excludes the 2015A-labeled
+  installation was **incorrect**. The same supplied `VIDA.log`
+  literally declares **VIDA2014D** four times across four sessions
+  (Sep 25–26, 2026), zero `VIDA2015A` markers and no
+  `SP: GetScript` line. These are **source metadata**, not a
+  reason to discard the log for 2015A-labeled VIDA research.
+  Static original DLL hashes and observed runtime SQL/XML
+  are still required for exact behavioral/patch identity.
+- **Original ReadVin SQL caller-branch check, offline 8/8 PASS**:
+  SHA-pinned original `BizServices.ScriptRepository.DLL` and
+  `AppServices.Scripting.DLL` show type-4 ReadVin -> five-arg
+  `GetScript` -> `GetOneScriptFromDb`; `GetFromDb` branches on
+  profile null versus `CommaSeparate(profile.Profiles)`,
+  script-ID empty/nonempty, and ECU-type sentinel -1.
+  No SQL rows can raise `ScriptMissingException`, a lookup
+  failure distinct from ECU transport/no-VIN; a result
+  array returns its first XML, not proof of VIN acceptance.
+  See [SQL caller branch note](docs/research/vida-2015a-getscript-sql-catalog-gate.md).
+  No SQL, VIDA instance or physical adapter was executed.
+- One Sep 26 VIDA2014D SQL failure names **ImageRepository**
+  via VehicleImageProvider.GetImage; **not GetScript** or
+  DiagSwdlRepository. One J2534 driver **load attempt**
+  is logged, without evidence of successful connection.
+- `VidaMonitor.log` on Oct 29, 2026 separately detects
+  DiagSwdlRepository twice and records VIDA started twice.
+  `db_attach_log.txt` separately reports attached databases
+  and several orphaned-user relinks. **Dates/sessions are not
+  correlated**; no proof this repaired the Sep 26 SQL failure
+  or that ReadVin executed.
+- [Source provenance note](docs/research/vida-supplied-logs-2014d-session-provenance.md)
+  and [pending feature branch](https://github.com/vorlocsev/virtualcar/tree/fix/vida-session-release-provenance-gate)
+  extend existing VIDA text auditor with release/session
+  boundaries and source-specific error/loading counters.
+  Versions in counters are **literal reported release labels**,
+  NOT proof of different engines or incompatible protocols.
+  Eight synthetic regression groups (#17–24), expected
+  Python total **300**; feature Windows VM and physical
+  hardware **NOT YET VERIFIED**. Do not merge until exact
+  feature-SHA trusted owner-only VMware validation.
+- [PR #151](https://github.com/vorlocsev/virtualcar/pull/151)
+  was merged as `6ab7e20d4e0ef2ae9334551c7bcf629e86c18413`,
+  exact-feature [VMware #42389575016](https://github.com/vorlocsev/virtualcar/actions/runs/42389575016)
+  **SUCCESS** (Python **292**, CTest x86/x64 **8/8** each,
+  C# Host **17/17**) and post-merge
+  [#42389868361](https://github.com/vorlocsev/virtualcar/actions/runs/42389868361)
+  **SUCCESS**. [Docs PR #154](https://github.com/vorlocsev/virtualcar/pull/154)
+  was merged as `88043c4f0f8927bfae6e22d6c0f3609a5018ef44`
+  without a dedicated post-merge Windows run.
+- Still missing: **authorized active VIDA2015A** effective config,
+  read-only `GetScript(ReadVin=4)` SQL/catalog evidence,
+  actual selected XML, and a continuous client/J2534 CEM
+  session with accepted VIN and separately confirmed alive ECU.
+  Do not synthesize CEM A3/E3/A6, SecurityAccess, PIN, ECU
+  programming or publish Virtual Car builds.
+- [Draft PR #143](https://github.com/vorlocsev/virtualcar/pull/143)
+  native unimplemented marker audit is still awaiting its
+  own exact-SHA VMware verification.
+
+---
+
+## HISTORICAL: VIDA 2015A VIN versus X40 and ECU-state evidence (2026-11-07)
 
 - [PR #151](https://github.com/vorlocsev/virtualcar/pull/151)
   **MERGED** as `6ab7e20d4e0ef2ae9334551c7bcf629e86c18413`.

@@ -181,5 +181,110 @@ class VidaSelectionTraceTests(unittest.TestCase):
                     main([str(private), "--output", str(out)])
 
 
+    def test_17_vida2014d_literal_log_marker_not_build_incompatibility(self):
+        records = ["Starting new logsession: 2026-09-25 22:22:30\n",
+                   "VIDA release: VIDA2014D\n",
+                   get(script_type="ReadVin"), fetched(), running()]
+        audit = audit_lines(records)
+        ev = audit["events"]
+        self.assertEqual(ev["declared_vida2014d_release_lines"], 1)
+        self.assertEqual(ev["declared_vida2015a_release_lines"], 0)
+        self.assertEqual(ev["readvin_triplets_declared_vida2014d"], 1)
+        self.assertEqual(ev["readvin_triplets_declared_vida2015a"], 0)
+        self.assertTrue(audit["literal_release_marker_does_not_prove_incompatible_diagnostic_engine"])
+        self.assertFalse(audit["actual_vida_client_identity_verified"])
+
+    def test_18_vida2015a_explicit_tag_is_still_not_vin_acceptance(self):
+        audit = audit_lines(["VIDA release: VIDA2015A\n",
+                             get(script_type="ReadVin"), fetched(), running()])
+        self.assertEqual(audit["events"]["readvin_triplets_declared_vida2015a"], 1)
+        self.assertEqual(audit["events"]["readvin_triplets_declared_vida2014d"], 0)
+        self.assertFalse(audit["script_selected_for_identify_vehicle_verified"])
+        self.assertFalse(audit["xc90_v8_my2009_verified"])
+
+    def test_19_cross_session_same_thread_cannot_complete_script_triplet(self):
+        audit = audit_lines(["VIDA release: VIDA2014D\n",
+                             get(script_type="ReadVin"), fetched(),
+                             "Starting new logsession: 2026-09-26 12:34:13\n",
+                             "VIDA release: VIDA2014D\n", running()])
+        ev = audit["events"]
+        self.assertEqual(ev["matched_read_vin_triplets"], 0)
+        self.assertEqual(ev["unmatched_running_script_events"], 1)
+        self.assertEqual(ev["session_boundary_lines"], 1)
+
+    def test_20_release_change_without_session_boundary_invalidates_pending(self):
+        audit = audit_lines(["VIDA release: VIDA2014D\n",
+                             get(script_type="ReadVin"), fetched(),
+                             "VIDA release: VIDA2015A\n", running()])
+        ev = audit["events"]
+        self.assertEqual(ev["matched_read_vin_triplets"], 0)
+        self.assertEqual(ev["unmatched_running_script_events"], 1)
+        self.assertEqual(ev["declared_vida2014d_release_lines"], 1)
+        self.assertEqual(ev["declared_vida2015a_release_lines"], 1)
+
+    def test_21_image_repository_login_failure_not_getscript_failure(self):
+        audit = audit_lines(["VIDA release: VIDA2014D\n",
+                             '12:36:35,013 [VehicleInformati][001][Error] '
+                             'System.Data.SqlClient.SqlException: '
+                             'Cannot open database "ImageRepository" requested by the login.\n',
+                             "Login failed for user 'SYNTHETIC_PRIVATE_USER'.\n",
+                             "12:36:38,711 [NavImageProvider][001][Info] "
+                             "Database: DiagSwdlRepository, SP: GetNavImage\n"])
+        ev = audit["events"]
+        self.assertEqual(ev["image_repository_login_failure_mentions"], 1)
+        self.assertEqual(ev["diagswdl_repository_sp_mentions"], 1)
+        self.assertEqual(ev["get_script_requests"], 0)
+        self.assertTrue(audit["image_repository_login_failure_is_not_getscript_failure"])
+        self.assertNotIn("SYNTHETIC_PRIVATE_USER", json.dumps(audit))
+
+    def test_22_j2534_load_attempt_does_not_prove_connect_success(self):
+        audit = audit_lines(["VIDA release: VIDA2014D\n",
+                             r"12:36:48,574 [J2534ChannelMana][001][VehCom] "
+                             r"Loading J2534 driver: C:\PRIVATE\SECRET\diag.dll" + "\n"])
+        self.assertEqual(audit["events"]["j2534_driver_load_attempts"], 1)
+        self.assertFalse(audit["actual_j2534_connection_success_verified"])
+        self.assertTrue(audit["j2534_driver_load_attempt_is_not_connection_success"])
+        self.assertNotIn("SECRET", json.dumps(audit))
+
+    def test_23_mixed_versions_and_unlabelled_are_kept_distinct(self):
+        records = [get(script_type="ReadVin"), fetched(), running(),
+                   "Starting new logsession: 2026-09-25 22:22:30\n",
+                   "VIDA release: VIDA2014D\n",
+                   get(script_type="ReadVin"), fetched(), running(),
+                   "Starting new logsession: 2026-09-26 12:34:13\n",
+                   "VIDA release: VIDA2015A\n",
+                   get(script_type="ReadVin"), fetched(), running()]
+        result = audit_lines(records)
+        ev = result["events"]
+        self.assertEqual(ev["matched_read_vin_triplets"], 3)
+        self.assertEqual(ev["readvin_triplets_version_unreported"], 1)
+        self.assertEqual(ev["readvin_triplets_declared_vida2014d"], 1)
+        self.assertEqual(ev["readvin_triplets_declared_vida2015a"], 1)
+        self.assertFalse(result["cross_file_or_cross_date_correlation_established"])
+
+    def test_24_untrusted_release_label_and_cli_no_private_export(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            private_path = p / "PRIVATE-ORIGINAL-VIDA-LOG.txt"
+            private_path.write_text(
+                "Starting new logsession: 2026-09-25 22:22:30\n"
+                "VIDA release: VIDA2014D SPOOFED\n"
+                + get(script_type="ReadVin")
+                + fetched(name="PRIVATE_SCRIPT_IDENTIFIER")
+                + running(name="PRIVATE_SCRIPT_IDENTIFIER"), encoding="utf8")
+            output = p / "SAFE.json"
+            with contextlib.redirect_stdout(io.StringIO()):
+                main([str(private_path), "--output", str(output)])
+            result = json.loads(output.read_text(encoding="utf8"))
+            self.assertEqual(result["events"]["declared_vida2014d_release_lines"], 0)
+            self.assertEqual(result["events"]["readvin_triplets_version_unreported"], 1)
+            for secret in ("PRIVATE-ORIGINAL", "PRIVATE_SCRIPT_IDENTIFIER",
+                           "VIDA2014D SPOOFED", str(private_path)):
+                self.assertNotIn(secret, json.dumps(result))
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    main([str(private_path), "--output", str(output)])
+
+
 if __name__ == "__main__":
     unittest.main()
