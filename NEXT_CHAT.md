@@ -1,6 +1,54 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: validated XML graph and VIN resolver profile boundaries (2026-11-07)
+## ACTIVE: VIDA JBoss WSL/SQL server startup evidence (2026-11-07)
+
+- Source of truth `development` at the start of this task:
+  `b85c73baca72207cb0bdb9182665a6651090e17c`,
+  [PR #162](https://github.com/vorlocsev/virtualcar/pull/162)
+  **MERGED**, docs-only VIN resolver profile evidence.
+  The latest verified post-merge VMware is
+  [#42396946803](https://github.com/vorlocsev/virtualcar/actions/runs/42396946803)
+  on earlier PR #159 merge SHA
+  `0541e8282b481da450f30329421eb13023b12994`.
+  No exact Windows CI for this new source branch yet.
+- Owner's *private* `server.log` 2026-10-29 is a
+  **JBoss/WildFly web server log**, not a .NET VIDA
+  `ReadVin`/J2534 log. Bounded local inspection:
+  **two** sessions, each reporting VIDA web deployment
+  and startup, SQL JDBC product, accessserver/BaseData
+  initialization, CarCom datasource binding, VIDA2014D
+  installed-base label, and **WSL self-integrity failure**
+  during `PreLoginAction`. Zero literal `GetScript`,
+  `ReadVin`, `DiagSwdlRepository`, `J2534` in this
+  file, which is **not** proof those operations never ran.
+  WSL is a separate login/provider problem unless
+  real client linkage is established.
+- New offline private-log categorizer
+  `emulator/tools/audit_vida_server_startup.py`:
+  two-session boundary counts, strict whitelist,
+  no raw log/user/path/VIN export, exclusive output.
+  Eight new synthetic Python regressions **8/8 local
+  PASS**, expected full Python suite **316**.
+  Actual user-supplied server log was inspected
+  **only locally**; no original logs committed.
+  Windows VMware **NOT YET VERIFIED** on this new
+  branch; don't merge before exact feature SHA checks.
+  [Full research note](docs/research/vida-jboss-server-startup-wsl-sql-evidence.md).
+- Primary P0 still unresolved: actual authorized
+  offline VIDA 2014D-derived 2015A `GetScript(ReadVin=4)`
+  stored-procedure metadata, selected XML and one
+  continuous diagnostic-client CarCom/J2534/identity
+  session for XC90 V8 MY2009. Keep
+  [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  open. No CEM A3/A6/B9F0 fabricated response,
+  SecurityAccess, PIN, ECU programming, physical
+  adapter test or Virtual Car release.
+- [PR #143](https://github.com/vorlocsev/virtualcar/pull/143)
+  remains Draft pending separate exact-feature VMware.
+
+---
+
+## HISTORICAL: validated XML graph and VIN resolver profile boundaries (2026-11-07)
 
 - [PR #159](https://github.com/vorlocsev/virtualcar/pull/159)
   **MERGED** as `0541e8282b481da450f30329421eb13023b12994`.
