@@ -484,6 +484,42 @@ request bytes or proprietary script output. Do not execute
 `GetScript`, change positive emulator replies or publish
 Virtual Car releases.
 
+Owner completed the static SQL **referenced-entities**
+confirmation without invoking `dbo.GetScript`:
+`sys.dm_sql_referenced_entities(N'dbo.GetScript', N'OBJECT')`
+filtered on `dbo.ScriptType` returned
+`ScriptTypeDependencyRows=3` and
+`DescriptionDependencyRows=1`. This directly establishes
+that SQL Server dependency metadata records at least one
+reference to **`dbo.ScriptType.Description`** in
+`dbo.GetScript`. Combined with the source-regex result
+(`DirectDescriptionComparison=True`) it strongly supports,
+but does NOT strictly prove, that the parameter is compared
+against this same column in the active branch, nor that
+VIDA supplies the candidate string `ReadVin` at runtime.
+**No SQL execution, XML extraction or J2534 traffic.**
+
+**Transition to J2534 evidence:** repository `main` README
+says the Windows x86 current deliverable is a trace-only
+J2534 proxy, not a full emulator; it forwards to an
+owner-supplied `VirtualCarJ2534.dll` which is not in the
+repository. `cmd/oneclick/main_windows.go` registers
+`VirtualCar Trace VM dev26` in the **WOW6432** 32-bit
+PassThruSupport.04.04 view and starts a specified SectorV
+process with `VCAR_TRACE_REAL_DLL` and
+`VCAR_TRACE_LOG_PATH` in that process environment.
+**This OneClick workflow has not been validated for VIDA**
+and may not correctly propagate environment through a
+VIDA launcher or child process. Next safe operator-local
+step is **read-only registry preflight** for that provider
+and x86 DLL presence, without dumping `FunctionLibrary`
+paths, writing registry entries, connecting to a physical
+ECU or launching VIDA. Treat registration and DLL existence
+as prerequisites, **not** J2534 API call or VIDA acceptance
+proof. A subsequent real VIDA session needs separately
+verified architecture, process environment and redacted
+J2534 request/response outcome.
+
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
 1. Establish how the **original VIDA caller** obtains/selects
