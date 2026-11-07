@@ -1,6 +1,54 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: VIDA 2015A ReadVin SQL and public 2014D fallback evidence (2026-11-07)
+## ACTIVE: VIDA 2015A VIN versus X40 and ECU-state evidence (2026-11-07)
+
+- [PR #151](https://github.com/vorlocsev/virtualcar/pull/151)
+  **MERGED** as `6ab7e20d4e0ef2ae9334551c7bcf629e86c18413`.
+  Exact-source [manual VMware #42389575016](https://github.com/vorlocsev/virtualcar/actions/runs/42389575016)
+  **SUCCESS** on `4c4ee7470e398cac78611d7cce4004d8b6aa8518`.
+  Post-merge [#42389868361](https://github.com/vorlocsev/virtualcar/actions/runs/42389868361)
+  **SUCCESS** on the merge SHA. Manual: **292 Python** passed,
+  native CTest x86/x64 **8/8** each, C# Host **17/17**, no artifacts.
+  `ReadVin` / explicit `EMPTYPROFILE` triplets now have
+  separate categorical evidence in the log auditor; this
+  **does not** prove the identity script content or accepted VIN.
+- Direct original VIDA2015A static IL follow-up, source-only
+  **8/8 checks PASS**:
+  `BizServices.Scripting.VehicleIdentityOutput.AddVIN` stores an
+  identity string; `SetX40Serial` sets `IsX40` and *overwrites
+  the same field*. `AddVIN` does **not** clear `IsX40`.
+  `AppServices.VehicleAccess.IdentifyVehicle` consumes
+  `GetIdentity`, `get_IsX40`, returns a `VehicleIdentity`
+  with type flag `not IsX40`, and has a `VinException` path
+  for null identity. Non-null identity is CR/LF-trimmed.
+  These are original **static branches and mock test code**, not
+  a physical accepted VIN, VIN checksum validation or proof of
+  which ReadVin XML branch runs.
+- Distinct original ScriptOutputConverter paths are
+  `GetAliveEcus`, `GetNotAliveEcus` and
+  `GetNotPresentEcus` (MecuReadout not-in-config);
+  the not-alive path can consult a **default CarCom ECU**.
+  Database expectation is not a positive observed ECU.
+  See [original-source audit](docs/research/vida-2015a-identity-vin-x40-ecu-states-il.md).
+- Next P0 research gate remains the **actual original VIDA2015A**
+  `DiagSwdlRepository.GetScript(ReadVin=4)` selection,
+  first returned XML, actual selected VIN/X40 output type and
+  separately observed alive/not-alive/not-in-config ECU states,
+  plus one authorized read-only VIDA+DiCE/J2534 trace.
+  **These outcomes are not yet observed.**
+- [PR #143](https://github.com/vorlocsev/virtualcar/pull/143)
+  A3/A6 native unimplemented marker audit remains **DRAFT**,
+  without exact-source Windows feature validation; do not
+  merge or claim its 16 additional tests verified.
+- Do not publish Virtual Car builds or upload original DLLs,
+  VINs, XML scripts, raw logs, SQL, donor INI, device IDs,
+  protected requests, SecurityAccess, PINs or ECU responses.
+  No replay, DiCE hardware, real MY2009 VIN, ECU, or vehicle
+  acceptance has been confirmed.
+
+---
+
+## HISTORICAL: VIDA 2015A ReadVin SQL and public 2014D fallback evidence (2026-11-07)
 
 - [PR #148](https://github.com/vorlocsev/virtualcar/pull/148)
   **MERGED** as `a3052a0bfa27233a3a296ff127a3e55079151879`.
