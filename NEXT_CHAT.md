@@ -12,6 +12,17 @@
   each, C# Host **17/17**, no artifacts.
   Its ASCII shape utility is synthetic-only and
   does not modify actual CEM or J2534 behavior.
+- [Draft PR #169](https://github.com/vorlocsev/virtualcar/pull/169)
+  carries the all-schema GetScript SQL catalog visibility
+  fix with six new source safety checks (expected
+  Python **330**, feature VMware unverified).
+  Manual trusted source selection was added through
+  merged CI-only [PR #170](https://github.com/vorlocsev/virtualcar/pull/170)
+  on `main` and [PR #171](https://github.com/vorlocsev/virtualcar/pull/171)
+  on `development`. This CI selector is NOT
+  a successful feature test; run exact-SHA
+  `vmware-development-validation.yml` manually
+  before promoting draft.
 - **Current unverified source branch**
   `fix/vida-getscript-nondbo-visibility` extends the
   existing read-only Windows catalog tool
