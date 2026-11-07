@@ -349,14 +349,29 @@ verification, or VIDA/ECU operational compatibility**.
 No XML, diagnostics, real VIN or script/profile IDs were
 exported; original SQL `GetScript` was not executed.
 
-Next owner-local structural gate: inspect only bounded XML
-metadata (element count, attribute count, maximum depth,
-root local name or root name equality count), or compute
-an aggregate count of distinct in-memory XML payload hashes
-without exporting hashes or XML. Avoid unbounded XML parsing
-and any out-of-database diagnostic actions. Emulator positive
-responses still require independent captured request/response
-evidence and client acceptance.
+The owner then conducted an **in-memory-only** SHA-256
+comparison of the 17 **decompressed** XML byte streams and
+of a separately derived structural signature. Results:
+`TotalVariants=17`, `UniqueXmlPayloads=17`,
+`UniqueXmlStructures=1`. Every XML differs in bytes, but
+all share the same ordering/depth of element start/end nodes,
+namespace/local names, empty-element flag and sorted attribute
+**names** in the owner's comparison. The comparison
+**excludes text nodes and all attribute values**;
+therefore it cannot establish translation-only differences
+or diagnostic parameter/logic equivalence. The previous
+read-only validation confirmed well-formedness and a byte
+length of 17964 for each variant. No XML content, hashes,
+script/profile/language IDs or VIN were exported.
+
+Next bounded owner-local structural gate: select just one
+previously loaded XML and report only its root local name,
+number of elements, number of attributes and maximum XML
+depth, with the same 1 MiB size bound and DTD/XXE-disabled
+`XmlReader`. Do not export raw XML, node text, attribute
+values, J2534 message bytes or diagnostic script instructions.
+Actual GetScript runtime selection and ECU/VIN acceptance
+remain unverified. No emulator positive response changes.
 
 
 
