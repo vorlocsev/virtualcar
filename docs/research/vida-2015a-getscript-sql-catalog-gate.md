@@ -861,17 +861,38 @@ servlet names, URL patterns, class names, XML contents,
 credentials or VIN were exported. No active requests,
 process changes, ECU I/O or Virtual Car releases.
 
-**Next safe owner-local bounded gate:** correlate the
-EJB module reference in **EAR slot 2's** securely parsed
-`META-INF/application.xml` with the single first-level
-`.jar` archive, returning only a boolean match. If the
-archive is valid ZIP/JAR, inspect only the central-directory
-entry counts by type (`.class`, `META-INF/ejb-jar.xml`,
-properties and XML) and optional case-insensitive boolean
-hints in entry **names** for VIDA diagnostics/J2534; do not
-extract or execute classes, dump entry names, read configs
-or inspect secrets. A negative string-hint result is
-inconclusive and does not rule out a call path.
+**Owner-local EJB archive identity and ZIP metadata (read-only):**
+The exploded EAR in sorted slot **2** has exactly one
+EJB module declaration in its previously securely parsed
+`META-INF/application.xml`, and exactly one direct-child
+`.jar`. The archive **basename matches the declaration**
+(`EJBJarMatchesDescriptor=True`). `JARReadable=True`; its
+ZIP central directory contains **374 entries, 325 `.class`,
+7 `.xml`, 2 `.properties`**. A file with exact entry name
+`META-INF/ejb-jar.xml` is present. Regex checks against
+`.class` entry **names only** reported
+`DiagnosticsNameHint=True` (substring `diagnos|vehicle|readvin`)
+and `J2534DiCENameHint=True` (substring
+`j2534|passthru|dice`). These checks DO NOT inspect any
+class bytecode, and they do NOT prove any communication or
+API integration. **Important false-positive risk:** the
+case-insensitive `dice` substring can occur in unrelated
+class identifiers such as `indices`, and package path
+matches may be unrelated to a class's purpose. No class
+names, archive contents or file paths were exported; no
+SQL procedure execution, network request, J2534/ECU I/O
+or binaries published.
+
+**Next bounded owner-local read-only gate:** distinguish
+`ReadVin`, `J2534`, `PassThru` and standalone `DiCE` hints
+by separate per-category counts in **class leaf basenames**
+versus full entry paths (bounded to 100000 ZIP entries)
+and inspect just the `META-INF/ejb-jar.xml` descriptor
+using safe DTD/XXE-disabled XML parser (at most 1MiB),
+returning counts of session/entity/message-driven EJBs
+and XML parse status only. Do not print class names, paths,
+configuration text, endpoints, credentials or VIN. Do not
+load or execute JARs or change the diagnostic adapter.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
