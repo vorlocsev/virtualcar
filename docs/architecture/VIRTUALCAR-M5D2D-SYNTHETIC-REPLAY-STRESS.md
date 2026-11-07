@@ -1,6 +1,15 @@
 # M5D-2d | Synthetic read replay, deadline and repeatability gates
 
-Status: **FEATURE CI VERIFIED on Windows x86/x64; post-merge CI PENDING**.
+Status: **MERGED, feature and post-merge Windows x86/x64 CI VERIFIED**.
+
+PR #117 merged as `f3f907e98669c172edb15265ae015f222a82be7e`.
+Automatic owner-only [VMware #42369754826](https://github.com/vorlocsev/virtualcar/actions/runs/42369754826)
+completed SUCCESS on this exact merge commit. CTest x86 7/7
+and x64 7/7, 11 Ledger test groups in the source CTest
+executable, managed Host 17/17, prior read/cancel/restart
+regressions PASS, and new M5D-2d 64-read synthetic C++ ↔ C#
+Host integration explicitly PASS on both x86 and x64.
+All baseline C/Python 252/Go/.NET pass. Artifacts: zero.
 
 Private owner-dispatched [VMware #42369341323](https://github.com/vorlocsev/virtualcar/actions/runs/42369341323)
 completed SUCCESS, checking out exact M5D-2d source SHA
@@ -67,8 +76,9 @@ one successful new 64-read native ↔ managed Host stress run
 on EACH architecture. C/Python 252/Go/.NET baseline must stay
 green. All results must be checked in logs before merging.
 
-Feature acceptance is verified on this source. PR #117 may
-be moved out of draft and merged, but requires a separate
-automatic post-merge development CI on the exact merge commit
-with new 64-read checks actually executed. No uploads, packages,
+Feature acceptance and independent automatic post-merge
+development CI on exact merge commit `f3f907e98669c172edb15265ae015f222a82be7e`
+are both VERIFIED. The new 64-read integration checks
+executed on both Windows architectures. This does not establish
+a J2534 data-plane capability or parallel eight-slot IPC. No uploads, packages,
 releases, installers, public artifacts or hardware activity.
