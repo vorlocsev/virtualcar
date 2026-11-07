@@ -1,6 +1,12 @@
 # M5D-1 | Bounded synthetic read-only request/reply preflight
 
-Status: **SELF-HOSTED WINDOWS x86/x64 VALIDATED**.
+Status: **MERGED, SELF-HOSTED WINDOWS x86/x64 VALIDATED**.
+PR #99 merged to development at `4485ae46171ecf84c5ac11dee17848a886654357`.
+Post-merge private Windows
+[#42341507066](https://github.com/vorlocsev/virtualcar/actions/runs/42341507066)
+SUCCESS on that exact commit, with 7/7 native CTest on both x86
+and x64 and all baseline managed/legacy/M5A/M5B/M5C2 gates PASS.
+Zero uploaded artifacts or releases.
 Private VMware [#42341213124](https://github.com/vorlocsev/virtualcar/actions/runs/42341213124)
 SUCCESS. Exact checked-out source `622cd526253e6310065ebc8abceaa82b1db60242`.
 Native MSVC x86 7/7 CTest, x64 7/7 CTest, including all 8

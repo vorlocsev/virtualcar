@@ -50,6 +50,16 @@ ECU, PIN, SecurityAccess, programming or Virtual Car releases.
 
 ## COMPLETED: M5D-1 offline synthetic read-only VCRD contract (Windows PASS, 2026-11-07)
 
+**Merged & post-merge verification:** PR #99 merged to
+`development` at `4485ae46171ecf84c5ac11dee17848a886654357`. The owner-only
+[VMware #42341507066](https://github.com/vorlocsev/virtualcar/actions/runs/42341507066)
+completed SUCCESS on this exact source commit. C++ native x86
+and x64 each passed 7/7 CTest including the new 8-group
+`m5d1_synthetic_readonly_contract_8_groups`; all managed C#,
+legacy C/Python/Go, M5A, M5B and M5C-2 gates also passed.
+Zero uploaded artifacts. This does not activate a J2534 data plane.
+
+
 M5C-2 provides a verified local Host and session lifecycle, but
 not a functional J2534 adapter. M5D-1 adds a standalone synthetic
 read-only VCRD v1 binary envelope and bounded correlation ledger,
