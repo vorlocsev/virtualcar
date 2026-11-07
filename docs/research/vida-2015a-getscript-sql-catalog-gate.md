@@ -307,15 +307,24 @@ This signature suggests ZIP but **does not yet establish**
 that the central directory parses, that an XML entry exists,
 or that any content is valid or applicable to XC90 V8.
 
-Next owner-controlled optional local-only validation: read
-**one** compressed payload into **volatile memory** on the
-licensed VIDA machine, open its ZIP central directory using
-.NET `System.IO.Compression.ZipArchive` in read-only mode,
-report only an entry count and total declared uncompressed
-length, and dispose streams. Do not export the binary,
-filenames, original script IDs, any XML, VIN or ECU data to
-GitHub or chat. Do not execute `GetScript` or diagnostic I/O.
-Actual script selection and VIDA client acceptance remain unknown.
+The owner successfully carried out this **local-only ZIP read-only
+in-memory** validation for the first language variant of the SQL
+`ReadVin` script. The `System.IO.Compression.ZipArchive` Read
+constructor succeeded and the central directory was readable:
+`ZipStructureReadable=True`, `ZipBytes=2603`, `EntryCount=1`,
+`DeclaredUnpackedBytes=17964`. The other 16 ZIP payloads were
+not structurally opened in this test. The declared size comes
+from ZIP metadata; **actual decompression, CRC, XML wellformedness,
+script selection and XC90 VIN/ECU acceptance remain unverified**.
+
+Next optional owner-local read-only gate: use the existing
+in-memory `byte[]` to open that same ZIP in read mode,
+read its single entry through a **bounded** stream into memory,
+and validate XML with external entity resolution disabled,
+reporting only success status and total decoded bytes.
+Do not output script names, XML nodes/text, XML itself,
+ZIP bytes, IDs, VIN or diagnostic messages, and do not execute
+SQL `GetScript` or touch real vehicle ECUs.
 
 
 
