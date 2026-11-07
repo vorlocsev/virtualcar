@@ -699,14 +699,38 @@ The owner pasted the script a second time with no second
 result table; treat only the first completed output as
 evidence.
 
-Next read-only gate: inspect the **Java PID 4324 process
-ancestor chain**, returning only EXE basenames/PIDs, plus
-strict boolean hints for VIDA/Volvo, `-jar`, `-cp` and
-Tomcat/Jetty/Spring in locally inspected command lines;
-never share raw command lines, full paths, URLs or secrets.
-If PID has exited or been reused, treat the result as
-inconclusive. No J2534 registry changes, adapter DLL
-loading, ECU traffic, or released binaries.
+**Owner-local Java process ancestry confirmed** by
+passive `Win32_Process` metadata walk:
+`explorer.exe` PID **6792** -> `VidaMonitor.exe`
+PID **12080** -> `cmd.exe` PID **12228** ->
+`java.exe` PID **4324**. `java.exe` reported
+`VIDA=True`, `Jar=True`, `Classpath=False`,
+`ServerHint=False` for private command-line tests
+(`vida|volvo`, `-jar`, `-cp`/`-classpath`, and
+`tomcat|jetty|spring`). `cmd.exe` had all four
+hints False; `VidaMonitor.exe` had VIDA True and other
+hints False; `explorer.exe` had all False. Together
+with earlier PE inspections: VIDA monitor is Volvo
+x86, Java binary is Oracle Java 21.0.10 x64.
+
+**Strongest finding:** Java was actually launched as a
+descendant of Volvo's VIDA monitor, so it is not just an
+unrelated JVM whose command line happens to mention VIDA.
+This still does **not** identify the JAR's function, a
+VIDA diagnostic client, any J2534 API usage, or whether
+DiCE DLLs are involved. No raw command line, JAR content,
+full path, URL or secrets were returned or published.
+
+Next safe owner-side read-only gate: inspect only the
+**JAR token after `-jar`** in Java PID 4324's local
+command line and classify its basename (`VIDA`/`Volvo`
+keyword, file extension, file-presence when absolute),
+without outputting the raw command line, full path or JAR
+contents. Independently confirm loaded diagnostic DLLs
+in that process only if diagnostic session is active.
+If the PID has exited/reused, rediscover its current PID;
+never start programs or register adapter automatically.
+No J2534 registry changes, ECU I/O or published binaries.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
