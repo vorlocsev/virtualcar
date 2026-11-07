@@ -60,6 +60,8 @@ Additional native integration:
 
 Parent M5A is verified 9/9 on VMware workflow #42314429323 at head 42df2953. M5B itself remains unverified until its own Windows x86/x64 workflow executes.
 
+The owner-only VMware dispatch selector and x86/x64 cross-language workflow are enabled by PR #88, merged to main as `80e18c201b8167612e3a8eb71e9c23eb58043b19`. The M5B VMware run is still pending.
+
 CI is the authority for compile/runtime claims. Do not mark M5B complete
 until Windows x86 and x64 native builds, all 8 offline gates and both
 cross-language C++-to-C# integration runs pass.

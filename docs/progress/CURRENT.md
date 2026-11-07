@@ -37,14 +37,15 @@ cross-language Windows tests exercise concurrent KEEPALIVE, wrong-PID
 rejection before HELLO, and session cleanup after GOODBYE. M5B has not
 yet passed its own VMware x86/x64 matrix.
 
-### M5B private VMware workflow enablement, Draft PR #88
+### M5B private VMware workflow enablement, merged PR #88
 
-PR #88 changes only `.github/workflows/vmware-development-validation.yml`:
-it adds the M5B source branch to the manual allowlist and runs the native
-x86/x64 clients against the C# host. Its earlier PR workflow attempt
+PR #88 was merged into `main` as `80e18c201b8167612e3a8eb71e9c23eb58043b19`.
+It adds the M5B source branch to the manual allowlist and runs native
+x86/x64 clients against the C# host. The earlier PR workflow attempt
 [#42306382969](https://github.com/vorlocsev/virtualcar/actions/runs/42306382969)
-failed before job steps/logs were available; this is **not** evidence of
-an M5B source-code failure or pass. PR #88 remains Draft and unmerged.
+ended before any runner was assigned or steps executed; it is not evidence
+of an M5B source-code failure or pass. The private VMware dispatch is now
+available, but the M5B run itself is still pending.
 
 No Virtual Car package, artifact, installer, adapter registration or
 release is produced. Keep all live-vehicle, SecurityAccess and programming
