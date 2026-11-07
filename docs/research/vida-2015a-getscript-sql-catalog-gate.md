@@ -133,10 +133,22 @@ against `DiagSwdlRepository.sys.procedures` with the same local
 connection and reported exactly one visible name match:
 `SchemaName=dbo`, `ProcedureName=GetScript`. This confirms
 **visibility of `dbo.GetScript` in the real installed database**
-for that SQL principal. Parameter names/types, permissions to execute
-it, procedure result selection, exact `ReadVin=4` XML, accepted VIN
-and ECU inventory remain **unverified**. The SQL procedure was **not
-executed** and no diagnostic data was extracted.
+for that SQL principal. A second read-only `sys.parameters` query
+then confirmed exactly five input parameters in ordinal order:
+`@scriptType varchar(50)`, `@profileList varchar(4000)`,
+`@scriptId varchar(32)`, `@languageCode char(5)`, and
+`@ecuType int` (SQL `max_length=4` bytes). All
+`is_output=False`. Thus all five **names** match the original
+`BizServices.ScriptRepository.DLL` call-site research, and
+the installed SQL-side parameter types are now directly observed.
+The `@scriptType` SQL parameter is text, **not integer**;
+the `ReadVin=4` source enum alone does not prove whether the
+wire-to-SQL value is `'4'`, `'ReadVin'`, or another string.
+
+The ability to execute the procedure, its result selection, actual
+`ReadVin=4` XML, accepted VIN and ECU inventory remain
+**unverified**. No stored procedure executed or diagnostic
+data extracted in these metadata-only queries.
 
 
 Microsoft SqlServer module v22 defaults to checking the SQL TLS
