@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Read-only, privacy-constrained structural audit of a locally owned VIDA XML script.
+
+Never exports original XML, script IDs, node IDs, VIN, parameter values or
+vehicle data. Edges are declarations, not evidence of executed methods.
+"""
+import argparse
+import json
+from pathlib import Path
+import re
+import xml.etree.ElementTree as ET
+
+SCHEMA = "virtualcar-vida-readvin-xml-graph-v1"
+MAX_FILE_BYTES = 2 * 1024 * 1024
+MAX_ELEMENTS = 20000
+MAX_ID_LENGTH = 128
+MAX_DEPTH = 96
+FORBIDDEN_MARKUP = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
+IDENTITY_METHODS = ("AddVIN", "SetX40Serial")
+
+
+def _kind(node):
+    if node is None:
+        return "unresolved"
+    classname = node.attrib.get("class", "")
+    if len(classname) > MAX_ID_LENGTH:
+        return "unrecognized"
+    end = classname.rsplit(".", 1)[-1]
+    if end == "VehicleIdentityOutput":
+        return "identity_output"
+    if end == "ReadVinComponent":
+        return "readvin_component"
+    return "other_component"
+
+
+def _disabled(attribute):
+    # Missing/unknown literals must not imply that a callback was enabled.
+    if attribute is None:
+        return "absent_disabled_attribute"
+    if attribute.strip().lower() in ("false", "0"):
+        return "not_disabled_literal"
+    if attribute.strip().lower() in ("true", "1"):
+        return "disabled_literal"
+    return "unrecognized_disabled_literal"
+
+
+def audit_xml_bytes(xml_data):
+    if not isinstance(xml_data, bytes) or len(xml_data) > MAX_FILE_BYTES:
+        raise ValueError("invalid source length")
+    # Fail closed on UTF-16/other wide encodings: the DTD scan is UTF-8 only.
+    if xml_data.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in xml_data[:256]:
+        raise ValueError("only UTF-8 XML is supported")
+    if FORBIDDEN_MARKUP.search(xml_data):
+        raise ValueError("DTD and entities are unsupported")
+    try:
+        root = ET.fromstring(xml_data)
+    except ET.ParseError as exc:
+        raise ValueError("invalid XML") from exc
+    if root.tag != "script":
+        raise ValueError("unexpected document root")
+
+    count = 0
+    stack = [(root, 0)]
+    while stack:
+        node, depth = stack.pop()
+        count += 1
+        if count > MAX_ELEMENTS or depth > MAX_DEPTH:
+            raise ValueError("excessive XML structure")
+        stack.extend((child, depth + 1) for child in node)
+
+    nodes = root.findall("./nodes/node")
+    handlers = root.findall("./handlers/eventhandler")
+    node_by_id = {}
+    for node in nodes:
+        node_id = node.attrib.get("nodeid", "")
+        if not node_id or len(node_id) > MAX_ID_LENGTH or node_id in node_by_id:
+            raise ValueError("missing/duplicate/excessive node identifier")
+        node_by_id[node_id] = node
+
+    identity_nodes = sum(_kind(n) == "identity_output" for n in nodes)
+    readvin_nodes = sum(_kind(n) == "readvin_component" for n in nodes)
+    output_node = node_by_id.get("Output")
+    output_is_identity = _kind(output_node) == "identity_output"
+    calls = 0
+    classified = {
+        "AddVIN": {"declared": 0, "not_disabled_literal": 0, "disabled_literal": 0,
+                   "absent_disabled_attribute": 0,
+                   "unrecognized_disabled_literal": 0, "readvin_source_node": 0},
+        "SetX40Serial": {"declared": 0, "not_disabled_literal": 0, "disabled_literal": 0,
+                         "absent_disabled_attribute": 0,
+                         "unrecognized_disabled_literal": 0, "readvin_source_node": 0},
+    }
+    unresolved_target = 0
+    other_target_identity_method = 0
+    for handler in handlers:
+        source = node_by_id.get(handler.attrib.get("node", ""))
+        for call in handler.findall("./call"):
+            calls += 1
+            method_name = call.attrib.get("method")
+            if method_name not in IDENTITY_METHODS:
+                continue
+            target = node_by_id.get(call.attrib.get("node", ""))
+            kind = _kind(target)
+            if kind == "unresolved":
+                unresolved_target += 1
+            if kind != "identity_output":
+                other_target_identity_method += 1
+                continue
+            group = classified[method_name]
+            group["declared"] += 1
+            group[_disabled(call.attrib.get("disabled"))] += 1
+            if _kind(source) == "readvin_component":
+                group["readvin_source_node"] += 1
+
+    return {
+        "schema_version": SCHEMA,
+        "source_kind": "private_vida_xml_static_structure_only",
+        "xml_structure_parsed": True,
+        "xml_elements_examined": count,
+        "node_count": len(nodes),
+        "event_handler_count": len(handlers),
+        "declared_call_count": calls,
+        "readvin_component_node_count": readvin_nodes,
+        "vehicle_identity_output_node_count": identity_nodes,
+        "named_output_node_is_vehicle_identity_output": output_is_identity,
+        "declared_identity_method_edges": {
+            "add_vin": classified["AddVIN"],
+            "set_x40_serial": classified["SetX40Serial"],
+        },
+        "identity_method_calls_with_unresolved_target": unresolved_target,
+        "identity_method_calls_to_non_identity_target": other_target_identity_method,
+        "all_edges_are_declarations_not_execution": True,
+        "observed_script_was_selected_by_vida": False,
+        "observed_event_callback_executed": False,
+        "observed_vehicle_identity_returned": False,
+        "actual_vida_client_identity_verified": False,
+        "xc90_v8_my2009_verified": False,
+        "replay_approved": False,
+    }
+
+
+def audit_file(path):
+    path = Path(path)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
+        raise ValueError("invalid source file")
+    return audit_xml_bytes(path.read_bytes())
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Offline VIDA XML event graph safety audit")
+    parser.add_argument("private_xml", type=Path, help="Local authorized original XML, never uploaded")
+    parser.add_argument("--output", required=True, type=Path, help="New categorical JSON outside the repository")
+    args = parser.parse_args(argv)
+    repo = Path(__file__).resolve().parents[2]
+    out = args.output.resolve()
+    if out == repo or repo in out.parents or out == args.private_xml.resolve():
+        parser.error("output path must be outside repository and different from source")
+    try:
+        result = audit_file(args.private_xml)
+    except (OSError, UnicodeError, ValueError) as exc:
+        parser.error("invalid local XML structure: " + type(exc).__name__)
+    try:
+        with args.output.open("x", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+    except OSError as exc:
+        parser.error("cannot create exclusive categorical report: " + type(exc).__name__)
+    print("VIDA XML graph counted; execution, VIN and ECU acceptance UNKNOWN")
+
+
+if __name__ == "__main__":
+    main()
