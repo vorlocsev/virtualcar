@@ -56,6 +56,127 @@ VIDA assembly, connect to DiCE, access a vehicle or validate an ECU
 response. They are not CI tests and must not be reported as VMware
 or VIDA end-to-end interoperability.
 
+## Original VIDA 2015A: exact ReadVin-to-ScriptProvider IL path
+
+A second targeted, **offline static IL/metadata** inspection used only
+the owner's original binaries. New original-file SHA-256:
+
+| Original DLL | SHA-256 |
+| --- | --- |
+| `ValueObjects.DLL` | `f9f875183031b9553096d771f3f186b85d16256d63bdb4b49977ea0795bbb5c5` |
+| `Core.DLL` | `f7e73e59cd64923d6bb34e17883eccdc29fa7c47e0b22af86fc97a32e87e7f9e` |
+| `AppServices.VehicleAccess.DLL` | `3bcaac2ce2dbe0b986a1c8588bbe3d75fe579bb41bb1eada759ccdb7214545a0` |
+| `AppServices.Scripting.DLL` | `c5f092eddceac8b9eb583fb9a54536d482402a64797bd3597fd0cc6b387f3b7f` |
+| `BizServices.ScriptRepository.DLL` | `f046b5fa3c8d3487fc05aa1140ac3c4ef1880eef5251c8c46b1c3d73f45a6bca` |
+
+### The exact enum, not a guessed script purpose
+
+The `ValueObjects.DLL` `ScriptType` metadata contains the following
+constant names/values: `EcuIdentification=3`, **`ReadVin=4`**,
+`CarConfig=5`, `CarStatus=6`, `VehCommSpecification=9`,
+`EcuIdentificationHighSpeed=19`,
+`EcuIdentificationLowSpeed=20`.
+These **are script type identifiers**, not target ECUs, security levels,
+D2 services, PINs or test outcomes.
+
+### Independently resolved original MethodDef / MemberRef call chain
+
+The following are names/tokens and the proven chain of **static calls**,
+not copied IL, SQL, XML content, VIN or real runtime traces:
+
+```text
+AppServices.VehicleAccess:
+  VehicleAccess.IdentifyVehicle              MethodDef 0x060000ED
+    -> IRunScriptService.RunIdentifyVehicleScript
+AppServices.Scripting:
+  RunScriptService.RunIdentifyVehicleScript   MethodDef 0x06000071
+    -> ScriptType=4 (ReadVin), VehicleProfile.Empty
+    -> getScriptEngineNoEcuContext            MethodDef 0x06000063
+      -> getScriptEngineNoEcuContext          MethodDef 0x06000064
+        -> IScriptProvider.GetScript          MemberRef 0x0A00004A
+           (the FIVE-argument overload)
+        -> IScriptEngineProvider.GetParsedScriptEngine
+    -> IScriptEngine.RunScript
+    -> IScriptEngine.GetOutput
+BizServices.ScriptRepository:
+  ScriptProvider.GetScript                    MethodDef 0x06000024
+    (corresponding FIVE-argument implementation)
+    -> GetOneScriptFromDb                     MethodDef 0x06000025
+      -> GetFromDb                            MethodDef 0x0600001E
+        -> StoredProcedureHelper: GetScript
+        -> SQL parameter setters
+        -> GetZippedScriptXml
+```
+
+The `GetFromDb` method visibly supplies stored procedure
+**`GetScript`** and categories of parameters named
+`@scriptType`, `@profileList`, `@scriptId`,
+`@languageCode`, `@ecuType`. No actual parameter values,
+stored procedure body, SQL credentials or response bytes are known.
+The original `RunIdentifyVehicleScript` calls the branch with
+`VehicleProfile.Empty`; the actual runtime session and selected
+script row remain unobserved.
+
+There is **a different FOUR-argument GetScript overload**
+(`0x06000023`) that checks `IsScriptOnDisk`, offers a SmartTool
+path and otherwise delegates to `GetOneScriptFromDb`.
+That overload must **not** be confused with the five-argument
+`ReadVin` call above. Inside `GetFromDb`, early disk special-case
+checks name `EcuIdentificationHighSpeed` and
+`EcuIdentificationLowSpeed`, **not ReadVin**. Thus the inspected
+`ReadVin` path points to the database stored-procedure lookup,
+not the ordinary file `res/scripts/` branch. This still does not
+prove that SQL is accessible at runtime, or which XML was returned.
+
+The **separate** `ScriptObjectProvider.GetEcuIdentificationScript`
+(`AppServices.Scripting.DLL` `0x06000013`) invokes engine
+creation with literal script types **19 and 20**. These are
+high-speed/low-speed ECU identification and must not be substituted
+for `ReadVin=4`. This strengthens the boundary between VIN identity,
+profile resolution and eventual ECU discovery.
+
+### What `NoCommConnection` actually proves
+
+In original `Core.DLL`,
+`Settings.get_DiagnosticConnection` (MethodDef
+`0x06000251`) explicitly recognizes four string values:
+`J2534DiagnosticConnection`, `DiCEDiagnosticConnection`,
+`VirtualDiagnosticConnection`, `NoCommConnection`.
+They map to distinct internal enum values 0, 1, 2 and 3;
+an unrecognized value maps to a separate fallback (4).
+The original `diagnostic.config.xml` contains
+`DiagnosticConnection=NoCommConnection`,
+`UseLocalDatabase=false`, `UseClientSettings=false`,
+`VehType=p2x` and `ScriptPath=res/scripts/`.
+This **proves configuration text and a reader**, not that a
+specific VIDA client session used that file or opened/failed to
+open DiCE/J2534. Do not modify the original config based on
+this static finding. `TraceScript=false` in the separate
+`components.config.xml` is also not equivalent to the
+`LogLevel=Trace` setting.
+
+### Verification and immediate next evidence gate
+
+Eight **local source-only assertions** passed (8/8):
+original hashes; ScriptType constant mapping; independent
+VehicleAccess identity/ECU paths; the ReadVin literal and
+empty profile; NoECUContext to five-argument GetScript path;
+five-argument provider-to-SQL handoff; EcuIdentification-only
+disk special-case literals; and NoComm config vs reader.
+The check was **not** run in GitHub CI and did not execute
+original assemblies, SQL, VIDA or an adapter.
+
+**Most valuable next authorized evidence:** verify that the owner's
+running `DiagSwdlRepository` has the stored procedure
+`GetScript`, its expected **metadata schema**, and a real
+`ScriptType.ReadVin` selection. A read-only SQL *schema inventory*
+is a safe first step; avoid calling an unreviewed stored procedure
+or exporting `XmlDataCompressed`. Only after the actual selected
+XML and a client trace are available can one test whether its
+reachable path issues B9FB, B9F0, A6, P3 or another service.
+No physical CEM identity, SecurityAccess, normal-mode predicate,
+vehicle configuration or VIN acceptance is established.
+
 ## Independently published VIDA 2014D research
 
 Pinned source: [spnda/volvo_vida_db @ e2f8ee165e373360d7f7fd0e80298f68c25bc07e](https://github.com/spnda/volvo_vida_db/tree/e2f8ee165e373360d7f7fd0e80298f68c25bc07e).
