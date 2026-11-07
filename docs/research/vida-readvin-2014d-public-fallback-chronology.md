@@ -60,6 +60,28 @@ References to public log areas:
 [script lookup and P3 probe](https://www.matthewsvolvosite.com/forums/viewtopic.php?start=10&t=102268),
 [125k target-40 and 250k target-50](https://www.matthewsvolvosite.com/forums/viewtopic.php?p=672174).
 
+### Public ReadVinComponent XML excerpt: independent F114 corroboration
+
+A separate public [VIN research note by Jan Jansen](https://jan-jansen.readthedocs.io/en/latest/vin.html)
+displays a **partial, third-party-extracted XML node**, not a complete
+verified 2015A ReadVin script or an OEM-backed XC90 MY2009 artifact.
+Its `Components.ReadVinComponent` has categorical settings
+`Identifier=F114`, `CanHiSpeedValue=500000`, `BusId=1`,
+`UseRelay=0`, `Mode=EcuVariant` and `ServiceId=100`.
+The researcher also documents the J2534 0x726 / `22F114`
+request associated with this branch.
+
+This is **stronger than a prose guess** for the published
+F114 pathway: a script *fragment* contains the identifier and
+communications settings consistent with the public VIDA 2014D log.
+It remains unverified which exact VIDA version, installed script
+checksum, model profile and reachable control-flow branch produced
+the original excerpt. Crucially, the excerpt contains **no proof of
+the B9FB fallback branch or the client accepting VIN**. The
+original owner's VIDA 2015A XML and database are not available
+as runnable sources. Do not reconstruct missing XML branches
+or manufacture a response from the fragment.
+
 The same public trace explicitly labels `ReadVinScriptThread`
 for the J2534 writes. **This is stronger than separate reports from
 different client sessions:** it establishes that those logged probes
