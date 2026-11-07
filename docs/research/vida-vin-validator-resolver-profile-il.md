@@ -40,11 +40,73 @@ contains a **separate** VIN-to-vehicle lookup service:
    through `VehicleResolverService.ResolveVin` was **not** proven
    as one call stack or actual session. Treat it as **separate
    readiness gates**, not as one guaranteed synchronous pipeline.
-2. The presence of `VinValidator.IsValidVIN` proves a validator
-   is called on one code path. Its internal implementation was
-   not supplied here, so no 17-character/checksum/manufacturer
-   rule is claimed. Earlier `VehicleIdentity` constructor's
-   CR/LF trimming is not itself equivalent to VIN validation.
+2. **UPDATED after acquisition of original `Util.DLL`:**
+   the exact `VinValidator.IsValidVIN` static predicate is now
+   independently characterized below. Its check is weaker
+   than full ISO VIN semantic validation. Earlier
+   `VehicleIdentity` constructor's CR/LF trimming
+   remains a separate stage.
+
+## Newly acquired original Util.DLL: actual IsValidVIN branches
+
+The owner-provided `Util.DLL` (114688 bytes, SHA-256
+`a0ef808188bab12de429fcb4467a9ceadfbfc3747cfb68580664495550ce263d`)
+contains these unmodified managed methods:
+
+| Original MethodDef | Confirmed static IL behavior |
+| --- | --- |
+| `0x06000278` `VinValidator.IsValidVIN` (97 IL bytes) | Returns false for null; requires `.Length == 17`; extracts `.Substring(length-6, 6)`, calls `IsValidChassisNbr`; finally accepts any one of four `.StartsWith` prefixes `YV`, `PN`, `LV`, `LY` |
+| `0x06000279` `VinValidator.IsNumeric` (29 IL bytes) | Applies `Regex.Match` with pattern `\\D`; inverts whether a non-decimal match succeeded |
+| `0x0600027A` `VinValidator.IsValidChassisNbr` (23 IL bytes) | Requires suffix length six and the `IsNumeric` check |
+
+All four `StartsWith` conditional branches target the same positive
+return instruction. The remaining middle positions are not validated by
+**this method**, and there is **no ISO 3779 check-digit computation or
+whole-VIN character-set check inside these methods**.
+
+The .NET `String.Length` counts **UTF-16 code units**, not necessarily
+Unicode grapheme clusters; `Regex \D` by default treats Unicode
+decimal digits as digits. Consequently this predicate must not be
+simplified to a claim that *only* ASCII digits would pass the original
+runtime. `StartsWith(string)` also uses .NET's built-in string comparison;
+the source check establishes the literal prefixes, not all unusual
+locale/Unicode corner cases.
+
+**Crucial distinction:** `IsValidVIN` is only a string-shape gate in
+one `ResolveVin` path. It does **not** establish that the vehicle exists
+in `DiagSwdlRepository` or other VIDA databases, that any CEM frame
+was received, that the XML script produced a VIN, or that VIDA accepted
+the XC90 V8 MY2009 profile.
+
+### Reproducibility: two different sets of completed checks
+
+**9/9 local original-source IL assertions PASS** over SHA-pinned
+`Util.DLL` and `BizServices.VehicleResolver.DLL`:
+both hashes, unique method token/body, null/length branches,
+six-character substring, numeric suffix guard, `\\D` regex,
+four explicit prefixes, four positive conditional branches,
+and caller from `VehicleResolverService.ResolveVin`.
+No original assembly was executed or committed.
+
+Separately, `emulator/tools/vida_vin_shape_ascii.py` is a tiny
+**synthetic ASCII-only approximation**, deliberately **not** integrated
+into CEM/J2534 runtime. It uses 17-character length, four initial
+two-letter prefixes and six trailing ASCII digits. It intentionally
+rejects all non-ASCII candidates rather than claiming exact .NET
+Unicode equivalence. Its `emulator/tests/test_vida_vin_shape_ascii.py`
+covers eight synthetic groups: null/type, exact length, suffix,
+four prefixes, other prefixes, lowercase, unconstrained middle,
+non-ASCII fail-closed. **8/8 local synthetic tests PASS.**
+
+The supplied test strings are invented synthetic placeholders,
+**not actual or accepted VINs**. A true ASCII shape result is never
+equivalent to `ReadVin`, `VinValidator` client execution, SQL profile
+resolution or an accepted ECU. No original VIN, raw IL, SQL,
+script XML or private record was added to Git.
+
+The expected entire Python test suite becomes **324**
+(previous 316 exact-VM-verified + eight), requiring a trusted Windows
+VMware run on the **exact new feature SHA** before merging.
 
 ## Eight local source-only regression assertions: 8/8 PASS
 
