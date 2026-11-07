@@ -1,6 +1,15 @@
 # M5D-2c | In-flight synthetic read cancel and Host crash/restart
 
-Status: **FEATURE IMPLEMENTED; PRIVATE WINDOWS VMWARE x86/x64 CI PENDING**.
+Status: **FEATURE Windows x86/x64 SELF-HOSTED VERIFIED; post-merge CI PENDING**.
+Owner-only [VMware #42367882755](https://github.com/vorlocsev/virtualcar/actions/runs/42367882755)
+SUCCESS, checked-out exact feature SHA `2500e997403d870f1957883fc5e85b076a273cdf`.
+Native CTest x86 7/7, x64 7/7; C# Host 17/17; M5D-2b
+four read-only tests per architecture and M5D-2c two new
+accepted-read tests per architecture PASS. Legacy C, Python
+252, Go and .NET PASS. No GitHub Actions artifacts uploaded.
+CI failures #42362605653 ($Host) and #42367076790 ($Args)
+were isolated to PowerShell test harness and fixed by PRs
+#112/#113 and #114/#115 before the passing feature run.
 
 This substage extends M5D-2b **synthetic** Named Pipe reads.
 It does NOT enable any PassThru, CAN physical transport, ECU
@@ -65,8 +74,10 @@ Two additional M5D-2c integration cases run on each of Win32/x64:
 Native MSVC /W4 /WX must pass 7/7 CTest on both x86/x64;
 managed C# Host 17/17, previous M5C-2 and M5D-2b, Python
 252, Go/C/.NET regression gates must remain green.
-No CI artifacts/releases/deployments. Do not merge until
-the private full x86/x64 run succeeds.
+Private full x86/x64 feature CI succeeded in #42367882755
+with zero uploaded artifacts. After PR #109 merges, require
+independent automatic CI on the exact development commit.
+No releases, deployments or hardware interactions.
 
 ## Limitations
 
