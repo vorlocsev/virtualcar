@@ -81,6 +81,12 @@ target_link_libraries(VirtualCarAuthenticatedSession PUBLIC VirtualCarIpcClient 
 target_compile_options(VirtualCarAuthenticatedSession PRIVATE /W4 /WX /permissive- /sdl)
 target_link_libraries(vc_ipc_client_checks PRIVATE VirtualCarAuthenticatedSession)
 
+# M5D-2eB: manual Windows-only three-epoch Host process integration test.
+# Not linked to the J2534 DLL; exercised by the owner-only VMware workflow.
+add_executable(vc_ipc_restarts_checks tests/ipc_restarts_checks.cpp)
+target_link_libraries(vc_ipc_restarts_checks PRIVATE VirtualCarAuthenticatedSession)
+target_compile_options(vc_ipc_restarts_checks PRIVATE /W4 /WX /permissive- /sdl)
+
 
 # M5D-1: isolated synthetic READ-only VCRD envelope + correlation ledger.
 # This does NOT link to VirtualCarJ2534Cpp, IPC or CAN transmission.
