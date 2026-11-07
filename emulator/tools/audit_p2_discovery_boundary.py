@@ -116,7 +116,8 @@ def summarize(items, stage, target=None):
     selected = [item for item in items if (
         item["route"] == "P3" if stage == "P3" else
         item["route"] == "D2" and item["service"] == stage and
-        (target is None or item["target"] == "0x" + target))]
+        (target is None or (item["target"] is None if target == "unknown"
+                            else item["target"] == "0x" + target)))]
     baud = lambda n: {500000: "500k", 125000: "125k"}.get(
         n, "unknown" if n is None else "other")
     return {"requests": len(selected),
@@ -132,6 +133,11 @@ def audit(transport, gate, *, same_run_reviewed=False):
     items = validate_transport(transport)
     matcher, hardware = validate_gate(gate)
     stages = {name: summarize(items, name) for name in ("B9FB", "A6", "B9F0", "P3")}
+    # A 2002-era target 40 capture cannot stand in for target 50 on late P2.
+    # This is a J2534 grouping only, not a cross-process SectorV match.
+    stages["B9FB_40"] = summarize(items, "B9FB", "40")
+    stages["B9FB_50"] = summarize(items, "B9FB", "50")
+    stages["B9FB_unknown_target"] = summarize(items, "B9FB", "unknown")
     stages["A3_40"] = summarize(items, "A3", "40")
     stages["A3_50"] = summarize(items, "A3", "50")
     stages["A3_unknown_target"] = {
@@ -147,6 +153,12 @@ def audit(transport, gate, *, same_run_reviewed=False):
         priority = "obtain_same_run_j2534_b9fb_tx"
     elif not stages["B9FB"]["statuses"].get("delivered"):
         priority = "investigate_b9fb_transport"
+    elif gate["scenario"] in ("P2_MY2005_lab", "P2_MY2009_lab") and \
+            not stages["B9FB_50"]["requests"]:
+        priority = "verify_b9fb_target_50_transport"
+    elif gate["scenario"] in ("P2_MY2005_lab", "P2_MY2009_lab") and \
+            not stages["B9FB_50"]["statuses"].get("delivered"):
+        priority = "investigate_b9fb_target_50_transport"
     elif client_match != "complete_frame_matcher_only":
         priority = "obtain_complete_client_b9fb_matcher_evidence"
     elif any(v["outcome"] == "timeout" for v in hardware.values()):
@@ -165,6 +177,16 @@ def audit(transport, gate, *, same_run_reviewed=False):
         "client_version": gate["client_version"],
         "scenario": gate["scenario"],
         "stage_evidence": stages,
+        "b9fb_target_evidence_boundary": {
+            "client_matcher_target": "not_reported_by_gate_schema",
+            "j2534_target_50_delivered": bool(stages["B9FB_50"]["statuses"].get("delivered")),
+            "j2534_target_40_delivered": bool(stages["B9FB_40"]["statuses"].get("delivered")),
+            "target_cross_source_match": "not_established",
+            "target_50_model_context": (
+                "p2_my2005plus_service_node_hypothesis_not_wire_identity"
+                if gate["scenario"] in ("P2_MY2005_lab", "P2_MY2009_lab")
+                else "unknown_lab_no_target_assumption"),
+        },
         "client_observations": {
             "b9fb_frame_matcher": client_match,
             "hardware_a3": {k: hardware[k]["outcome"] for k in sorted(hardware)},
@@ -179,6 +201,8 @@ def audit(transport, gate, *, same_run_reviewed=False):
             "Independent reports lack shared transaction identifiers or synchronized clocks.",
             "Same-run provenance never establishes per-transaction attribution.",
             "J2534 delivery and B9FB frame matching do not prove accepted VIN.",
+            "B9FB target 40/50/unknown are reported separately; a target 40 positive never substitutes for target 50 in the late-P2 laboratory priority.",
+            "The SectorV gate schema has no B9FB matcher target field; no cross-source target correspondence is claimed.",
             "A3/E3 observations do not establish SecurityAccess or normal-mode acceptance.",
             "A6/B9F0/P3 delivery cannot establish XC90 MY2009 ECU identity."]}
 
