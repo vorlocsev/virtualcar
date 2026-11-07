@@ -35,19 +35,54 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## NEXT: M5D read-only synthetic J2534 data-plane design (NOT IMPLEMENTED)
+## NEXT: M5D-2 authenticated synthetic C# Host data exchange (NOT IMPLEMENTED)
 
-M5C-2 is the authenticated control/lifecycle foundation, not a
-working PassThru adapter. Before enabling any read-only CAN/ISO15765
-route, specify a new bounded Host↔client frame/command contract:
-explicit allowlist of synthetic read requests, a maximum frame
-size, timeouts and backpressure, ownership by a live
-process-bound session, reset/cancel semantics, and no ECU writes.
-Require 6–8 negative/positive tests on both Windows x86 and x64,
-then actual C++ DLL-to-C# Host integration and black-box comparison
-with the existing safe synthetic emulator. Keep J2534 fail-closed
-until all conditions are confirmed. Dvinholm / real vehicles remain
-out of scope for this substage.
+After M5D-1 offline format validation, the next step is a new
+read-only request/response handler in the authenticated C# Host
+that binds each VCRD envelope to a verified M5C-2 session and a
+sealed synthetic-only scenario. It must enforce bounded frames,
+strict DID and route allowlists, cancellation, timeout/replay
+denial, backpressure and Host process-loss invalidation. It
+requires separate x86/x64 cross-language integration evidence.
+Do not link this to the fail-closed J2534 DLL before independently
+approved read-only parity and negative-path tests. No physical
+ECU, PIN, SecurityAccess, programming or Virtual Car releases.
+
+## COMPLETED: M5D-1 offline synthetic read-only VCRD contract (Windows PASS, 2026-11-07)
+
+M5C-2 provides a verified local Host and session lifecycle, but
+not a functional J2534 adapter. M5D-1 adds a standalone synthetic
+read-only VCRD v1 binary envelope and bounded correlation ledger,
+distinct from M5A/M5B VCLB v1 control IPC. The fixed 60-byte header
+carries process-bound owner, operation ID and exact CAN route;
+payload <=64 bytes, wire <=124 bytes. Only 0x22 read requests
+and matching 0x62 positive replies for synthetic DIDs F187, F189,
+F190 are permitted. Unknown service/kind/DID and writes are denied.
+
+A maximum-eight-operation ledger enforces strictly increasing
+operation IDs, 100..5000 ms deadlines, exact response identity/route/
+DID correlation, explicit cancel/reset, replay denial, clock rollback,
+bounded capacity and concurrent safety. Eight deterministic CTest
+groups PASSED private Windows x86/x64 self-hosted CI:
+[#42341213124](https://github.com/vorlocsev/virtualcar/actions/runs/42341213124),
+which checked out exact feature source `622cd526253e6310065ebc8abceaa82b1db60242` on
+`VirtualCar-CI-WIN`. MSVC native x86: 7/7 CTest; x64:
+7/7 CTest, including `m5d1_synthetic_readonly_contract_8_groups`
+on both architectures. M5A 9/9, M5B x86/x64, M5C-2 Host
+loss/restart on x86/x64, Python 252, Go, Legacy C and
+.NET gates passed. GitHub Actions artifacts: 0. First
+attempt #42340891720 failed at /WX C4244 implicit integral
+initializer conversions in the test source only; fix commit
+`622cd526253e6310065ebc8abceaa82b1db60242` passed the complete follow-up CI.
+The caller MUST authenticate M5C-2 and the sealed synthetic
+scenario before binding the ledger: this isolated contract cannot
+prove authentication or response provenance by itself.
+
+M5D-1 does NOT touch the C# Host, IPC socket, CAN transceiver or
+J2534 DLL. It is an OFFLINE proposed wire contract, not a working
+data plane. M5D-2 will bind the authenticated Host and sealed
+fixtures with end-to-end x86/x64 tests; separate J2534 bridging is
+later. No physical devices, real ECUs, PIN, writes or releases.
 
 ## COMPLETED checkpoint: M5C-2 authenticated Host-bound lifecycle PASSED (2026-11-07)
 
