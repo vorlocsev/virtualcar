@@ -639,14 +639,30 @@ a point-in-time snapshot. No driver DLL observed loaded.
 No process start/stop, hardware communication, DLL
 injection/load, or adapter registry modification.
 
-Next local-only passive check: inventory other **running
-Volvo-authored/VIDA-named processes**, their PIDs, company
-and product fields and whether they expose a GUI window,
-without paths, window titles or command-line arguments.
-A generic browser/IIS-hosted VIDA session may not be
-Volvo-stamped; negative results are therefore inconclusive.
-The original VIDA diagnostic client process and transport
-selection must be confirmed before any J2534 trace attempt.
+**Owner-local extended VIDA running-process inventory:**
+A passive `Win32_Process` enumeration with on-disk EXE
+`FileVersionInfo.CompanyName` matching Volvo, `ProductName`
+matching VIDA, or EXE filename matching VIDA/DiCE found
+**only** `VidaMonitor.exe`, PID `12080`, Company `Volvo
+Cars Corporation`, Product `VIDA`, `HasWindow=False`
+(`MainWindowHandle==0`). This corroborates the prior
+identification of the **32-bit VIDA monitor** but DOES NOT
+prove that no VIDA client or web UI is running: browsers,
+IIS workers and generic processes can fall outside this
+filter, and inaccessible EXE metadata may be omitted.
+No user program or diagnostic driver was started, no
+module injection, no registry writes, no hardware I/O.
+
+**Next owner-local read-only gate:** inventory Windows
+services whose name/display name matches VIDA/Volvo/DiCE,
+and standard IIS/HTTP publishing services (`W3SVC`, `WAS`),
+plus process-name-only presence of `w3wp`, `java`, and
+web-browser hosts; capture names, running state and PID
+only, not full paths, command lines, URLs, ports,
+credentials or vehicle data. An idle/stopped service is
+not a failure by itself; the installed GUI and actual
+transport selection remain unverified. Do not try to
+register the generic x86 J2534 proxy for VIDA yet.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
