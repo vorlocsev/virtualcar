@@ -150,6 +150,18 @@ The ability to execute the procedure, its result selection, actual
 **unverified**. No stored procedure executed or diagnostic
 data extracted in these metadata-only queries.
 
+An additional owner-side `sys.tables` / `sys.columns` catalog-only
+query confirmed `dbo.ScriptType` has precisely two visible columns:
+`Id int` (column 1, `max_length=4`) and
+`Description varchar(50)` (column 2, `max_length=50`).
+The `Description` type matches the declared maximum width of
+`GetScript.@scriptType varchar(50)`, but equal SQL types **do not
+prove the relationship** or that `ScriptType.Id=4` exists. A narrow
+read-only lookup of only the `Id=4` entry is the next optional
+operator-controlled evidence step; unlike the catalog queries it
+**would read table data**, and it must not be mistaken for an
+executed GetScript or the effective runtime SQL argument.
+
 
 Microsoft SqlServer module v22 defaults to checking the SQL TLS
 certificate chain. A local SQL installation with an untrusted
