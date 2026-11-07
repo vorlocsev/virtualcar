@@ -48,6 +48,7 @@ on:
           - feature/m5c1-bounded-lifecycle-preflight
           - feature/m5c2-authenticated-session-lifecycle
           - feature/m5d1-readonly-vcrd-contract
+          - feature/m5d2a-csharp-synthetic-read-host
 
 permissions:
   contents: read
