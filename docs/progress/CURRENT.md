@@ -35,6 +35,41 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
+## VERIFIED: M5D-2d replay/deadline and serial read stress (FEATURE CI PASS, 2026-11-07)
+
+**Private VMware feature verification SUCCESS:** [CI #42369341323](https://github.com/vorlocsev/virtualcar/actions/runs/42369341323)
+checked out exact source `5fff8957dd6963d013be6a6f0b0fee3f78b7ac1b`. Native MSVC x86 and x64
+each passed 7/7 CTest (including 11 Ledger groups in the
+M5D-1 test executable), C# Host 17/17, and new authenticated
+64-read C++ ↔ C# Host serial stress on BOTH x86 and x64 PASS.
+M5B/M5C-2/M5D-2b/M5D-2c, legacy C, Python 252, Go, and .NET
+also passed. No GitHub Actions artifact uploads, releases,
+or deployments. **Post-merge CI is still required.** M5D-2d extends
+the isolated M5D-1 Ledger C++ CTest suite from eight to eleven
+deterministic groups:
+- rebind with reused numeric session/generation but a different
+  Host FILETIME, denying a stale positive response and reused
+  operation ID;
+- 256 repeated synthetic requests across eight Host ownership
+  epochs, with zero pending slots after every response;
+- 40 exact timeout-boundary cycles rejecting expired replies
+  and preventing their resurrection after revoke/rebind.
+
+The existing native `vc_ipc_client_checks` also gains
+`--readonly-stress`, which makes 64 sequential authenticated
+F187/F189/F190 fixture requests against one real C# Host process,
+checks exact invented A/B/C/LAB bytes and zero M5D-1 pending slots
+after every response, refreshes session KEEPALIVE, rejects F191,
+then tests one final permitted read and clean disconnect.
+
+These tests stress the *existing* serial synthetic reader, not a
+new multi-request pipeline. There are no new write services,
+J2534 DLL links, real vehicle identification or physical CAN.
+Owner-only Windows x86/x64 feature VMware gate #42369341323
+PASSED; PR #117 is now eligible for merge after the docs-only
+evidence update. Independent automatic development CI on the
+merge commit must still run the identical 64-read checks.
+
 ## COMPLETED: M5D-2c in-flight synthetic read cancellation and Host restart (Windows x86/x64, 2026-11-07)
 
 **Merged and independently reverified:** PR #109 merged into

@@ -574,6 +574,64 @@ bool cross_language_readonly_positive(const std::wstring& pipe_name,
     return true;
 }
 
+// M5D-2d: 64 serial synthetic reads on ONE authenticated Host.
+// Verifies that every operation is independently correlated, completed,
+// and releases the bounded M5D-1 ledger slot (no unbounded backlog).
+bool cross_language_readonly_stress(const std::wstring& pipe_name,
+                                    std::uint32_t expected_server_pid)
+{
+    AuthenticatedSession session(5000);
+    if (session.connect(pipe_name, test_secret(), expected_server_pid, 5000)
+            != SessionResult::ok)
+        return false;
+    constexpr virtualcar::readonly::Route route{0x7e0U, 0x7e8U, false};
+    constexpr std::array<std::uint16_t, 3> dids{0xf187U, 0xf189U, 0xf190U};
+    constexpr std::array<std::array<std::uint8_t, 3>, 3> expected{{
+        {{'A', 'B', 0}},
+        {{'C', 0, 0}},
+        {{'L', 'A', 'B'}}
+    }};
+    constexpr std::array<std::size_t, 3> sizes{2U, 1U, 3U};
+    for (unsigned i = 0; i < 64; ++i) {
+        const std::size_t which = i % dids.size();
+        std::array<std::uint8_t, 61> body{};
+        std::size_t length = 0;
+        const SessionResult result =
+            session.read_synthetic(route, dids[which], body, length);
+        if (result != SessionResult::ok || length != sizes[which] ||
+            !std::equal(body.begin(), body.begin() +
+                static_cast<std::ptrdiff_t>(length), expected[which].begin()) ||
+            session.pending_read_count() != 0 ||
+            !session.snapshot().active || !session.connected()) {
+            std::printf("FAIL: M5D2d serial read #%u, DID=%04x, result=%u, len=%zu\n",
+                i, static_cast<unsigned>(dids[which]),
+                static_cast<unsigned>(result), length);
+            return false;
+        }
+        if ((i % 8U) == 7U && session.keep_alive() != SessionResult::ok)
+            return false;
+    }
+    std::array<std::uint8_t, 61> refused{};
+    std::size_t refused_size = 99;
+    if (session.read_synthetic(route, 0xf191U, refused, refused_size)
+            != SessionResult::invalid || refused_size != 0 ||
+        session.pending_read_count() != 0 || !session.connected())
+        return false;
+    // Recheck a valid DID after denying an unsupported one.
+    std::array<std::uint8_t, 61> final{};
+    std::size_t final_length = 0;
+    if (session.read_synthetic(route, 0xf187U, final, final_length)
+            != SessionResult::ok ||
+        final_length != 2 || final[0] != 'A' || final[1] != 'B' ||
+        session.pending_read_count() != 0 ||
+        session.disconnect() != SessionResult::ok ||
+        session.snapshot().active || session.snapshot().channels != 0 ||
+        session.pending_read_count() != 0)
+        return false;
+    std::printf("PASS: M5D2d 64 serial authenticated C++ synthetic reads, no pending slots\n");
+    return true;
+}
+
 bool cross_language_readonly_deny(const std::wstring& pipe_name,
                                   std::uint32_t expected_server_pid,
                                   bool missing_fixture)
@@ -749,6 +807,7 @@ int main(int argc, char** argv)
           std::strcmp(argv[1], "--lifecycle") == 0 ||
           std::strcmp(argv[1], "--lifecycle-expire") == 0 ||
           std::strcmp(argv[1], "--readonly") == 0 ||
+          std::strcmp(argv[1], "--readonly-stress") == 0 ||
           std::strcmp(argv[1], "--readonly-deny") == 0 ||
           std::strcmp(argv[1], "--readonly-no-fixture") == 0 ||
           std::strcmp(argv[1], "--readonly-expire") == 0)) ||
@@ -774,6 +833,8 @@ int main(int argc, char** argv)
             return cross_language_lifecycle_expiry(pipe_name, expected_server_pid) ? 0 : 1;
         if (std::strcmp(argv[1], "--readonly") == 0)
             return cross_language_readonly_positive(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--readonly-stress") == 0)
+            return cross_language_readonly_stress(pipe_name, expected_server_pid) ? 0 : 1;
         if (std::strcmp(argv[1], "--readonly-deny") == 0)
             return cross_language_readonly_deny(pipe_name, expected_server_pid, false) ? 0 : 1;
         if (std::strcmp(argv[1], "--readonly-no-fixture") == 0)
@@ -792,7 +853,7 @@ int main(int argc, char** argv)
         return cross_language_connect(pipe_name, expected_server_pid) ? 0 : 1;
     }
     if (argc != 1) {
-        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire|--readonly|--readonly-deny|--readonly-no-fixture|--readonly-expire <pipe-name> <server-pid>] | --lifecycle-restart|--readonly-crash-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file> | --readonly-cancel <pipe-name> <server-pid> <accepted-file>\n");
+        std::printf("Usage: vc_ipc_client_checks [--connect|--reject-peer|--lifecycle|--lifecycle-expire|--readonly|--readonly-stress|--readonly-deny|--readonly-no-fixture|--readonly-expire <pipe-name> <server-pid>] | --lifecycle-restart|--readonly-crash-restart <pipe-name> <server-pid> <ready-file> <host-lost-file> <next-pid-file> | --readonly-cancel <pipe-name> <server-pid> <accepted-file>\n");
         return 2;
     }
 

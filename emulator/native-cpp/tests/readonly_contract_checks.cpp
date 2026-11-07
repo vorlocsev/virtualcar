@@ -1,4 +1,4 @@
-// M5D-1: eight synthetic, deterministic, read-only VCRD envelope/ledger gates.
+// M5D-1: eleven synthetic, deterministic, read-only VCRD envelope/ledger gates.
 // No IPC/ECU/CAN/J2534 transport is touched or enabled by this executable.
 
 #include "virtualcar/readonly_contract.hpp"
@@ -307,11 +307,101 @@ bool group08_wrong_host_rejected_and_concurrent_capacity() {
     ledger.revoke();
     return !ledger.active() && ledger.pending() == 0;
 }
+
+bool group09_host_rebind_denies_stale_owner_and_old_operation() {
+    Ledger ledger;
+    const Identity new_host{owner.session_id, owner.generation,
+        owner.server_pid, owner.server_created_100ns + 1U};
+    if (ledger.bind(owner, standard, 100, 500) != Result::ok ||
+        ledger.submit(request(1), 101) != Result::ok ||
+        ledger.pending() != 1)
+        return false;
+    ledger.revoke();
+    if (ledger.pending() != 0 ||
+        ledger.bind(new_host, standard, 200, 500) != Result::ok)
+        return false;
+    // Even when numeric session and generation were reused, a
+    // response from the prior Host's FILETIME must revoke binding.
+    if (ledger.complete(response(1), 201) != Result::denied ||
+        ledger.active() || ledger.pending() != 0)
+        return false;
+    if (ledger.bind(new_host, standard, 210, 500) != Result::ok ||
+        ledger.submit(request(1, 0xf190, standard, new_host), 211)
+            != Result::duplicate ||
+        ledger.submit(request(2, 0xf190, standard, new_host), 212)
+            != Result::ok ||
+        ledger.complete(response(1, 0xf190, standard, new_host), 213)
+            != Result::stale ||
+        ledger.pending() != 1)
+        return false;
+    if (ledger.complete(response(2, 0xf190, standard, new_host), 214)
+            != Result::ok ||
+        ledger.pending() != 0)
+        return false;
+    ledger.revoke();
+    return !ledger.active() && ledger.pending() == 0;
+}
+
+bool group10_long_serial_identification_and_rebind_stays_bounded() {
+    Ledger ledger;
+    constexpr std::array<std::uint16_t, 3> dids{0xf187U, 0xf189U, 0xf190U};
+    std::uint64_t now = 100;
+    std::uint64_t id = 1;
+    // 8 synthetic lifetime epochs x 32 operations. No real ECU access.
+    for (unsigned epoch = 0; epoch < 8; ++epoch) {
+        const Identity epoch_host{owner.session_id, owner.generation,
+            owner.server_pid, owner.server_created_100ns + epoch};
+        if (ledger.bind(epoch_host, standard, now, 500) != Result::ok)
+            return false;
+        for (unsigned i = 0; i < 32; ++i) {
+            const std::uint16_t did = dids[i % dids.size()];
+            if (ledger.submit(request(id, did, standard, epoch_host), now + 1)
+                    != Result::ok ||
+                ledger.pending() != 1 ||
+                ledger.complete(response(id, did, standard, epoch_host), now + 2)
+                    != Result::ok ||
+                ledger.pending() != 0)
+                return false;
+            ++id;
+            now += 3;
+        }
+        ledger.revoke();
+        if (ledger.active() || ledger.pending() != 0 ||
+            ledger.bind(epoch_host, standard, now, 500) != Result::ok ||
+            ledger.submit(request(id - 1, 0xf190, standard, epoch_host), now + 1)
+                != Result::duplicate)
+            return false;
+        ledger.revoke();
+        now += 10;
+    }
+    return !ledger.active() && ledger.pending() == 0 && id == 257;
+}
+
+bool group11_deadline_repeats_do_not_resurrect_old_replies() {
+    Ledger ledger;
+    std::uint64_t now = 100;
+    for (std::uint64_t id = 1; id <= 40; ++id) {
+        if (ledger.bind(owner, standard, now, 100) != Result::ok ||
+            ledger.submit(request(id), now) != Result::ok)
+            return false;
+        std::size_t expired = 99;
+        if (ledger.tick(now + 99, expired) != Result::ok || expired != 0 ||
+            ledger.pending() != 1 ||
+            ledger.complete(response(id), now + 100) != Result::expired ||
+            ledger.complete(response(id), now + 101) != Result::stale ||
+            ledger.pending() != 0)
+            return false;
+        ledger.revoke();
+        now += 200;
+    }
+    return !ledger.active() && ledger.pending() == 0;
+}
+
 } // namespace
 
 int main() {
     struct Gate { const char* name; bool (*run)(); };
-    const std::array<Gate, 8> gates{{
+    const std::array<Gate, 11> gates{{
         {"01 LE bounded golden vectors", group01_wire_golden_vector_and_roundtrip},
         {"02 Reject malformed envelope headers", group02_framing_rejects_all_malformed_headers},
         {"03 Reject nonread/unauthorized DID", group03_read_only_service_and_did_allowlist},
@@ -319,7 +409,10 @@ int main() {
         {"05 Correlate response owner/route/DID", group05_correlate_positive_reply_by_owner_did_and_route},
         {"06 Eight queue slots and replay denial", group06_bounded_queue_and_no_replay_after_cancel},
         {"07 Exact timeout and clock rollback", group07_deadline_exact_boundary_and_clock_rollback},
-        {"08 Wrong Host + concurrent requests", group08_wrong_host_rejected_and_concurrent_capacity}
+        {"08 Wrong Host + concurrent requests", group08_wrong_host_rejected_and_concurrent_capacity},
+        {"09 Host rebind denies stale owner and replay", group09_host_rebind_denies_stale_owner_and_old_operation},
+        {"10 Serial 256-reads with epoch rotation", group10_long_serial_identification_and_rebind_stays_bounded},
+        {"11 Repeated deadline boundary rejects replies", group11_deadline_repeats_do_not_resurrect_old_replies}
     }};
     unsigned passed = 0;
     for (const auto& gate : gates) {
@@ -327,6 +420,6 @@ int main() {
         std::printf("%s %s\n", ok ? "PASS" : "FAIL", gate.name);
         if (ok) ++passed;
     }
-    std::printf("VirtualCar M5D-1 read-only envelope/ledger: %u/8\n", passed);
+    std::printf("VirtualCar M5D-1 read-only envelope/ledger: %u/11\n", passed);
     return passed == gates.size() ? 0 : 1;
 }
