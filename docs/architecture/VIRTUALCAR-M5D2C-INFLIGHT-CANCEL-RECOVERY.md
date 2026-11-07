@@ -1,6 +1,15 @@
 # M5D-2c | In-flight synthetic read cancel and Host crash/restart
 
-Status: **FEATURE Windows x86/x64 SELF-HOSTED VERIFIED; post-merge CI PENDING**.
+Status: **MERGED and FEATURE + POST-MERGE Windows x86/x64 SELF-HOSTED VERIFIED**.
+PR #109 merged as `30bb9dcd48eeb1e4259dca43d6a31c466cd5c69c`.
+Automatic [VMware #42368227332](https://github.com/vorlocsev/virtualcar/actions/runs/42368227332)
+SUCCESS on this exact commit: native x86/x64 each 7/7 CTest,
+managed C# Host 17/17, M5D-2c two accepted-read cancellation
+and Host crash/restart tests **on each architecture**, M5D-2b
+and M5C-2 baseline all PASS. Uploaded artifacts: 0.
+Feature validation [#42367882755](https://github.com/vorlocsev/virtualcar/actions/runs/42367882755)
+also passed on source `2500e997403d870f1957883fc5e85b076a273cdf`.
+J2534 DLL remains fail-closed.
 Owner-only [VMware #42367882755](https://github.com/vorlocsev/virtualcar/actions/runs/42367882755)
 SUCCESS, checked-out exact feature SHA `2500e997403d870f1957883fc5e85b076a273cdf`.
 Native CTest x86 7/7, x64 7/7; C# Host 17/17; M5D-2b
@@ -75,8 +84,8 @@ Native MSVC /W4 /WX must pass 7/7 CTest on both x86/x64;
 managed C# Host 17/17, previous M5C-2 and M5D-2b, Python
 252, Go/C/.NET regression gates must remain green.
 Private full x86/x64 feature CI succeeded in #42367882755
-with zero uploaded artifacts. After PR #109 merges, require
-independent automatic CI on the exact development commit.
+with zero uploaded artifacts. Post-merge automatic #42368227332 independently executed
+on the exact development merge commit and passed.
 No releases, deployments or hardware interactions.
 
 ## Limitations

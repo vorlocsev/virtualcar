@@ -35,7 +35,20 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## VERIFIED: M5D-2c in-flight synthetic read cancellation and Host restart (Windows x86/x64, 2026-11-07)
+## COMPLETED: M5D-2c in-flight synthetic read cancellation and Host restart (Windows x86/x64, 2026-11-07)
+
+**Merged and independently reverified:** PR #109 merged into
+`development` as `30bb9dcd48eeb1e4259dca43d6a31c466cd5c69c`. Automatic owner-only
+[VMware #42368227332](https://github.com/vorlocsev/virtualcar/actions/runs/42368227332) completed
+SUCCESS on this exact merge commit. Native MSVC x86 7/7 and
+x64 7/7 CTest, managed C# Host 17/17, M5B/M5C-2/M5D-2b
+and Python 252/C/Go/.NET PASS. The M5D-2c step *actually ran*
+both new cases on each architecture: cancellation of an already
+accepted synthetic read with no stale payload, and Host kill
+during the accepted read followed by a new PID+FILETIME-bound
+Host and clean F187 recovery. Uploaded artifacts: 0. No
+releases or deployments. The J2534 DLL remains fail-closed.
+
 
 M5D-2c introduces a strictly read-only, cooperative cancel
 signal for the existing native `ipc::Client`. A different thread
@@ -77,21 +90,24 @@ The previous failures #42362605653 (reserved PowerShell $Host)
 and #42367076790 (automatic $Args parameter) were limited to
 the test launcher. CI PRs #112/#113 and #114/#115 corrected them
 before the successful feature run; no feature logic changed.
-Post-merge CI is still pending; retain fail-closed J2534. The existing M5D-2b four per-arch
+Post-merge CI #42368227332 passed; retain fail-closed J2534. The existing M5D-2b four per-arch
 read tests, M5C-2 restart, managed 17/17 and CTest 7/7
 must remain green. There is no public arbitrary CAN/J2534
 data plane, physical ECU, writes, PIN, SecurityAccess,
 programming, package publication or Virtual Car release.
 
-## NEXT: M5D-2c post-merge CI and integration review
+## NEXT: M5D synthetic read-only hardening (NOT IMPLEMENTED)
 
-The feature branch passed true Windows x86/x64 read cancellation
-and Host crash/reconnect tests, but this is not yet post-merge
-evidence. Merge only the validated feature branch plus this
-documentation and then confirm the same M5D-2c gate runs and
-passes on the `development` merge commit. Continue to keep
-`VirtualCarJ2534Cpp` fail-closed and unlinked; do not infer
-physical CAN support or publish any Virtual Car binaries.
+M5D-2c's serial read, active cancellation and Host crash/recovery
+have now passed both feature and post-merge private Windows CI.
+Further proposed work is stress/repeatability validation of the
+same synthetic-only lifecycle, explicit stale-token/replay
+negative tests across reconnect, and inspection of per-operation
+deadline accounting. No eight-request concurrent pipe transport
+or J2534 CAN data plane is claimed as implemented. Keep
+`VirtualCarJ2534Cpp` fail-closed and unlinked; no vehicle
+identification, physical CAN, PIN, SecurityAccess, programming
+or Virtual Car binary publishing.
 
 ## COMPLETED: M5D-2b native authenticated synthetic VCRD reader (Windows x86/x64 PASS, 2026-11-07)
 
