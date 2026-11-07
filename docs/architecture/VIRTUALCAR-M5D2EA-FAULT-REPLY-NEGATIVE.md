@@ -1,6 +1,16 @@
 # M5D-2eA | Controlled synthetic reply fault injection
 
-Status: **FEATURE PREPARED; Windows VMware x86/x64 CI NOT YET RUN**.
+Status: **FEATURE Windows x86/x64 CI VERIFIED; post-merge CI PENDING**.
+
+[Owner-only VMware #42371326557](https://github.com/vorlocsev/virtualcar/actions/runs/42371326557)
+completed SUCCESS on exact feature source `263ea3fc6071d881f0e27d953629204d9c1da3e8`.
+Native x86 and x64 each passed 7/7 CTest and all five
+separate authenticated negative reply tests: partial outer
+header, partial inner body, stalled body, operation mismatch,
+DID mismatch. Both the strict native per-case success marker
+and managed Host clean exit were checked by the workflow.
+Managed Host 17/17, M5D-2b/c/d, Python 252, legacy C,
+Go and .NET gates PASS. Zero artifacts, releases or deployment.
 
 This is a narrowly limited *negative-path laboratory test* for
 existing read-only authenticated VCRD v1 traffic. It adds no new

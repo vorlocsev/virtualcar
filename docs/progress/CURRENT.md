@@ -35,7 +35,21 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE: M5D-2eA authenticated synthetic response fault-injection (VMware CI PENDING)
+## VERIFIED: M5D-2eA synthetic reply fault rejection (feature x86/x64 PASS, 2026-11-07)
+
+**Private feature VMware SUCCESS:** [#42371326557](https://github.com/vorlocsev/virtualcar/actions/runs/42371326557)
+checked out exact source `263ea3fc6071d881f0e27d953629204d9c1da3e8` on
+`VirtualCar-CI-WIN`. For EACH of Windows x86 and x64, all
+five native C++ ↔ managed Host fault cases actually executed
+and PASS: truncated VCLB header, partial inner VCRD body,
+stalled body timeout, mismatched operation ID and mismatched
+allowlisted DID. Each was validated by the exact native
+per-case PASS marker plus Host exit code zero. Native
+CTest 7/7 each, C# Host 17/17, M5D-2b 64-read stress, M5D-2c
+accepted-read cancel/Host crash recovery, Python 252,
+Legacy C, Go and .NET PASS. Zero uploaded artifacts.
+Post-merge automatic CI remains required.
+
 
 An isolated test-only negative responder has been added to the managed
 C# LocalLabPipeHost, activated solely by five explicit `--serve-once`
@@ -55,11 +69,10 @@ session, NO channels and NO pending M5D-1 Ledger slots.
 No generic CAN transmit, arbitrary UDS services or J2534 bridge
 has been added.
 
-A private VMware owner-only feature run is still REQUIRED.
-The existing 7/7 native CTest per Win32/x64, C# Host 17/17,
-64-read synthetic stress, active cancel/restart gates and all
-baseline regression suites must remain successful. Keep feature
-PR draft until new checks actually execute and PASS.
+Feature VMware #42371326557 passed the required x86/x64
+integration and all baseline gates. PR #121 is eligible for
+merge after updating this evidence; a separate automatic
+development push on the exact merge commit is still required.
 Repeated restart chains and additional cancel-race timing are
 not yet covered by this substage.
 
