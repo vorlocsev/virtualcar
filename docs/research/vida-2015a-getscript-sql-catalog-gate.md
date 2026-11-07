@@ -413,17 +413,29 @@ particular response is expected. Nothing below depth 3,
 including parameter/attribute values, event names, transport
 IDs, J2534 requests, XML bodies, VIN or ECU data was emitted.
 
-Next operator-controlled local-only structural gate: count
-`XmlReader.Depth=4` element `LocalName` occurrences, grouped
-under each path `handlers/eventhandler`,
-`handlers/propertyhandler`, and `nodes/node`. Read only one
-prior in-memory ZIP XML in bounded memory with XML DTD/XXE
-disabled; output *only* aggregate path and count. Semantic
-recovery of request/response bytes and original `GetScript`
-caller binding requires independent evidence and additional
-safety gates, **not** speculative emulator positive replies.
-No SQL stored procedure execution, ECU I/O, or Virtual Car
-binary publishing.
+The owner completed the `XmlReader.Depth=4` local-only
+metadata gate twice, with identical aggregate output:
+`handlers/eventhandler/call = 27`,
+`handlers/propertyhandler/set = 6`,
+`nodes/node/extension = 12`, and
+`nodes/node/property = 70`.
+That is **115** XML elements at depth 4, not 115
+confirmed diagnostic commands or requests. Combined with
+previously measured depths 0–3 (`1 + 2 + 2 + 47`),
+**167** of the measured **182** XML elements are accounted
+for; **15** remain at depths 5–6. Terms `call`, `set`,
+`extension`, and `property` are element names only:
+we have NOT seen values, function bindings, original
+script instructions, message IDs, VIN or ECU frames.
+
+Next operator-local read-only gate: aggregate only depths
+5 and 6 XML `LocalName` and counts from the same previously
+loaded ZIP in memory with a bounded stream and DTD/XXE
+prohibited. Alternatively stop at this structure gate and
+focus on independent client-selection/transport evidence.
+Avoid original script XML, attribute values or any
+proprietary binary export. No `GetScript` execution, ECU
+I/O, positive emulator reply change, or release.
 
 
 
