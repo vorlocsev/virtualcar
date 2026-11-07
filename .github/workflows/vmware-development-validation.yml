@@ -64,6 +64,7 @@ on:
           - fix/vida-session-release-provenance-gate
           - feature/vida-readvin-xml-graph-safe-audit
           - feature/vida-jboss-startup-provenance-audit
+          - research/vida-original-vinvalidator-ascii-shape-gate
 
 permissions:
   contents: read
