@@ -27,11 +27,15 @@ GET_SCRIPT = re.compile(
 )
 FETCHED = re.compile(r"\bFetched script:\s*'([^'\r\n]{1,128})'", re.IGNORECASE)
 RUNNING = re.compile(r"\bRunning script:\s*'([^'\r\n]{1,128})'", re.IGNORECASE)
+# Exact explicit diagnostic Profile label only. It is NOT a model/VIN mapping.
+EMPTY_PROFILE = re.compile(r"\bProfile:\s*'EMPTYPROFILE,'", re.IGNORECASE)
 
 
 def _kind(value):
     if value == "VehCommSpecification":
         return "veh_comm_specification"
+    if value == "ReadVin":
+        return "read_vin"
     return "empty_type" if value == "" else "other_type"
 
 
@@ -46,12 +50,16 @@ def audit_lines(lines):
     counts = {
         "get_script_requests": 0,
         "requests_veh_comm_specification": 0,
+        "requests_read_vin": 0,
+        "requests_read_vin_explicit_empty_profile": 0,
         "requests_other_type": 0,
         "requests_empty_type": 0,
         "fetched_script_events": 0,
         "running_script_events": 0,
         "matched_get_fetch_run_triplets": 0,
         "matched_veh_comm_specification_triplets": 0,
+        "matched_read_vin_triplets": 0,
+        "matched_read_vin_explicit_empty_profile_triplets": 0,
         "orphan_fetched_script_events": 0,
         "unmatched_running_script_events": 0,
         "different_script_running_events": 0,
@@ -88,7 +96,11 @@ def audit_lines(lines):
                 kind = _kind(request.group(1))
                 counts["get_script_requests"] += 1
                 counts["requests_" + kind] += 1
-                pending[thread] = {"time": time_ms, "kind": kind, "fetched": None}
+                explicit_empty = kind == "read_vin" and EMPTY_PROFILE.search(payload) is not None
+                if explicit_empty:
+                    counts["requests_read_vin_explicit_empty_profile"] += 1
+                pending[thread] = {"time": time_ms, "kind": kind, "fetched": None,
+                                   "explicit_empty_profile": explicit_empty}
                 continue
             fetched = FETCHED.search(payload)
             if fetched:
@@ -114,6 +126,10 @@ def audit_lines(lines):
                     counts["matched_get_fetch_run_triplets"] += 1
                     if current["kind"] == "veh_comm_specification":
                         counts["matched_veh_comm_specification_triplets"] += 1
+                    elif current["kind"] == "read_vin":
+                        counts["matched_read_vin_triplets"] += 1
+                        if current["explicit_empty_profile"]:
+                            counts["matched_read_vin_explicit_empty_profile_triplets"] += 1
                 pending.pop(thread, None)
 
     return {
@@ -124,6 +140,8 @@ def audit_lines(lines):
         "matching_scope": "same_vida_component_thread_and_30_second_log_window",
         "external_source_examples_are_not_my2009_evidence": True,
         "get_script_type_is_not_runtime_call_site": True,
+        "read_vin_get_fetch_run_is_log_chronology_not_identity": True,
+        "empty_profile_token_is_not_verified_vehicle_profile": True,
         "script_content_provenance_verified": False,
         "script_selected_for_identify_vehicle_verified": False,
         "b9fb_to_vin_mapping_verified": False,
