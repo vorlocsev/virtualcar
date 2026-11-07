@@ -268,16 +268,22 @@ Possible relationships: `Script.fkScriptType -> ScriptType.Id`,
 `ScriptProfileMap.fkScript -> Script.Id` because their names
 and types align. These are **inferences**, not verified foreign
 key constraints. `ScriptType.Id=7 -> ReadVin` is already
-confirmed independently, but there is **no evidence yet**
-that any `Script` row has `fkScriptType=7`.
+confirmed independently. The owner subsequently ran the
+bounded **read-only aggregate** SQL query
+`SELECT COUNT_BIG(*) AS ReadVinScriptCount FROM dbo.Script WHERE fkScriptType = 7;`
+and observed **`ReadVinScriptCount = 1`** on the installed VIDA 2015A
+instance. This confirms exactly one `Script` row of the SQL
+`ReadVin` type in that installation; it does **not** reveal its
+`Script.Id`, whether `ScriptContent` or profile mappings are present,
+or which script `GetScript` returns in a real VIDA session.
 
-Next catalog-only step: inspect `sys.foreign_keys` and
-`sys.foreign_key_columns` for the three candidate referring
-tables. No reported FK constraints would not disprove
-application-level relationships. A subsequent bounded
-`COUNT_BIG(*)` for `Script.fkScriptType=7` can establish
-script presence without exposing script IDs or XML.
-Neither step executes `GetScript`.
+Next bounded read-only aggregate gate: independently count rows in
+`ScriptContent` and `ScriptProfileMap` whose `fkScript` belongs to
+the single `Script` row with `fkScriptType=7`. Optionally inspect
+`sys.foreign_keys` / `sys.foreign_key_columns` for declared
+constraints; their absence would not disprove logical application
+relationships. Never return content XML, script/profile IDs or
+other private values. No `GetScript` execution or ECU I/O.
 
 
 
