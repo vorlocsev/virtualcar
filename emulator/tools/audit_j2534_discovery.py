@@ -266,6 +266,15 @@ def _a6_frame(tx, can_id, payload, ctx):
 def _result(tx):
     if tx["_source_error"]:
         status, reason = "unverified", tx["_source_error"]
+    elif tx["_unimplemented_probe"]:
+        # The native DLL explicitly consumed a valid CEM A3/A6 request but
+        # intentionally did not implement a reply. A later J2534 timeout
+        # is a symptom; it must not obscure this known emulator boundary.
+        # Contradictory RX records remain unverified, never a positive ECU.
+        if tx["rx_frames"] or tx["off_route_rx"]:
+            status, reason = "unverified", "cem_unimplemented_marker_rx_conflict"
+        else:
+            status, reason = "unsupported", "cem_response_not_implemented"
     elif tx["_bad_route"]:
         status, reason = "unsupported", "strict_route_rejected"
     elif tx["_no_fixture"]:
@@ -319,6 +328,8 @@ def _result(tx):
         "response_pending_frames": tx["_p3_pending"],
         "off_route_rx": tx["off_route_rx"], "window_ms": window,
         "status": status, "reason": reason,
+        "native_cem_response_unimplemented": tx["_unimplemented_probe"],
+        "j2534_timeout_observed": tx["_timeout"],
     }
     if tx["route"] == "OBD":
         result["start_indications"] = tx["_obd_starts"]
@@ -581,6 +592,7 @@ def audit(lines, *, include_obd=False):
             "_a6_identifier": _a6_request_identifier(raw) if service == "A6" else None,
             "_a6_error": None,
             "_no_fixture": False, "_bad_route": False,
+            "_unimplemented_probe": False,
             "_timeout": False, "_end_reason": "no_delivery_evidence",
             "_p3_total": None, "_p3_received": 0, "_p3_sequence": 1,
             "_p3_header": b"", "_p3_negative": False, "_p3_mismatch": False,
@@ -854,6 +866,17 @@ def audit(lines, *, include_obd=False):
             receive(s, _words(text.split(marker, 1)[1]), stamp)
             s["rxctx"] = None
             continue
+        if text == "P2 D2 CEM A3/A6: no verified response implementation":
+            # Exact native marker, emitted synchronously by process_d2() on
+            # a valid CEM request. The marker contains no target/channel:
+            # bind only to the active, recognized D2 A3/A6 TX in this PID.
+            tx = active(s, s["last_tx_channel"])
+            if (tx and tx["route"] == "D2"
+                    and tx["service"] in ("A3", "A6")
+                    and tx["target"] in ("0x40", "0x50")
+                    and tx["protocol"] in ("CAN", "unknown")
+                    and tx["can_id"] == "0x000FFFFE"):
+                tx["_unimplemented_probe"] = True
         if "P2 D2 read command: no validated response fixture" in text or "P2 D2 command: no recorded ECU fixture" in text:
             tx = active(s, s["last_tx_channel"])
             if tx and tx["route"] != "OBD":
@@ -904,6 +927,8 @@ def audit(lines, *, include_obd=False):
             "J2534 RX delivery does not prove diagnostic-client ECU acceptance.",
             "Legacy logs without channel, flags or timestamps leave route metadata unknown.",
             "No A3/A6 or P3 positive ECU identity is inferred without a verified fixture.",
+            "An exact native CEM A3/A6 unimplemented marker proves this emulator emitted no planned response, not that the client normal-mode predicate is known.",
+            "A J2534 timeout after that marker remains separately recorded; contradictory RX cannot establish an authentic ECU reply.",
             "negative_response identifies a final UDS rejection, not successful ECU discovery.",
             "UDS NRC 0x78 is nonterminal; pending-only probes stay unverified unless a read timeout is logged.",
             "A positive ReadDataByIdentifier header requires at least one data-record byte.",
