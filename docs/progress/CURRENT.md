@@ -1,5 +1,33 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
+## Self-hosted-only CI migration (2026-11-07)
+
+The previous separate GitHub-hosted workflows are replaced by one
+authoritative Windows self-hosted VM validation on
+`[self-hosted, Windows, X64, virtualcar-win]`.
+The core workflow `.github/workflows/vmware-development-validation.yml`
+runs automatically on trusted `development` pushes, and is reusable
+for owner-only manual dispatch from `main`. Five former workflow names
+are preserved as **manual aliases** to that same validation.
+They do **not** accept pull_request events or execute unreviewed fork
+code on the persistent VM. The operator may validate a feature branch
+only by explicitly adding its name to the core allowlist on `main`.
+
+This Windows suite executes legacy C/Python/Go, MSVC native x86/x64,
+old-C-vs-C++ synthetic RX parity, .NET 10 managed/storage/scenario,
+M5A host and M5B C++ <-> C# peer checks (when source is present).
+It does not provide identical Linux-host smoke, retired Native AOT ABI
+probe, old legacy trace-oneclick or VMware prerelease packaging coverage.
+Do not treat removal of GitHub-hosted checks as an equivalent pass
+for the retired Linux-specific steps. No artifact upload, prerelease,
+adapter install, software publication or physical ECU access is allowed.
+See `docs/architecture/VIRTUALCAR-SELFHOSTED-CI.md`.
+
+Pre-migration private VMware #42319966445: SUCCESS for merged
+M5C-1 source on `development`. Migration changes need their own
+post-merge self-hosted validation and are NOT marked verified here.
+
+
 ## ACTIVE checkpoint: M5C-1 Windows x86/x64 lifecycle preflight PASSED (2026-11-07)
 
 ### M5A C# current-user Named Pipe host: MERGED into development
