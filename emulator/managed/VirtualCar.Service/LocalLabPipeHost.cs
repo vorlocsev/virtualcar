@@ -8,7 +8,8 @@ namespace VirtualCar.Service;
 /// One-client Windows Named Pipe preflight for the private laboratory.
 /// OS current-user isolation plus a separate 256-bit launch secret are required.
 /// The launch secret must be provisioned out-of-band by a future trusted launcher.
-/// NO CAN/ECU request can be executed through this host.
+/// Only sealed synthetic identification reads are allowed by M5D-2a.
+/// No raw CAN, physical J2534, arbitrary ECU request or programming.
 /// </summary>
 public sealed class LocalLabPipeHost
 {
@@ -82,22 +83,72 @@ public sealed class LocalLabPipeHost
                         session.Value.Generation, []),
                     cancellationToken).ConfigureAwait(false);
 
+                // Every read request is correlated monotonically inside
+                // this one authenticated connection. A restarted Host has
+                // a new process-creation identity and reauthenticates.
+                ulong lastReadOperationId = 0;
+                ulong serverCreated = VcrdCodec.CurrentHostCreationTime();
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     PipeFrame? frame = await ReadWithDeadlineAsync(server, cancellationToken)
                         .ConfigureAwait(false);
                     if (frame is null) return;
                     if (frame.SessionId != session.Value.Id ||
-                        frame.Generation != session.Value.Generation ||
-                        frame.Payload.Length != 0 ||
-                        frame.Kind is not (PipeFrameCodec.KeepAlive or PipeFrameCodec.Goodbye))
+                        frame.Generation != session.Value.Generation)
                         return;
                     await _coordinator.ValidateSessionAsync(session.Value, cancellationToken)
                         .ConfigureAwait(false);
-                    if (frame.Kind == PipeFrameCodec.Goodbye) return;
+
+                    if (frame.Kind is PipeFrameCodec.KeepAlive or PipeFrameCodec.Goodbye)
+                    {
+                        if (frame.Payload.Length != 0) return;
+                        if (frame.Kind == PipeFrameCodec.Goodbye) return;
+                        await WriteWithDeadlineAsync(server,
+                            new PipeFrame(PipeFrameCodec.Ack, session.Value.Id,
+                                session.Value.Generation, []),
+                            cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    // Only a 63-byte VCRD read request is accepted, never a
+                    // raw CAN frame or a generic caller-provided response.
+                    if (frame.Kind != PipeFrameCodec.ReadRequest ||
+                        frame.Payload.Length != VcrdCodec.HeaderLength + 3 ||
+                        !VcrdCodec.TryDecode(frame.Payload, out VcrdEnvelope? request) ||
+                        request is null ||
+                        request.Kind != VcrdCodec.ReadRequest ||
+                        request.SessionId != session.Value.Id ||
+                        request.Generation != session.Value.Generation ||
+                        request.ServerPid != (uint)Environment.ProcessId ||
+                        request.Created100Ns != serverCreated ||
+                        request.OperationId <= lastReadOperationId)
+                        return;
+
+                    // The coordinator validates that the *current* session
+                    // still owns an immutable, verified synthetic scenario.
+                    // Missing or malformed VCRF fixtures fail CLOSED.
+                    ushort did = System.Buffers.Binary.BinaryPrimitives
+                        .ReadUInt16BigEndian(request.Payload.AsSpan(1, 2));
+                    byte[]? synthetic = await _coordinator.ReadSyntheticAsync(
+                        session.Value, request.RequestCanId, request.ResponseCanId,
+                        request.Extended, did, cancellationToken).ConfigureAwait(false);
+                    if (synthetic is null || synthetic.Length is < 1 or > 61)
+                        return;
+
+                    lastReadOperationId = request.OperationId;
+                    byte[] positive = new byte[3 + synthetic.Length];
+                    positive[0] = 0x62;
+                    positive[1] = request.Payload[1];
+                    positive[2] = request.Payload[2];
+                    synthetic.CopyTo(positive, 3);
+                    byte[] encoded = VcrdCodec.Encode(request with
+                    {
+                        Kind = VcrdCodec.ReadResponse,
+                        Payload = positive
+                    });
                     await WriteWithDeadlineAsync(server,
-                        new PipeFrame(PipeFrameCodec.Ack, session.Value.Id,
-                            session.Value.Generation, []),
+                        new PipeFrame(PipeFrameCodec.ReadReply, session.Value.Id,
+                            session.Value.Generation, encoded),
                         cancellationToken).ConfigureAwait(false);
                 }
             }

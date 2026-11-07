@@ -3,8 +3,9 @@ using System.Buffers.Binary;
 namespace VirtualCar.Service;
 
 /// <summary>
-/// Strict, versioned, local-only M5 preflight envelope. No ECU/CAN commands
-/// or scenario administration are permitted on this data endpoint.
+/// Strict, versioned, local-only VCLB control envelope. M5D-2a adds only
+/// a sealed, synthetic read request and positive reply; no arbitrary CAN,
+/// J2534 device or ECU programming commands are permitted.
 /// </summary>
 public static class PipeFrameCodec
 {
@@ -15,6 +16,10 @@ public static class PipeFrameCodec
     public const ushort KeepAlive = 2;
     public const ushort Goodbye = 3;
     public const ushort Ack = 4;
+    // M5D-2a: authenticated, synthetic-only VCRD envelope carried as a
+    // VCLB payload. This does not add a J2534 data-plane endpoint.
+    public const ushort ReadRequest = 5;
+    public const ushort ReadReply = 6;
     private static ReadOnlySpan<byte> Magic => "VCLB"u8;
 
     public static async Task WriteAsync(Stream stream, PipeFrame frame, CancellationToken cancellationToken = default)
@@ -65,7 +70,7 @@ public static class PipeFrameCodec
     }
 
     private static bool Supported(ushort kind) =>
-        kind is Hello or KeepAlive or Goodbye or Ack;
+        kind is Hello or KeepAlive or Goodbye or Ack or ReadRequest or ReadReply;
 }
 
 public sealed record PipeFrame(ushort Kind, ulong SessionId, ulong Generation, byte[] Payload);

@@ -22,7 +22,7 @@ internal static class Program
         // "no-session" intentionally leaves the coordinator without an active scenario,
         // so a wrong-PID client must be rejected before it can authenticate.
         if (args.Length == 3 && args[0] == "--serve-once" &&
-            args[2] is "session" or "no-session")
+            args[2] is "session" or "no-session" or "read-session")
         {
             string pipeName = args[1];
             if (string.IsNullOrEmpty(pipeName) || pipeName.Length > 80 ||
@@ -30,8 +30,10 @@ internal static class Program
                 return 2;
 
             var runtime = new StubRuntime();
-            bool selected = args[2] == "session";
-            await using var core = await CoreAsync(selected: selected, runtime: runtime);
+            bool selected = args[2] != "no-session";
+            await using var core = await CoreAsync(
+                selected: selected, runtime: runtime,
+                readFixture: args[2] == "read-session");
             await Host(core, pipeName, TimeSpan.FromSeconds(10)).ServeOnceAsync();
 
             int expectedPreparations = selected ? 1 : 0;
@@ -52,7 +54,7 @@ internal static class Program
         }
         if (args.Length != 0)
         {
-            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session>]");
+            Console.Error.WriteLine("Usage: VirtualCar.Service.Checks [--serve-once <pipe-name> <session|no-session|read-session>]");
             return 2;
         }
 
@@ -66,7 +68,15 @@ internal static class Program
             ("06 Stale session generation fails closed", Test06),
             ("07 Forged session and unrecognized command are rejected", Test07),
             ("08 Disconnect and reconnect invalidate previous token", Test08),
-            ("09 Idle accept deadline releases listener", Test09)
+            ("09 Idle accept deadline releases listener", Test09),
+            ("10 Authenticated VCRD F187/F190 reads from sealed scenario", Test10),
+            ("11 Read request with wrong Host process identity is rejected", Test11),
+            ("12 Read request with unapproved CAN route is rejected", Test12),
+            ("13 Read SecurityAccess and arbitrary service denied", Test13),
+            ("14 Unknown DID and invalid VCRD kind denied", Test14),
+            ("15 Replayed read operation rejected after positive reply", Test15),
+            ("16 Unsealed or malformed VCRF fixture denied", Test16),
+            ("17 Invalid VCRD reserved bytes and truncation denied", Test17)
         ];
         int passed = 0;
         foreach (var (label, check) in checks)
@@ -92,9 +102,10 @@ internal static class Program
     }
 
     private static async Task<ScenarioCoordinator> CoreAsync(
-        bool selected = true, StubRuntime? runtime = null)
+        bool selected = true, StubRuntime? runtime = null, bool readFixture = false)
     {
-        var core = new ScenarioCoordinator(new StubCatalog(), runtime ?? new StubRuntime());
+        var core = new ScenarioCoordinator(
+            new StubCatalog(readFixture), runtime ?? new StubRuntime());
         if (selected) await core.SelectAsync("ipc-synthetic", 1);
         return core;
     }
@@ -145,9 +156,10 @@ internal static class Program
     }
 
     private static async Task RunClosedAsync(
-        Func<NamedPipeClientStream, Task> clientAction, bool selected = true)
+        Func<NamedPipeClientStream, Task> clientAction,
+        bool selected = true, bool readFixture = false)
     {
-        await using var core = await CoreAsync(selected);
+        await using var core = await CoreAsync(selected, readFixture: readFixture);
         LocalLabPipeHost host = Host(core);
         Task serving = host.ServeOnceAsync();
         await using (var client = await ConnectAsync(host.PipeName))
@@ -349,12 +361,209 @@ internal static class Program
         await core.ResetAsync();
     }
 
-    private sealed class StubCatalog : IScenarioCatalog
+    // Invented data only. VCRF v1 route 0x7e0->0x7e8, three sorted
+    // DIDs and small synthetic response bytes, SHA256-sealed by the catalog.
+    private static byte[] ReadFixtureBytes() =>
+    [
+        (byte)'V', (byte)'C', (byte)'R', (byte)'F',
+        1, 0, 0xe0, 0x07, 0, 0, 0xe8, 0x07, 0, 0, 3,
+        0xf1, 0x87, 2, (byte)'A', (byte)'B',
+        0xf1, 0x89, 1, (byte)'C',
+        0xf1, 0x90, 3, (byte)'L', (byte)'A', (byte)'B'
+    ];
+
+    private static VcrdEnvelope ReadRequest(
+        PipeFrame session, ulong operation = 1, ushort did = 0xF187,
+        uint requestId = 0x7e0, uint responseId = 0x7e8,
+        bool extended = false)
+    {
+        return new VcrdEnvelope(
+            VcrdCodec.ReadRequest, operation, session.SessionId,
+            session.Generation, (uint)Environment.ProcessId,
+            VcrdCodec.CurrentHostCreationTime(), requestId, responseId,
+            extended, [0x22, (byte)(did >> 8), (byte)did]);
+    }
+
+    private static async Task SendReadRawAsync(
+        Stream client, PipeFrame session, byte[] bytes)
+    {
+        await PipeFrameCodec.WriteAsync(client,
+            new PipeFrame(PipeFrameCodec.ReadRequest, session.SessionId,
+                session.Generation, bytes));
+    }
+
+    private static async Task<VcrdEnvelope> ReadResultAsync(
+        Stream client, PipeFrame session, VcrdEnvelope request)
+    {
+        await SendReadRawAsync(client, session, VcrdCodec.Encode(request));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        PipeFrame? response = await PipeFrameCodec.ReadAsync(client, timeout.Token);
+        Require(response is not null &&
+            response.Kind == PipeFrameCodec.ReadReply &&
+            response.SessionId == session.SessionId &&
+            response.Generation == session.Generation,
+            "Uncorrelated or missing outer VCLB read response.");
+        Require(VcrdCodec.TryDecode(response!.Payload, out VcrdEnvelope? decoded) &&
+            decoded is not null &&
+            decoded.Kind == VcrdCodec.ReadResponse &&
+            decoded.OperationId == request.OperationId &&
+            decoded.SessionId == session.SessionId &&
+            decoded.Generation == session.Generation &&
+            decoded.ServerPid == request.ServerPid &&
+            decoded.Created100Ns == request.Created100Ns &&
+            decoded.RequestCanId == request.RequestCanId &&
+            decoded.ResponseCanId == request.ResponseCanId &&
+            decoded.Extended == request.Extended,
+            "Uncorrelated or malformed VCRD positive read response.");
+        return decoded!;
+    }
+
+    private static async Task Test10()
+    {
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            VcrdEnvelope first = await ReadResultAsync(
+                client, token, ReadRequest(token, 1, 0xF187));
+            Require(first.Payload.SequenceEqual(new byte[]
+                { 0x62, 0xf1, 0x87, (byte)'A', (byte)'B' }),
+                "F187 fixture is not identical to immutable canonical scenario.");
+            VcrdEnvelope second = await ReadResultAsync(
+                client, token, ReadRequest(token, 2, 0xF190));
+            Require(second.Payload.SequenceEqual(new byte[]
+                { 0x62, 0xf1, 0x90, (byte)'L', (byte)'A', (byte)'B' }),
+                "F190 fixture bytes were not scenario derived.");
+            await PipeFrameCodec.WriteAsync(client,
+                new PipeFrame(PipeFrameCodec.KeepAlive,
+                    token.SessionId, token.Generation, []));
+            PipeFrame? ack = await PipeFrameCodec.ReadAsync(client);
+            Require(ack?.Kind == PipeFrameCodec.Ack, "Read broke authenticated keepalive.");
+            await PipeFrameCodec.WriteAsync(client,
+                new PipeFrame(PipeFrameCodec.Goodbye,
+                    token.SessionId, token.Generation, []));
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+    }
+
+    private static async Task Test11() =>
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            VcrdEnvelope wrong = ReadRequest(token) with
+            {
+                Created100Ns = VcrdCodec.CurrentHostCreationTime() + 1
+            };
+            await SendReadRawAsync(client, token, VcrdCodec.Encode(wrong));
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+
+    private static async Task Test12() =>
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            await SendReadRawAsync(client, token,
+                VcrdCodec.Encode(ReadRequest(token, requestId: 0x7e1)));
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+
+    private static async Task Test13() =>
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            byte[] wire = VcrdCodec.Encode(ReadRequest(token));
+            wire[VcrdCodec.HeaderLength] = 0x27; // SecurityAccess, not read.
+            await SendReadRawAsync(client, token, wire);
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+
+    private static async Task Test14()
+    {
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            byte[] wire = VcrdCodec.Encode(ReadRequest(token));
+            wire[VcrdCodec.HeaderLength + 2] = 0x91; // Unknown DID.
+            await SendReadRawAsync(client, token, wire);
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            byte[] wire = VcrdCodec.Encode(ReadRequest(token));
+            BinaryPrimitives.WriteUInt16LittleEndian(wire.AsSpan(6), 99);
+            await SendReadRawAsync(client, token, wire);
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+    }
+
+    private static async Task Test15() =>
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            VcrdEnvelope req = ReadRequest(token);
+            _ = await ReadResultAsync(client, token, req);
+            await SendReadRawAsync(client, token, VcrdCodec.Encode(req));
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+
+    private static async Task Test16()
+    {
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            await SendReadRawAsync(client, token,
+                VcrdCodec.Encode(ReadRequest(token)));
+            await ExpectClosedAsync(client);
+        }); // selected old scenario, not a VCRF response map
+
+        byte[] malformed = ReadFixtureBytes();
+        byte[] withTrailing = [.. malformed, 0xff];
+        ScenarioSnapshot candidate = ScenarioSnapshot.VerifySynthetic(
+            new ScenarioCandidate("ipc-synthetic", 1,
+                ScenarioProvenance.Synthetic, true, withTrailing,
+                Convert.ToHexString(SHA256.HashData(withTrailing))));
+        Require(SyntheticReadFixture.Find(
+                candidate, 0x7e0, 0x7e8, false, 0xF187) is null,
+            "VCRF parser accepted a trailing record outside sealed framing.");
+
+        malformed[17] = 62; // first entry claims oversized response data
+        candidate = ScenarioSnapshot.VerifySynthetic(
+            new ScenarioCandidate("ipc-synthetic", 1,
+                ScenarioProvenance.Synthetic, true, malformed,
+                Convert.ToHexString(SHA256.HashData(malformed))));
+        Require(SyntheticReadFixture.Find(
+                candidate, 0x7e0, 0x7e8, false, 0xF187) is null,
+            "VCRF parser accepted an oversized entry.");
+    }
+
+    private static async Task Test17()
+    {
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            byte[] wire = VcrdCodec.Encode(ReadRequest(token));
+            wire[56] = 1; // Reserved field is mandatory zero.
+            await SendReadRawAsync(client, token, wire);
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+
+        await RunClosedAsync(async client =>
+        {
+            PipeFrame token = await HelloAsync(client);
+            byte[] wire = VcrdCodec.Encode(ReadRequest(token));
+            await SendReadRawAsync(client, token, wire[..^1]);
+            await ExpectClosedAsync(client);
+        }, readFixture: true);
+    }
+
+    private sealed class StubCatalog(bool readFixture = false) : IScenarioCatalog
     {
         public Task<ScenarioCandidate?> LoadAsync(string id, long revision, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
-            byte[] bytes = [0x22, 0xF1, 0x87]; // Invented read-only synthetic fixture.
+            byte[] bytes = readFixture
+                ? ReadFixtureBytes()
+                : [0x22, 0xF1, 0x87]; // Old M5A scenario, NOT a VCRF response map.
             return Task.FromResult<ScenarioCandidate?>(new ScenarioCandidate(
                 "ipc-synthetic", 1, ScenarioProvenance.Synthetic, true,
                 bytes, Convert.ToHexString(SHA256.HashData(bytes))));
