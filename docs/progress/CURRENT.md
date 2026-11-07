@@ -1,5 +1,34 @@
 # CURRENT | Dvinholm / Virtual Car Lab
 
+## VERIFIED: M5D-2eB isolated + live Host multi-epoch tests (2026-11-07)
+
+- [PR #125](https://github.com/vorlocsev/virtualcar/pull/125) merged:
+  seven synthetic-only Ledger cancellation/restart/expiry race groups.
+  Windows x86/x64 8/8 CTest, including the new 7-group executable,
+  passed on feature [VMware #42373748380](https://github.com/vorlocsev/virtualcar/actions/runs/42373748380).
+- [PR #128](https://github.com/vorlocsev/virtualcar/pull/128) merged to
+  `development` at `f1c1b7b4a349d89ba81a52fb643ac69de2281055`.
+  Its separate Windows C++ process test exercises 4 authenticated
+  synthetic C# Hosts: accepted-read Host kill, accepted-read cooperative
+  cancel, another accepted-read Host kill, then fresh healthy F187 read.
+  Old session/channel/ledger state must be revoked, and numeric 1/1
+  tokens cannot override the PID+FILETIME owner binding.
+- Feature [VMware #42375232666](https://github.com/vorlocsev/virtualcar/actions/runs/42375232666)
+  SUCCESS on exact code SHA `b084c695141c38280e2d4e7bf671449481d8fdcc`.
+  Automatic [post-merge VMware #42375477826](https://github.com/vorlocsev/virtualcar/actions/runs/42375477826)
+  SUCCESS on exact development merge SHA. Both verified **x86 and x64**
+  8/8 CTest and distinct Host-epoch integration PASS; C# Host 17/17,
+  Python 252, legacy C/Go/.NET checks PASS. **Artifacts: 0**.
+- Only local read-only **synthetic** sealed fixtures are accepted. This
+  is NOT an operational replacement J2534 adapter, does NOT establish
+  SectorV/VIDA/VDASH acceptance or real XC90 V8 MY2009 CEM identity,
+  and does not permit SecurityAccess, PIN, programming or releases.
+
+**NEXT:** Issue #4 evidence-bound SectorV/CEM identification. Distinguish
+B9FB transport success from client VIN acceptance, A3/A6/B9F0 response,
+and ECU discovery, using a continuous anonymized client+J2534 capture.
+Do not invent OEM positives or generalize donor MY2005 data to MY2009.
+
 ## Self-hosted-only CI migration (2026-11-07)
 
 The previous separate GitHub-hosted workflows are replaced by one
