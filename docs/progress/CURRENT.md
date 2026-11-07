@@ -35,7 +35,20 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## VERIFIED: M5D-2d replay/deadline and serial read stress (FEATURE CI PASS, 2026-11-07)
+## COMPLETED: M5D-2d replay/deadline and serial read stress (FEATURE + POST-MERGE CI PASS, 2026-11-07)
+
+**Merged and independently reverified:** PR #117 merged into
+`development` as `f3f907e98669c172edb15265ae015f222a82be7e`. Automatic owner-only
+[VMware #42369754826](https://github.com/vorlocsev/virtualcar/actions/runs/42369754826)
+completed SUCCESS on this exact merge commit, not merely the
+feature ref. Native x86 and x64 7/7 CTest each, managed Host
+17/17, all previous M5B/M5C-2/M5D-2b/M5D-2c, legacy C,
+Python 252, Go and .NET checks PASS. The new M5D-2d x86 and
+x64 64-read native ↔ managed synthetic stress cases were
+**actually executed** and passed. Zero uploaded artifacts;
+no packages/releases/deployment. The original feature run
+#42369341323 also passed. J2534 remains fail-closed.
+
 
 **Private VMware feature verification SUCCESS:** [CI #42369341323](https://github.com/vorlocsev/virtualcar/actions/runs/42369341323)
 checked out exact source `5fff8957dd6963d013be6a6f0b0fee3f78b7ac1b`. Native MSVC x86 and x64
@@ -44,7 +57,7 @@ M5D-1 test executable), C# Host 17/17, and new authenticated
 64-read C++ ↔ C# Host serial stress on BOTH x86 and x64 PASS.
 M5B/M5C-2/M5D-2b/M5D-2c, legacy C, Python 252, Go, and .NET
 also passed. No GitHub Actions artifact uploads, releases,
-or deployments. **Post-merge CI is still required.** M5D-2d extends
+or deployments. **Post-merge CI also passed.** M5D-2d extends
 the isolated M5D-1 Ledger C++ CTest suite from eight to eleven
 deterministic groups:
 - rebind with reused numeric session/generation but a different
@@ -65,10 +78,9 @@ then tests one final permitted read and clean disconnect.
 These tests stress the *existing* serial synthetic reader, not a
 new multi-request pipeline. There are no new write services,
 J2534 DLL links, real vehicle identification or physical CAN.
-Owner-only Windows x86/x64 feature VMware gate #42369341323
-PASSED; PR #117 is now eligible for merge after the docs-only
-evidence update. Independent automatic development CI on the
-merge commit must still run the identical 64-read checks.
+Owner-only feature VMware #42369341323 and independent
+post-merge automatic development VMware #42369754826 both PASSED,
+including identical 64-read checks on each architecture.
 
 ## COMPLETED: M5D-2c in-flight synthetic read cancellation and Host restart (Windows x86/x64, 2026-11-07)
 
@@ -131,14 +143,16 @@ must remain green. There is no public arbitrary CAN/J2534
 data plane, physical ECU, writes, PIN, SecurityAccess,
 programming, package publication or Virtual Car release.
 
-## NEXT: M5D synthetic read-only hardening (NOT IMPLEMENTED)
+## NEXT: M5D-2e additional synthetic fault-injection validation (NOT IMPLEMENTED)
 
 M5D-2c's serial read, active cancellation and Host crash/recovery
 have now passed both feature and post-merge private Windows CI.
-Further proposed work is stress/repeatability validation of the
-same synthetic-only lifecycle, explicit stale-token/replay
-negative tests across reconnect, and inspection of per-operation
-deadline accounting. No eight-request concurrent pipe transport
+M5D-2d now covers repeated synthetic reads, stale Host tokens,
+operation replay and exact Ledger expiry boundaries. Further
+proposed work is controlled fault injection into partial VCRD
+header/body reads, repeated cancellation races, and stale
+positive replies after repeated restarts. None of these
+additional negative-path trials is implemented yet. No eight-request concurrent pipe transport
 or J2534 CAN data plane is claimed as implemented. Keep
 `VirtualCarJ2534Cpp` fail-closed and unlinked; no vehicle
 identification, physical CAN, PIN, SecurityAccess, programming

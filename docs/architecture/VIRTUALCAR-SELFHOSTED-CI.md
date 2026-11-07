@@ -119,3 +119,21 @@ four M5D-2b cases on **each architecture**, with CTest x86/x64
 7/7 each, managed Host 17/17 and all baseline checks PASS.
 Zero artifacts/releases. Next M5D-2c pending-read cancel and
 crash/restart tests remain unimplemented; J2534 still fail-closed.
+
+
+## M5D-2d synthetic replay and read-stress acceptance (2026-11-07)
+
+- Feature PR #117 source `5fff8957dd6963d013be6a6f0b0fee3f78b7ac1b`
+  checked out by owner-dispatched [VMware #42369341323](https://github.com/vorlocsev/virtualcar/actions/runs/42369341323),
+  SUCCESS, CTest 7/7 on x86 and x64 with 11 VCRD Ledger
+  groups, Host 17/17 and actual 64-read synthetic C++ ↔ C#
+  Host stress PASS on both architectures.
+- PR #117 merged into development as `f3f907e98669c172edb15265ae015f222a82be7e`.
+  Automatic [VMware #42369754826](https://github.com/vorlocsev/virtualcar/actions/runs/42369754826)
+  completed SUCCESS on that exact SHA: x86/x64 native CTest
+  7/7 each, C# Host 17/17, old M5D-2b/c tests,
+  64-read synthetic stress PASS separately on x86 and x64,
+  Python 252, Legacy C, Go and .NET checks PASS.
+- GitHub reports zero uploaded artifacts; no releases,
+  deployments, physical CAN/ECU or J2534 read bridge.
+  The J2534 DLL continues fail-closed, unlinked to IPC.
