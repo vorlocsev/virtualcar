@@ -454,13 +454,35 @@ storage column but does **not** establish which row, profile,
 script type string or language the runtime procedure returns,
 its execution result, or VIDA/J2534 compatibility.
 
-Next narrow owner-local **static source classification** gate:
-read only the local SQL module definition in memory and report
-boolean/count metadata around how `@scriptType` is referenced;
-do not send SQL body or literal strings, passwords, scripts,
-XML, vehicle identifiers or calls to `GetScript`. Simple text
-matching is heuristic and does not prove semantics; original
-client runtime argument remains an independent evidence gate.
+The owner then ran the local-only **source classification**
+probe against `sys.sql_modules` for `dbo.GetScript`
+without emitting source. Output:
+`DefinitionAvailable=True`, `ScriptTypeReferences=2`,
+`DirectDescriptionComparison=True`,
+`DirectIdComparison=False`, and
+`ExplicitIntegerConversion=False`.
+Regex matching of a direct `Description = @scriptType`
+(or reverse) is positive. This is a **strong clue** that
+`@scriptType varchar(50)` participates in a textual
+Description comparison, consistent with the separate
+SQL lookup label `ReadVin` (`dbo.ScriptType.Id=7`).
+But the regex **does not prove** that this specific
+Description belongs to `dbo.ScriptType`, is in executable
+SQL rather than a comment, or that no indirect numeric
+conversion exists elsewhere. `ScriptTypeReferences=2` also
+includes the procedure declaration if present.
+Therefore treat caller argument `ReadVin` as **candidate**,
+not a verified client runtime parameter; do not conflate
+SQL numeric `Id=7` and original application's numeric
+enum value or `@scriptType` string.
+
+**Next gate**: Verify the table/column relationship using
+SQL metadata only, or move to authorized **offline**
+VIDA-to-virtual-J2534 trace with redacted event types,
+protocol IDs, timestamps, and response outcome, never VIN,
+request bytes or proprietary script output. Do not execute
+`GetScript`, change positive emulator replies or publish
+Virtual Car releases.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
