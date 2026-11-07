@@ -61,6 +61,7 @@ on:
           - feature/p0-explicit-a3-a6-unimplemented-evidence
           - research/vida-2015a-getscript-catalog-only-inspector
           - research/vida-readvin-script-selection-evidence
+          - fix/vida-session-release-provenance-gate
 
 permissions:
   contents: read
