@@ -721,16 +721,31 @@ VIDA diagnostic client, any J2534 API usage, or whether
 DiCE DLLs are involved. No raw command line, JAR content,
 full path, URL or secrets were returned or published.
 
-Next safe owner-side read-only gate: inspect only the
-**JAR token after `-jar`** in Java PID 4324's local
-command line and classify its basename (`VIDA`/`Volvo`
-keyword, file extension, file-presence when absolute),
-without outputting the raw command line, full path or JAR
-contents. Independently confirm loaded diagnostic DLLs
-in that process only if diagnostic session is active.
-If the PID has exited/reused, rediscover its current PID;
-never start programs or register adapter automatically.
-No J2534 registry changes, ECU I/O or published binaries.
+**Owner-local `-jar` argument basename inspection:**
+`java.exe` PID **4324** is executing an existing absolute
+`.jar` named **`jboss-modules.jar`**; `FileExists=True`,
+`NameMentionsVIDA=False`. This is consistent with
+**JBoss Modules**, a modular Java classloading/boot
+mechanism also used by **WildFly/JBoss AS**, but does
+**not** prove which application module actually starts,
+whether the process is a WildFly/JBoss server, or whether
+it handles VIDA diagnostics/DiCE. The prior ancestry
+`VidaMonitor.exe` -> `cmd.exe` -> `java.exe` and
+`VIDAHint=True`, `Jar=True` are already established.
+JBoss Modules manual: https://jboss-modules.github.io/jboss-modules/manual/
+WildFly example/guide:
+https://docs.wildfly.org/24/Developer_Guide.html
+
+**Next safe owner-side passive gate:** on the already
+running Java PID (only if still the same process),
+inspect boolean flags for JBoss module launcher
+`-mp`/`-modulepath`, `org.jboss.as.standalone`,
+`org.jboss.as.server`, `-Djboss.home.dir`, plus count of
+LISTEN TCP sockets belonging to the same PID (do not
+emit IP/port numbers or command lines). Check separately
+for loaded `TSDiCE32.dll`, `TSDiCE64.dll`,
+`monpj432.dll` only as metadata. No changes to registry,
+processes, DLLs, SQL, ECU or Virtual Car distribution.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
