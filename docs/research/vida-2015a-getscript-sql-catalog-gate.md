@@ -286,14 +286,25 @@ data, an XC90-specific profile or an effective runtime selection.
 No language identifiers, script/profile identifiers, VIN or XML
 bytes were returned.
 
-Next owner-controlled bounded aggregate gate: count
-`ScriptContent` rows with **non-NULL** and **nonempty**
-`XmlDataCompressed` for the SQL `ReadVin` type, without selecting
-or returning any XML/content data. A nonempty binary value is
-not proof of valid compressed XML or correct vehicle identity.
-Optionally inspect `sys.foreign_keys` / `sys.foreign_key_columns`
-for declared relationships; absence would not disprove logical
-application mapping. No `GetScript` execution or ECU I/O.
+The owner then ran the next **aggregate-only, read-only**
+check using `XmlDataCompressed IS NOT NULL`,
+`DATALENGTH(XmlDataCompressed)>0` and distinct
+`fkLanguage` across the SQL `ReadVin` script. The four
+returned values are: `ContentRows=17`,
+`NonNullXmlRows=17`, `NonEmptyXmlRows=17`,
+`LanguagesWithContent=17`. **All 17 content rows have a
+non-NULL, nonempty binary payload**, but this is not a
+successful decompression or validation of XML syntax and
+does not establish any specific XC90-compatible requests.
+
+Next owner-controlled format-only gate: group the 17
+`XmlDataCompressed` values by a **locally derived**
+ZIP/GZIP/zlib/other magic-byte classification and report
+only aggregate counts and min/max byte lengths. Do not
+export the raw headers, raw binary, language/profile
+identifiers, decrypted XML, VIN or any diagnostic responses.
+Actual `GetScript` runtime selection and VIN acceptance
+remain unverified. No procedure execution or ECU I/O.
 
 
 
