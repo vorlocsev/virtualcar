@@ -921,16 +921,37 @@ vendor DLL use. No class names, raw XML, class bytecode,
 URLs, paths, passwords, VIN or ECU data were exported.
 No code execution, process/registry change or hardware I/O.
 
-**Next bounded passive gate:** determine whether any of
-the 20 declared EJB session-bean class names resolve to
-existing ZIP class paths, and whether any declared bean
-itself has `J2534` in its *leaf* class name (counts/booleans
-only). This is structural metadata, not a call graph.
-A later optional static-only constant-pool scan could
-seek class references to the J2534-named class, with tight
-per-class size limits; do not run classes, disassemble full
-proprietary methods or export code. Do not modify the
-Virtual Car adapter or publish binaries.
+**Owner-local EJB declaration-to-class verification:**
+The same verified exploded EAR sorted slot **2**,
+containing a single root EJB JAR, was inspected again with
+DTD/XXE-disabled parsing of its `META-INF/ejb-jar.xml`.
+All **20** `<session>` nodes declare an `ejb-class`, and
+**20/20** fully qualified implementation class names
+resolve to existing ZIP `.class` entries in the JAR.
+`BeanClassesMissing=0`, `BeansWithoutClassDeclaration=0`.
+None of the 20 declared EJB class *leaf* names contains
+`J2534` or `Vehicle` (`J2534SessionBeans=0`,
+`VehicleSessionBeans=0`), while the full archive still
+contains **1** J2534-named `.class` (`J2534ClassFiles=1`).
+This is strong static structural consistency and suggests
+the J2534 class is a **non-bean helper/service candidate**;
+it is NOT evidence that any bean calls it or that VIDA
+uses J2534 in a ReadVin diagnostic session. No class code
+or methods were run, loaded, extracted or exported.
+
+**Next bounded owner-local, read-only gate:** parse only
+Java `.class` **constant-pool structural references** in
+the same archive, using per-entry/aggregate uncompressed
+size limits, robust support for Java class constant tags,
+and only output counts of classes declaring a
+`CONSTANT_Class` reference to the one J2534-named type;
+add count for the 20 declared bean implementation classes
+if feasible. No raw constant-pool strings, class names,
+bytecode, method bodies, paths or VIN output. References
+would prove static class linkage, not actual runtime calls;
+zero reference count may miss reflection or dependencies
+outside this archive. Do not change registry, VIDA server,
+ECU, virtual adapter or build publication.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
