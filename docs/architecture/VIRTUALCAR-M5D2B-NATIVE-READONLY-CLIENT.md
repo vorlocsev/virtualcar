@@ -1,6 +1,15 @@
 # M5D-2b | Authenticated native synthetic read client
 
-Status: **IMPLEMENTED ON FEATURE BRANCH; PRIVATE WINDOWS CI PENDING**.
+Status: **WINDOWS x86/x64 SELF-HOSTED VERIFIED**, PR #105 pending merge.
+
+[Private VMware #42344223822](https://github.com/vorlocsev/virtualcar/actions/runs/42344223822)
+completed SUCCESS on exact feature code SHA `8742b687c388f1603b90d95af95827b86f09b92b`
+and runner `VirtualCar-CI-WIN`. Both native Win32 and x64:
+7/7 CTest and four separate real C++ ↔ C# Host cases PASS
+for sealed F187/F189/F190 fixture, wrong CAN route refusal,
+missing fixture refusal and expired authenticated lease.
+Managed Host 17/17, M5B/M5C-2, Python 252, Go/C/.NET PASS.
+Zero uploaded artifacts. No build distributions or releases.
 The J2534 DLL remains fail-closed and does not link this module.
 This is *not* a real CAN/ISO15765/J2534 adapter.
 

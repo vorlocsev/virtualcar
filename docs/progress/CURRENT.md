@@ -35,7 +35,30 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
-## ACTIVE: M5D-2b native authenticated synthetic VCRD reader (VMware CI pending)
+## NEXT: M5D-2c in-flight read cancellation, Host-loss and restart (NOT IMPLEMENTED)
+
+M5D-2b successfully established serial, authenticated synthetic
+read-only C++ ↔ C# data exchange. The next stage must prove
+cancellation and revocation while a read is *in progress*, not
+only a pre-read lease expiration. Require bounded Host I/O
+deadlines, explicit cancels, rejected stale operation IDs after
+Host restart with reused numeric session tokens, and cleanup
+of every pending ledger slot. Re-run MSVC x86/x64 and managed
+cross-language tests. Keep C++ J2534 ABI fail-closed; physical
+CAN, real ECU/DID responses, PIN, SecurityAccess, writes and
+software publication remain prohibited.
+
+
+## COMPLETED: M5D-2b native authenticated synthetic VCRD reader (Windows x86/x64 PASS, 2026-11-07)
+
+**Private VMware verified:** [#42344223822](https://github.com/vorlocsev/virtualcar/actions/runs/42344223822)
+SUCCESS on exact source `8742b687c388f1603b90d95af95827b86f09b92b` checked out by
+`VirtualCar-CI-WIN`. Native MSVC x86 7/7 and x64 7/7 CTest,
+managed Host 17/17, Python 252, C/Go/.NET, M5B and M5C-2 all PASS.
+For EACH of x86/x64, real C++ ↔ C# pipe runs confirmed sealed
+synthetic F187/F189/F190 reads, wrong CAN route rejection,
+missing fixture denial, and local lease expiry. No uploaded
+artifacts, packages or releases. The J2534 DLL remains fail-closed.
 
 Implementation branch: `feature/m5d2b-native-readonly-ipc-client`.
 The M5B native Windows Named Pipe Client now has a dedicated
@@ -60,8 +83,9 @@ and local lease expiry before any read. Existing M5A 17/17,
 M5B/M5C-2 and native CTest must remain green. No asynchronous
 8-in-flight IPC pipeline is claimed: reads serialize by mutex;
 the eight-slot ledger is retained for exact correlation/limits.
-Live read crash/restart and cancellation tests remain for the next
-follow-up. **Not Windows-validated yet. Keep feature PR draft.**
+Live in-flight read crash/restart and cancellation tests remain for
+the next follow-up. **x86/x64 integration verified**, PR #105
+eligible for merge after documentation-only evidence commit.
 
 No `VirtualCarJ2534Cpp` linkage, no physical CAN, real ECU/vehicle
 identity, SecurityAccess, PIN, programming, artifacts or releases.
@@ -99,14 +123,15 @@ and eight new), native Win32 7/7 CTest, native x64 7/7 CTest,
 M5B x86/x64, M5C-2 host loss/restart x86/x64 and Python 252,
 Legacy C, Go, .NET all PASS. Zero uploaded artifacts.
 Verified only the Host-side synthetic read path; C++ read client
-M5D-2b remains unimplemented.
+M5D-2b is subsequently implemented and verified as documented above.
 This step only enables serial read-only fixture responses inside the
 C# Host; M5D-1's eight-slot native C++ ledger is still isolated.
 
-**Next M5D-2b (NOT IMPLEMENTED):** connect the existing native
-M5C-2 authenticated client and M5D-1 correlator to this Host
-with cross-language Windows x86/x64 read/restart/cancel tests.
-No J2534 DLL linkage or CAN/ECU physical activity. No releases.
+**M5D-2b** subsequently connected the native M5C-2 authenticated
+client to M5D-1 ledger and the C# Host for x86/x64 synthetic
+reads (evidence above). Separate in-flight read cancel and
+Host crash/restart coverage is still pending. No J2534 DLL
+linkage or CAN/ECU physical activity. No releases.
 
 ## COMPLETED: M5D-1 offline synthetic read-only VCRD contract (Windows PASS, 2026-11-07)
 

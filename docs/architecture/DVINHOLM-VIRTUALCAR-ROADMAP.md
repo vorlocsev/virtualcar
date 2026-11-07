@@ -18,7 +18,7 @@ not requirements for the new architecture.
 | M4B-1 | J2534 ISO15765 RX metadata, atomic two-entry queue, 8 ECU routes | COMPLETED, PR #81, CI #15 |
 | M4B-2 | Executed x86 old C DLL vs C++ RX module, 8 synthetic trace gates | COMPLETED, PR #83, CI #638 |
 | M5 | C# Host + secure Named Pipes + native C++ client | M5A/M5B/M5C-1 complete; M5C-2 PR #96 merged as 7bde901, private VMware feature #42339519459 and post-merge #42339851382 SUCCESS, native x86/x64 6/6 CTest and Host-loss/restart PASS; J2534 data plane disabled |
-| M5D | Authenticated read-only synthetic CAN/ISO15765 control/data contract, bounded routing and fail-closed J2534 bridge | M5D-1/2a merged (Host 17/17, Win32/x64 7/7 PASS). M5D-2b native C++ authenticated VCRD + M5D-1 ledger integration prepared on feature branch, Windows x86/x64 cross-language CI PENDING; no asynchronous multi-read pipeline, live-read restart, J2534 DLL, or real ECU activity |
+| M5D | Authenticated read-only synthetic CAN/ISO15765 control/data contract, bounded routing and fail-closed J2534 bridge | M5D-1/2a merged (Host 17/17, native Win32/x64 7/7). M5D-2b cross-language C++ x86/x64 sealed synthetic reads, wrong-route/missing-fixture/expiry checks PASS on private VMware #42344223822, source 8742b68, PR #105 pending merge. M5D-2c in-flight cancel and Host-loss during active read NOT IMPLEMENTED; J2534 DLL fail-closed |
 | M6 | C# WinUI3 private control UI, RU/EN, test results | PLANNED |
 | M7 | Dvinholm x64 native J2534 E2E + x86 client coexistence | PLANNED |
 | M8 | Retire legacy Go/C ONLY after verified behavioral parity | PLANNED |
