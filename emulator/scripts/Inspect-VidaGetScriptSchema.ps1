@@ -36,7 +36,8 @@ if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
 }
 
 # Only Microsoft SQL Server *catalog views*. No script/table content is read.
-# Schema is deliberately fixed to dbo. Invisible means absent OR not permitted.
+# Procedure name is checked across all visible schemas; parameter metadata remains dbo-only.
+# SQL principal metadata permissions can hide objects and schemas.
 $query = @'
 SELECT
   (SELECT COUNT(*) FROM sys.procedures p JOIN sys.schemas s ON s.schema_id=p.schema_id
