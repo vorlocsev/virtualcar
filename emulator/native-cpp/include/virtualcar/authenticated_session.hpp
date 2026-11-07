@@ -6,7 +6,10 @@
 
 #include "virtualcar/ipc_client.hpp"
 #include "virtualcar/lifecycle.hpp"
+#include "virtualcar/readonly_contract.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <span>
@@ -48,6 +51,11 @@ public:
     [[nodiscard]] Result reserve_channel(lifecycle::ChannelKind kind,
                                          std::uint32_t& channel_id);
     [[nodiscard]] Result close_channel(std::uint32_t channel_id);
+    // M5D-2b: a serial, authenticated synthetic 0x22 DID request. The
+    // returned buffer is an offline VCRF fixture, never physical CAN data.
+    [[nodiscard]] Result read_synthetic(readonly::Route route, std::uint16_t did,
+                                        std::array<std::uint8_t, 61>& bytes,
+                                        std::size_t& length);
     [[nodiscard]] Result disconnect() noexcept;
 
     // Local state/lease check only; it is not a remote health probe.
@@ -61,11 +69,17 @@ private:
     [[nodiscard]] Result keep_alive_locked();
     [[nodiscard]] static Result map_ipc(ipc::Result value) noexcept;
     [[nodiscard]] static Result map_lifecycle(lifecycle::Result value) noexcept;
+    [[nodiscard]] static Result map_readonly(readonly::Result value) noexcept;
 
     mutable std::mutex mutex_;
     ipc::Client client_;
     lifecycle::BoundedSession lifecycle_;
     lifecycle::SessionKey key_{};
+    readonly::Ledger ledger_;
+    readonly::Route read_route_{};
+    // Last issued ID survives disconnect/rebind/restart in this object.
+    std::uint64_t next_read_operation_id_{1};
+    bool read_route_bound_{};
     bool active_{};
 };
 

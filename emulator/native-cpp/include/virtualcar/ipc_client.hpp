@@ -10,6 +10,7 @@
 #include <span>
 #include <string_view>
 #include <vector>
+#include "virtualcar/readonly_contract.hpp"
 
 namespace virtualcar::ipc {
 
@@ -29,7 +30,9 @@ enum class Kind : std::uint16_t {
     hello = 1,
     keep_alive = 2,
     goodbye = 3,
-    ack = 4
+    ack = 4,
+    read_request = 5,
+    read_reply = 6
 };
 
 struct SessionToken final {
@@ -80,6 +83,10 @@ public:
                                  std::uint32_t expected_server_pid,
                                  std::uint32_t timeout_ms = 3000);
     [[nodiscard]] Result keep_alive();
+    // M5D-2b: exactly one allowlisted synthetic 0x22 read over the already
+    // authenticated current-user pipe. No generic CAN/J2534 transmit API.
+    [[nodiscard]] Result read_synthetic(const readonly::Envelope& request,
+                                        readonly::Envelope& response);
     [[nodiscard]] Result disconnect() noexcept;
 
     [[nodiscard]] bool connected() const noexcept;

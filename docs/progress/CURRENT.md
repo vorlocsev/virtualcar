@@ -35,6 +35,37 @@ from `main` and completed SUCCESS in #42321161342, validating
 `development` commit `2b5bef8`. Four other aliases remain untested.
 
 
+## ACTIVE: M5D-2b native authenticated synthetic VCRD reader (VMware CI pending)
+
+Implementation branch: `feature/m5d2b-native-readonly-ipc-client`.
+The M5B native Windows Named Pipe Client now has a dedicated
+`read_synthetic` method that accepts only valid M5D-1 0x22 requests,
+writes an authenticated VCLB kind=5 envelope, and expects VCLB kind=6
+containing one exact bounded VCRD positive reply. It verifies the
+outer session/generation, process-bound owner identity, operation ID,
+CAN route, DID and 0x62 service before exposing any bytes.
+
+M5C-2 `AuthenticatedSession` now composes M5D-1 `Ledger` and
+native IPC read. It first validates and heartbeats the authenticated
+Host; its first route is fixed for the rest of that session;
+operation IDs increase across disconnect and reconnect; only
+F187/F189/F190 may be requested; Ledger records, correlates, times
+out and revokes operations. Host denial, malformed reply, timeout,
+lease expiry and disconnect revoke all channel and pending state.
+
+New Windows cross-language CLI modes are being prepared for BOTH
+native Win32 and x64: positive sealed synthetic fixture reads,
+denial of mismatched CAN route, missing VCRF fixture rejection,
+and local lease expiry before any read. Existing M5A 17/17,
+M5B/M5C-2 and native CTest must remain green. No asynchronous
+8-in-flight IPC pipeline is claimed: reads serialize by mutex;
+the eight-slot ledger is retained for exact correlation/limits.
+Live read crash/restart and cancellation tests remain for the next
+follow-up. **Not Windows-validated yet. Keep feature PR draft.**
+
+No `VirtualCarJ2534Cpp` linkage, no physical CAN, real ECU/vehicle
+identity, SecurityAccess, PIN, programming, artifacts or releases.
+
 ## COMPLETED: M5D-2a authenticated C# Host synthetic fixture reads (Windows PASS, 2026-11-07)
 
 **Merged and verified:** PR #102 merged into `development`

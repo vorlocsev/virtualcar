@@ -181,7 +181,7 @@ Result transfer_exact(HANDLE pipe, std::span<std::uint8_t> bytes,
 bool FrameCodec::supported(std::uint16_t kind) noexcept
 {
     return kind >= static_cast<std::uint16_t>(Kind::hello) &&
-        kind <= static_cast<std::uint16_t>(Kind::ack);
+        kind <= static_cast<std::uint16_t>(Kind::read_reply);
 }
 
 bool FrameCodec::encode(const Frame& frame, std::vector<std::uint8_t>& output)
@@ -420,6 +420,93 @@ Result Client::keep_alive()
             close_locked();
             return Result::protocol_error;
         }
+        return Result::ok;
+    } catch (...) {
+        close_locked();
+        throw;
+    }
+}
+
+Result Client::read_synthetic(const readonly::Envelope& request,
+                              readonly::Envelope& response)
+{
+    std::lock_guard<std::mutex> guard(mutex_);
+    response = {};
+    if (is_invalid_handle(pipe_) || session_.id == 0 || session_.generation == 0)
+        return Result::not_authenticated;
+    if (request.kind != readonly::Kind::read_request ||
+        request.owner.session_id != session_.id ||
+        request.owner.generation != session_.generation ||
+        request.owner.server_pid != session_.server_pid ||
+        request.owner.server_created_100ns != session_.server_creation_time_100ns)
+        return Result::invalid;
+
+    std::array<std::uint8_t, readonly::Codec::maximum_wire_size> inner{};
+    std::size_t used = 0;
+    if (!readonly::Codec::encode(request, inner, used) ||
+        used != readonly::Codec::header_size + 3)
+        return Result::invalid;
+
+    try {
+        Frame outer{};
+        outer.kind = static_cast<std::uint16_t>(Kind::read_request);
+        outer.session_id = session_.id;
+        outer.generation = session_.generation;
+        outer.payload.assign(inner.begin(), inner.begin() +
+            static_cast<std::ptrdiff_t>(used));
+
+        Result result = write_frame(outer);
+        if (result != Result::ok) {
+            close_locked();
+            return result;
+        }
+
+        // Only accept the dedicated Host VCLB read-reply kind and an exact
+        // bounded 60+4..64 byte VCRD body. No general-purpose pipe messages.
+        std::array<std::uint8_t, FrameCodec::header_length> header{};
+        result = read_exact(header);
+        if (result != Result::ok) {
+            close_locked();
+            return result;
+        }
+        const std::uint32_t len = get_u32(header.data() + 8);
+        if (!std::equal(magic.begin(), magic.end(), header.begin()) ||
+            get_u16(header.data() + 4) != FrameCodec::version ||
+            get_u16(header.data() + 6) !=
+                static_cast<std::uint16_t>(Kind::read_reply) ||
+            get_u64(header.data() + 12) != session_.id ||
+            get_u64(header.data() + 20) != session_.generation ||
+            len < readonly::Codec::header_size + 4 ||
+            len > readonly::Codec::maximum_wire_size) {
+            close_locked();
+            return Result::protocol_error;
+        }
+
+        std::array<std::uint8_t, readonly::Codec::maximum_wire_size> raw{};
+        result = read_exact(std::span<std::uint8_t>(raw.data(), len));
+        if (result != Result::ok) {
+            close_locked();
+            return result;
+        }
+        readonly::Envelope decoded{};
+        if (!readonly::Codec::decode(
+                std::span<const std::uint8_t>(raw.data(), len), decoded) ||
+            decoded.kind != readonly::Kind::read_response ||
+            decoded.operation_id != request.operation_id ||
+            decoded.owner.session_id != request.owner.session_id ||
+            decoded.owner.generation != request.owner.generation ||
+            decoded.owner.server_pid != request.owner.server_pid ||
+            decoded.owner.server_created_100ns !=
+                request.owner.server_created_100ns ||
+            decoded.route.request_can_id != request.route.request_can_id ||
+            decoded.route.response_can_id != request.route.response_can_id ||
+            decoded.route.extended != request.route.extended ||
+            decoded.payload[1] != request.payload[1] ||
+            decoded.payload[2] != request.payload[2]) {
+            close_locked();
+            return Result::protocol_error;
+        }
+        response = decoded;
         return Result::ok;
     } catch (...) {
         close_locked();

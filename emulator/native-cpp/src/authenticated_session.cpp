@@ -8,6 +8,9 @@
 
 #include "virtualcar/authenticated_session.hpp"
 
+#include <algorithm>
+#include <limits>
+
 namespace virtualcar::session {
 
 AuthenticatedSession::AuthenticatedSession(std::uint64_t lease_ms) noexcept
@@ -61,6 +64,9 @@ Result AuthenticatedSession::connect(std::wstring_view pipe_name,
         return map_lifecycle(started);
     }
 
+    ledger_.revoke();
+    read_route_ = {};
+    read_route_bound_ = false;
     key_ = key;
     active_ = true;
     return Result::ok;
@@ -143,11 +149,94 @@ Result AuthenticatedSession::close_channel(std::uint32_t channel_id)
     return map_lifecycle(status);
 }
 
+Result AuthenticatedSession::read_synthetic(
+    readonly::Route route, std::uint16_t did,
+    std::array<std::uint8_t, 61>& bytes, std::size_t& length)
+{
+    const std::lock_guard<std::mutex> lock(mutex_);
+    bytes.fill(0);
+    length = 0;
+    if ((did != 0xf187U && did != 0xf189U && did != 0xf190U) ||
+        !readonly::Codec::valid_route(route))
+        return Result::invalid;
+    if (next_read_operation_id_ == (std::numeric_limits<std::uint64_t>::max)())
+        return Result::exhausted;
+
+    const Result health = keep_alive_locked();
+    if (health != Result::ok)
+        return health;
+
+    const std::uint64_t now = static_cast<std::uint64_t>(GetTickCount64());
+    const readonly::Identity owner{key_.id, key_.generation,
+        key_.server_pid, key_.server_creation_time_100ns};
+    if (!read_route_bound_) {
+        const readonly::Result b = ledger_.bind(owner, route, now, 3000);
+        if (b != readonly::Result::ok) {
+            revoke_locked();
+            return map_readonly(b);
+        }
+        read_route_ = route;
+        read_route_bound_ = true;
+    } else if (read_route_.request_can_id != route.request_can_id ||
+               read_route_.response_can_id != route.response_can_id ||
+               read_route_.extended != route.extended) {
+        // Never switch synthetic CAN routes within one authenticated pipe.
+        return Result::invalid;
+    }
+
+    readonly::Envelope request{};
+    request.kind = readonly::Kind::read_request;
+    request.owner = owner;
+    request.operation_id = next_read_operation_id_;
+    request.route = route;
+    request.length = 3;
+    request.payload[0] = 0x22U;
+    request.payload[1] = static_cast<std::uint8_t>(did >> 8U);
+    request.payload[2] = static_cast<std::uint8_t>(did);
+
+    const readonly::Result queued = ledger_.submit(request, now);
+    if (queued != readonly::Result::ok) {
+        if (!ledger_.active())
+            revoke_locked();
+        return map_readonly(queued);
+    }
+    ++next_read_operation_id_;
+
+    readonly::Envelope response{};
+    const ipc::Result wire = client_.read_synthetic(request, response);
+    if (wire != ipc::Result::ok) {
+        revoke_locked();
+        return map_ipc(wire);
+    }
+
+    const std::uint64_t received = static_cast<std::uint64_t>(GetTickCount64());
+    const readonly::Result done = ledger_.complete(response, received);
+    if (done != readonly::Result::ok) {
+        revoke_locked();
+        return map_readonly(done);
+    }
+    // A valid VCRD response does not itself grant permission to extend
+    // or resurrect an expired M5C-2 authenticated lifecycle.
+    const lifecycle::Result lease = lifecycle_.validate(key_, received);
+    if (lease != lifecycle::Result::ok) {
+        revoke_locked();
+        return map_lifecycle(lease);
+    }
+
+    length = static_cast<std::size_t>(response.length - 3);
+    std::copy_n(response.payload.begin() + 3,
+        static_cast<std::ptrdiff_t>(length), bytes.begin());
+    return Result::ok;
+}
+
 Result AuthenticatedSession::disconnect() noexcept
 {
     const std::lock_guard<std::mutex> lock(mutex_);
     const ipc::Result remote = client_.disconnect();
     lifecycle_.reset();
+    ledger_.revoke();
+    read_route_ = {};
+    read_route_bound_ = false;
     key_ = {};
     active_ = false;
     return map_ipc(remote);
@@ -158,6 +247,9 @@ void AuthenticatedSession::revoke_locked() noexcept
     if (client_.connected())
         (void)client_.disconnect();
     lifecycle_.reset();
+    ledger_.revoke();
+    read_route_ = {};
+    read_route_bound_ = false;
     key_ = {};
     active_ = false;
 }
@@ -209,6 +301,23 @@ Result AuthenticatedSession::map_ipc(ipc::Result value) noexcept
     case ipc::Result::peer_mismatch: return Result::peer_mismatch;
     case ipc::Result::not_authenticated: return Result::not_authenticated;
     case ipc::Result::io_error: return Result::io_error;
+    }
+    return Result::io_error;
+}
+
+Result AuthenticatedSession::map_readonly(readonly::Result value) noexcept
+{
+    switch (value) {
+    case readonly::Result::ok: return Result::ok;
+    case readonly::Result::invalid: return Result::invalid;
+    case readonly::Result::denied: return Result::protocol_error;
+    case readonly::Result::not_ready: return Result::not_authenticated;
+    case readonly::Result::capacity: return Result::capacity;
+    case readonly::Result::duplicate: return Result::invalid;
+    case readonly::Result::stale: return Result::protocol_error;
+    case readonly::Result::expired: return Result::expired;
+    case readonly::Result::clock_regressed: return Result::clock_regressed;
+    case readonly::Result::exhausted: return Result::exhausted;
     }
     return Result::io_error;
 }

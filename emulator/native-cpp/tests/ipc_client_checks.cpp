@@ -519,6 +519,104 @@ bool cross_language_lifecycle_host_restart(const std::wstring& pipe_name,
     return true;
 }
 
+bool cross_language_readonly_positive(const std::wstring& pipe_name,
+                                      std::uint32_t expected_server_pid)
+{
+    AuthenticatedSession session;
+    const auto secret = test_secret();
+    if (session.connect(pipe_name, secret, expected_server_pid, 5000) != SessionResult::ok)
+        return false;
+
+    constexpr virtualcar::readonly::Route route{0x7e0U, 0x7e8U, false};
+    constexpr std::array<std::uint16_t, 3> dids{0xf187U, 0xf189U, 0xf190U};
+    constexpr std::array<std::array<std::uint8_t, 3>, 3> expected{{
+        {{'A', 'B', 0}},
+        {{'C', 0, 0}},
+        {{'L', 'A', 'B'}}
+    }};
+    constexpr std::array<std::size_t, 3> sizes{2U, 1U, 3U};
+    for (std::size_t i = 0; i < dids.size(); ++i) {
+        std::array<std::uint8_t, 61> body{};
+        std::size_t size = 0;
+        const SessionResult result = session.read_synthetic(route, dids[i], body, size);
+        if (result != SessionResult::ok || size != sizes[i] ||
+            !std::equal(body.begin(), body.begin() +
+                static_cast<std::ptrdiff_t>(size), expected[i].begin())) {
+            std::printf("FAIL native synthetic read DID %04x (status=%u, count=%zu)\\n",
+                static_cast<unsigned>(dids[i]),
+                static_cast<unsigned>(result), size);
+            return false;
+        }
+    }
+
+    std::array<std::uint8_t, 61> blocked{};
+    std::size_t blocked_size{};
+    if (session.read_synthetic(route, 0xf191U, blocked, blocked_size) !=
+            SessionResult::invalid ||
+        blocked_size != 0 || !session.connected()) {
+        std::printf("FAIL unauthorized DID was not rejected locally\\n");
+        return false;
+    }
+    const virtualcar::readonly::Route wrong_route{0x7e1U, 0x7e8U, false};
+    if (session.read_synthetic(wrong_route, 0xf187U,
+            blocked, blocked_size) != SessionResult::invalid ||
+        blocked_size != 0 || !session.connected()) {
+        std::printf("FAIL route switching was not blocked locally\\n");
+        return false;
+    }
+    if (session.keep_alive() != SessionResult::ok ||
+        session.disconnect() != SessionResult::ok ||
+        session.snapshot().active || session.snapshot().channels != 0) {
+        std::printf("FAIL native read did not close authenticated lifecycle\\n");
+        return false;
+    }
+    std::printf("PASS native C++ x86/x64 synthetic F187/F189/F190 read contract\\n");
+    return true;
+}
+
+bool cross_language_readonly_deny(const std::wstring& pipe_name,
+                                  std::uint32_t expected_server_pid,
+                                  bool missing_fixture)
+{
+    AuthenticatedSession session;
+    const auto secret = test_secret();
+    if (session.connect(pipe_name, secret, expected_server_pid, 5000) != SessionResult::ok)
+        return false;
+
+    const virtualcar::readonly::Route route{
+        missing_fixture ? 0x7e0U : 0x7e1U, 0x7e8U, false};
+    std::array<std::uint8_t, 61> data{};
+    std::size_t count{};
+    const SessionResult result = session.read_synthetic(
+        route, 0xf187U, data, count);
+    if (result == SessionResult::ok || result == SessionResult::invalid ||
+        count != 0 || session.connected() ||
+        session.snapshot().active || session.snapshot().channels != 0) {
+        std::printf("FAIL native read did not revoke on denied Host fixture/route\\n");
+        return false;
+    }
+    std::printf("PASS native read fails closed when Host denies route/fixture\\n");
+    return true;
+}
+
+bool cross_language_readonly_expiry(const std::wstring& pipe_name,
+                                    std::uint32_t expected_server_pid)
+{
+    AuthenticatedSession session(250);
+    const auto secret = test_secret();
+    if (session.connect(pipe_name, secret, expected_server_pid, 5000) != SessionResult::ok)
+        return false;
+
+    Sleep(350);
+    constexpr virtualcar::readonly::Route route{0x7e0U, 0x7e8U, false};
+    std::array<std::uint8_t, 61> data{};
+    std::size_t count{};
+    return session.read_synthetic(route, 0xf187U, data, count) ==
+               SessionResult::expired &&
+           count == 0 && !session.connected() &&
+           !session.snapshot().active && session.snapshot().channels == 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -527,7 +625,11 @@ int main(int argc, char** argv)
          (std::strcmp(argv[1], "--connect") == 0 ||
           std::strcmp(argv[1], "--reject-peer") == 0 ||
           std::strcmp(argv[1], "--lifecycle") == 0 ||
-          std::strcmp(argv[1], "--lifecycle-expire") == 0)) ||
+          std::strcmp(argv[1], "--lifecycle-expire") == 0 ||
+          std::strcmp(argv[1], "--readonly") == 0 ||
+          std::strcmp(argv[1], "--readonly-deny") == 0 ||
+          std::strcmp(argv[1], "--readonly-no-fixture") == 0 ||
+          std::strcmp(argv[1], "--readonly-expire") == 0)) ||
         (argc == 7 && std::strcmp(argv[1], "--lifecycle-restart") == 0)) {
         std::wstring pipe_name;
         for (const char* p = argv[2]; *p != '\0'; ++p) {
@@ -546,6 +648,14 @@ int main(int argc, char** argv)
             return cross_language_authenticated_lifecycle(pipe_name, expected_server_pid) ? 0 : 1;
         if (std::strcmp(argv[1], "--lifecycle-expire") == 0)
             return cross_language_lifecycle_expiry(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--readonly") == 0)
+            return cross_language_readonly_positive(pipe_name, expected_server_pid) ? 0 : 1;
+        if (std::strcmp(argv[1], "--readonly-deny") == 0)
+            return cross_language_readonly_deny(pipe_name, expected_server_pid, false) ? 0 : 1;
+        if (std::strcmp(argv[1], "--readonly-no-fixture") == 0)
+            return cross_language_readonly_deny(pipe_name, expected_server_pid, true) ? 0 : 1;
+        if (std::strcmp(argv[1], "--readonly-expire") == 0)
+            return cross_language_readonly_expiry(pipe_name, expected_server_pid) ? 0 : 1;
         if (std::strcmp(argv[1], "--lifecycle-restart") == 0)
             return cross_language_lifecycle_host_restart(
                 pipe_name, expected_server_pid, argv[4], argv[5], argv[6]) ? 0 : 1;
