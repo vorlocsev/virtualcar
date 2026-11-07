@@ -771,19 +771,41 @@ and listener types remain unidentified. No loopback
 HTTP requests were sent; no addresses/ports, command lines,
 URLs, secrets or ECU traffic were disclosed.
 
-**Next safe owner-local read-only gate:** identify whether
-the running WildFly server has a conventional
-`standalone/deployments` directory relative to its
-**locally parsed** `-Djboss.home.dir` or
-`-Djboss.server.base.dir`. Only return deployment
-artifact extension counts (`.war`/`.ear`/`.jar`) and
-marker counts (`.deployed`/`.failed`/`.isdeploying`);
-no raw command-line output, source archives, deployment
-names, full paths or HTTP requests. Note: deployments may
-be managed through server configuration/content store,
-so an empty directory is **inconclusive**, not proof that
-no applications are deployed. Do not start services,
-modify deployments, register J2534 or attempt ECU I/O.
+**Owner-local read-only WildFly deployment-folder check:**
+On the verified Java x64 PID **4324** (parent 12228 and
+`org.jboss.as.standalone` launcher hint),
+`JBossHomeFound=True`, `ExplicitBaseFound=False`,
+`BaseResolved=True`, `BaseAbsolute=True` and
+`DeploymentDirectoryExists=True`. Within the default
+`jboss.home.dir/standalone/deployments`, the operator
+observed **3 files**, **2 directories**, with counts
+`WAR=0`, `EAR=0`, `JAR=0`, `.deployed=2`,
+`.failed=0`, `.isdeploying=0` among the immediate files.
+Two `.deployed` scanner markers strongly suggest **two
+successfully deployed items**, potentially corresponding
+to two exploded directories, but no name correspondence,
+application content or diagnostic functionality has been
+verified. The absence of `.war`/`.ear` archives in the
+root does **not** rule out exploded deployments.
+
+A subsequent attempted rerun submitted `if` and `else`
+as separate commands and returned PowerShell
+`CommandNotFoundException` for `else`; that is a CLI
+parsing artifact and does not invalidate the completed
+first output. An earlier untrusted scan was invalidated
+by the Windows PowerShell 5.1 reserved `$HOME` variable;
+the new successful output uses `$jbossHomeDir`.
+
+**Next read-only operator-local gate:** correlate each
+`.deployed` marker filename stem with directory names
+**in memory only**, outputting each directory's type
+(`.war`, `.ear`, other), exact marker-match booleans,
+plus presence of top-level `WEB-INF` or `META-INF`
+folders. Do not display actual directory/marker names,
+paths, package contents, command lines, VIN or credentials;
+do not execute anything or register J2534. Even a confirmed
+WAR structure will not itself prove VIDA diagnostics or
+DiCE communication.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
