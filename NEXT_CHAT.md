@@ -1,6 +1,58 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: M4B-2 passed on Windows VMware runner; validate current M5A branch next
+## ACTIVE checkpoint: M5D-2eB verified; return to P0 CEM evidence (2026-11-07)
+
+Virtual Car remains a PRIVATE synthetic/read-only lab separate from Dvinholm.
+No releases, adapter installation, firmware writes, SecurityAccess or genuine ECU
+positive responses are authorized. Dvinholm remains the primary product.
+
+### Confirmed live development state
+
+- `development` merge HEAD at this checkpoint:
+  `f1c1b7b4a349d89ba81a52fb643ac69de2281055`.
+- M5D-2eB isolated Ledger cancellation, expiry and Host-owner race tests
+  merged via [PR #125](https://github.com/vorlocsev/virtualcar/pull/125).
+  [Manual VMware #42373748380](https://github.com/vorlocsev/virtualcar/actions/runs/42373748380)
+  validated exact feature SHA `6eb2b69d205ae1bcc06126e655d98dbc34127b2c`.
+- M5D-2eB live Windows C++/C# test merged via
+  [PR #128](https://github.com/vorlocsev/virtualcar/pull/128).
+  It tests two owned C# Host crashes separated by a cooperative cancel on
+  one retained native session and then a **fourth** clean synthetic F187 Host.
+  [Feature VMware #42375232666](https://github.com/vorlocsev/virtualcar/actions/runs/42375232666)
+  validated exact source `b084c695141c38280e2d4e7bf671449481d8fdcc`:
+  x86 and x64 native 8/8 CTest each, new cross-process test PASS on each
+  architecture, C# Host 17/17, Python 252, Go/C and managed checks PASS.
+- [Post-merge VMware #42375477826](https://github.com/vorlocsev/virtualcar/actions/runs/42375477826)
+  completed SUCCESS on exact development SHA
+  `f1c1b7b4a349d89ba81a52fb643ac69de2281055`.
+  Both x86/x64 Host crash/cancel/crash and final recovery tests actually PASS,
+  CTest 8/8 per arch, Python 252, C# 17/17. **Zero uploaded artifacts**.
+- Owner-only validation runs on Windows self-hosted VM. Manual feature
+  selection is allowlisted on main; workflow files are synchronized with
+  development. The fail-closed C++ J2534 DLL is **not linked** to the
+  synthetic local Host read path.
+
+### Next unblocked priority
+
+Return to [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):
+read-only XC90 V8 MY2009 CEM identification, specifically verified
+SectorV client normal-mode predicate and the A3/A6/B9F0 route/response
+evidence. The available MY2005 LAB SectorV example matched B9FB 13/13 but
+then saw no hardware A3 RX and zero reachable modules. It does NOT verify
+MY2009 compatibility, authorize A3/E3 replies or establish normal-mode
+acceptance. No real MY2009 full discovery capture is present in the
+repository. Keep B9FB replay and READ128 unchanged.
+
+Best next engineering increment is **evidence-bound**: audit an
+anonymized, single continuous client/J2534 trace with actual client
+outcome to decide whether transport, identity parsing or subsequent
+ECU discovery fails. Require verified provenance before adding any
+positive vehicle response. Follow AGENTS.md: focused PR, 6-8 checks,
+exact SHA VMware validation when a Windows component changes.
+
+---
+
+## HISTORICAL checkpoint (archived): M4B-2, before M5A integration
 
 Dvinholm remains PRIMARY. Virtual Car is a PRIVATE, read-only development
 lab, not a released or registered J2534 driver. Never publish Virtual Car
