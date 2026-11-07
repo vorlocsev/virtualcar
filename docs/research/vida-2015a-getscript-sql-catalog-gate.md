@@ -120,11 +120,11 @@ From the project root in Windows PowerShell 5.1 or a compatible PowerShell:
 ### Local VIDA SQL certificate trust (explicit opt-in)
 
 On the owner's separate VIDA 2015A Windows 11 LTSC machine, the SQL
-named instance is \`.\VIDA\`: \`MSSQL$VIDA\` and \`SQLBrowser\`
+named instance is `.\VIDA`: `MSSQL$VIDA` and `SQLBrowser`
 were running. The owner's interactive, read-only
-\`Invoke-Sqlcmd -TrustServerCertificate\` returned
-\`Connected=1\`, and the \`DiagSwdlRepository\` database
-was \`ONLINE\` with \`HAS_DBACCESS=1\`. This verifies only the
+`Invoke-Sqlcmd -TrustServerCertificate` returned
+`Connected=1`, and the `DiagSwdlRepository` database
+was `ONLINE` with `HAS_DBACCESS=1`. This verifies only the
 SQL endpoint and database access; **GetScript catalog and
 ReadVin execution have not been observed**.
 
@@ -132,31 +132,31 @@ Microsoft SqlServer module v22 defaults to checking the SQL TLS
 certificate chain. A local SQL installation with an untrusted
 self-signed certificate can reject login *after* successfully finding
 the server. The helper now accepts the optional
-\`-TrustServerCertificate\` switch for explicit, owner-authorized
-**local** instances only (e.g. \`.\VIDA\`, \`(local)\VIDA\`,
-\`localhost\VIDA\`). Without the switch, normal certificate
+`-TrustServerCertificate` switch for explicit, owner-authorized
+**local** instances only (e.g. `.\VIDA`, `(local)\VIDA`,
+`localhost\VIDA`). Without the switch, normal certificate
 verification remains enabled. It rejects a nonlocal
-\`-ServerInstance\` when the switch is supplied and never changes
+`-ServerInstance` when the switch is supplied and never changes
 the SQL Server TLS settings or system certificate trust store.
 
 On the authorized VIDA host only, after copying the repository to
-\`C:\VirtualCar-VIDA\` and creating a private directory:
+`C:\VirtualCar-VIDA` and creating a private directory:
 
-\`\`\`powershell
+```powershell
 Set-ExecutionPolicy -Scope Process RemoteSigned -Force
 Import-Module SqlServer -ErrorAction Stop
 New-Item -ItemType Directory -Path 'C:\VIDA-private' -Force | Out-Null
-& 'C:\VirtualCar-VIDA\emulator\scripts\Inspect-VidaGetScriptSchema.ps1' \`
-    -ServerInstance '.\VIDA' \`
-    -TrustServerCertificate \`
+& 'C:\VirtualCar-VIDA\emulator\scripts\Inspect-VidaGetScriptSchema.ps1' `
+    -ServerInstance '.\VIDA' `
+    -TrustServerCertificate `
     -OutputFile 'C:\VIDA-private\GetScript-catalog-01.json'
-\`\`\`
+```
 
 Use a **new filename** on each attempt, because the helper refuses to
 overwrite existing private output. No raw script XML, SQL body, VIN
 or database connection string should be uploaded to GitHub.
 The helper still queries **catalog metadata only** and cannot
-establish which \`ReadVin=4\` XML VIDA actually selects.
+establish which `ReadVin=4` XML VIDA actually selects.
 
 The SqlServer module must already be installed from a trusted source;
 the helper does not install dependencies. Use existing authorized Windows
