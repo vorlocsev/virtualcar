@@ -608,6 +608,32 @@ may load only after communication begins; never infer
 VIDA compatibility solely from installed J2534 registration.
 Do not register the proxy or publish binaries.
 
+**Owner-local passive VIDA process/module gate:**
+At observation time, Windows `Get-Process` name filter
+`vida|dice|vct` found `DevCtrlSV3` (PID 4644) and
+`VidaMonitor` (PID 12080). System-wide `tasklist /M`
+reported **no loaded process** matching any of
+`TSDiCE32.dll`, `TSDiCE64.dll`, `monpj432.dll` at that
+time. This is strictly a snapshot; it does NOT establish
+whether the full VIDA UI or diagnostic module was active,
+whether a diagnostic adapter was selected, or whether one
+of these DLLs will load upon communication. A system-wide
+module-name scan also cannot rule out a differently named
+DiCE communication stack. `VidaMonitor` has been listed as
+a VIDA component in third-party process inventories, but
+we did not verify the binary manufacturer or architecture
+on the owner's installation; `DevCtrlSV3` role remains
+unverified. No process start/stop, hardware communication,
+DLL injection/load, or adapter registry modification.
+
+Next local-only passive check: obtain version-resource
+`CompanyName`/`ProductName`/`FileDescription` and PE
+machine type **for these two running executables** without
+emitting their paths or command-line arguments, and list
+service associations by process ID. Distinguish any
+subsequent actual diagnostic UI session from mere background
+process presence before attempting a J2534 capture.
+
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
 1. Establish how the **original VIDA caller** obtains/selects
