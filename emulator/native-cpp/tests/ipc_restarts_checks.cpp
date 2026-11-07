@@ -131,6 +131,7 @@ bool run(const std::wstring& pipe, std::uint32_t first_pid,
                 session.disconnect() != Result::ok ||
                 !fully_revoked(session))
                 return false;
+            if (!put_marker(file(round, ".verified"), "verified")) return false;
             std::printf("PASS: M5D2eB three revoked Host epochs, clean F187 recovery\n");
             return true;
         }
