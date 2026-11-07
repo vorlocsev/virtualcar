@@ -13,6 +13,17 @@
   reason to discard the log for 2015A-labeled VIDA research.
   Static original DLL hashes and observed runtime SQL/XML
   are still required for exact behavioral/patch identity.
+- **Original ReadVin SQL caller-branch check, offline 8/8 PASS**:
+  SHA-pinned original `BizServices.ScriptRepository.DLL` and
+  `AppServices.Scripting.DLL` show type-4 ReadVin -> five-arg
+  `GetScript` -> `GetOneScriptFromDb`; `GetFromDb` branches on
+  profile null versus `CommaSeparate(profile.Profiles)`,
+  script-ID empty/nonempty, and ECU-type sentinel -1.
+  No SQL rows can raise `ScriptMissingException`, a lookup
+  failure distinct from ECU transport/no-VIN; a result
+  array returns its first XML, not proof of VIN acceptance.
+  See [SQL caller branch note](docs/research/vida-2015a-getscript-sql-catalog-gate.md).
+  No SQL, VIDA instance or physical adapter was executed.
 - One Sep 26 VIDA2014D SQL failure names **ImageRepository**
   via VehicleImageProvider.GetImage; **not GetScript** or
   DiagSwdlRepository. One J2534 driver **load attempt**
