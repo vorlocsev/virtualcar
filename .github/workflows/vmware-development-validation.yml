@@ -51,6 +51,7 @@ on:
           - feature/m5d2a-csharp-synthetic-read-host
           - feature/m5d2b-native-readonly-ipc-client
           - feature/m5d2c-inflight-read-cancel-recovery
+          - feature/m5d2d-synthetic-read-replay-stress
 
 permissions:
   contents: read
@@ -578,6 +579,11 @@ jobs:
             @{label='missing fixture denial'; flag='--readonly-no-fixture'; mode='session'},
             @{label='expired lease denial'; flag='--readonly-expire'; mode='read-session'}
           )
+          # M5D-2d feature explicitly opts in to extended serial stress.
+          # Earlier trusted source refs retain the original four cases.
+          if (Test-Path -LiteralPath 'docs/architecture/VIRTUALCAR-M5D2D-SYNTHETIC-REPLAY-STRESS.md') {
+            $cases += @{label='64 serial synthetic fixture reads'; flag='--readonly-stress'; mode='read-session'}
+          }
           foreach ($arch in @('x86', 'x64')) {
             $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
             foreach ($case in $cases) {
@@ -597,7 +603,11 @@ jobs:
                 if ($exitCode -ne 0) {
                   throw ("M5D2b {0} {1} C# Host exited with {2}" -f $arch, $case.label, $exitCode)
                 }
-                Write-Host ("PASS: M5D2b {0} {1} native C++ <-> C# Host" -f $arch, $case.label)
+                if ($case.flag -eq '--readonly-stress') {
+                  Write-Host ("PASS: M5D2d {0} 64-read native C++ <-> C# Host synthetic stress" -f $arch)
+                } else {
+                  Write-Host ("PASS: M5D2b {0} {1} native C++ <-> C# Host" -f $arch, $case.label)
+                }
               } finally { Stop-M5D2BHost -Process $server }
             }
           }
