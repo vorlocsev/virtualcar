@@ -209,13 +209,32 @@ a `NULL` referenced schema; `referenced_id` can also be `NULL`
 if unresolved. Case differences in recorded names must not be
 silently normalized into proof of identical objects.
 
-**Next catalog-only gate:** check `referenced_id`,
-`OBJECT_SCHEMA_NAME(referenced_id)` and
-`OBJECT_NAME(referenced_id)` plus
-`is_caller_dependent`/`is_ambiguous` for exactly those
-dependencies. The SQL statement and stored procedure must
-not be executed. Actual script selection and client
-acceptance remain unknown.
+The owner subsequently completed this second, metadata-only gate:
+all four references resolved to concrete `dbo` tables:
+
+| Name in procedure definition | Resolved schema/object | Local `referenced_id` | Caller-dependent | Ambiguous |
+|---|---|---:|---|---|
+| `Script` | `dbo.Script` | 288720081 | false | false |
+| `ScriptContent` | `dbo.ScriptContent` | 685245496 | false | false |
+| `scriptprofilemap` | `dbo.ScriptProfileMap` | 580197117 | false | false |
+| `scriptType` | `dbo.ScriptType` | 256719967 | false | false |
+
+SQL Server `OBJECT_SCHEMA_NAME(referenced_id)` and
+`OBJECT_NAME(referenced_id)` returned the resolved names.
+These object IDs are **local database metadata**, not stable
+cross-installation identifiers; do not embed them in the emulator.
+`is_caller_dependent=0` and `is_ambiguous=0` constrain
+reference resolution only. They do not prove all four tables are
+read on the `ReadVin` branch or that the requested script exists.
+
+**Next bounded catalog-only gate:** inspect `sys.columns`
+for the four resolved tables to identify candidate relational
+keys and script-type columns, optionally followed by
+`sys.foreign_key_columns` for recorded relationships.
+Do not fetch `ScriptContent` rows or compressed XML and do
+not execute `GetScript` as part of the metadata audit.
+Actual runtime script selection and client identity acceptance
+remain unknown.
 
 
 
