@@ -376,16 +376,28 @@ reported by this specific counting step. The study has
 not exported element text, attribute values, original XML,
 private binary or real VIN/ECU frames.
 
-Next bounded owner-local structural gate: inspect **only**
-root's immediate child element `LocalName` and counts
-(`XmlReader.Depth=1`) from the same in-memory ZIP XML,
-without publishing text, any attribute values, complete
-script trees, J2534 payloads or external resources.
-Those names can reveal broad script sections, but do
-not independently prove how the original VIDA client
-binds `GetScript.@scriptType`, executes diagnostic
-logic or accepts a vehicle VIN. No emulator positive
-response changes or releases.
+The owner has completed the root-immediate-child
+catalog-free, in-memory-only gate for one local `ReadVin`
+XML variant. `XmlReader.Depth=1` yielded **two** element
+names and counts: `title: 1` and `content: 1`.
+The root-level sketch is therefore `script -> {title, content}`.
+The separate single-line PowerShell enumeration confirmed
+both items explicitly; an earlier short operator response
+`1/1` must not be interpreted as *one* child overall.
+Names suggest a heading and a main content area, but this
+is only a structural inference, **not an analysis of values
+or actual VIDA script execution**.
+
+Next bounded owner-local structural gate: inspect only the
+`LocalName` and aggregate count of direct children of
+`content` (`XmlReader.Depth=2`, following the `content`
+parent at depth 1) in the previously loaded single XML,
+without displaying raw XML, text nodes, attribute values,
+CAN/J2534 requests or diagnostic instructions. The input
+should remain in RAM with a decompression bound and DTD/XXE
+disabled. Actual `GetScript` runtime selection, CEM traffic,
+and VIN/ECU acceptance remain unverified; do not change
+emulator positive replies or publish builds.
 
 
 
