@@ -680,19 +680,19 @@ jobs:
             $native = $clients[$arch]
             $pipe = 'vcm5d2c-cancel-' + $arch + '-' + [guid]::NewGuid().ToString('N')
             $ready = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.ready')
-            $host = $null
+            $heldHost = $null
             $client = $null
             try {
               $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $service,$pipe,$ready)
-              $host = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $hostArgs
-              $client = Start-M5D2CProcess -File $native -Args ('--readonly-cancel "{0}" {1} "{2}"' -f $pipe,$host.Id,$ready)
+              $heldHost = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -Args $hostArgs
+              $client = Start-M5D2CProcess -File $native -Args ('--readonly-cancel "{0}" {1} "{2}"' -f $pipe,$heldHost.Id,$ready)
               Wait-M5D2CMarker -Path $ready -Value 'accepted' -Client $client
               Assert-M5D2CExit -Process $client -Label "$arch concurrent read cancellation"
-              Assert-M5D2CExit -Process $host -Label "$arch canceled Host cleanup"
+              Assert-M5D2CExit -Process $heldHost -Label "$arch canceled Host cleanup"
               Write-Host "PASS: M5D2c $arch accepted read canceled, no stale reply, Host cleanup"
             } finally {
               Stop-M5D2CChild -Process $client
-              Stop-M5D2CChild -Process $host
+              Stop-M5D2CChild -Process $heldHost
               if (Test-Path -LiteralPath $ready) { Remove-Item -LiteralPath $ready -Force }
             }
 
