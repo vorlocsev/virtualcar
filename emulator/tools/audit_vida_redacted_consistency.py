@@ -82,6 +82,7 @@ def analyze(v2, v3):
     for key in ('f114', 'b9fb', 'addvin', 'setx40serial'):
         _yes(flags[key])
     distances = {}
+    binding_declarations = {}
     for label in ('add_vin', 'set_x40_serial'):
         item = groups[label]
         n = checks['add_vin_declarations' if label == 'add_vin' else 'x40_declarations'][0]
@@ -93,6 +94,33 @@ def analyze(v2, v3):
         distances[label] = {
             k: _uint(bins[k]) for k in ('one_edge', 'two_edges', 'three_or_more_edges',
                                         'no_path_in_event_call_graph', 'explicitly_disabled_call')
+        }
+        old = g['declared_identity_edges'][label]
+        newer = item['disabled_attribute_counts']
+        aligned = (
+            ('absent_disabled_attribute', 'unspecified'),
+            ('not_disabled_literal', 'not_disabled_literal'),
+            ('disabled_literal', 'disabled_literal'),
+            ('unrecognized_disabled_literal', 'unrecognized_literal'),
+        )
+        categories = {}
+        for source_key, target_key in aligned:
+            v2_count, v3_count = _uint(old[source_key]), _uint(newer[target_key])
+            if v2_count != v3_count:
+                raise ValueError('identity disabled-attribute categories disagree')
+            categories[target_key] = v3_count
+        if sum(categories.values()) != n:
+            raise ValueError('identity disabled categories do not partition calls')
+        calls_with_params = _uint(item['calls_with_declared_parameter_child'])
+        total_params = _uint(item['declared_parameter_child_total'])
+        if calls_with_params > n or total_params < calls_with_params:
+            raise ValueError('invalid declared parameter counts')
+        binding_declarations[label] = {
+            'call_count': n,
+            'disabled_attribute_categories': categories,
+            'calls_with_declared_parameter_child': calls_with_params,
+            'declared_parameter_child_total': total_params,
+            'explicitly_not_disabled_does_not_prove_execution': True,
         }
     return {
         'schema_version': SCHEMA,
@@ -106,6 +134,13 @@ def analyze(v2, v3):
         'declared_calls': checks['declared_calls'][0],
         'identity_methods': {k: checks[k][0] for k in ('add_vin_declarations','x40_declarations')},
         'declared_chain_length_counts': distances,
+        'identity_parameter_declarations': binding_declarations,
+        'all_identity_calls_have_parameter_child': all(
+            x['calls_with_declared_parameter_child'] == x['call_count']
+            for x in binding_declarations.values()),
+        'identity_disabled_unspecified_total': sum(
+            x['disabled_attribute_categories']['unspecified']
+            for x in binding_declarations.values()),
         'lexical_f114_present': flags['f114'],
         'lexical_b9fb_present': flags['b9fb'],
         'original_xml_included': False,
