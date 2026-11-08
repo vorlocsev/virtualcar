@@ -50,7 +50,11 @@ def audit(private_archive):
             "f114": f114,
         },
         "identity_xml_graph_declarations": {
+            "graph_layout": graph["graph_layout"],
             "node_count": graph["node_count"],
+            "event_handler_count": graph["event_handler_count"],
+            "declared_call_count": graph["declared_call_count"],
+            "named_output_node_is_vehicle_identity_output": graph["named_output_node_is_vehicle_identity_output"],
             "readvin_component_count": graph["readvin_component_node_count"],
             "vehicle_identity_output_count": graph["vehicle_identity_output_node_count"],
             "declared_identity_edges": graph["declared_identity_method_edges"],
