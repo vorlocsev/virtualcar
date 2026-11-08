@@ -258,5 +258,98 @@ class ServiceCatalogTests(unittest.TestCase):
                 main([str(z), str(cat), '--service-definition', str(definition), '--output', str(out)])
 
 
+    def test_26_valid_t122_foreign_key_is_still_declaration_only(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        t122 = b'id,identifier\n7,D2\n9,P3\n'
+        r = audit_sources(xml(), t111, definition, t122)
+        self.assertTrue(r['protocol_catalog_csv_supplied'])
+        self.assertTrue(r['single_readvin_with_matching_t122_protocol_reference_candidate_present'])
+        self.assertFalse(r['actual_protocol_transport_verified'])
+        self.assertFalse(r['j2534_tx_or_ecu_rx_verified'])
+        self.assertFalse(r['accepted_vin_verified'])
+
+    def test_27_missing_t122_key_does_not_match_even_with_definition(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        missing = b'id,identifier\n8,OTHER_PROTOCOL\n'
+        r = audit_sources(xml(), t111, definition, missing)
+        self.assertTrue(r['single_readvin_with_matching_service_definition_root_candidate_present'])
+        self.assertFalse(r['single_readvin_with_matching_t122_protocol_reference_candidate_present'])
+        self.assertFalse(audit_sources(xml(), t111, definition)[
+            'single_readvin_with_matching_t122_protocol_reference_candidate_present'])
+
+    def test_28_missing_service_definition_prevents_t122_promotion(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        t122 = b'id,identifier\n7,D2\n'
+        r = audit_sources(xml(), t111, protocol_catalog_bytes=t122)
+        self.assertFalse(r['single_readvin_with_matching_t122_protocol_reference_candidate_present'])
+        self.assertTrue(r['protocol_catalog_csv_supplied'])
+
+    def test_29_t122_requires_unique_id_and_identifier_headers(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        for raw in (b'id,other\n7,D2\n', b'identifier\nD2\n',
+                    b'id,id,identifier\n7,7,D2\n', b''):
+            with self.subTest(data=raw):
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), t111, definition, raw)
+
+    def test_30_t122_duplicate_and_invalid_rows_fail_closed(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        for raw in (b'id,identifier\n7,D2\n7,OTHER\n',
+                    b'id,identifier\n7,\n', b'id,identifier\ninvalid,D2\n',
+                    b'id,identifier\n7\n', b'id,identifier\n7,D2,EXTRA\n',
+                    b'id,identifier\n'):
+            with self.subTest(data=raw):
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), t111, definition, raw)
+
+    def test_31_t122_private_protocol_names_never_emitted(self):
+        secret = 'SENSITIVE_T122_PROTOCOL_LABEL'
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7345,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        raw = ('id,identifier\n7345,' + secret + '\n').encode()
+        r = json.dumps(audit_sources(xml(), t111, definition, raw))
+        self.assertTrue(json.loads(r)['single_readvin_with_matching_t122_protocol_reference_candidate_present'])
+        for token in (secret, '7345', 'ReadVin', '100'):
+            self.assertNotIn(token, r)
+
+    def test_32_optional_t122_cli_stays_private_and_exclusive(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            z = root / 'readvin.zip'
+            cat = root / 'T111_Service.csv'
+            definition = root / '100.xml'
+            protocols = root / 'T122_Protocol.csv'
+            out = root / 'result.json'
+            with zipfile.ZipFile(z, 'w', compression=zipfile.ZIP_DEFLATED) as a:
+                a.writestr('script.xml', xml())
+            cat.write_bytes(b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n')
+            definition.write_bytes(b'<service id="100"><command/></service>')
+            protocols.write_bytes(b'id,identifier\n7,PRIVATE_D2_NAME\n')
+            args = [str(z), str(cat), '--service-definition', str(definition),
+                    '--protocol-catalog', str(protocols), '--output', str(out)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(args)
+            saved = out.read_text(encoding='utf-8')
+            self.assertTrue(json.loads(saved)['single_readvin_with_matching_t122_protocol_reference_candidate_present'])
+            self.assertNotIn('PRIVATE_D2_NAME', saved)
+            self.assertNotIn(str(protocols), saved)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(args)
+
+    def test_33_t122_bounded_size_and_unsupported_format_rejected(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        for raw in (b'A' * (MAX_CSV_BYTES + 1),
+                    b'id,identifier\n7,D2\x00\n',
+                    b'id,identifier\n7,\xff\n'):
+            with self.subTest(size=len(raw)):
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), t111, definition, raw)
+
+
 if __name__ == '__main__':
     unittest.main()
