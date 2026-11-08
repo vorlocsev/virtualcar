@@ -472,5 +472,151 @@ class ServiceCatalogTests(unittest.TestCase):
                 main(args)
 
 
+    def test_42_t100_t160_t161_profile_join_stays_static_only(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        t122 = b'id,identifier\n7,D2\n'
+        definition = b'<service id="100"><command/></service>'
+        t110 = b'fkT100_EcuVariant,fkT111_Service\n55,100\n'
+        t100 = b'id,identifier,fkT101_Ecu\n55,PRIVATE_VARIANT,99\n'
+        t160 = b'fkT161_Profile,fkT100_EcuVariant\n10,55\n'
+        t161 = b'id,identifier\n10,PROFILE_XC90_SYNTHETIC\n'
+        r = audit_sources(xml(), t111, definition, t122, t110, '55',
+                          t100, t160, t161, 'PROFILE_XC90_SYNTHETIC')
+        self.assertTrue(r['t100_t160_t161_profile_catalogs_supplied'])
+        self.assertTrue(r['single_readvin_with_selected_default_ecu_variant_profile_candidate_present'])
+        for key in ('selected_profile_is_target_vehicle_verified',
+                    'actual_ecu_variant_identity_verified',
+                    'actual_ecu_variant_service_support_verified',
+                    'accepted_vin_verified', 'emulator_replay_approved'):
+            self.assertFalse(r[key])
+
+    def test_43_t100_missing_selected_variant_prevents_profile_join(self):
+        base = (xml(), b'id,fkT122_Protocol,service,mode\n100,7,X,0\n',
+                b'<service id="100"><command/></service>', b'id,identifier\n7,D2\n',
+                b'fkT100_EcuVariant,fkT111_Service\n55,100\n', '55')
+        t100 = b'id,identifier,fkT101_Ecu\n56,DIFFERENT,99\n'
+        t160 = b'fkT161_Profile,fkT100_EcuVariant\n10,55\n'
+        t161 = b'id,identifier\n10,PROFILE_MATCH\n'
+        r = audit_sources(*base, t100, t160, t161, 'PROFILE_MATCH')
+        self.assertTrue(r['single_readvin_with_matching_t110_service_ecu_variant_candidate_present'])
+        self.assertFalse(r['single_readvin_with_selected_default_ecu_variant_profile_candidate_present'])
+
+    def test_44_wrong_profile_and_wrong_t160_relation_are_not_promoted(self):
+        base = (xml(), b'id,fkT122_Protocol,service,mode\n100,7,X,0\n',
+                b'<service id="100"><command/></service>', b'id,identifier\n7,D2\n',
+                b'fkT100_EcuVariant,fkT111_Service\n55,100\n', '55',
+                b'id,identifier,fkT101_Ecu\n55,SYNTHETIC_VARIANT,99\n')
+        t161 = b'id,identifier\n10,PROFILE_A\n11,PROFILE_B\n'
+        for t160, identifier in (
+            (b'fkT161_Profile,fkT100_EcuVariant\n10,55\n', 'PROFILE_B'),
+            (b'fkT161_Profile,fkT100_EcuVariant\n10,56\n', 'PROFILE_A'),
+            (b'fkT161_Profile,fkT100_EcuVariant\n10,55\n', 'UNKNOWN_PROFILE')):
+            with self.subTest(identifier=identifier):
+                r = audit_sources(*base, t160, t161, identifier)
+                self.assertFalse(r['single_readvin_with_selected_default_ecu_variant_profile_candidate_present'])
+
+    def test_45_profile_catalog_arguments_must_be_complete(self):
+        base = (xml(), b'id,fkT122_Protocol,service,mode\n100,7,X,0\n',
+                b'<service id="100"><command/></service>', b'id,identifier\n7,D2\n',
+                b'fkT100_EcuVariant,fkT111_Service\n55,100\n', '55')
+        t100 = b'id,identifier,fkT101_Ecu\n55,SYNTHETIC_VARIANT,99\n'
+        t160 = b'fkT161_Profile,fkT100_EcuVariant\n10,55\n'
+        t161 = b'id,identifier\n10,PROFILE_A\n'
+        for extras in ((t100, None, t161, 'PROFILE_A'),
+                       (t100, t160, None, 'PROFILE_A'),
+                       (t100, t160, t161, None),
+                       (t100, t160, t161, ''),
+                       (t100, t160, t161, 'A\nB')):
+            with self.subTest(mask=[v is None for v in extras]):
+                with self.assertRaises(ValueError):
+                    audit_sources(*base, *extras)
+        with self.assertRaises(ValueError):
+            audit_sources(*base[:4], None, None, t100, t160, t161, 'PROFILE_A')
+
+    def test_46_t100_malformed_and_duplicate_rows_fail_closed(self):
+        base = (xml(), b'id,fkT122_Protocol,service,mode\n100,7,X,0\n',
+                b'<service id="100"><command/></service>', b'id,identifier\n7,D2\n',
+                b'fkT100_EcuVariant,fkT111_Service\n55,100\n', '55')
+        t160 = b'fkT161_Profile,fkT100_EcuVariant\n10,55\n'
+        t161 = b'id,identifier\n10,PROFILE_A\n'
+        for t100 in (b'id,identifier\n55,X\n', b'id,identifier,fkT101_Ecu\n55,X,99\n55,Y,99\n',
+                     b'id,identifier,fkT101_Ecu\n55,,99\n',
+                     b'id,identifier,fkT101_Ecu\n55,X,\n',
+                     b'id,identifier,fkT101_Ecu\ninvalid,X,99\n',
+                     b'id,identifier,fkT101_Ecu\n55,X,0\n',
+                     b'id,identifier,fkT101_Ecu\n'):
+            with self.subTest(t100=t100[:40]):
+                with self.assertRaises(ValueError):
+                    audit_sources(*base, t100, t160, t161, 'PROFILE_A')
+
+    def test_47_t161_duplicate_identifier_and_ambiguous_id_fail_closed(self):
+        base = (xml(), b'id,fkT122_Protocol,service,mode\n100,7,X,0\n',
+                b'<service id="100"><command/></service>', b'id,identifier\n7,D2\n',
+                b'fkT100_EcuVariant,fkT111_Service\n55,100\n', '55',
+                b'id,identifier,fkT101_Ecu\n55,X,99\n',
+                b'fkT161_Profile,fkT100_EcuVariant\n10,55\n')
+        for t161 in (b'id,identifier\n10,PROFILE_A\n11,PROFILE_A\n',
+                     b'id,identifier\n10,PROFILE_A\n10,PROFILE_B\n',
+                     b'id,identifier\n10,\n',
+                     b'id,id,identifier\n10,10,PROFILE_A\n',
+                     b'id,identifier\n'):
+            with self.subTest(t161=t161[:35]):
+                with self.assertRaises(ValueError):
+                    audit_sources(*base, t161, 'PROFILE_A')
+
+    def test_48_t160_ambiguous_and_invalid_links_fail_closed(self):
+        base = (xml(), b'id,fkT122_Protocol,service,mode\n100,7,X,0\n',
+                b'<service id="100"><command/></service>', b'id,identifier\n7,D2\n',
+                b'fkT100_EcuVariant,fkT111_Service\n55,100\n', '55',
+                b'id,identifier,fkT101_Ecu\n55,X,99\n')
+        t161 = b'id,identifier\n10,PROFILE_A\n'
+        for t160 in (b'fkT161_Profile\n10\n',
+                     b'fkT161_Profile,fkT100_EcuVariant\n10,55\n10,55\n',
+                     b'fkT161_Profile,fkT100_EcuVariant\n10,0\n',
+                     b'fkT161_Profile,fkT100_EcuVariant\n10,INVALID\n',
+                     b'fkT161_Profile,fkT100_EcuVariant\n10,55,EXTRA\n',
+                     b'fkT161_Profile,fkT100_EcuVariant\n'):
+            with self.subTest(t160=t160[:45]):
+                with self.assertRaises(ValueError):
+                    audit_sources(*base, t160, t161, 'PROFILE_A')
+
+    def test_49_profile_input_privacy_and_optional_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            z = root / 'selected-readvin.zip'
+            t111 = root / 'T111_Service.csv'
+            definition = root / '100.xml'
+            t122 = root / 'T122_Protocol.csv'
+            t110 = root / 'T110_Service_EcuVariant.csv'
+            t100 = root / 'T100_EcuVariant.csv'
+            t160 = root / 'T160_DefaultEcuVariant.csv'
+            t161 = root / 'T161_Profile.csv'
+            output = root / 'private-summary.json'
+            with zipfile.ZipFile(z, 'w', compression=zipfile.ZIP_DEFLATED) as a:
+                a.writestr('readvin.xml', xml())
+            t111.write_bytes(b'id,fkT122_Protocol,service,mode\n100,7,X,0\n')
+            definition.write_bytes(b'<service id="100"><command/></service>')
+            t122.write_bytes(b'id,identifier\n7,SECRET_PROTOCOL_NAME\n')
+            t110.write_bytes(b'fkT100_EcuVariant,fkT111_Service\n55,100\n')
+            t100.write_bytes(b'id,identifier,fkT101_Ecu\n55,SECRET_ECU_VARIANT,99\n')
+            t160.write_bytes(b'fkT161_Profile,fkT100_EcuVariant\n10,55\n')
+            t161.write_bytes(b'id,identifier\n10,SECRET_PROFILE_IDENTIFIER\n')
+            argv = [str(z), str(t111), '--service-definition', str(definition),
+                    '--protocol-catalog', str(t122), '--t110-catalog', str(t110),
+                    '--ecu-variant-id', '55', '--t100-catalog', str(t100),
+                    '--t160-catalog', str(t160), '--t161-catalog', str(t161),
+                    '--profile-identifier', 'SECRET_PROFILE_IDENTIFIER',
+                    '--output', str(output)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(argv)
+            text = output.read_text(encoding='utf-8')
+            self.assertTrue(json.loads(text)['single_readvin_with_selected_default_ecu_variant_profile_candidate_present'])
+            for secret in ('SECRET_PROFILE_IDENTIFIER', 'SECRET_ECU_VARIANT',
+                           'SECRET_PROTOCOL_NAME', '55', '100', str(t161)):
+                self.assertNotIn(secret, text)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(argv)
+
+
 if __name__ == '__main__':
     unittest.main()
