@@ -988,6 +988,49 @@ or unexpected, stop and review privately before any
 DLL loading/registration/VM test. Do not alter the
 14-file manifest or modify user files to force a pass.
 
+## BIN7 PassiveTrace corrected effective state (2026-11-08)
+
+The owner ran a **read-only** targeted check of the
+`virtualcar.ini` next to their locally self-consistent
+BIN7 package. Reported:
+
+```text
+[VirtualCar] BIN7 PassiveTrace Verification
+PassiveTraceState  MissingSection
+EffectivelyDisabled True
+CorrectedSafetyCheck True
+Result=OK
+```
+
+At the exact BIN7 source commit `14b95e036daf7c908c9da57af0609013f5305062`,
+`emulator/src/virtualcar.c` reads PassiveTrace/Enabled with
+default `"0"`, and only enables replay for parsed value 1.
+Thus a missing `[PassiveTrace]` is an **effectively
+disabled replay state** under this implementation.
+The previous `PassiveTraceDisabled=False` reflected
+an overly strict local check requiring explicit `Enabled=0`,
+not an enabled trace. The other 10/11 local checks
+previously returned true; with this corrected criterion,
+the **static BIN7 SafetyPreflight is now 11/11 PASS**.
+The local 14/14 checksum matches remain verified
+relative to their companion manifest.
+
+**Scope and next gate:** this is a **static, local profile
+and package consistency** result, NOT an independent
+signature check or functional J2534 validation. No ECU
+or vehicle identity acceptance has been established.
+The next user-side action should verify that a future
+test is conducted inside the intended VMware guest
+and that the guest has a snapshot plus **no physical
+J2534 or USB pass-through devices**. The snapshot
+and physical-disconnect state cannot be reliably
+proven by guest OS heuristics; they require manual
+verification from the VMware UI. Guest registry can
+be inventoried read-only without revealing names,
+paths or raw diagnostic data. Do not install or register
+the candidate, change host keys, or run SectorV until
+the VM-safety prerequisites are confirmed.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
