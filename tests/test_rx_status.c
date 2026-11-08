@@ -34,6 +34,16 @@ int main(void) {
     assert(!p2_j2534_rx_read_is_data(7u, 0u));
     assert(!p2_j2534_rx_read_is_data(16u, 0x180u));
     assert(!p2_j2534_rx_read_is_data(0u, 0x009u)); GROUP();
-    printf("dev26: %u/9 native J2534 RxStatus groups OK\n", groups);
-    return groups == 9u ? 0 : 1;
+    /* Bad/stale or overreported message counts must never reach proxy loops. */
+    assert(p2_j2534_rx_batch_is_safe(0u, 1u, 1u));
+    assert(p2_j2534_rx_batch_is_safe(0u, 3u, 2u));
+    assert(p2_j2534_rx_batch_is_safe(0u, 129u, 128u));
+    assert(!p2_j2534_rx_batch_is_safe(0u, 0u, 1u));
+    assert(!p2_j2534_rx_batch_is_safe(0u, 3u, 0u));
+    assert(!p2_j2534_rx_batch_is_safe(0u, 2u, 3u));
+    assert(!p2_j2534_rx_batch_is_safe(0u, 129u, 129u));
+    assert(!p2_j2534_rx_batch_is_safe(7u, 2u, 2u));
+    assert(!p2_j2534_rx_batch_is_safe(16u, 1u, 1u)); GROUP();
+    printf("dev26: %u/10 native J2534 RxStatus groups OK\n", groups);
+    return groups == 10u ? 0 : 1;
 }
