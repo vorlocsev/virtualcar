@@ -281,6 +281,81 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
             'identity_calls_with_wrong_direct_argument_count'], 1)
         self.assertFalse(result['identity_argument_string_type_verified'])
 
+    def test_30_get_name_without_direct_output_property_is_only_weaker_candidate(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        report = audit_xml(raw)
+        self.assertTrue(report['candidate_addvin_route_arity_and_output_shape_lexically_present'])
+        self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertEqual(report['categorical_declarations']['get_outputs_without_direct_property'], 1)
+        self.assertFalse(report['resultget_property_lookup_at_runtime_verified'])
+
+    def test_31_direct_string_property_can_form_stronger_static_candidate(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<extension>', b'<property name="Decoded" class="String"/><extension>')
+        report = audit_xml(raw)
+        self.assertTrue(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertFalse(report['candidate_x40_route_direct_declared_string_output_lexically_present'])
+        self.assertEqual(report['categorical_declarations']['get_outputs_with_unique_direct_string_property'], 1)
+        self.assertFalse(report['vin_accepted_by_client'])
+        self.assertFalse(report['identity_argument_string_type_verified'])
+
+    def test_32_byte_class_is_not_declared_string_compatible(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<extension>', b'<property name="Decoded" class="Byte"/><extension>')
+        report = audit_xml(raw)
+        self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertEqual(report['categorical_declarations']['get_outputs_with_other_or_unknown_class'], 1)
+
+    def test_33_wrapper_nested_property_is_not_direct_property(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<extension>', b'<wrapper><property name="Decoded" class="String"/></wrapper><extension>')
+        report = audit_xml(raw)
+        self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertEqual(report['categorical_declarations']['get_outputs_without_direct_property'], 1)
+
+    def test_34_duplicate_output_property_is_ambiguous(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<extension>',
+                          b'<property name="Decoded" class="String"/>'
+                          b'<property name="Decoded" class="String"/><extension>')
+        report = audit_xml(raw)
+        self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertEqual(report['categorical_declarations']['get_outputs_with_duplicate_property_declarations'], 1)
+
+    def test_35_string_property_of_different_resultget_does_not_join(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<node nodeid="Output"',
+                          b'<node nodeid="Extractor2" class="X.ResultGet">'
+                          b'<property name="Decoded" class="String"/>'
+                          b'<extension><get property="Decoded"/></extension></node>'
+                          b'<node nodeid="Output"')
+        report = audit_xml(raw)
+        self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertEqual(report['categorical_declarations']['get_outputs_with_unique_direct_string_property'], 1)
+
+    def test_36_x40_has_own_string_property_candidate_not_vin(self):
+        raw = xml(output_method='SetX40Serial').replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<extension>', b'<property name="Decoded" class="String"/><extension>')
+        report = audit_xml(raw)
+        self.assertTrue(report['candidate_x40_route_direct_declared_string_output_lexically_present'])
+        self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertFalse(report['vin_accepted_by_client'])
+
+    def test_37_source_property_name_does_not_match_get_output(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<extension>', b'<property name="Unrelated" class="String"/><extension>')
+        report = audit_xml(raw)
+        self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertEqual(report['categorical_declarations']['get_outputs_without_direct_property'], 1)
+
     def test_10_private_zip_safe_new_json_exclusive_and_symlink(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)
