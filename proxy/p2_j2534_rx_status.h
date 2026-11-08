@@ -13,4 +13,11 @@ static inline int p2_j2534_rx_is_data(uint32_t rx_status) {
     return (rx_status & P2_RX_STATUS_NON_DATA_MASK) == 0u;
 }
 
+/* The result of PassThruReadMsgs must also be successful. Adapters can leave
+   *pNumMsgs and the supplied buffer unchanged on an error, so stale bytes
+   must never be classified as a freshly received ECU frame. */
+static inline int p2_j2534_rx_read_is_data(uint32_t result, uint32_t rx_status) {
+    return result == 0u && p2_j2534_rx_is_data(rx_status);
+}
+
 #endif
