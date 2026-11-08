@@ -1202,9 +1202,21 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
        Never synthesize E3/E6, an ignition state, or a module identity. */
     if(cem_d2_probe_shape(data,len)){
         backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
-        logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
-        backend_event(c,c->active_trace,"request_completed","CEM",
-                      "unimplemented_probe","no_response");
+        /* The strict D2 bus policy already gates recorded B9 replies.
+           Apply the same *read-only classification* to A3/A6 request
+           shapes before calling an unsupported bus "unimplemented".
+           This never creates any CEM response or changes loose mode. */
+        if(g_p2_strict_routing &&
+           ((data[1]==0x40u && c->baud!=125000u) ||
+            (data[1]==0x50u && c->baud!=500000u))){
+            logline("P2 D2 CEM A3/A6 strict bus mismatch: no response",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unsupported_bus","no_response");
+        }else{
+            logline("P2 D2 CEM A3/A6: no verified response implementation",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unimplemented_probe","no_response");
+        }
         return 1;
     }
     if(len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
@@ -1647,16 +1659,24 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
         SCONFIG_LIST *list=(SCONFIG_LIST*)input;
+        U32 speed_changed=0;
         if(!list||(!list->ConfigPtr&&list->NumOfParams)){unlock_state();return error(ERR_NULL_PARAMETER);}
         if(list->NumOfParams>64){unlock_state();return error(ERR_INVALID_IOCTL_VALUE);}
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
+                if(s->Parameter==1){
+                    if(c->baud!=s->Value)speed_changed=1;
+                    c->baud=s->Value;
+                }
                 log_set_config(id,s->Parameter,s->Value);
             }
             if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
         }
+        /* The passive CEM observer must see the same effective channel speed
+           as the J2534 transport after SET_CONFIG. Never create ECU RX. */
+        if(speed_changed)
+            p2_bridge_connect(&g_vehicle_bridge,id,c->protocol,c->baud);
         unlock_state();return error(ERR_OK);
     }
     unlock_state();return error(ERR_INVALID_IOCTL_ID);

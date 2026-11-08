@@ -1086,6 +1086,55 @@ int main(){
    REQUIRE(process_d2(&wrong,0x000FFFFE,request,8)==0);
   }
  }
+ /* Issue #4: A3/A6 requests stay silent regardless of bus. In strict mode
+    distinguish wrong 125/500/250 kbit/s route from the missing CEM reply.
+    In loose mode retain the existing unimplemented_probe classification. */
+ {
+  static const U32 bitrates[]={125000u,500000u,250000u};
+  static const U8 targets[]={0x40u,0x50u};
+  static const U8 services[]={0xA3u,0xA6u};
+  U32 mode,bi,ti,si,saved_strict=g_p2_strict_routing;
+  SCONFIG probe_speed={1,500000u};
+  SCONFIG_LIST speed_options={1,&probe_speed};
+  for(mode=0;mode<2;mode++) {
+   g_p2_strict_routing=mode;
+   for(bi=0;bi<3;bi++) {
+    probe_speed.Value=bitrates[bi];
+    REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&speed_options,0)==ERR_OK);
+    REQUIRE(channel(cid)->baud==bitrates[bi]);
+    /* J2534 SetConfig and passive bridge must agree after each switch. */
+    {
+     U32 k,synced=0;
+     for(k=0;k<P2_BRIDGE_MAX_CHANNELS;k++){
+      const p2_bridge_channel *bc=&g_vehicle_bridge.channels[k];
+      if(bc->active && bc->id==cid){
+       REQUIRE(bc->baud==bitrates[bi]);synced++;
+      }
+     }
+     REQUIRE(synced==1u);
+    }
+    for(ti=0;ti<2;ti++)for(si=0;si<2;si++) {
+     U8 request[8]={0xCF,targets[ti],services[si],0,0,0,0,0};
+     int wrong_bus=(targets[ti]==0x40u?bitrates[bi]!=125000u:
+                                              bitrates[bi]!=500000u);
+     const char *expected=(mode && wrong_bus)?"unsupported_bus":"unimplemented_probe";
+     const char *start;U64 rid;
+     m=frame(PROTO_CAN,0x000FFFFEu,request,8);
+     REQUIRE(backend_probe_name(channel(cid),&m)!=NULL);
+     start=backend_lines+backend_len;send(cid,&m);rid=last_tx_request(start);
+     REQUIRE(rid!=0 && terminal_count_for(start,rid)==1);
+     REQUIRE(terminal_for(start,rid,expected,"no_response")==1);
+     REQUIRE(event_count_since(start,"\"kind\":\"route_selected\"")==1);
+     REQUIRE(event_count_since(start,"\"kind\":\"response_generated\"")==0);
+     REQUIRE(strstr(start,"\"route\":\"CEM\"")!=NULL);
+     n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+    }
+   }
+  }
+  probe_speed.Value=500000u;
+  REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&speed_options,0)==ERR_OK);
+  g_p2_strict_routing=saved_strict;
+ }
  /* One configured B9FB fixture must not be misapplied to B9F0. */
  REQUIRE(g_d2[2].frame_count==0);
  /* B9FB with an explicit synthetic, non-sensitive fixture: verify 29-bit
