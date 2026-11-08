@@ -53,15 +53,18 @@ def _can_frame(hextext):
     return can_id, vals[4:]
 
 
-def _matches_script_label(line, pattern, expected):
+def _matched_script_version(line, pattern, expected):
+    """Return exact version (empty if unversioned), or None for nonmatch."""
     match = pattern.search(line)
     if match is None:
-        return False
+        return None
     label = match.group(1)
     if label == expected:
-        return True
+        return ''
     prefix = expected + ' '
-    return label.startswith(prefix) and bool(_VERSION.fullmatch(label[len(prefix):]))
+    if label.startswith(prefix) and _VERSION.fullmatch(label[len(prefix):]):
+        return label[len(prefix):]
+    return None
 
 
 def audit_text(logtext, expected_script_id=None):
@@ -82,6 +85,7 @@ def audit_text(logtext, expected_script_id=None):
     request_families_in_window = set()
     request_families_after_run = set()
     expected_fetched = False
+    fetched_version = None
     expected_running = False
     session_has_ordered_run = False
     session_has_ordered_run_with_requests = False
@@ -104,6 +108,7 @@ def audit_text(logtext, expected_script_id=None):
             request_families_in_window.clear()
             request_families_after_run.clear()
             expected_fetched = False
+            fetched_version = None
             expected_running = False
             session_has_complete_window = False
             session_has_ordered_run = False
@@ -114,6 +119,7 @@ def audit_text(logtext, expected_script_id=None):
             request_families_in_window.clear()
             request_families_after_run.clear()
             expected_fetched = False
+            fetched_version = None
             expected_running = False
             is_readvin = bool(_SCRIPT.search(line))
             tracked = is_readvin and bool(_EMPTY.search(line))
@@ -127,13 +133,17 @@ def audit_text(logtext, expected_script_id=None):
         # than attributing its later diagnostic traffic to ReadVin.
         if _RUNNING_ANY.search(line):
             if expected_script_id is not None:
-                matching_run = _matches_script_label(
+                running_version = _matched_script_version(
                     line, _RUNNING_LABEL, expected_script_id)
-                if not matching_run:
+                if (running_version is None or
+                        (expected_fetched and running_version != fetched_version)):
+                    # Even the same script ID with a different version is a
+                    # different fetched artifact; close this evidence window.
                     tracked = False
                     request_families_in_window.clear()
                     request_families_after_run.clear()
                     expected_fetched = False
+                    fetched_version = None
                     expected_running = False
                     continue
                 if tracked and expected_fetched:
@@ -145,6 +155,7 @@ def audit_text(logtext, expected_script_id=None):
                     expected_running = False
                     request_families_after_run.clear()
                 expected_fetched = False
+                fetched_version = None
             elif not _RUNNING.search(line):
                 tracked = False
                 request_families_in_window.clear()
@@ -155,8 +166,9 @@ def audit_text(logtext, expected_script_id=None):
         if expected_script_id is not None and _FETCHED_ANY.search(line):
             # Any new fetch supersedes the previous candidate. Do not join
             # a Fetched line for one script with a Running line for another.
-            expected_fetched = _matches_script_label(
+            fetched_version = _matched_script_version(
                 line, _FETCHED_LABEL, expected_script_id)
+            expected_fetched = fetched_version is not None
             expected_running = False
             request_families_after_run.clear()
         if _FETCHED.search(line):
