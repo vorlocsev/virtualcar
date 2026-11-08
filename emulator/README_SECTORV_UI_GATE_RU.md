@@ -4,8 +4,10 @@
 виртуальным J2534. Он не подключается к SectorV, не читает скриншоты,
 не запускает эмулятор, не запрашивает PIN и не отправляет CAN.
 
-После уже выполненного read-only сеанса человек вручную фиксирует только
-шесть закрытых категорий. Не вставляйте VIN, текст ошибки, номер ECU,
+После наблюдения интерфейса человек вручную фиксирует только
+шесть закрытых категорий. Для одного скриншота допускаются `null` в
+неизвестных условиях изоляции. Отдельный режим подтверждённой VM-сессии
+принимает только явные `true` для read-only и отключённого физического адаптера. Не вставляйте VIN, текст ошибки, номер ECU,
 путь к файлу, дату, имя ПК, скриншот, PID, дамп или байты CAN.
 
 ## Пример ввода (ИЛЛЮСТРАЦИЯ, не результаты испытания)
@@ -16,11 +18,11 @@
 {
   "schema_version": "virtualcar-sectorv-ui-observation-v1",
   "client": "SectorV",
-  "scenario": "P2_MY2009_lab",
-  "source": "human_ui_observation",
-  "run_scope": "single_vm_client_run",
-  "read_only": true,
-  "physical_adapter_disconnected": true,
+  "scenario": "unknown_lab",
+  "source": "screenshot_ui_observation",
+  "run_scope": "single_client_ui_observation",
+  "read_only": null,
+  "physical_adapter_disconnected": null,
   "observations": {
     "adapter_listed": "yes",
     "adapter_selected": "yes",
@@ -32,18 +34,20 @@
 }
 ```
 
-Значения в примере **синтетические**. Сочетание `connection=connected`,
+Это **пример безопасной категоризации изображения**, а не протокол
+проверенной VMware-сессии. Сочетание `connection=connected`,
 `ecu_list=empty`, `vehicle_identity=not_displayed` и
 `error_category=vin_read_failed` иллюстрирует наблюдение в интерфейсе
 SectorV 1.1.2 на предоставленном скриншоте, но **из одного изображения
 не следует**, что физические адаптеры были отключены, режим был только
 для чтения или это тот же бинарник/сеанс, что в предыдущем J2534-аудите.
 Не импортируйте его как подтверждённый лабораторный отчёт без этих проверок.
-Замените только категории в примере
-на реально видимые в **том же** запуске SectorV. Не устанавливайте
-`physical_adapter_disconnected=true`, если отсутствие физического
-адаптера не подтверждено. Если наблюдение не проводилось, не создавайте
-фиктивный отчёт и оставьте статус `NOT_TESTED`.
+Замените только категории GUI на действительно наблюдаемые. Значения
+`null` не заменять на `true` без отдельного подтверждения. Для режима
+операторского VMware-сеанса требуется `source=human_ui_observation`,
+`run_scope=single_vm_client_run`, `read_only=true`,
+`physical_adapter_disconnected=true`. Если наблюдение не проводилось,
+не создавайте фиктивный отчёт и оставьте статус `NOT_TESTED`.
 
 В папке `emulator`:
 
@@ -72,6 +76,9 @@ py -3 -m unittest discover -s tests -p test_audit_sectorv_ui_observation.py -v
   доставке B9FB. `vehicle_unrecognized` означает другую, более общую ошибку.
 - `first_next_gate`: безопасный следующий диагностический шаг по
   наблюдениям, не разрешение подделывать положительные ответы CEM.
+  Для скриншота с ошибкой VIN назначается
+  `obtain_isolated_same_run_j2534_vin_read_evidence`, а не ложная
+  корреляция с ранее накопленным J2534-журналом.
 
 Даже при `vehicle_identity=displayed` и `ecu_list=populated` валидатор
 сохраняет `client_acceptance_e2e=not_verified`, пока отдельная
