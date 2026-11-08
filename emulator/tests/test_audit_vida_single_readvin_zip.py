@@ -2,6 +2,8 @@
 import contextlib
 import io
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -98,9 +100,7 @@ class SingleReadVinZipTests(unittest.TestCase):
             raw = output.read_text(encoding="utf-8")
             data = json.loads(raw)
             self.assertTrue(data["xml_zip_structure_validated"])
-            for private in ("YV1CZ0002A0000001", str(p), "ReadVin.xml", "R"):
-                if private == "R":
-                    continue
+            for private in ("YV1CZ0002A0000001", str(p), "ReadVin.xml"):
                 self.assertNotIn(private, raw)
             self.assertFalse(data["xc90_v8_my2009_identity_verified"])
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -122,6 +122,21 @@ class SingleReadVinZipTests(unittest.TestCase):
         self.assertNotIn("UPDATE dbo.", s)
         self.assertNotIn("Export-Csv", s)
         self.assertNotIn("WriteAllText", s)
+        # Windows CI: PowerShell AST parse only. Never execute SQL script.
+        exe = shutil.which("powershell.exe") or shutil.which("pwsh")
+        if exe:
+            quoted = str(POWER_SHELL).replace("'", "''")
+            expression = (
+                "$t=$null; $e=$null; "
+                "[System.Management.Automation.Language.Parser]::ParseFile('"
+                + quoted + "',[ref]$t,[ref]$e) | Out-Null; "
+                "if ($e.Count -gt 0) { exit 1 }"
+            )
+            proc = subprocess.run(
+                [exe, "-NoProfile", "-NonInteractive", "-Command", expression],
+                capture_output=True, text=True, timeout=20
+            )
+            self.assertEqual(proc.returncode, 0, "PowerShell AST parsing failed")
 
 
 if __name__ == "__main__":
