@@ -25,8 +25,13 @@ def fixtures():
             'node_count': 3, 'readvin_component_count': 1,
             'vehicle_identity_output_count': 1, 'event_handler_count': 2,
             'declared_call_count': 2, 'graph_layout': {'status': 'nested_sections'},
-            'declared_identity_edges': {'add_vin': {'declared': 1},
-                                        'set_x40_serial': {'declared': 1}},
+            'declared_identity_edges': {
+                'add_vin': {'declared': 1, 'absent_disabled_attribute': 1,
+                            'not_disabled_literal': 0, 'disabled_literal': 0,
+                            'unrecognized_disabled_literal': 0},
+                'set_x40_serial': {'declared': 1, 'absent_disabled_attribute': 1,
+                                   'not_disabled_literal': 0, 'disabled_literal': 0,
+                                   'unrecognized_disabled_literal': 0}},
         },
     }
     bin_map = {'one_edge': 0, 'two_edges': 1, 'three_or_more_edges': 0,
@@ -41,9 +46,19 @@ def fixtures():
         'eventhandler_count': 2, 'declared_event_call_count': 2,
         'identity_output_method_topology': {
             'add_vin': {'total_targeting_identity_output': 1,
-                        'possible_declared_chain_distance_to_identity': copy.deepcopy(bin_map)},
+                        'possible_declared_chain_distance_to_identity': copy.deepcopy(bin_map),
+                        'disabled_attribute_counts': {
+                            'unspecified': 1, 'not_disabled_literal': 0,
+                            'disabled_literal': 0, 'unrecognized_literal': 0},
+                        'calls_with_declared_parameter_child': 1,
+                        'declared_parameter_child_total': 1},
             'set_x40_serial': {'total_targeting_identity_output': 1,
-                               'possible_declared_chain_distance_to_identity': copy.deepcopy(bin_map)},
+                               'possible_declared_chain_distance_to_identity': copy.deepcopy(bin_map),
+                        'disabled_attribute_counts': {
+                            'unspecified': 1, 'not_disabled_literal': 0,
+                            'disabled_literal': 0, 'unrecognized_literal': 0},
+                        'calls_with_declared_parameter_child': 1,
+                        'declared_parameter_child_total': 1},
         },
     }
     return v2, v3
@@ -114,6 +129,30 @@ class SafeCrosscheckTests(unittest.TestCase):
             self.assertNotIn(str(pa), result)
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 main([str(pa), str(pb), '--output', str(out)])
+
+    def test_09_disabled_attribute_categories_must_match_across_sources(self):
+        a, b = fixtures()
+        b['identity_output_method_topology']['add_vin'][
+            'disabled_attribute_counts']['unspecified'] = 0
+        b['identity_output_method_topology']['add_vin'][
+            'disabled_attribute_counts']['not_disabled_literal'] = 1
+        with self.assertRaises(ValueError):
+            analyze(a, b)
+
+    def test_10_parameter_declarations_do_not_prove_vin_data_flow(self):
+        r = analyze(*fixtures())
+        self.assertTrue(r['all_identity_calls_have_parameter_child'])
+        self.assertEqual(r['identity_disabled_unspecified_total'], 2)
+        self.assertEqual(r['identity_parameter_declarations']['add_vin'][
+            'declared_parameter_child_total'], 1)
+        self.assertFalse(r['vin_accepted_by_client'])
+
+    def test_11_parameter_count_cannot_exceed_call_count(self):
+        a, b = fixtures()
+        b['identity_output_method_topology']['set_x40_serial'][
+            'calls_with_declared_parameter_child'] = 2
+        with self.assertRaises(ValueError):
+            analyze(a, b)
 
     def test_08_reject_schema_and_overlarge_inputs(self):
         a, b = fixtures()
