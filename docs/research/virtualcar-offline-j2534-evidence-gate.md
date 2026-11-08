@@ -1423,6 +1423,85 @@ connection, ECU list, error text). Do not make any
 registry/INI changes, retest physical hardware,
 or synthesize missing B9FB responses.
 
+## BIN7 bounded route analysis: protocol branches and exception categories (2026-11-08)
+
+The owner ran a second strictly local read-only audit on **the same fixed
+J2534/backend append byte slices** from the new VMware SectorV window,
+printing category counts and reason enums only, no raw VIN/CAN or private
+session identifiers:
+
+```text
+ConnectMode=CAN flags=none baud=125000 status=ok count=2
+ConnectMode=CAN flags=none baud=500000 status=ok count=5
+ConnectMode=CAN flags=other baud=125000 status=ok count=3
+ConnectMode=CAN flags=other baud=250000 status=ok count=1
+ConnectMode=CAN flags=other baud=500000 status=ok count=3
+ConnectMode=CAN_PS flags=none baud=125000 status=invalid_protocol count=1
+ConnectMode=CAN_PS flags=none baud=500000 status=invalid_protocol count=4
+ConnectMode=CAN_PS flags=other baud=125000 status=invalid_protocol count=2
+ConnectMode=CAN_PS flags=other baud=250000 status=invalid_protocol count=1
+ConnectMode=CAN_PS flags=other baud=500000 status=invalid_protocol count=2
+ConnectMode=ISO15765 flags=none baud=500000 status=ok count=1
+ConnectMode=ISO15765_PS flags=none baud=500000 status=invalid_protocol count=1
+ConnectMode=other flags=none baud=other status=invalid_protocol count=3
+DiscoveryException route=D2 service=B9FB target=0x50 status=unsupported reason=strict_route_rejected count=1
+DiscoveryException route=P3 service=other target=other status=timeout reason=j2534_read_timeout_observed count=2
+BackendReason status=no_fixture reason=explicit_missing_profile route=CEM count=10
+BackendReason status=unsupported reason=unhandled_request route=UNHANDLED count=1
+BackendReason status=unsupported reason=unimplemented_probe route=CEM count=1
+BackendReason status=unsupported reason=unsupported_bus route=CEM count=1
+Result=OK
+```
+
+Summing **15 J2534 Connect OK**: 14 standard CAN (125k 5,
+250k 1, 500k 8) and 1 standard ISO15765 (500k).
+Summing **14 invalid_protocol**: 10 CAN_PS 0x8004,
+1 ISO15765_PS 0x8005, 3 `other` unknown numeric IDs.
+The BIN7 source explicitly defaults optional CAN_PS to
+`ERR_INVALID_PROTOCOL_ID` unless opt-in configuration probe
+enabled; ISO15765_PS and other IDs are not standard CAN/ISO15765.
+**This is not evidence of a regression in standard protocols.**
+`flags=other` is a non-allowlisted flag category, not enough
+evidence to assert an illegal flag or wrong selection.
+
+**Specific strict-route root cause in *this* binary:**
+`emulator/src/virtualcar.c` initializes base D2
+`0x40` fixtures to 125,000 bps and `0x50` fixtures
+to 500,000 bps. With `StrictRouting=1`, the code
+checks `c->baud != d->baud` and produces
+`strict_route_rejected` and backend `unsupported_bus`
+before any fixture lookup. The one J2534
+`D2 0x50/B9FB unsupported strict_route_rejected`
+is therefore consistent with a **non-500k channel**
+for that specific request, but the exact observed
+baud/channel needs a targeted metadata-only inspection
+for proof; do not remap or relax StrictRouting.
+
+The backend's one `unimplemented_probe route=CEM`
+reflects deliberate lack of verified CEM A3/A6 handling
+in the BIN7 source; *specific A3 vs A6 is unknown*
+from these aggregates. One `UNHANDLED/unhandled_request`
+is a separate unsupported shape, not proof of an ECU fault.
+The two discovery `P3/other` timeouts are explicitly
+observed J2534 read timeouts under analyzer rules,
+**not established as SectorV's entire GUI timeout**
+nor CEM B9FB failures. The J2534 and backend
+classifiers may differ in coverage and lifecycle;
+do **not** equate unmatched counts across them.
+
+**Critical missing external observation:** owner has not yet
+reported what SectorV GUI actually displayed: canonical
+adapter visible/selected, connection state, ECU list,
+and any error text. Thus **client acceptance and XC90
+identity remain unverified**. The sensible next action
+is to request the GUI observations; optionally run one
+local metadata-only audit for the three exceptional
+discovery records' `protocol`, `baud_bps`,
+`rx_frames` and bounded `reason` (without
+CAN bytes, VIN, paths, session/request IDs). Do not
+change INI, fabricate CEM responses, enable CAN_PS
+or test against physical hardware yet.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
