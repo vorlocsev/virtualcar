@@ -1545,19 +1545,62 @@ VIN, sensitive paths or SQL contents were exported. No
 SQL/HTTP requests created by the passive script, no ECU
 calls or deployment changes; no Virtual Car builds released.
 
-**Next bounded read-only gate:** consider a **single
-combined Windows TCP snapshot** while the same authorized,
-non-diagnostic VIDA browser UI is open, matching both
-browser/WebView ↔ WildFly listener endpoints and WildFly ↔
-local `sqlservr.exe` endpoints in the **same snapshot**,
-with only aggregate counts. This could establish concurrent
-presence of both transport legs, still not per-request
-causality or SQL procedure execution. Avoid further idle
-resampling, packet capture, URL/port disclosure, database
-queries, or vehicle/adapter operations. If confirmed,
-shift toward separate, explicitly authorized sanitized
-caller-identity evidence instead of more archive scans.
-PR #172 remains draft/unmerged; publish no builds.
+**Owner-run combined browser ↔ WildFly ↔ local SQL TCP sampling (COMPLETED, no dual-leg sample):**
+`Inspect-VIDA-BrowserWildFlySQLSnapshot.ps1` finished
+`Result=OK` / `ScriptFinished`. It checked the same ten
+passive Windows TCP snapshots for reverse tuple matches
+on browser/WebView ↔ VIDA-descendant WildFly and VIDA-
+descendant WildFly ↔ local `sqlservr.exe`.
+
+| Aggregate metric | Observed |
+|---|---:|
+| `VerifiedVidaWildFlyCount` / `LocalSQLServerProcessCount` | **1 / 1** |
+| `SamplesCompleted` | **10** |
+| `PeakExplicitWildFlyLoopbackListeners` | **3** |
+| `SamplesWithBrowserToWildFlyTCP` | **0** |
+| `SamplesWithWildFlyToLocalSQLTCP` | **10** |
+| `SamplesWithBothLegsInSameSnapshot` | **0** |
+| `PeakMatchedBrowserWildFlyPairs` | **0** |
+| `PeakMatchedWildFlySQLPairs` | **9** |
+| `DistinctBrowserOrWebViewClientProcesses` | **0** |
+
+**Interpretation:** ten contemporaneous snapshots verified
+WildFly↔SQL TCP ownership but did **not** observe a browser
+peer and hence did **not** establish both legs concurrently.
+This does **not overturn** the separate, successful 20/20
+browser↔WildFly observations reported immediately before.
+The browser likely became idle or its sockets changed
+between runs; **this is only a hypothesis**. A bounded
+code review found the two sampling scripts use the same
+listener-port/loopback/reverse-TCP-tuple approach, but the
+combined script additionally filters peer processes using
+an initial process inventory and does **not refresh a newly
+observed browser process PID**; the earlier sampler can
+refresh missing PIDs on demand. The combined script also
+did **not report raw server established socket counts or
+uncategorized reverse peer counts**. Therefore the zero
+browser result may mean there were no WildFly inbound
+established endpoints at the time, or that client category
+matching did not recognize a process. These possibilities
+cannot be separated from this output. Nine is a **peak
+count of matched WildFly/SQL TCP endpoint pairs**, NOT nine
+SQL queries, stored procedure invocations, databases or
+independent application requests. No SQL `dbo.GetScript`
+execution, VIN read, or J2534/DiCE workflow established.
+
+**Next decision:** perform **at most one targeted passive
+classification diagnostic** that reports WildFly loopback
+server-endpoint presence, reverse peer matches before
+browser name filtering, and peer category lookup with
+fresh PID metadata, while also counting SQL peers from
+the same existing TCP snapshots. Report counts only, no
+ports, IPs, URLs, PID, path, process command-line, SQL
+statement, packet contents or VIN. If it still yields no
+browser/server connections, stop network repetition and
+pivot to independently authorized sanitized original
+caller/database-session metadata, not unbounded JAR scans.
+Keep draft PR #172 unmerged; no application changes or
+Virtual Car binaries published.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
