@@ -39,6 +39,9 @@ _COUNTER_NAMES = (
     'j2534_rx_direction_lines', 'j2534_rx_id_only_or_short_lines',
     'j2534_rx_p3_positive_prefix_candidates', 'j2534_rx_p2_b9fb_positive_prefix_candidates',
     'j2534_transmitted_frame_indications', 'j2534_err_buffer_empty',
+    'rx_p3_prefix_after_ordered_request_tx_candidates',
+    'rx_p2_target40_prefix_after_ordered_request_tx_candidates',
+    'rx_p2_target50_prefix_after_ordered_request_tx_candidates',
 )
 
 def _fresh():
@@ -51,6 +54,23 @@ def _can_frame(hextext):
         return None
     can_id = int.from_bytes(bytes(vals[:4]), 'big')
     return can_id, vals[4:]
+
+
+def _rx_response_prefix_candidate_family(canid, payload):
+    """Recognize response-shaped prefixes on non-transmit CAN IDs only.
+
+    Without J2534 RxStatus and protocol metadata, this is a lexical candidate,
+    NOT proof of ECU delivery, successful decoding or response correlation.
+    """
+    if (canid != 0x726 and canid <= 0x7ff and
+            payload[:3] == [0x62, 0xf1, 0x14]):
+        return 'p3_f114'
+    if (canid != 0xffffe and canid <= 0x1fffffff and canid & 1 and
+            len(payload) >= 4 and
+            (payload[0] in (0x8f, 0x97) or 0xc8 <= payload[0] <= 0xcf) and
+            payload[1] in (0x40, 0x50) and payload[2:4] == [0xf9, 0xfb]):
+        return 'p2_b9fb_' + f'{payload[1]:02x}'
+    return None
 
 
 def _matched_script_version(line, pattern, expected):
@@ -82,6 +102,7 @@ def audit_text(logtext, expected_script_id=None):
     ordered_run_with_requests_by_session = []
     ordered_run_with_requests_and_tx_by_session = []
     ordered_req_before_tx_by_session = []
+    ordered_request_tx_rx_by_session = []
     current = _fresh()
     tracked = False
     request_families_in_window = set()
@@ -89,6 +110,8 @@ def audit_text(logtext, expected_script_id=None):
     tx_families_after_run = set()
     request_waiting_for_tx = set()
     ordered_request_tx_families = set()
+    pending_tx_rx_families = set()
+    rx_prefix_families_in_window = set()
     expected_fetched = False
     fetched_version = None
     expected_running = False
@@ -96,6 +119,7 @@ def audit_text(logtext, expected_script_id=None):
     session_has_ordered_run_with_requests = False
     session_has_ordered_run_with_requests_and_tx = False
     session_has_ordered_req_before_tx = False
+    session_has_ordered_request_tx_rx = False
     session_has_complete_window = False
     line_count = 0
     for line in logtext.splitlines():
@@ -110,6 +134,7 @@ def audit_text(logtext, expected_script_id=None):
                 ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
                 ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
                 ordered_req_before_tx_by_session.append(session_has_ordered_req_before_tx)
+                ordered_request_tx_rx_by_session.append(session_has_ordered_request_tx_rx)
             if len(summaries) >= MAX_SESSIONS:
                 raise ValueError('too many sessions')
             current = _fresh()
@@ -119,6 +144,8 @@ def audit_text(logtext, expected_script_id=None):
             tx_families_after_run.clear()
             request_waiting_for_tx.clear()
             ordered_request_tx_families.clear()
+            pending_tx_rx_families.clear()
+            rx_prefix_families_in_window.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
@@ -127,6 +154,7 @@ def audit_text(logtext, expected_script_id=None):
             session_has_ordered_run_with_requests = False
             session_has_ordered_run_with_requests_and_tx = False
             session_has_ordered_req_before_tx = False
+            session_has_ordered_request_tx_rx = False
         if _GETSCRIPT.search(line):
             # A new selected script closes the previous bootstrap window,
             # even when it is a different type or a profiled ReadVin.
@@ -135,6 +163,8 @@ def audit_text(logtext, expected_script_id=None):
             tx_families_after_run.clear()
             request_waiting_for_tx.clear()
             ordered_request_tx_families.clear()
+            pending_tx_rx_families.clear()
+            rx_prefix_families_in_window.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
@@ -162,6 +192,8 @@ def audit_text(logtext, expected_script_id=None):
                     tx_families_after_run.clear()
                     request_waiting_for_tx.clear()
                     ordered_request_tx_families.clear()
+                    pending_tx_rx_families.clear()
+                    rx_prefix_families_in_window.clear()
                     expected_fetched = False
                     fetched_version = None
                     expected_running = False
@@ -177,6 +209,8 @@ def audit_text(logtext, expected_script_id=None):
                     tx_families_after_run.clear()
                     request_waiting_for_tx.clear()
                     ordered_request_tx_families.clear()
+                    pending_tx_rx_families.clear()
+                    rx_prefix_families_in_window.clear()
                 expected_fetched = False
                 fetched_version = None
             elif not _RUNNING.search(line):
@@ -197,6 +231,8 @@ def audit_text(logtext, expected_script_id=None):
             tx_families_after_run.clear()
             request_waiting_for_tx.clear()
             ordered_request_tx_families.clear()
+            pending_tx_rx_families.clear()
+            rx_prefix_families_in_window.clear()
         if _FETCHED.search(line):
             current['bootstrap_readvin_fetched'] += 1
         if _RUNNING.search(line):
@@ -218,9 +254,15 @@ def audit_text(logtext, expected_script_id=None):
                 elif ecu in ('40', '50') and service == 'b9fb':
                     request_families_after_run.add('p2_b9fb_' + ecu)
                 if ecu == '726' and service == '22f114':
-                    request_waiting_for_tx.add('p3_f114')
+                    new_family = 'p3_f114'
                 elif ecu in ('40', '50') and service == 'b9fb':
-                    request_waiting_for_tx.add('p2_b9fb_' + ecu)
+                    new_family = 'p2_b9fb_' + ecu
+                else:
+                    new_family = None
+                if new_family is not None:
+                    # An RX after a new request must not reuse a prior TX.
+                    pending_tx_rx_families.discard(new_family)
+                    request_waiting_for_tx.add(new_family)
                 if len(request_families_after_run) == 3:
                     session_has_ordered_run_with_requests = True
                     if len(tx_families_after_run) == 3:
@@ -250,6 +292,7 @@ def audit_text(logtext, expected_script_id=None):
                 if tx_family in request_waiting_for_tx:
                     ordered_request_tx_families.add(tx_family)
                     request_waiting_for_tx.discard(tx_family)
+                    pending_tx_rx_families.add(tx_family)
                     if len(ordered_request_tx_families) == 3:
                         session_has_ordered_req_before_tx = True
                 if (len(request_families_after_run) == 3 and
@@ -261,8 +304,24 @@ def audit_text(logtext, expected_script_id=None):
             if frame is None:
                 current['j2534_rx_id_only_or_short_lines'] += 1
                 continue
-            _, payload = frame
+            canid, payload = frame
             # Prefix only, not a complete/validated ECU response or VIN.
+            # Do not promote TX echoes or explicit J2534 transmit indications.
+            if (expected_running and '--->' not in line and
+                    'TRANSMITTED FRAME INDICATION' not in line.upper() and
+                    'TX_MSG_TYPE' not in line.upper()):
+                rx_family = _rx_response_prefix_candidate_family(canid, payload)
+                if rx_family in pending_tx_rx_families:
+                    pending_tx_rx_families.remove(rx_family)
+                    rx_prefix_families_in_window.add(rx_family)
+                    key = {
+                        'p3_f114': 'rx_p3_prefix_after_ordered_request_tx_candidates',
+                        'p2_b9fb_40': 'rx_p2_target40_prefix_after_ordered_request_tx_candidates',
+                        'p2_b9fb_50': 'rx_p2_target50_prefix_after_ordered_request_tx_candidates',
+                    }[rx_family]
+                    current[key] += 1
+                    if len(rx_prefix_families_in_window) == 3:
+                        session_has_ordered_request_tx_rx = True
             if payload[:3] == [0x62, 0xf1, 0x14]:
                 current['j2534_rx_p3_positive_prefix_candidates'] += 1
             if (len(payload) >= 4 and (payload[0] in (0x8f, 0x97) or 0xc8 <= payload[0] <= 0xcf)
@@ -275,6 +334,7 @@ def audit_text(logtext, expected_script_id=None):
         ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
         ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
         ordered_req_before_tx_by_session.append(session_has_ordered_req_before_tx)
+        ordered_request_tx_rx_by_session.append(session_has_ordered_request_tx_rx)
     if len(summaries) > MAX_SESSIONS:
         raise ValueError('too many sessions')
     totals = {name: sum(s[name] for s in summaries) for name in _COUNTER_NAMES}
@@ -294,6 +354,8 @@ def audit_text(logtext, expected_script_id=None):
             ordered_run_with_requests_and_tx_by_session),
         'sessions_with_ordered_expected_script_request_before_tx_all_families': sum(
             ordered_req_before_tx_by_session),
+        'sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates': sum(
+            ordered_request_tx_rx_by_session),
         'runtime_getscript_selection_verified': False,
         'session_counters': summaries,
         'totals': totals,
