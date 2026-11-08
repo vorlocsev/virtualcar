@@ -1703,6 +1703,10 @@ WildFly's process ID likewise do not prove a call to this
 specific procedure, parameter selection, VIN access or
 Virtual Car interoperability.
 
+**Owner screenshot: SQL Server (VIDA) server protocol configuration (2026-11-08):**
+Windows SQL Server Configuration Manager under `SQL Server Network Configuration → Protocols for VIDA` visibly reports all three **server-side** protocols **Enabled**: `Shared Memory`, `Named Pipes` and `TCP/IP`.
+This confirms the instance is configured to allow those transports, **not** which protocol a given VIDA client selected. The previously observed WildFly ↔ local SQL TCP socket evidence independently establishes TCP use for that Java process, while availability of Named Pipes/Shared Memory leaves other client paths possible. The screenshot did not show TCP/IP bind details, active protocol usage, SQL query text, `GetScript` execution or J2534 data. No configuration changes, service restarts or binary releases performed. Any follow-up screenshots of TCP/IP properties should redact local addresses, hostnames and credentials.
+
 **Decision: close the low-yield SQL/TCP reconnaissance
 loop at this evidence level.** Do not keep polling an idle
 procedure plan cache or re-run broad JVM keyword searches.
