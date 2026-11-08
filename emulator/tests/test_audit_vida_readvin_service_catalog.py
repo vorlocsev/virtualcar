@@ -618,5 +618,118 @@ class ServiceCatalogTests(unittest.TestCase):
                 main(argv)
 
 
+    def test_50_script_profile_map_eligible_without_runtime_selection_proof(self):
+        args = self._script_profile_inputs()
+        script_map = b'fkProfile,fkScript\n PROFILE_SYNTHETIC ,VCC-225200-1\n'
+        report = audit_sources(*args, script_map, 'VCC-225200-1')
+        self.assertTrue(report['script_profile_map_csv_supplied'])
+        self.assertTrue(report['eligible_selected_script_for_static_ecu_profile_candidate_present'])
+        self.assertFalse(report['actual_getscript_selected_script_verified'])
+        self.assertFalse(report['accepted_vin_verified'])
+        self.assertFalse(report['emulator_replay_approved'])
+
+    def test_51_script_map_other_profile_not_eligible(self):
+        args = self._script_profile_inputs()
+        mapped = b'fkProfile,fkScript\nOTHER_PROFILE,VCC-225200-1\n'
+        report = audit_sources(*args, mapped, 'VCC-225200-1')
+        self.assertFalse(report['eligible_selected_script_for_static_ecu_profile_candidate_present'])
+
+    def test_52_script_map_other_script_not_eligible(self):
+        args = self._script_profile_inputs()
+        mapped = b'fkProfile,fkScript\nPROFILE_SYNTHETIC,OTHER_SCRIPT\n'
+        report = audit_sources(*args, mapped, 'VCC-225200-1')
+        self.assertFalse(report['eligible_selected_script_for_static_ecu_profile_candidate_present'])
+
+    def test_53_script_profile_map_rejects_duplicate_pairs(self):
+        args = self._script_profile_inputs()
+        mapped = b'fkProfile,fkScript\nPROFILE_SYNTHETIC,VCC-225200-1\nPROFILE_SYNTHETIC,VCC-225200-1\n'
+        with self.assertRaises(ValueError):
+            audit_sources(*args, mapped, 'VCC-225200-1')
+
+    def test_54_script_map_malformed_and_unsafe_rows_fail_closed(self):
+        args = self._script_profile_inputs()
+        sources = (b'', b'fkProfile\nPROFILE_SYNTHETIC\n',
+                   b'fkProfile,fkScript,fkScript\nA,B,C\n',
+                   b'fkProfile,fkScript\n',
+                   b'fkProfile,fkScript\nPROFILE_SYNTHETIC,\n',
+                   b'fkProfile,fkScript\n,SELECTED_SCRIPT\n',
+                   b'fkProfile,fkScript\nPROFILE_SYNTHETIC,SCRIPT,EXTRA\n',
+                   b'fkProfile,fkScript\nPROFILE_SYNTHETIC,SC\x00RIPT\n',
+                   b'fkProfile,fkScript\nPROFILE_SYNTHETIC,SC\xffRIPT\n')
+        for data in sources:
+            with self.subTest(data=data[:32]):
+                with self.assertRaises(ValueError):
+                    audit_sources(*args, data, 'VCC-225200-1')
+
+    def test_55_script_id_requires_safe_exact_string(self):
+        args = self._script_profile_inputs()
+        mapped = b'fkProfile,fkScript\nPROFILE_SYNTHETIC,VCC-225200-1\n'
+        for script in ('', ' VCC-225200-1', 'VCC-225200-1 ', 'X\nY', 'X\x00Y', 'A'*129, None, 123):
+            with self.subTest(script=script):
+                with self.assertRaises(ValueError):
+                    audit_sources(*args, mapped, script)
+
+    def test_56_script_map_requires_complete_profile_chain(self):
+        args = self._script_profile_inputs()
+        mapped = b'fkProfile,fkScript\nPROFILE_SYNTHETIC,VCC-225200-1\n'
+        with self.assertRaises(ValueError):
+            audit_sources(*args, mapped, None)
+        with self.assertRaises(ValueError):
+            audit_sources(*args[:6], script_profile_map_bytes=mapped, selected_script_id='VCC-225200-1')
+        mismatched = list(args)
+        mismatched[-1] = 'WRONG_PROFILE'
+        with self.assertRaises(ValueError):
+            audit_sources(*mismatched, mapped, 'VCC-225200-1')
+
+    def test_57_script_map_cli_keeps_sources_private_and_exclusive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'selected-readvin.zip'
+            t111 = root / 'T111_Service.csv'
+            definition = root / '100.xml'
+            t122 = root / 'T122_Protocol.csv'
+            t110 = root / 'T110_Service_EcuVariant.csv'
+            t100 = root / 'T100_EcuVariant.csv'
+            t160 = root / 'T160_DefaultEcuVariant.csv'
+            t161 = root / 'T161_Profile.csv'
+            script_map = root / 'ScriptProfileMap.csv'
+            out = root / 'summary.json'
+            with zipfile.ZipFile(source, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('readvin.xml', xml())
+            t111.write_bytes(b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n')
+            definition.write_bytes(b'<service id="100"><command/></service>')
+            t122.write_bytes(b'id,identifier\n7,PRIVATE_PROTOCOL\n')
+            t110.write_bytes(b'fkT100_EcuVariant,fkT111_Service\n55,100\n')
+            t100.write_bytes(b'id,identifier,fkT101_Ecu\n55,PRIVATE_VARIANT,99\n')
+            t160.write_bytes(b'fkT161_Profile,fkT100_EcuVariant\n10,55\n')
+            t161.write_bytes(b'id,identifier\n10,PROFILE_SYNTHETIC\n')
+            script_map.write_bytes(b'fkProfile,fkScript\nPROFILE_SYNTHETIC,VCC-225200-1\n')
+            argv = [str(source), str(t111), '--service-definition', str(definition),
+                    '--protocol-catalog', str(t122), '--t110-catalog', str(t110),
+                    '--ecu-variant-id', '55', '--t100-catalog', str(t100),
+                    '--t160-catalog', str(t160), '--t161-catalog', str(t161),
+                    '--profile-identifier', 'PROFILE_SYNTHETIC',
+                    '--script-profile-map', str(script_map), '--script-id', 'VCC-225200-1',
+                    '--output', str(out)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(argv)
+            report = out.read_text(encoding='utf-8')
+            self.assertTrue(json.loads(report)['eligible_selected_script_for_static_ecu_profile_candidate_present'])
+            for secret in ('PROFILE_SYNTHETIC', 'VCC-225200-1', 'PRIVATE_PROTOCOL',
+                           'PRIVATE_VARIANT', str(script_map)):
+                self.assertNotIn(secret, report)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(argv)
+
+    @staticmethod
+    def _script_profile_inputs():
+        return (xml(), b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n',
+                b'<service id="100"><command/></service>', b'id,identifier\n7,D2\n',
+                b'fkT100_EcuVariant,fkT111_Service\n55,100\n', '55',
+                b'id,identifier,fkT101_Ecu\n55,SYNTHETIC_VARIANT,99\n',
+                b'fkT161_Profile,fkT100_EcuVariant\n10,55\n',
+                b'id,identifier\n10,PROFILE_SYNTHETIC\n', 'PROFILE_SYNTHETIC')
+
+
 if __name__ == '__main__':
     unittest.main()
