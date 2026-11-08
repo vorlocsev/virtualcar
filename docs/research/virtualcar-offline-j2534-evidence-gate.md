@@ -750,6 +750,50 @@ Further provenance and controlled VMware testing
 will need verified build identity; no registry
 modifications or physical J2534 testing now.
 
+## Four BUILDINFO version and architecture values (owner Windows, 2026-11-08)
+
+The owner performed read-only PE inspection and extracted strictly
+allowlisted values for the four local `BUILDINFO.json` candidates:
+
+```text
+Group   PEMachine   Version                 DeclaredArchitecture
+BIN7    x86         vmware-lab-2026.11.01    windows-x86-pe32
+BIN8    x86         vmware-lab-2026.11.01    windows-x86-pe32
+BIN9    x86         vmware-lab-2026.11.01    windows-x86-pe32
+BIN11   x86         vmware-lab-2026.11.01    windows-x86-pe32
+Result=OK
+```
+
+Although all four match the expected x86 architecture and use
+the **same version label**, their SHA256 content groups differ.
+This is **not a reason** to assume they are identical builds,
+and size/mtime/anonymous group index do not establish version
+ordering or success of client acceptance.
+
+**Crucial source-schema correction**: code review of
+`emulator/tools/package_vmware_lab.py` shows that the package
+builder sets top-level `source_commit` from a validated 40-digit
+hexadecimal input, plus `format`, `version`,
+`architecture`, `profile`,
+`vmware_e2e_verified=False`,
+`ecu_identity_verified=False`, etc.
+The previous local key-name inspection filtered only names
+beginning with `commit`, `sha`, `git`, `version`,
+`build`, etc., so **`source_commit` was excluded by
+the regex**. Lack of this field in prior **filtered output
+does NOT mean missing from the actual JSON**.
+
+Next owner-local gate: read the four local `source_commit`
+values **only if they match 40 hex digits**, printing just
+the leading 12 commit SHA digits, together with BIN group,
+and selected literal safety flags. This differs from
+displaying SHA256 of a private binary: a source revision
+identifier is needed to correlate a *specific commit*
+with a known candidate package. Keep binary file hashes,
+paths, ZIPs, INI and VIN private. Verify commit ancestry
+against repository before selecting a candidate. No
+registry edits or real vehicle testing.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
