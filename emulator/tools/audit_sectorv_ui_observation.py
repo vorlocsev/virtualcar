@@ -32,12 +32,23 @@ def audit(raw):
     if type(raw) is not dict or set(raw) != KEYS:
         raise ValueError("expected exactly the allowlisted top-level fields")
     if (raw["schema_version"] != SCHEMA or raw["client"] != "SectorV"
-            or raw["scenario"] not in ("P2_MY2009_lab", "P2_MY2005_lab", "unknown_lab")
-            or raw["source"] != "human_ui_observation"
-            or raw["run_scope"] != "single_vm_client_run"
-            or raw["read_only"] is not True
-            or raw["physical_adapter_disconnected"] is not True):
-        raise ValueError("only a single, isolated read-only SectorV GUI run is supported")
+            or raw["scenario"] not in ("P2_MY2009_lab", "P2_MY2005_lab", "unknown_lab")):
+        raise ValueError("unsupported schema, client or scenario")
+    if raw["source"] == "human_ui_observation":
+        if (raw["run_scope"] != "single_vm_client_run"
+                or raw["read_only"] is not True
+                or raw["physical_adapter_disconnected"] is not True):
+            raise ValueError("human VM run requires declared read-only, isolated conditions")
+    elif raw["source"] == "screenshot_ui_observation":
+        # A GUI image proves neither VM context nor read-only or adapter isolation.
+        # None is JSON null, not an implicit positive assertion.
+        if (raw["run_scope"] != "single_client_ui_observation"
+                or raw["read_only"] is not None
+                or raw["physical_adapter_disconnected"] is not None
+                or raw["scenario"] != "unknown_lab"):
+            raise ValueError("screenshot evidence must keep environment and scenario unknown")
+    else:
+        raise ValueError("unsupported provenance source")
     observed = raw["observations"]
     if type(observed) is not dict or set(observed) != set(OBSERVATIONS):
         raise ValueError("GUI observation must have only six fixed categories")
@@ -81,15 +92,21 @@ def audit(raw):
     else:
         next_gate = "independently_validate_displayed_identity_and_ecu_provenance"
 
+    if raw["source"] == "screenshot_ui_observation" and selected == "yes" and (
+            connection == "connected" and identity != "displayed"):
+        next_gate = "obtain_isolated_same_run_j2534_vin_read_evidence"
+
     return {
         "schema_version": "virtualcar-sectorv-ui-observation-report-v1",
         "read_only": True,
         "contains_payload_data": False,
         "client": "SectorV",
         "scenario": raw["scenario"],
-        "source": "human_ui_observation_unverified",
-        "scope": "one_isolated_vm_client_run",
-        "physical_adapter_disconnected_reported": True,
+        "source": raw["source"] + "_unverified",
+        "scope": raw["run_scope"],
+        "read_only_reported": raw["read_only"],
+        "physical_adapter_disconnected_reported": raw["physical_adapter_disconnected"],
+        "isolation_independently_verified": False,
         "observed_gui_states": {key: observed[key] for key in OBSERVATIONS},
         "adapter_selected_in_gui": selected == "yes",
         "connection_displayed_in_gui": connection == "connected",
@@ -104,7 +121,8 @@ def audit(raw):
         "interpretation": (
             "GUI states are human observations, not proof of ECU authenticity, "
             "VIN validity or transaction-level correspondence with J2534. "
-            "No identifiers or diagnostic payloads were collected."
+            "No identifiers or diagnostic payloads were collected. "
+            "For screenshot-only evidence, environment and scenario stay unknown."
         ),
     }
 
