@@ -18,6 +18,68 @@ The MY2007 exterior facelift **is not** the protocol-change boundary. The HS-CAN
 * **Evidence:** VIDA official protocol grouping: https://vidaresources.volvocars.biz/help-wbt/us/b5980760141034ddc0a801cc2958048c.htm
 * **Evidence:** GGD introduced on XC90 MY2005 B8444S (HS-CAN): https://lemon-manuals.la/Volvo/2008/S80%20AWD%20V8-4.4L%20VIN%2085%20B8444S/Repair%20and%20Diagnosis/Testing%20and%20Inspection/Initial%20Inspection%20and%20Diagnostic%20Overview/Diagnosis/Diagnostic%20Versions%20and%20Communication%20Methods/
 
+## XC90 V8 MY2009 (B8444S): module-specific catalog evidence (08.11.2026)
+
+**New, engine-specific source:** the DriveRAP/OPUS *Volvo Coverage* table
+([mirror 1](https://widnesautoelectrical.co.uk/wp-content/uploads/2019/02/DriveRAP-VOLVO-web-1.pdf),
+[mirror 2](https://f.hubspotusercontent30.net/hubfs/8362832/Opus_October2020/Pdf%20files/driverap-volvo-web.pdf))
+has entries explicitly named **XC90 2009 B8444S**. Both URLs reproduce
+the same product-coverage table; **they are not two independent diagnostic
+captures**. Its column is **Diagnostic No#**, which must NOT be silently
+renamed to ECU hardware part number or valid B9F0/B9FB content.
+
+| Source catalog entry for XC90 2009 B8444S | Protocol as listed | Diagnostic No# | What this establishes |
+| --- | --- | --- | --- |
+| CEM, Central electronic module (D2) | D2 v 7 | `31296075 AA` | A D2 CEM diagnostic profile is listed for this engine/year |
+| CEM, Central electronic module (GGD) | GGD v 2 | `30682825 A` | A GGD CEM catalog entry also exists; actual variant/path on one vehicle is unknown |
+| ECM Denso CV8 | GGD v 2 | `30670321 AA` | GGD coverage for the V8 engine ECU is catalogued |
+| BCM | GGD v 2 | `30667559 AA` | GGD coverage for brake module is catalogued |
+| TCM TF-80SC AWD | GGD v 2 | `30774456 AC` | GGD coverage under the explicit AWD automatic transmission variant |
+
+The D2 CEM row appears **twice identically** in the published table:
+duplicate rows do not prove two CEMs or two J2534 endpoints. Equally, a
+GGD and D2 CEM row **does not** prove that *the same physical CEM and its
+present software* support both paths at once. This is **tool compatibility
+metadata** rather than a recovered Volvo module configuration.
+
+The same coverage document has a different diagnostic number for
+**XC90 2010 B8444S CEM (D2)**, `30728759 AA`, and for **ECM Denso CV8
+(GGD)**, `31288778 AA`. These are catalog differences, **not**
+proof of an incompatibility or the precise condition for a successful
+MY2009 B9FB response. A donor from MY2010 must not be promoted to an
+MY2009 hardware/software identity without an independent capture.
+
+**Separate service-description evidence:** Volvo's
+[CAN fault-tracing description for XC90 V8 B8444S](https://charm.li/Volvo/2006/XC90%20AWD%20V8-4.4L%20VIN%2085%20B8444S/Repair%20and%20Diagnosis/Powertrain%20Management/Computers%20and%20Control%20Systems/Information%20Bus/Description%20and%20Operation/General%20Information%20About%20Fault-Tracing%20In%20the%20CAN%20Network/)
+distinguishes CEM's older diagnostic coverage from GGD on other
+HS-CAN modules. The [diagnostic-family overview](https://lemon-manuals.org.ua/Volvo/2007/XC90%20FWD%20L6-3.2L%20VIN%2098%20B6324S/Repair%20and%20Diagnosis/Testing%20and%20Inspection/Initial%20Inspection%20and%20Diagnostic%20Overview/Diagnosis/Diagnostic%20Versions%20and%20Communication%20Methods/)
+dates GGD introduction for XC90 B8444S to MY2005 on HS CAN.
+Those descriptions support **mixed per-module protocols**; they do not
+supply an MY2009 B9FB `F9 FB` response, a GGD CAN arbitration ID,
+a VIN, a gateway state, or SectorV acceptance.
+
+### Consequences for the current read-only emulator
+
+1. Keep **CEM D2 B9FB transport**, **CEM GGD catalog possibility** and
+   **V8 ECM/TF-80SC GGD discovery** as distinct evidence streams.
+2. `0x50` remains a **logical D2 CEM node**, not an ECM GGD arbitration
+   ID, hardware part number, or VIN content.
+3. The owner's bounded SectorV session had **11 B9FB requests and no
+   delivered B9FB RX**. `B9FBFrameCount=0` and `no_fixture` are consistent
+   with that outcome; catalog rows cannot populate these response frames.
+4. The **two P3-classified timeouts** in the same report do not establish
+   GGD requests. Do not relabel them GGD without a source-bound frame
+   matcher or service trace.
+5. Never generate positive `A3/E3`, `A6/E6`, `B9F0`, `B9FB`, GGD ECU
+   identification or a synthetic automotive identity based on this catalog.
+   The first acceptable upgrade remains an authorized, version-bound,
+   read-only **XC90 V8 MY2009** client + J2534 response capture.
+
+**Verification status:** public coverage text and service descriptions
+reviewed; original OEM service provenance and visual PDF table have
+not been independently authenticated. No physical ECU or live client
+exchange tested in this stage, and no emulator code changed.
+
 ## Keep distinct namespaces in code
 
 1. **Model year / generation**: 2003/2004 vs 2005+ P2. MY2007 facelift is presentation/ECU-variant context, not a new bus family.
