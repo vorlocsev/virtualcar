@@ -1627,23 +1627,67 @@ established. No IPs, ports, PIDs, URLs, paths, proprietary
 scripts, credentials or VIN emitted; the diagnostic sent no
 HTTP/SQL/vehicle calls and made no configuration changes.
 
-**Next priority: stop TCP repetition.** The transport
-provenance evidence is sufficient for the current stage:
-VIDA browser/WebView ↔ WildFly and WildFly ↔ SQL Server
-have each been observed, but at different times. The key
-remaining research question is **which original VIDA client
-or server path invokes `dbo.GetScript` and with what
-runtime `@scriptType`**, not more Java keyword searches or
-socket counts. Design any further inspection as a
-separately approved, tightly scoped **read-only SQL
-session/procedure metadata** task, beginning with sanitized
-session ownership/database-name counts and explicitly
-**not** invoking `dbo.GetScript` or exporting query text,
-VIN, usernames or secrets. If authorized data remains
-insufficient, mark the SQL caller unresolved and pivot to
-an independently authorized offline virtual-J2534 trace.
-Keep draft PR #172 unmerged; no app changes or published
-Virtual Car binaries.
+**Owner-run SQL Server session provenance metadata check (COMPLETED):**
+`Inspect-VIDA-SQLSessionProvenance.ps1` completed
+`Result=OK` / `ScriptFinished`. Unlike prior TCP-only
+probes, this explicitly opened a new **read-only local SQL
+connection** to `\.\VIDA`/`master` under Windows integrated
+security, then performed **one SELECT** over
+`sys.dm_exec_sessions` LEFT JOIN `sys.dm_exec_requests`
+plus `DB_ID(N'DiagSwdlRepository')`. No stored procedure
+was executed and no SQL statement text was selected.
+
+| Aggregate metric | Observed |
+|---|---:|
+| Verified VIDA-descendant WildFly / local SQL process | **1 / 1** |
+| `LocalSQLMetadataConnectionOpened` / `TargetDatabaseNameResolvable` | **True / True** |
+| `VisibleSQLUserSessions` | **11** |
+| `SessionsWithoutHostProcessId` | **0** |
+| `SessionsReportingVidaWildFlyHostPid` | **9** |
+| `WildFlySessionsCurrentContextTargetDb` | **0** |
+| `WildFlySessionsCurrentContextOtherDb` | **9** |
+| `WildFlySessionsWithActiveRequest` | **0** |
+| `WildFlyActiveRequestsInTargetDatabase` | **0** |
+
+**Interpretation:** SQL Server exposed nine user-session
+rows whose `host_process_id` matched the OS PID of the
+verified VIDA-descendant Java/WildFly process, consistent
+with the previously observed WildFly↔SQL TCP link. SQL's
+client-reported host PID is **process attribution metadata**,
+not an authenticated or cryptographically trustworthy PID.
+The nine sessions' **current `sys.dm_exec_sessions.database_id`
+contexts** all differed from `DiagSwdlRepository` at the
+instant of inspection; this does **not** exclude cross-
+database qualified access or a past/brief context switch.
+No matching `sys.dm_exec_requests` rows showed ongoing
+queries in those sessions at the snapshot instant; this
+cannot establish absence of past completed queries or
+`dbo.GetScript` use. SQL Server's permission-dependent DMVs
+may show only visible sessions. One of the 11 visible
+sessions could be the inspection client's own new SQL
+connection; the output does not separately classify it.
+No original SQL caller method, database object invocation,
+`@scriptType` string, SQL command, client UI request or
+VIN/J2534 exchange has been observed. No query text,
+credentials, login names, paths, IPs or PIDs exported.
+No SQL `GetScript` execution, writes, network/adapter/ECU
+operations or Virtual Car builds published.
+
+**Next bounded metadata gate:** if the owner approves one
+more read-only SQL SELECT, inspect only the **plan-cache
+aggregate for the already-known procedure**
+`DiagSwdlRepository.dbo.GetScript`, using
+`sys.dm_exec_procedure_stats`, scoped by database and
+object identifiers; report whether a cache row is present,
+aggregate execution count and coarse recency only.
+A cache hit is evidence that *some* caller executed the
+procedure while its plan remained cached, **not** evidence
+that WildFly was that caller or which `@scriptType` value
+was used. No cache row is **inconclusive** because plans
+expire/evict and the view reports only cached completed
+procedure executions. Do not execute the procedure or
+obtain SQL text. Keep draft PR #172 unmerged and no
+Virtual Car binaries published.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
