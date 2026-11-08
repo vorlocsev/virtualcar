@@ -213,3 +213,50 @@ to this new checker here; no actual match reported.
 
 No emulator/J2534/CEM changes; the PR remains Draft and
 exact-head Windows CI has not executed.
+
+## Public literal ReadVin property example, not the owner's selected script
+
+An independently accessible public technical write-up
+https://jan-jansen.readthedocs.io/en/latest/vin.html
+quotes a `Components.ReadVinComponent` XML node from
+its own observed first-readout script. It reports these
+**source-declared properties** (not an owner-car trace):
+
+- `ServiceId`: `class="Int"`, literal value `100`.
+- `Identifier`: `class="String"`, literal value `F114`.
+- `Mode`: `class="String"`, literal value `EcuVariant`.
+- `CanHiSpeedValue`: `500000` and `BusId`: `1`,
+  which are script configuration declarations, not
+  validated target XC90 V8 communication.
+
+The external site also reproduces the published
+`ReadVin/EMPTYPROFILE` first-readout selection. The
+`ServiceId=100` example provides a **real public XML
+shape** for our safe static catalog join, NOT proof that
+`T111_Service.id=100` exists in the owner's installation
+or what its `service/mode/definition` bytes are. The
+`Identifier=F114` string is **not** a complete 0x22 or
+0xB9 CAN request; the selected CarCom service and
+ECU communication context are required.
+
+For comparison, the owner's locally available
+`VIDA.log.txt`, `server.log.txt` and
+`db_attach_log.txt` were searched *privately* for
+`ReadVin`, `GetScript` and `service_GetService`:
+**zero matching lines** in these three already-supplied
+startup/database-install logs. The new bootstrap
+analyzer yielded **0 tracked sessions** on
+`VIDA.log.txt`. This is a limitation of the available
+log sample and does **not** prove VIDA never started
+ReadVin, nor that a vehicle failed identification.
+No raw log text, names, paths or credentials are
+uploaded here.
+
+Before any claim of real target CEM behavior, the same
+owner-selected `ReadVin` XML and `T111_Service.csv`,
+plus its corresponding `extracted_services/<id>.xml`,
+must be matched with actual GetScript selection and
+same-session ECU RX. An absent service row or a
+`VehicleServices.xml` fallback likewise changes
+interpretation. No synthetic F114/B9FB response is
+authorized by this static metadata evidence.
