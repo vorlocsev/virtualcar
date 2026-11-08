@@ -794,6 +794,56 @@ paths, ZIPs, INI and VIN private. Verify commit ancestry
 against repository before selecting a candidate. No
 registry edits or real vehicle testing.
 
+## Four local packages' source_commit linked to GitHub (2026-11-08)
+
+The owner extracted only the first 12 hex characters of
+`BUILDINFO.json/source_commit` plus two verification flags for four
+content-distinct bundled DLL groups. All `vmware_e2e_verified` and
+`ecu_identity_verified` values were explicitly **False**:
+
+| Binary group | GitHub source_commit prefix | Actual commit timestamp (UTC) |
+|---|---|---|
+| BIN7 | `14b95e036daf` | 2026-11-03 18:05:24 |
+| BIN8 | `a98a9332cc3f` | 2026-11-03 10:39:03 |
+| BIN9 | `a486d27c2fbb` | 2026-11-02 17:41:14 |
+| BIN11 | `fbf3ec429642` | 2026-11-02 23:02:17 |
+
+All four SHA prefixes resolve to **existing GitHub commits** in
+`vorlocsev/virtualcar`. They are four distinct generated merge
+commits of feature heads into the same historical base
+`ac1f523a319a0d29e61d7e5ac07307446925cf16`.
+Six pairwise GitHub compare checks reported **diverged**, not a
+linear ancestor-descendant sequence. Consequently BIN7 is **only
+the latest by commit timestamp**, not proven to contain every
+change in the other candidates, not the latest branch build,
+and not functionally approved.
+
+Source-diff context: the later BIN7 merge touches research and
+native CAN_PS diagnostic routing investigations. BIN8/BIN9/BIN11
+include related but diverging code paths. Do not interpret
+commit dates, version-label equality or file sizes as acceptance
+proof.
+
+The GitHub connector showed **zero pull-request-triggered
+workflow runs** associated with each of the four merge SHAs,
+and **zero separate commit statuses** for each. These endpoints
+are not an exhaustive check of all possible CI events;
+therefore report **no CI evidence discovered via these checks**,
+not "CI never ran" or "CI failed".
+
+**Next safe verification:** independently select the locally
+BUILDINFO-bearing **BIN7** candidate (only a first candidate,
+not an approved release), then check the **adjacent**
+`SHA256SUMS.txt` entry for `VirtualCarJ2534.dll` using
+local SHA-256, printing only booleans and group, not
+expected/actual hash or paths. If there is no checksum
+file or the stored hash differs, do not install or register.
+A matching self-contained checksum validates package
+integrity **relative to that manifest**, not authenticity,
+trusted source origin, correct J2534 behavior or actual
+vehicle identity. No J2534 DLL loading, client calls or
+physical CAN testing at this stage.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
