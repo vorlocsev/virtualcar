@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "p2_message_classify.h"
 #include "p2_j2534_bridge.h"
+#include "p2_j2534_rx_status.h"
 #if !defined(_WIN32) || !defined(_M_IX86)
 #error This proxy must be built for 32-bit Windows x86.
 #endif
@@ -159,7 +160,7 @@ static void event_log(const char *ev,DWORD channel,DWORD status,DWORD requested,
     event_log_extra(ev,channel,status,requested,count,kind,canid,size,misc,0,0,0,0,0);
 }
 static p2_kind msg_kind(PASSTHRU_MSG *m,int rx){
-    if(!m || m->DataSize>4128u)return P2_OTHER;
+    if(!m || m->DataSize>4128u || (rx && !p2_j2534_rx_is_data(m->RxStatus)))return P2_OTHER;
     return p2_classify(m->Data,m->DataSize,rx);
 }
 static DWORD msg_canid(PASSTHRU_MSG *m){return (!m||m->DataSize>4128u)?0:p2_can_id(m->Data,m->DataSize);}
