@@ -4,9 +4,11 @@ import copy
 import io
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from audit_vida_redacted_consistency import analyze, main
 
 
