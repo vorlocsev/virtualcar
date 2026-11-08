@@ -482,7 +482,7 @@ class ServiceCatalogTests(unittest.TestCase):
         t161 = b'id,identifier\n10,PROFILE_XC90_SYNTHETIC\n'
         r = audit_sources(xml(), t111, definition, t122, t110, '55',
                           t100, t160, t161, 'PROFILE_XC90_SYNTHETIC')
-        self.assertTrue(r['t100_t160_t161_profile_catalogs_supplied'])
+        self.assertTrue(r['ecu_profile_catalogs_supplied'])
         self.assertTrue(r['single_readvin_with_selected_default_ecu_variant_profile_candidate_present'])
         for key in ('selected_profile_is_target_vehicle_verified',
                     'actual_ecu_variant_identity_verified',
