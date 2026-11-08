@@ -81,17 +81,21 @@ def audit_text(logtext, expected_script_id=None):
     ordered_run_by_session = []
     ordered_run_with_requests_by_session = []
     ordered_run_with_requests_and_tx_by_session = []
+    ordered_req_before_tx_by_session = []
     current = _fresh()
     tracked = False
     request_families_in_window = set()
     request_families_after_run = set()
     tx_families_after_run = set()
+    request_waiting_for_tx = set()
+    ordered_request_tx_families = set()
     expected_fetched = False
     fetched_version = None
     expected_running = False
     session_has_ordered_run = False
     session_has_ordered_run_with_requests = False
     session_has_ordered_run_with_requests_and_tx = False
+    session_has_ordered_req_before_tx = False
     session_has_complete_window = False
     line_count = 0
     for line in logtext.splitlines():
@@ -105,6 +109,7 @@ def audit_text(logtext, expected_script_id=None):
                 ordered_run_by_session.append(session_has_ordered_run)
                 ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
                 ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
+                ordered_req_before_tx_by_session.append(session_has_ordered_req_before_tx)
             if len(summaries) >= MAX_SESSIONS:
                 raise ValueError('too many sessions')
             current = _fresh()
@@ -112,6 +117,8 @@ def audit_text(logtext, expected_script_id=None):
             request_families_in_window.clear()
             request_families_after_run.clear()
             tx_families_after_run.clear()
+            request_waiting_for_tx.clear()
+            ordered_request_tx_families.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
@@ -119,12 +126,15 @@ def audit_text(logtext, expected_script_id=None):
             session_has_ordered_run = False
             session_has_ordered_run_with_requests = False
             session_has_ordered_run_with_requests_and_tx = False
+            session_has_ordered_req_before_tx = False
         if _GETSCRIPT.search(line):
             # A new selected script closes the previous bootstrap window,
             # even when it is a different type or a profiled ReadVin.
             request_families_in_window.clear()
             request_families_after_run.clear()
             tx_families_after_run.clear()
+            request_waiting_for_tx.clear()
+            ordered_request_tx_families.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
@@ -150,6 +160,8 @@ def audit_text(logtext, expected_script_id=None):
                     request_families_in_window.clear()
                     request_families_after_run.clear()
                     tx_families_after_run.clear()
+                    request_waiting_for_tx.clear()
+                    ordered_request_tx_families.clear()
                     expected_fetched = False
                     fetched_version = None
                     expected_running = False
@@ -163,6 +175,8 @@ def audit_text(logtext, expected_script_id=None):
                     expected_running = False
                     request_families_after_run.clear()
                     tx_families_after_run.clear()
+                    request_waiting_for_tx.clear()
+                    ordered_request_tx_families.clear()
                 expected_fetched = False
                 fetched_version = None
             elif not _RUNNING.search(line):
@@ -181,6 +195,8 @@ def audit_text(logtext, expected_script_id=None):
             expected_running = False
             request_families_after_run.clear()
             tx_families_after_run.clear()
+            request_waiting_for_tx.clear()
+            ordered_request_tx_families.clear()
         if _FETCHED.search(line):
             current['bootstrap_readvin_fetched'] += 1
         if _RUNNING.search(line):
@@ -201,6 +217,10 @@ def audit_text(logtext, expected_script_id=None):
                     request_families_after_run.add('p3_f114')
                 elif ecu in ('40', '50') and service == 'b9fb':
                     request_families_after_run.add('p2_b9fb_' + ecu)
+                if ecu == '726' and service == '22f114':
+                    request_waiting_for_tx.add('p3_f114')
+                elif ecu in ('40', '50') and service == 'b9fb':
+                    request_waiting_for_tx.add('p2_b9fb_' + ecu)
                 if len(request_families_after_run) == 3:
                     session_has_ordered_run_with_requests = True
                     if len(tx_families_after_run) == 3:
@@ -225,6 +245,13 @@ def audit_text(logtext, expected_script_id=None):
                 tx_family = 'p2_b9fb_' + f'{payload[1]:02x}'
             if expected_running and tx_family:
                 tx_families_after_run.add(tx_family)
+                # Only prefix-order evidence. This does not establish a J2534
+                # transaction ID, transmission success, or an ECU response.
+                if tx_family in request_waiting_for_tx:
+                    ordered_request_tx_families.add(tx_family)
+                    request_waiting_for_tx.discard(tx_family)
+                    if len(ordered_request_tx_families) == 3:
+                        session_has_ordered_req_before_tx = True
                 if (len(request_families_after_run) == 3 and
                         len(tx_families_after_run) == 3):
                     session_has_ordered_run_with_requests_and_tx = True
@@ -247,6 +274,7 @@ def audit_text(logtext, expected_script_id=None):
         ordered_run_by_session.append(session_has_ordered_run)
         ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
         ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
+        ordered_req_before_tx_by_session.append(session_has_ordered_req_before_tx)
     if len(summaries) > MAX_SESSIONS:
         raise ValueError('too many sessions')
     totals = {name: sum(s[name] for s in summaries) for name in _COUNTER_NAMES}
@@ -264,6 +292,8 @@ def audit_text(logtext, expected_script_id=None):
             ordered_run_with_requests_by_session),
         'sessions_with_ordered_expected_script_requests_and_tx': sum(
             ordered_run_with_requests_and_tx_by_session),
+        'sessions_with_ordered_expected_script_request_before_tx_all_families': sum(
+            ordered_req_before_tx_by_session),
         'runtime_getscript_selection_verified': False,
         'session_counters': summaries,
         'totals': totals,
