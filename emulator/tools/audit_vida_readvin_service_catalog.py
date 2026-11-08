@@ -119,6 +119,7 @@ def _parse_catalog(csv_bytes):
     occurrences = {}
     metadata_complete_ids = {}
     protocol_complete_ids = {}
+    protocol_keys_by_service_id = {}
     has_protocol_header = 'fkT122_Protocol' in reader.fieldnames
     total = invalid = empty_metadata = 0
     try:
@@ -137,16 +138,56 @@ def _parse_catalog(csv_bytes):
                 occurrences[value] = occurrences.get(value, 0) + 1
                 if has_metadata:
                     metadata_complete_ids[value] = metadata_complete_ids.get(value, 0) + 1
-                    if has_protocol_header and _positive_id(record['fkT122_Protocol']) is not None:
-                        protocol_complete_ids[value] = protocol_complete_ids.get(value, 0) + 1
+                    if has_protocol_header:
+                        protocol_key = _positive_id(record['fkT122_Protocol'])
+                        if protocol_key is not None:
+                            protocol_complete_ids[value] = protocol_complete_ids.get(value, 0) + 1
+                            protocol_keys_by_service_id[value] = protocol_key
     except (csv.Error, UnicodeError) as exc:
         raise ValueError('malformed CSV') from exc
-    return occurrences, metadata_complete_ids, protocol_complete_ids, total, invalid, empty_metadata
+    return occurrences, metadata_complete_ids, protocol_complete_ids, protocol_keys_by_service_id, total, invalid, empty_metadata
 
 
-def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None):
+
+def _parse_protocol_catalog(csv_bytes):
+    """Bounded T122_Protocol FK classification; never exposes protocol names."""
+    if (not isinstance(csv_bytes, bytes) or len(csv_bytes) > MAX_CSV_BYTES
+            or b'\x00' in csv_bytes):
+        raise ValueError('unsafe T122 CSV')
+    try:
+        text = csv_bytes.decode('utf-8-sig')
+    except UnicodeError as exc:
+        raise ValueError('unsupported T122 CSV encoding') from exc
+    if any(len(line) > MAX_CSV_LINE_LENGTH for line in text.splitlines()):
+        raise ValueError('T122 CSV line too long')
+    reader = csv.DictReader(io.StringIO(text, newline=''), strict=True)
+    # Original T122_Protocol export uses id and identifier; a numeric ID
+    # without an actual protocol identifier is not a valid FK target.
+    if (not reader.fieldnames or
+            not {'id', 'identifier'}.issubset(reader.fieldnames) or
+            len(set(reader.fieldnames)) != len(reader.fieldnames)):
+        raise ValueError('expected unique T122 id and identifier headers')
+    ids = set()
+    try:
+        for row_number, record in enumerate(reader, 1):
+            if (row_number > MAX_ROWS or None in record or
+                    any(v is None for v in record.values())):
+                raise ValueError('invalid T122 CSV row structure')
+            key = _positive_id(record['id'])
+            if key is None or not record['identifier'].strip() or key in ids:
+                raise ValueError('invalid or duplicate T122 protocol record')
+            ids.add(key)
+    except (csv.Error, UnicodeError) as exc:
+        raise ValueError('malformed T122 CSV') from exc
+    if not ids:
+        raise ValueError('empty T122 protocol catalog')
+    return ids
+
+def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None, protocol_catalog_bytes=None):
     content, nodes = _parse_xml(xml_bytes)
-    service_ids, metadata_complete_ids, protocol_complete_ids, rows, invalid_rows, empty_metadata = _parse_catalog(csv_bytes)
+    service_ids, metadata_complete_ids, protocol_complete_ids, protocol_keys_by_service_id, rows, invalid_rows, empty_metadata = _parse_catalog(csv_bytes)
+    protocol_catalog_ids = (_parse_protocol_catalog(protocol_catalog_bytes)
+                            if protocol_catalog_bytes is not None else None)
     definition_id, definition_content_present = (None, False)
     if service_definition_bytes is not None:
         definition_id, definition_content_present = _parse_service_definition(service_definition_bytes)
@@ -187,6 +228,7 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None):
         'literal_ids_with_declared_override': 0,
     }
     definition_qualified_matches = 0
+    protocol_qualified_matches = 0
     for node_id, node in readers.items():
         props = node.findall('./property')
         service_props = [p for p in props if p.attrib.get('name') == 'ServiceId']
@@ -217,6 +259,9 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None):
                 if (definition_content_present and definition_id == value and
                         protocol_complete_ids.get(value, 0) == 1):
                     definition_qualified_matches += 1
+                    if (protocol_catalog_ids is not None and
+                            protocol_keys_by_service_id.get(value) in protocol_catalog_ids):
+                        protocol_qualified_matches += 1
             else:
                 counters['literal_ids_with_unique_catalog_row_but_empty_service_or_mode'] += 1
 
@@ -234,6 +279,10 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None):
         'service_definition_xml_supplied': service_definition_bytes is not None,
         'single_readvin_with_matching_service_definition_root_candidate_present': bool(
             len(readers) == 1 and definition_qualified_matches == 1),
+        'protocol_catalog_csv_supplied': protocol_catalog_bytes is not None,
+        'single_readvin_with_matching_t122_protocol_reference_candidate_present': bool(
+            len(readers) == 1 and protocol_qualified_matches == 1),
+        'actual_protocol_transport_verified': False,
         'original_service_definition_runtime_verified': False,
         'same_installation_provenance_verified': False,
         'original_getscript_runtime_selection_verified': False,
@@ -273,6 +322,7 @@ def main(argv=None):
     ap.add_argument('readvin_zip', type=Path)
     ap.add_argument('t111_csv', type=Path)
     ap.add_argument('--service-definition', type=Path, help='optional private extracted_services/<id>.xml')
+    ap.add_argument('--protocol-catalog', type=Path, help='optional same-installation T122_Protocol.csv')
     ap.add_argument('--output', required=True, type=Path)
     a = ap.parse_args(argv)
     repo = Path(__file__).resolve().parents[2]
@@ -280,6 +330,8 @@ def main(argv=None):
     inputs = [a.readvin_zip, a.t111_csv]
     if a.service_definition is not None:
         inputs.append(a.service_definition)
+    if a.protocol_catalog is not None:
+        inputs.append(a.protocol_catalog)
     if (dest == repo or repo in dest.parents
             or dest in (p.resolve() for p in inputs)
             or a.output.is_symlink() or a.output.parent.is_symlink()):
@@ -295,7 +347,14 @@ def main(argv=None):
                     or path.stat().st_size > MAX_SERVICE_DEFINITION_BYTES):
                 raise ValueError('unsupported private service definition')
             definition = path.read_bytes()
-        report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes(), definition)
+        protocols = None
+        if a.protocol_catalog is not None:
+            path = a.protocol_catalog
+            if (path.is_symlink() or not path.is_file() or path.suffix.lower() != '.csv'
+                    or path.stat().st_size > MAX_CSV_BYTES):
+                raise ValueError('unsupported private T122 protocol catalog')
+            protocols = path.read_bytes()
+        report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes(), definition, protocols)
         with a.output.open('x', encoding='utf-8') as out:
             json.dump(report, out, ensure_ascii=False, indent=2)
             out.write('\n')
