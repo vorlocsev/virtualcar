@@ -72,7 +72,11 @@ class VidaVmwareBootstrapStaticTests(unittest.TestCase):
         self.assertIn("if ($ConfigureRunnerService)", self.script)
         self.assertIn("does not power on a stopped VMware guest", self.script)
 
-    def test_07_windows_powershell_ast_parse_without_execution(self):
+    def test_07_workspace_guards_match_windows_and_posix_separators(self):
+        self.assertIn(r"(?i)[\\/]_work([\\/]|$)", self.script)
+        self.assertIn(r"(?i)[\\/]\.git([\\/]|$)", self.script)
+
+    def test_08_windows_powershell_ast_parse_without_execution(self):
         exe = shutil.which("powershell.exe") or shutil.which("pwsh")
         if not exe:
             self.skipTest("PowerShell parser is only available on Windows CI")
