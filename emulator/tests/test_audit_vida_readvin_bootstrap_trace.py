@@ -145,5 +145,30 @@ class VidaBootstrapTraceTests(unittest.TestCase):
         self.assertEqual(out['session_count'], 2)
 
 
+
+    def test_19_unrelated_running_script_closes_active_readvin_without_getscript(self):
+        other = "[Script][Info] Running script: 'Unrelated ECU coding'\n"
+        out = audit_text(PREFACE + SELECT + P3 + other + P2A + P2B + TXP2A)
+        self.assertEqual(out['totals']['vehcomm_p3_f114_requests'], 1)
+        self.assertEqual(out['totals']['vehcomm_p2_b9fb_target40_requests'], 0)
+        self.assertEqual(out['totals']['j2534_p2_b9fb_target40_tx_frames'], 0)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 0)
+        self.assertFalse(out['client_vin_accepted'])
+
+    def test_20_new_readvin_selection_after_other_running_reopens_window(self):
+        other = "[Script][Info] Running script: 'Unrelated ECU coding'\n"
+        out = audit_text(PREFACE + SELECT + P3 + other + P2A + SELECT + P3 + P2A + P2B)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 1)
+        self.assertEqual(out['totals']['vehcomm_p2_b9fb_target40_requests'], 1)
+        self.assertEqual(out['session_count'], 1)
+        self.assertFalse(out['actual_positive_ecu_reply_correlated'])
+
+    def test_21_selected_readvin_running_keeps_current_window_open(self):
+        out = audit_text(PREFACE + SELECT + P3 + RUN + P2A + P2B)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 1)
+        self.assertEqual(out['totals']['bootstrap_readvin_running'], 1)
+        self.assertFalse(out['replay_approved'])
+
+
 if __name__ == '__main__':
     unittest.main()
