@@ -99,5 +99,51 @@ class VidaBootstrapTraceTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 main([str(src),'--output',str(dst)])
 
+
+    def test_13_unrelated_getscript_closes_existing_bootstrap_window(self):
+        unrelated = "[ScriptProvider] SP: GetScript Type: 'VehCommSpecification' Profile: 'EMPTYPROFILE,'\n"
+        out = audit_text(PREFACE + SELECT + P3 + unrelated + P2A + P2B + TXP2A)
+        self.assertEqual(out['totals']['vehcomm_p3_f114_requests'], 1)
+        self.assertEqual(out['totals']['vehcomm_p2_b9fb_target40_requests'], 0)
+        self.assertEqual(out['totals']['j2534_p2_b9fb_target40_tx_frames'], 0)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 0)
+
+    def test_14_profiled_readvin_closes_bootstrap_window(self):
+        profiled = "[ScriptProvider] SP: GetScript Type: 'ReadVin' Profile: 'PROFILE_X,'\n"
+        out = audit_text(PREFACE + SELECT + P3 + profiled + P2A + P2B)
+        self.assertEqual(out['totals']['readvin_getscript_declarations'], 2)
+        self.assertEqual(out['totals']['readvin_emptyprofile_selections'], 1)
+        self.assertEqual(out['totals']['vehcomm_p2_b9fb_target40_requests'], 0)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 0)
+
+    def test_15_two_bootstrap_windows_cannot_complete_one_combined_gate(self):
+        out = audit_text(PREFACE + SELECT + P3 + SELECT + P2A + P2B)
+        self.assertEqual(out['session_count'], 1)
+        self.assertEqual(out['totals']['readvin_emptyprofile_selections'], 2)
+        self.assertEqual(out['totals']['vehcomm_p3_f114_requests'], 1)
+        self.assertEqual(out['totals']['vehcomm_p2_b9fb_target40_requests'], 1)
+        self.assertEqual(out['totals']['vehcomm_p2_b9fb_target50_requests'], 1)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 0)
+        self.assertFalse(out['client_vin_accepted'])
+
+    def test_16_second_complete_window_in_same_session_counts_only_once(self):
+        out = audit_text(PREFACE + SELECT + P3 + SELECT + P3 + P2A + P2B)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 1)
+        self.assertEqual(out['session_count'], 1)
+        self.assertFalse(out['actual_positive_ecu_reply_correlated'])
+
+    def test_17_new_bootstrap_after_unrelated_getscript_reopens_window(self):
+        unrelated = "[ScriptProvider] SP: GetScript Type: 'Other' Profile: 'EMPTYPROFILE,'\n"
+        out = audit_text(PREFACE + SELECT + P3 + unrelated + P2A + SELECT + P3 + P2A + P2B)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 1)
+        self.assertEqual(out['totals']['vehcomm_p2_b9fb_target40_requests'], 1)
+        self.assertFalse(out['xc90_v8_my2009_identified'])
+
+    def test_18_session_boundary_cannot_join_split_windows(self):
+        out = audit_text(PREFACE + SELECT + P3 + P2A + PREFACE + SELECT + P2B)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 0)
+        self.assertEqual(out['session_count'], 2)
+
+
 if __name__ == '__main__':
     unittest.main()
