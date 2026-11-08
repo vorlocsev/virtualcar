@@ -17,8 +17,8 @@ OBSERVATIONS = {
     "ecu_list": {"populated", "empty", "not_opened", "unknown"},
     "vehicle_identity": {"displayed", "not_displayed", "unknown"},
     "error_category": {
-        "none", "adapter_missing", "connect_error", "vehicle_unrecognized",
-        "timeout", "other", "unknown"
+        "none", "adapter_missing", "connect_error", "vin_read_failed",
+        "vehicle_unrecognized", "timeout", "other", "unknown"
     },
 }
 KEYS = {
@@ -72,6 +72,8 @@ def audit(raw):
         next_gate = "review_same_run_j2534_connect_status"
     elif connection != "connected":
         next_gate = "observe_client_connect_state"
+    elif identity != "displayed" and error == "vin_read_failed":
+        next_gate = "review_same_run_vin_read_request_and_b9fb_delivery"
     elif identity != "displayed":
         next_gate = "review_same_run_b9fb_delivery_and_verified_fixture"
     elif ecu_list != "populated":
