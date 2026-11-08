@@ -1007,16 +1007,65 @@ URLs, passwords, VIN, ECU data or Java methods were
 exported or executed; no DB/network/J2534 device I/O,
 configuration/registry changes or binary publication.
 
-**Next bounded operator-local static gate:** inspect only
-the target class's JVM constant pool for **aggregate**
-method-name keywords and external class-reference family
-counts (e.g., native-library/JNA patterns, Java I/O/network,
-J2534 PassThru command hints). Apply 1 MiB class size
-limit; output booleans/counts only, never actual class,
-method, package, native-library or path names. The results
-are only static hints and must not be interpreted as proof
-of actual calls. In parallel, prioritise an eventual scan
-of other deployed modules only if this gate suggests it.
+**Owner-local J2534-named class role audit (v2, completed):**
+After troubleshooting a previous incomplete run, the
+instrumented read-only PowerShell v2 script completed with
+`[VIDA] Result=OK` and `ScriptFinished`. Current WildFly
+PID was **11600**, and ancestry to `VidaMonitor.exe` was
+confirmed. The EJB archive in sorted EAR slot 2 yielded:
+
+| Metric | Result |
+|---|---:|
+| J2534TargetStatus | `Parsed` |
+| J2534Fields | 5 |
+| J2534Methods | 11 |
+| Constructors | 1 |
+| StaticInitializers | 0 |
+| GetterMethods | 5 |
+| SetterMethods | 5 |
+| BooleanGetterMethods | 0 |
+| OtherMethods | **0** |
+| NativeMethods | 0 |
+| PassThruDeclaredMethods | 0 |
+| ReferencedJnaFamilyClasses | 0 |
+| ReferencedJavaNetClasses | 0 |
+| ReferencedJavaIOClasses | 0 |
+| ReferencedReflectionClasses | 0 |
+| ReferencedSQLClasses | 0 |
+| JnaFamilyMethodRefs | 0 |
+| NativeLibraryLoadMethodRefs | 0 |
+| PassThruMethodRefs | 0 |
+| ConstantPoolPassThruHints | 0 |
+| ConstantPoolJ2534Hints | 3 |
+
+**Interpretation:** the exact breakdown of declared
+method names (constructor + five getter + five setter)
+with five fields and no other methods is **strongly
+consistent with a JavaBean/DTO** representing J2534 data,
+NOT an executable J2534 PassThru driver implementation.
+This is a static structure-based inference, not inspection
+of method bodies or proof of actual usage or runtime
+behavior. Three J2534 mentions in the target class's own
+constant pool can reflect its own name/types and should
+not be considered evidence of external calls. All other
+324 class entries in this same EJB JAR previously tested
+negative for J2534 references via exact `CONSTANT_Class`
+and UTF8 hints; neither scan covers other deployments.
+Zero native/PassThru/JNA references in the target class
+does not rule out the rest of VIDA reaching DiCE/J2534 via
+a different module, factory, interface, process or DLL.
+
+**Next safe, bounded, read-only gate:** pivot away from
+this probable data model. Enumerate **counts only** of
+nested `WEB-INF/lib` JARs, exploded `WEB-INF/classes`,
+other first-level artifacts within the two exploded WARs,
+and optionally `META-INF`/manifest presence. No archive
+extraction, file-content searches, Java execution,
+server/registry/J2534 mutations, URLs or confidential
+names/paths/credentials/VIN output. Use these counts to
+prioritize which application module to inspect next; do
+not assert a VIDA→J2534 communication path without
+separate evidence.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
