@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from audit_vida_readvin_clr_dispatch import _load_private_zip
 from audit_vida_readvin_property_classes import audit_xml as audit_property_classes
 
-SCHEMA = 'virtualcar-vida-readvin-resultget-candidate-route-v2'
+SCHEMA = 'virtualcar-vida-readvin-resultget-candidate-route-v3'
 SCRIPT_DLL_SHA256 = 'd93b61b7b7524942649fd534303735dd4390af6ffee848b82e91c8e47eb5e028'
 CARCOM_DLL_SHA256 = '1735d8ac20d63a20afe13742ea5156cce5a5328392bd3e44d9ec3cd8ae0dbd07'
 IDENTITY_METHODS = ('AddVIN', 'SetX40Serial')
@@ -45,6 +45,9 @@ def audit_xml(xml_bytes):
     onget_identity_source_ids = set()
     onget_addvin_source_ids = set()
     onget_x40_source_ids = set()
+    arity_safe_positive_readvin_pairs = set()
+    arity_safe_onget_addvin_sources = set()
+    arity_safe_onget_x40_sources = set()
     stats = {
         'resultget_node_declarations': len(resultget_nodes),
         'resultget_nodes_with_direct_invalue_property': 0,
@@ -68,6 +71,8 @@ def audit_xml(xml_bytes):
         'readvin_positive_response_to_resultget_execute_declarations': 0,
         'enabled_readvin_positive_response_to_resultget_execute_declarations': 0,
         'reader_execute_calls_with_other_or_absent_event_name': 0,
+        'reader_execute_calls_with_direct_arguments': 0,
+        'positive_reader_execute_calls_with_zero_arguments': 0,
         'resultget_onget_to_identity_declarations': 0,
         'enabled_resultget_onget_to_identity_declarations': 0,
         'resultget_to_identity_calls_with_other_or_absent_event_name': 0,
@@ -77,6 +82,9 @@ def audit_xml(xml_bytes):
         'identity_calls_using_resultget_non_get_property': 0,
         'enabled_identity_calls_using_resultget_get_output': 0,
         'other_identity_parameter_declarations': 0,
+        'identity_calls_with_wrong_direct_argument_count': 0,
+        'identity_calls_to_non_output_node_id': 0,
+        'identity_calls_to_named_output_with_one_argument': 0,
     }
     for node_id, node in resultget_nodes.items():
         prop = [p for p in node.findall('./property') if p.attrib.get('name') == 'InValue']
@@ -131,6 +139,8 @@ def audit_xml(xml_bytes):
             if (event_source_id in readvin_ids and target_id in resultget_ids and
                     call.attrib.get('method') == 'Execute'):
                 stats['readvin_event_to_resultget_execute_declarations'] += 1
+                zero_arguments = len(call.findall('./parameter')) == 0
+                stats['reader_execute_calls_with_direct_arguments'] += int(not zero_arguments)
                 stats['enabled_readvin_event_to_resultget_execute_declarations'] += int(parser_enabled)
                 if parser_enabled:
                     readvin_event_target_ids.add(target_id)
@@ -140,11 +150,24 @@ def audit_xml(xml_bytes):
                     if parser_enabled:
                         stats['enabled_readvin_positive_response_to_resultget_execute_declarations'] += 1
                         positive_readvin_event_pairs.add((event_source_id, target_id))
+                        if zero_arguments:
+                            stats['positive_reader_execute_calls_with_zero_arguments'] += 1
+                            arity_safe_positive_readvin_pairs.add((event_source_id, target_id))
                 else:
                     stats['reader_execute_calls_with_other_or_absent_event_name'] += 1
             if not (target_id in identity_ids and call.attrib.get('method') in IDENTITY_METHODS):
                 continue
-            for param in call.findall('./parameter'):
+            direct_params = call.findall('./parameter')
+            is_single_string_argument_shape = len(direct_params) == 1
+            # Script.get_Output resolves a node literally named Output.
+            # AddVIN/SetX40Serial MethodDef signature is void(string).
+            named_output = target_id == 'Output'
+            stats['identity_calls_with_wrong_direct_argument_count'] += int(
+                not is_single_string_argument_shape)
+            stats['identity_calls_to_non_output_node_id'] += int(not named_output)
+            stats['identity_calls_to_named_output_with_one_argument'] += int(
+                named_output and is_single_string_argument_shape)
+            for param in direct_params:
                 source_id = param.attrib.get('node', '')
                 if 'node' not in param.attrib or source_id not in resultget_ids:
                     stats['other_identity_parameter_declarations'] += 1
@@ -163,8 +186,12 @@ def audit_xml(xml_bytes):
                             onget_identity_source_ids.add(source_id)
                             if call.attrib.get('method') == 'AddVIN':
                                 onget_addvin_source_ids.add(source_id)
+                                if named_output and is_single_string_argument_shape:
+                                    arity_safe_onget_addvin_sources.add(source_id)
                             elif call.attrib.get('method') == 'SetX40Serial':
                                 onget_x40_source_ids.add(source_id)
+                                if named_output and is_single_string_argument_shape:
+                                    arity_safe_onget_x40_sources.add(source_id)
                     else:
                         stats['resultget_to_identity_calls_with_other_or_absent_event_name'] += 1
                 elif not prop_name:
@@ -207,6 +234,22 @@ def audit_xml(xml_bytes):
             {extractor for _, extractor in
              (positive_readvin_event_pairs & result_to_invalue_set_pairs)} &
             onget_x40_source_ids),
+        # Stronger static gate: the original reflection signatures must be
+        # structurally invokable. A type-compatible STRING VALUE is still
+        # UNKNOWN; string presence, CEM response and runtime all unverified.
+        'candidate_addvin_route_arity_and_output_shape_lexically_present': bool(
+            {extractor for _, extractor in
+             (arity_safe_positive_readvin_pairs & result_to_invalue_set_pairs)} &
+            arity_safe_onget_addvin_sources),
+        'candidate_x40_route_arity_and_output_shape_lexically_present': bool(
+            {extractor for _, extractor in
+             (arity_safe_positive_readvin_pairs & result_to_invalue_set_pairs)} &
+            arity_safe_onget_x40_sources),
+        'original_resultget_execute_parameter_count': 0,
+        'original_addvin_argument_count': 1,
+        'original_setx40serial_argument_count': 1,
+        'original_identity_output_node_id_required': 'Output',
+        'identity_argument_string_type_verified': False,
         'source_event_name_required': 'OnPositiveResponse',
         'resultget_event_name_required': 'OnGet',
         'event_delegates_were_observed_at_runtime': False,
