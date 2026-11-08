@@ -1,0 +1,51 @@
+name: VIDA offline SQLite verification (owner VM)
+
+# Private, owner-triggered metadata check. No checkout, no database
+# upload, no network fetches or repository-controlled analysis code.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virtualcar-vida-offline-readonly
+  cancel-in-progress: false
+
+jobs:
+  verify-vida-offline:
+    name: Verify 9 private VIDA SQLite copies
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, virtualcar-win]
+    timeout-minutes: 90
+    steps:
+      - name: Validate collection and metadata-only output
+        shell: powershell
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pythonManifest = 'E:\VirtualCar\Tools\python312.path'
+          $data = 'E:\VirtualCar\VIDA-private'
+          $validator = 'E:\VirtualCar\VIDA-tools\verify_offline_collection.py'
+
+          foreach ($path in @($pythonManifest, $data, $validator)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw 'Offline VIDA prerequisite unavailable on the owner runner.'
+            }
+          }
+
+          $python = (Get-Content -LiteralPath $pythonManifest -Raw).Trim()
+          if (-not (Test-Path -LiteralPath $python)) {
+            throw 'Configured runner Python executable is unavailable.'
+          }
+
+          # The known local validator emits counts and booleans only.
+          # It verifies SQLite integrity, row counts and manifest SHA256.
+          # It does not print table content, VIN, XML, BLOBs or source paths.
+          & $python $validator --folder $data
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Offline VIDA collection verification failed.'
+          }
+
+          Write-Host 'VERIFIED: owner-private VIDA SQLite collection. No original data uploaded.'
