@@ -50,13 +50,15 @@ class FreshWindowTests(unittest.TestCase):
             j.write_text("historical unreadable preamble\n", encoding="utf-8")
             b.write_text("historical invalid record\n", encoding="utf-8")
             baseline = gate._baseline(j, b)
-            j.open("a", encoding="utf-8").write(b9fb_no_fixture())
-            b.open("a", encoding="utf-8").write("".join([
+            with j.open("a", encoding="utf-8") as out:
+                out.write(b9fb_no_fixture())
+            with b.open("a", encoding="utf-8") as out:
+                out.write("".join([
                 backend_evt("tx_received"),
                 backend_evt("probe_classified", probe="D2_50_B9FB"),
                 backend_evt("request_completed", reason="missing_profile",
                             outcome="no_response", tick=1001000),
-            ]))
+                ]))
             j_lines, jm = gate._append_lines(j, baseline["j2534"])
             b_lines, bm = gate._append_lines(b, baseline["backend"])
             self.assertEqual((jm["complete_lines"], bm["complete_lines"]), (3, 3))
