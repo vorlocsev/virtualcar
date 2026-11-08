@@ -1469,19 +1469,52 @@ proof of missing client support. A browser process count
 is not a browser window count, and no process-to-tab or
 application attribution has been demonstrated.
 
-**Next bounded passive gate:** classify the lone
-`VidaDescendantOtherProcesses=1` by a fixed, generic
-process category and parent relationship (counts only),
-and independently count visible window titles with a
-case-insensitive VIDA marker among browser/WebView or
-other processes, **without printing window titles, PIDs,
-paths, URLs or process command lines**. Windows window
-metadata and process ancestry provide UI candidates, not
-proof of the UI backend or SQL procedure. Do not start or
-interact with applications, send TCP/HTTP/SQL/J2534/ECU
-requests, or publish builds. If no VIDA-marked UI window
-exists, pause client-network attribution until one is
-legitimately available. Keep PR #172 draft/unmerged.
+**Owner-local passive VIDA primary-window / process classification (completed):**
+`Inspect-VIDA-ClientWindowMetadata.ps1` finished
+`Result=OK`/`ScriptFinished`. Confirmed
+`VidaDescendantsTotal=3`, `OtherVidaDescendants=1`.
+The sole non-cmd/non-java VIDA descendant is in generic
+**ConsoleHost** category (`OtherDescendantConsoleHost=1`),
+with **`cmd.exe` as its direct parent**
+(`OtherDescendantParentCmd=1`). No other miscellaneous
+descendant type or direct parent category registered.
+
+The separate `Get-Process` primary-window-title snapshot
+found **6 processes with non-empty MainWindowTitle**,
+including **1 browser process** and **0 WebView processes**
+with a nonempty title; 5 other processes had a title.
+Case-insensitive `VIDA` marker appeared in **1 browser
+process title** (`VIDAMarkedBrowserWindowTitles=1`) and
+**1 non-browser process title**
+(`VIDAMarkedOtherWindowTitles=1`), with **0 WebView titles**.
+These are counts of **process primary titles**, not counts
+of all tabs/windows or proof of a particular web origin.
+The other VIDA-marked title could be an unrelated
+application or launcher; it has not been identified.
+
+**Interpretation:** one already-running browser is a
+**credible VIDA UI candidate**. The earlier **20 zero
+inbound WildFly TCP snapshot results** can reflect an
+idle/open tab, and do not conflict with a browser window
+whose title contains VIDA. Neither title alone proves
+client ↔ WildFly connectivity or `dbo.GetScript`/J2534.
+No full titles, paths, process command lines, URLs, PIDs,
+IP addresses, ports, VIN, or credentials printed; no
+applications launched, network calls or ECU actions.
+
+**Next owner-controlled bounded validation:** with the
+already-open VIDA-marked browser tab in view, run the
+existing passive `Inspect-VIDA-WildFlyTcpSampling.ps1`
+during **ordinary non-diagnostic UI navigation only**
+(e.g. existing home/help view), with no ECU/adapter actions,
+programming, VIN collection, database requests or service
+changes. An observed reverse TCP peer would establish
+browser/other process ↔ WildFly connectivity only; it
+would not identify an HTTP route or SQL procedure. If
+nothing is observed, do not repeat indefinite captures;
+instead classify other available client transports using
+separate non-invasive provenance checks. PR #172 remains
+draft; do not publish Virtual Car binaries.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
