@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "p2_message_classify.h"
 #include "p2_j2534_bridge.h"
+#include "p2_j2534_rx_status.h"
 #if !defined(_WIN32) || !defined(_M_IX86)
 #error This proxy must be built for 32-bit Windows x86.
 #endif
@@ -158,8 +159,9 @@ static void event_log(const char *ev,DWORD channel,DWORD status,DWORD requested,
                       p2_kind kind,DWORD canid,DWORD size,DWORD misc){
     event_log_extra(ev,channel,status,requested,count,kind,canid,size,misc,0,0,0,0,0);
 }
-static p2_kind msg_kind(PASSTHRU_MSG *m,int rx){
-    if(!m || m->DataSize>4128u)return P2_OTHER;
+static p2_kind msg_kind(PASSTHRU_MSG *m,int rx,DWORD read_result){
+    if(!m || m->DataSize>4128u ||
+       (rx && !p2_j2534_rx_read_is_data(read_result,m->RxStatus)))return P2_OTHER;
     return p2_classify(m->Data,m->DataSize,rx);
 }
 static DWORD msg_canid(PASSTHRU_MSG *m){return (!m||m->DataSize>4128u)?0:p2_can_id(m->Data,m->DataSize);}
@@ -176,11 +178,14 @@ DWORD WINAPI PassThruDisconnect(DWORD channel){DWORD st;ensure_loaded();st=real_
   if(st==0 && g_bridge_ready){EnterCriticalSection(&g_bridge_lock);p2_bridge_disconnect(&g_bridge,channel);LeaveCriticalSection(&g_bridge_lock);}
   event_log("disconnect",channel,st,0,0,P2_OTHER,0,0,0);return st;}
 DWORD WINAPI PassThruReadMsgs(DWORD channel,PASSTHRU_MSG *msgs,DWORD *num,DWORD timeout){
-    DWORD st,count=0,requested=num?*num:0,i,idx=0; p2_kind kind=P2_OTHER;
+    DWORD st,count=0,requested=num?*num:0,i,idx=0; int valid_batch=0;
+    p2_kind kind=P2_OTHER;
     const char *core_rx=0;
     ensure_loaded();st=real_read?real_read(channel,msgs,num,timeout):ERR_FAILED;
     count=num?*num:0;
-    if(st==0 && msgs && count>0 && count<=128 && g_bridge_ready){
+    /* Never dereference driver-reported records beyond caller capacity. */
+    valid_batch=msgs && p2_j2534_rx_batch_is_safe(st,requested,count);
+    if(valid_batch && g_bridge_ready){
       EnterCriticalSection(&g_bridge_lock);
       for(i=0;i<count;++i){
         const char *v;
@@ -191,12 +196,12 @@ DWORD WINAPI PassThruReadMsgs(DWORD channel,PASSTHRU_MSG *msgs,DWORD *num,DWORD 
       }
       LeaveCriticalSection(&g_bridge_lock);
     }
-    if(msgs && count>0 && count<=128){
-      for(i=0;i<count;++i){p2_kind k=msg_kind(&msgs[i],1);if(k!=P2_OTHER){kind=k;idx=i;break;}}
+    if(valid_batch){
+      for(i=0;i<count;++i){p2_kind k=msg_kind(&msgs[i],1,st);if(k!=P2_OTHER){kind=k;idx=i;break;}}
     }
     event_log_extra("read",channel,st,requested,count,kind,
-              (msgs&&count>idx&&count<=128)?msg_canid(&msgs[idx]):0,
-              (msgs&&count>idx&&count<=128)?msg_len(&msgs[idx]):0,0,
+              (valid_batch && count>idx)?msg_canid(&msgs[idx]):0,
+              (valid_batch && count>idx)?msg_len(&msgs[idx]):0,0,
               0,0,0,core_rx,0);
     return st;
 }
@@ -205,7 +210,7 @@ DWORD WINAPI PassThruWriteMsgs(DWORD channel,PASSTHRU_MSG *msgs,DWORD *num,DWORD
     const char *core_name=0;
     DWORD core_decision=0;
     if(msgs && requested>0 && requested<=128){
-      for(i=0;i<requested;++i){p2_kind k=msg_kind(&msgs[i],0);if(k!=P2_OTHER){kind=k;idx=i;break;}}
+      for(i=0;i<requested;++i){p2_kind k=msg_kind(&msgs[i],0,0u);if(k!=P2_OTHER){kind=k;idx=i;break;}}
     }
     ensure_loaded();st=real_write?real_write(channel,msgs,num,timeout):ERR_FAILED;
     count=num?*num:0;

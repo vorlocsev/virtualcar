@@ -1,0 +1,33 @@
+#ifndef P2_J2534_RX_STATUS_H
+#define P2_J2534_RX_STATUS_H
+
+#include <stdint.h>
+
+/* J2534 RxStatus, not TxFlags. Bits 7 and 8 describe addressing and
+   CAN_29BIT_ID, and must NOT disqualify an otherwise real RX frame.
+   Reject indications, failed TX, break, padding/error, and lost-data flags.
+   This guards observers only: original PassThruReadMsgs output is untouched. */
+#define P2_RX_STATUS_NON_DATA_MASK 0x0000027Fu
+
+static inline int p2_j2534_rx_is_data(uint32_t rx_status) {
+    return (rx_status & P2_RX_STATUS_NON_DATA_MASK) == 0u;
+}
+
+/* The result of PassThruReadMsgs must also be successful. Adapters can leave
+   *pNumMsgs and the supplied buffer unchanged on an error, so stale bytes
+   must never be classified as a freshly received ECU frame. */
+static inline int p2_j2534_rx_read_is_data(uint32_t result, uint32_t rx_status) {
+    return result == 0u && p2_j2534_rx_is_data(rx_status);
+}
+
+/* The driver's returned count must fit both the caller-allocated request
+   capacity and this observer's bounded scan. A success code alone is NOT
+   permission to dereference records beyond the caller's array. */
+static inline int p2_j2534_rx_batch_is_safe(uint32_t result,
+                                              uint32_t requested,
+                                              uint32_t returned) {
+    return result == 0u && returned > 0u && returned <= requested &&
+           returned <= 128u;
+}
+
+#endif

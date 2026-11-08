@@ -45,7 +45,16 @@ int main(void) {
  /* Can observe only when explicitly configured for the actual car. */
  b.vehicle.cfg.enable_community_ls_signals=true;
  b.vehicle.cfg.observed_cem_ls_can_id=0x00617FF8;
- assert(!strcmp(p2_bridge_inspect_rx(&b,11,0,ls,12,101),"cem_broadcast_observed"));
+ /* J2534 transmit indications must not mutate passive key/ignition state. */
+ assert(!p2_bridge_inspect_rx(&b,11,0x001u,ls,12,100));
+ assert(!p2_bridge_inspect_rx(&b,11,0x009u,ls,12,100));
+ assert(!p2_bridge_inspect_rx(&b,11,0x002u,ls,12,100));
+ assert(!p2_bridge_inspect_rx(&b,11,0x008u,ls,12,100));
+ assert(!p2_bridge_inspect_rx(&b,11,0x200u,ls,12,100));
+ assert(!b.vehicle.passive_key.valid);
+ assert(b.inspected_rx==0u);
+ /* CAN_29BIT_ID is legitimate addressing metadata for actual RX data. */
+ assert(!strcmp(p2_bridge_inspect_rx(&b,11,0x100u,ls,12,101),"cem_broadcast_observed"));
  assert(b.vehicle.passive_key.valid && b.vehicle.passive_key.key_position==2);
  assert(b.vehicle.diagnostic_ignition==P2_DIAG_IGNITION_UNKNOWN);
  assert(!p2_bridge_inspect_rx(&b,11,0,ls,11,102)); GROUP();

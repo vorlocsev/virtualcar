@@ -1,4 +1,5 @@
 #include "p2_j2534_bridge.h"
+#include "p2_j2534_rx_status.h"
 
 static p2_bridge_channel *find_channel(p2_j2534_bridge *b, uint32_t id) {
     size_t k;
@@ -68,7 +69,7 @@ const char *p2_bridge_inspect_rx(p2_j2534_bridge *b,uint32_t id,uint32_t flags,
     p2_ls_observation result;
     uint32_t can_id;
     bool extended;
-    if (!b||!data||size!=12) return 0; /* one 8-byte raw CAN frame */
+    if (!b||!data||size!=12||!p2_j2534_rx_is_data(flags)) return 0; /* only real raw CAN RX */
     c=find_channel(b,id);
     if(!c){++b->unknown_channel_events;return 0;}
     if(c->protocol_id!=5u || c->baud!=b->vehicle.cfg.ls_bitrate) return 0;
