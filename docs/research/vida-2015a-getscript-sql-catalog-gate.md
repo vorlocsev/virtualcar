@@ -1435,18 +1435,53 @@ requests were sent; the operator did not interact with the
 vehicle; no IPs, ports, paths, URLs, credentials or VIN
 were disclosed.
 
-**Next bounded read-only gate:** pivot to Windows process
-inventory around `VidaMonitor.exe` and the verified WildFly
-process (children/descendants, client/browser/WebView
-process categories, relevant executable architecture and
-process relationships), **counts and categories only**.
-Avoid repeatedly resampling idle TCP listeners. Do not
-start VIDA, load DLLs, inspect private command-line strings
-or modify SQL, registry, driver or ECU configuration.
-If candidate client processes are found, define a separate
-sanitized, authorized observation of how they communicate,
-without asserting HTTP/SQL procedure usage from process
-names alone. Keep draft PR #172 unmerged; publish no builds.
+**Owner-local passive VIDA client process inventory (completed):**
+`Inspect-VIDA-ClientProcessInventory.ps1` completed
+`Result=OK`/`ScriptFinished`, with a single CIM Windows
+process snapshot and PID-reuse-protected ancestry checks.
+
+| Aggregate process metric | Observed |
+|---|---:|
+| `VidaMonitorProcesses` | **1** |
+| `WildFlyStandaloneCandidates` / `VerifiedVidaDescendantWildFly` | **1 / 1** |
+| `VidaDescendantsTotal` / `DirectVidaMonitorChildren` | **3 / 1** |
+| `VidaDescendantCmdProcesses` | **1** |
+| `VidaDescendantJavaProcesses` | **1** |
+| `VidaDescendantBrowserProcesses` / `VidaDescendantWebViewProcesses` | **0 / 0** |
+| `VidaDescendantOtherProcesses` | **1** |
+| `VerifiedWildFlyDirectCmdParents` / `VerifiedWildFlyDirectVidaMonitorParents` | **1 / 0** |
+| `BrowsersRunningSystemWide` / `WebViewsRunningSystemWide` | **14 / 6** |
+| `SQLServerProcessesRunning` | **1** |
+
+The independently confirmed core process chain is
+**`VidaMonitor.exe → cmd.exe → java.exe` (WildFly)**. A
+third VIDA descendant, of a type other than `cmd.exe`,
+`java.exe`, a known browser or WebView2, exists but was
+not identified in the redacted categories. There are 14
+browser processes and 6 WebView2 processes running in
+Windows overall, **none confirmed as VIDA descendants**.
+Browsers frequently launch independently of their target
+web applications: absence of descendant relationship is
+**not evidence that these browsers do not host the VIDA UI**.
+The earlier 20 TCP snapshots with zero inbound loopback
+WildFly connections remain bounded observations, not
+proof of missing client support. A browser process count
+is not a browser window count, and no process-to-tab or
+application attribution has been demonstrated.
+
+**Next bounded passive gate:** classify the lone
+`VidaDescendantOtherProcesses=1` by a fixed, generic
+process category and parent relationship (counts only),
+and independently count visible window titles with a
+case-insensitive VIDA marker among browser/WebView or
+other processes, **without printing window titles, PIDs,
+paths, URLs or process command lines**. Windows window
+metadata and process ancestry provide UI candidates, not
+proof of the UI backend or SQL procedure. Do not start or
+interact with applications, send TCP/HTTP/SQL/J2534/ECU
+requests, or publish builds. If no VIDA-marked UI window
+exists, pause client-network attribution until one is
+legitimately available. Keep PR #172 draft/unmerged.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
