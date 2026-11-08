@@ -17,8 +17,8 @@ def xml(gets='<get property="Decoded"><getbyid key="101"/><getbyname key="VIN"/>
         identity_param='<parameter node="Extractor" property="Decoded"/>',
         disabled='', reader_call=True, output_method='AddVIN', ext='',
         binding=True, binding_disabled=''):
-    reader = '<eventhandler node="Reader"><call node="Extractor" method="Execute"/></eventhandler>' if reader_call else ''
-    output = ('<eventhandler node="Extractor"><call node="Identity" method="' + output_method + '"' +
+    reader = '<eventhandler node="Reader" name="OnPositiveResponse"><call node="Extractor" method="Execute"/></eventhandler>' if reader_call else ''
+    output = ('<eventhandler node="Extractor" name="OnGet"><call node="Identity" method="' + output_method + '"' +
               disabled + '>' + identity_param + '</call></eventhandler>')
     binding_xml = ('<propertyhandler node="Reader" name="Result">'
                    '<set node="Extractor" property="InValue"' +
@@ -44,6 +44,8 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
         self.assertEqual(c['identity_calls_using_declared_resultget_get_output'], 1)
         self.assertTrue(r['candidate_route_lexically_present'])
         self.assertTrue(r['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertTrue(r['candidate_addvin_route_with_event_names_lexically_present'])
+        self.assertFalse(r['candidate_x40_route_with_event_names_lexically_present'])
         self.assertEqual(c['enabled_readvin_result_to_resultget_invalue_sets'], 1)
         self.assertFalse(r['vin_accepted_by_client'])
         self.assertFalse(r['resultget_setproperties_was_executed'])
@@ -165,6 +167,47 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
         result = audit_xml(raw)
         self.assertTrue(result['candidate_route_lexically_present'])
         self.assertFalse(result['candidate_three_leg_route_with_property_binding_lexically_present'])
+
+    def test_18_missing_event_names_cannot_make_verified_route(self):
+        raw = xml().replace(b' name="OnPositiveResponse"', b'').replace(b' name="OnGet"', b'')
+        report = audit_xml(raw)
+        self.assertTrue(report['candidate_three_leg_without_event_name_validation_lexically_present'])
+        self.assertFalse(report['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertEqual(report['categorical_declarations'][
+            'reader_execute_calls_with_other_or_absent_event_name'], 1)
+        self.assertEqual(report['categorical_declarations'][
+            'resultget_to_identity_calls_with_other_or_absent_event_name'], 1)
+        self.assertFalse(report['vin_accepted_by_client'])
+
+    def test_19_no_response_event_not_positive_vin_route(self):
+        raw = xml().replace(b' name="OnPositiveResponse"', b' name="OnNoResponse"')
+        report = audit_xml(raw)
+        self.assertTrue(report['candidate_three_leg_without_event_name_validation_lexically_present'])
+        self.assertFalse(report['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertFalse(report['candidate_addvin_route_with_event_names_lexically_present'])
+
+    def test_20_resultget_wrong_event_cannot_make_vin_route(self):
+        raw = xml().replace(b' name="OnGet"', b' name="OnNoContact"')
+        report = audit_xml(raw)
+        self.assertTrue(report['candidate_three_leg_without_event_name_validation_lexically_present'])
+        self.assertFalse(report['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertFalse(report['candidate_addvin_route_with_event_names_lexically_present'])
+
+    def test_21_onget_x40_uses_separate_non_vin_gate(self):
+        report = audit_xml(xml(output_method='SetX40Serial'))
+        self.assertTrue(report['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertTrue(report['candidate_x40_route_with_event_names_lexically_present'])
+        self.assertFalse(report['candidate_addvin_route_with_event_names_lexically_present'])
+        self.assertFalse(report['vin_accepted_by_client'])
+
+    def test_22_no_promotion_when_disabled_positive_event(self):
+        raw = xml().replace(b'method="Execute"/>', b'method="Execute" disabled="false"/>')
+        report = audit_xml(raw)
+        self.assertEqual(report['categorical_declarations'][
+            'readvin_positive_response_to_resultget_execute_declarations'], 1)
+        self.assertEqual(report['categorical_declarations'][
+            'enabled_readvin_positive_response_to_resultget_execute_declarations'], 0)
+        self.assertFalse(report['candidate_three_leg_route_with_property_binding_lexically_present'])
 
     def test_10_private_zip_safe_new_json_exclusive_and_symlink(self):
         with tempfile.TemporaryDirectory() as d:
