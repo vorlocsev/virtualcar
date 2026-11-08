@@ -105,6 +105,10 @@ def audit_xml_bytes(xml_data):
     all_nodes = [e for e in root.iter() if local_name(e) == "node"]
     all_handlers = [e for e in root.iter() if local_name(e) == "eventhandler"]
     all_calls = [e for e in root.iter() if local_name(e) == "call"]
+    # Nested <call> elements have ambiguous event-source semantics.
+    # Count them for structural completeness, but never promote them to
+    # a candidate executable identity event or potential VIN path.
+    nested_calls = sum(nearest_call(e) is not None for e in all_calls)
     nodes = [e for e in all_nodes if has_section_ancestor(e, "nodes")]
     handlers = [e for e in all_handlers if has_section_ancestor(e, "handlers")]
     unclassified_nodes = len(all_nodes) - len(nodes)
@@ -153,6 +157,10 @@ def audit_xml_bytes(xml_data):
             if local_name(call) != "call" or nearest_handler(call) is not handler:
                 continue
             calls += 1
+            if nearest_call(call) is not None:
+                # Its XML parameter belongs to this inner call, but its
+                # event-source/dispatch semantics are NOT established.
+                continue
             method_name = call.attrib.get("method")
             if method_name not in IDENTITY_METHODS:
                 continue
@@ -194,11 +202,12 @@ def audit_xml_bytes(xml_data):
         "graph_layout": {
             "status": ("unresolved_or_partial" if not graph_sections_found or
                        unclassified_nodes or unclassified_handlers or
-                       len(all_calls) != calls else
+                       len(all_calls) != calls or nested_calls else
                        "direct_sections" if direct_path_matched else "nested_sections"),
             "node_elements_any_depth": len(all_nodes),
             "eventhandler_elements_any_depth": len(all_handlers),
             "call_elements_any_depth": len(all_calls),
+            "call_elements_nested_under_call_not_promoted": nested_calls,
             "node_elements_outside_nodes_section": unclassified_nodes,
             "eventhandler_elements_outside_handlers_section": unclassified_handlers,
             "call_elements_not_in_parsed_eventhandlers": len(all_calls) - calls,
