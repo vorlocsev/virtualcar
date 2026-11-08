@@ -173,5 +173,88 @@ class ServiceCatalogTests(unittest.TestCase):
         self.assertNotIn('ReadVin', report)
 
 
+    def test_18_matching_original_service_definition_wrapper_is_shape_only(self):
+        source = xml()
+        cat = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<?xml version="1.0" encoding="utf-8"?><service id="100"><definition/></service>'
+        result = audit_sources(source, cat, definition)
+        self.assertTrue(result['service_definition_xml_supplied'])
+        self.assertTrue(result['single_readvin_with_matching_service_definition_root_candidate_present'])
+        self.assertFalse(result['original_service_definition_runtime_verified'])
+        self.assertFalse(result['accepted_vin_verified'])
+        self.assertFalse(result['emulator_replay_approved'])
+
+    def test_19_wrong_definition_id_and_no_definition_not_promoted(self):
+        cat = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        self.assertFalse(audit_sources(xml(), cat)['single_readvin_with_matching_service_definition_root_candidate_present'])
+        result = audit_sources(xml(), cat, b'<service id="101"><component/></service>')
+        self.assertFalse(result['single_readvin_with_matching_service_definition_root_candidate_present'])
+
+    def test_20_missing_protocol_column_or_value_blocks_definition_shape(self):
+        definition = b'<service id="100"><definition/></service>'
+        for cat in (b'id,service,mode\n100,ReadVin,0\n',
+                    b'id,fkT122_Protocol,service,mode\n100,,ReadVin,0\n'):
+            with self.subTest(cat=cat):
+                result = audit_sources(xml(), cat, definition)
+                self.assertTrue(result['single_readvin_with_service_mode_metadata_candidate_present'])
+                self.assertFalse(result['single_readvin_with_matching_service_definition_root_candidate_present'])
+
+    def test_21_duplicate_rows_and_override_are_not_promoted(self):
+        definition = b'<service id="100"><command/></service>'
+        cat = b'id,fkT122_Protocol,service,mode\n100,7,X,0\n100,7,Y,0\n'
+        self.assertFalse(audit_sources(xml(), cat, definition)['single_readvin_with_matching_service_definition_root_candidate_present'])
+        setter = '<propertyhandler node="Input" name="Out"><set node="Reader" property="ServiceId"/></propertyhandler>'
+        cat = b'id,fkT122_Protocol,service,mode\n100,7,X,0\n'
+        self.assertFalse(audit_sources(xml(setter=setter), cat, definition)['single_readvin_with_matching_service_definition_root_candidate_present'])
+
+    def test_22_definition_rejects_malformed_unsafe_and_empty_sources(self):
+        cat = b'id,fkT122_Protocol,service,mode\n100,7,X,0\n'
+        for definition in (b'', b'<service id="100"/>', b'<script id="100"><x/></script>',
+                           b'<service id="0100"><x/></service>', b'<service><x/></service>',
+                           b'<!DOCTYPE service [<!ENTITY vin "SENSITIVE">]><service id="100">&vin;</service>',
+                           b'<service id="100"><x></service>'):
+            with self.subTest(definition=definition[:30]):
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), cat, definition)
+
+    def test_23_definition_depth_and_size_bounds(self):
+        cat = b'id,fkT122_Protocol,service,mode\n100,7,X,0\n'
+        deep = b'<service id="100">' + b'<x>' * 100 + b'</x>' * 100 + b'</service>'
+        with self.assertRaises(ValueError):
+            audit_sources(xml(), cat, deep)
+        from audit_vida_readvin_service_catalog import MAX_SERVICE_DEFINITION_BYTES
+        with self.assertRaises(ValueError):
+            audit_sources(xml(), cat, b' ' * (MAX_SERVICE_DEFINITION_BYTES + 1))
+
+    def test_24_private_definition_and_metadata_never_emitted(self):
+        secret = 'SENSITIVE_SERVICE_XML_PAYLOAD'
+        cat = b'id,fkT122_Protocol,service,mode\n100,PRIVATE_PROTOCOL,SECRET_SVC,0\n'
+        definition = ('<service id="100"><data>' + secret + '</data></service>').encode()
+        result = json.dumps(audit_sources(xml(), cat, definition))
+        self.assertTrue(json.loads(result)['single_readvin_with_matching_service_definition_root_candidate_present'])
+        for token in (secret, 'PRIVATE_PROTOCOL', 'SECRET_SVC', '100', 'Reader'):
+            self.assertNotIn(token, result)
+
+    def test_25_optional_cli_service_definition_keeps_private_file_local(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            z = root / 'readvin.zip'
+            cat = root / 'T111_Service.csv'
+            definition = root / '100.xml'
+            out = root / 'result.json'
+            with zipfile.ZipFile(z, 'w', compression=zipfile.ZIP_DEFLATED) as a:
+                a.writestr('script.xml', xml())
+            cat.write_bytes(b'id,fkT122_Protocol,service,mode\n100,7,X,0\n')
+            definition.write_bytes(b'<service id="100"><secret>SECRET_SERVICE_DEFINITION</secret></service>')
+            with contextlib.redirect_stdout(io.StringIO()):
+                main([str(z), str(cat), '--service-definition', str(definition), '--output', str(out)])
+            content = out.read_text(encoding='utf-8')
+            self.assertTrue(json.loads(content)['single_readvin_with_matching_service_definition_root_candidate_present'])
+            self.assertNotIn('SECRET_SERVICE_DEFINITION', content)
+            self.assertNotIn(str(definition), content)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main([str(z), str(cat), '--service-definition', str(definition), '--output', str(out)])
+
+
 if __name__ == '__main__':
     unittest.main()
