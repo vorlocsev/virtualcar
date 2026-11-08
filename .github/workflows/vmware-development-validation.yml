@@ -74,6 +74,8 @@ on:
           - 7fd4231c70189d418643f3f8d832f1c96b34c0b9
           # VIDA SQL storage catalog-only inspector: exact, locally reviewed PR #179 SHA.
           - 258f03e72c14b6d49629a7e23d4d7adcaa77bcf8
+          # Private single-ReadVin ZIP audit, exact reviewed feature SHA.
+          - 013fa4c5f5e2d632d18e884535afed34ac50ac6d
 
 permissions:
   contents: read
