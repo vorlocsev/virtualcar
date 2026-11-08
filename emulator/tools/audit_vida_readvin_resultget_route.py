@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from audit_vida_readvin_clr_dispatch import _load_private_zip
 from audit_vida_readvin_property_classes import audit_xml as audit_property_classes
 
-SCHEMA = 'virtualcar-vida-readvin-resultget-candidate-route-v4'
+SCHEMA = 'virtualcar-vida-readvin-resultget-candidate-route-v5'
 SCRIPT_DLL_SHA256 = 'd93b61b7b7524942649fd534303735dd4390af6ffee848b82e91c8e47eb5e028'
 CARCOM_DLL_SHA256 = '1735d8ac20d63a20afe13742ea5156cce5a5328392bd3e44d9ec3cd8ae0dbd07'
 IDENTITY_METHODS = ('AddVIN', 'SetX40Serial')
@@ -53,6 +53,11 @@ def audit_xml(xml_bytes):
     string_declaration_safe_x40_sources = set()
     stats = {
         'resultget_node_declarations': len(resultget_nodes),
+        'resultget_setpath_event_call_declarations': 0,
+        'resultget_setpath_event_calls_with_three_direct_args': 0,
+        'resultget_setpath_event_calls_with_wrong_direct_arg_count': 0,
+        'resultget_setpath_event_calls_disabled_by_attribute': 0,
+
         'resultget_nodes_with_direct_invalue_property': 0,
         'resultget_nodes_with_direct_invalue_class_response': 0,
         'resultget_nodes_with_extension_get': 0,
@@ -161,6 +166,19 @@ def audit_xml(xml_bytes):
         for call in handler.findall('./call'):
             target_id = call.attrib.get('node', '')
             parser_enabled = 'disabled' not in call.attrib
+            if target_id in resultget_ids and call.attrib.get('method') == 'SetPath':
+                # The original public SetPath method has a 3-argument CLR
+                # signature, but it lacks [Scriptable] registration. Merely
+                # finding it in XML event calls must not imply a callable
+                # script method or a dynamically registered output property.
+                stats['resultget_setpath_event_call_declarations'] += 1
+                count = len(call.findall('./parameter'))
+                if count == 3:
+                    stats['resultget_setpath_event_calls_with_three_direct_args'] += 1
+                else:
+                    stats['resultget_setpath_event_calls_with_wrong_direct_arg_count'] += 1
+                stats['resultget_setpath_event_calls_disabled_by_attribute'] += int(
+                    not parser_enabled)
             if (event_source_id in readvin_ids and target_id in resultget_ids and
                     call.attrib.get('method') == 'Execute'):
                 stats['readvin_event_to_resultget_execute_declarations'] += 1
@@ -288,6 +306,19 @@ def audit_xml(xml_bytes):
             {extractor for _, extractor in
              (arity_safe_positive_readvin_pairs & result_to_invalue_set_pairs)} &
             string_declaration_safe_x40_sources),
+        # Verified independently in SHA-pinned original CLR MethodDef/FieldDef
+        # metadata. ResultGet.SetPath is PUBLIC but not [Scriptable]; external
+        # direct calls may mutate output properties, but an XML event call to
+        # SetPath cannot be used as evidence of such an invocation.
+        'original_resultget_setpath_signature': 'void(string, ResponsePath, ResponseNodeType)',
+        'original_resultget_setpath_scriptable_attribute_present': False,
+        'original_resultget_execute_scriptable_attribute_present': True,
+        'original_setpath_primitive_response_node_enum_value': 7,
+        'original_setpath_primitive_registers_property_class': 'String',
+        'original_setpath_other_node_types_register_property_class': 'Response',
+        'setpath_invoked_by_original_runtime_verified': False,
+        'setpath_called_from_script_event_verified': False,
+        'setpath_generated_get_selection_path_verified': False,
         'resultget_property_lookup_at_runtime_verified': False,
         'original_resultget_execute_parameter_count': 0,
         'original_addvin_argument_count': 1,
