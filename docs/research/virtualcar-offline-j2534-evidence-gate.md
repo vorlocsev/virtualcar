@@ -1143,6 +1143,59 @@ Backup/rollback first. This stage alone is NOT evidence
 of software having run, successful J2534 discovery or
 accepted XC90 V8 MY2009/CEM identity. No binaries published.
 
+## Owner staged BIN7 in VMware and reverified all 14 manifest checksums (2026-11-08)
+
+Following owner confirmation of a VMware snapshot and unplugged
+physical USB/J2534 devices, a **guest-only** staging command
+copied the vetted BIN7 files into a permanent folder and checked
+SHA256 again. Owner-reported output:
+
+```text
+[VirtualCar] BIN7 Staging
+VMwareGuest          : True
+SourceCommit12       : 14b95e036daf
+CopiedFiles          : 15
+VerifiedChecksums    : 14
+BundleReady          : True
+J2534RegistryChanged : False
+Result=PASS
+```
+
+This is 14 checksum-covered package files plus the 15th
+`SHA256SUMS.txt` manifest. The exact source commit is
+`14b95e036daf7c908c9da57af0609013f5305062`.
+The `J2534RegistryChanged=False` property was emitted
+by a staging script that contains no registry mutation, not
+an independent audit.
+
+Repo source at this *exact* BIN7 commit confirms
+`emulator/scripts/install.ps1` calls
+`RegistryView.Registry32`/`CreateSubKey` for only
+`HKLM\\SOFTWARE\\PassThruSupport.04.04\\SectorV Virtual Car`,
+writing `FunctionLibrary` to its parent directory's
+`VirtualCarJ2534.dll`, `CAN=1`, `ISO15765=1`,
+`MessageVersion=0x0404`. The companion
+`emulator/scripts/uninstall.ps1` removes only that
+canonical subkey; it should be used only after ensuring
+the key belongs to this lab session.
+
+**Next permitted VM guest-only step**: in an elevated
+PowerShell, first verify VMware hardware hint, exact
+staged `BUILDINFO.source_commit`, that the **currently
+canonical provider key remains absent**, and the staged
+DLL and install script still match the local 14-entry
+manifest. Then run only the package's known
+`scripts/install.ps1` (no outside download), and in
+a subsequent read-only command inspect that this
+specific Registry32 key points at the staged
+`VirtualCarJ2534.dll` and declares 04.04/CAN/ISO15765.
+A nonzero or unexpected result is a **stop**, not permission
+to rewrite older alias keys. Snapshot/physical isolation
+were owner-reported and remain requirements. Do **not**
+load/execute J2534 DLL via actual client, assert that
+SectorV recognizes CEM, or publish builds until
+registration is separately verified.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
