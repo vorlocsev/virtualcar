@@ -1114,6 +1114,35 @@ use physical CAN merely because BIN7's static 14-file
 manifest and synthetic-profile checks passed. No positive
 SectorV/VDASH/CEM identity acceptance has been demonstrated.
 
+## Snapshot and no physical J2534 passthrough: owner confirmation (2026-11-08)
+
+Following read-only guest checks that showed canonical Registry32 J2534
+provider `SectorV Virtual Car` missing, the owner answered `готово`
+in direct response to the request to confirm (1) a VMware snapshot/
+restore point was created and (2) physical USB/J2534 adapters were
+disconnected from the guest.
+
+These safety prerequisites are **owner-reported**, not verified
+through the VMware host UI by this research. Keep the actual
+guest name, local paths, VIN and device identifiers private.
+
+**Plan for controlled deployment:** do **not** modify the
+host machine's registry or any existing alias provider entries.
+Stage **only** the expected BIN7 allowlisted files and
+`SHA256SUMS.txt` in a clean permanent guest-only directory;
+reverify all 14 SHA256 entries locally after copying,
+along with exact 40-hex source commit and safe synthetic
+profile. Stop for owner review of the staged result;
+subsequently register the **canonical** x86 provider
+using the reviewed package `scripts/install.ps1`
+only inside the snapshot-backed, disconnected VMware guest.
+The installer uses `RegistryView.Registry32`,
+`CreateSubKey`, and explicit CAN/ISO15765/MessageVersion
+declarations; it does not clean older unrelated aliases.
+Backup/rollback first. This stage alone is NOT evidence
+of software having run, successful J2534 discovery or
+accepted XC90 V8 MY2009/CEM identity. No binaries published.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
