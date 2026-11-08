@@ -1118,19 +1118,54 @@ pool in these 31 JARs was read in this inventory. No paths,
 names of proprietary classes, endpoints, VIN or credentials
 were emitted, nor device/SQL/HTTP requests sent.
 
-**Next bounded owner-local passive gate:** count `CONSTANT_Utf8`
-keyword hints in class constant pools across the **31 web
-JARs and 279 exploded classes**, without printing values or
-filenames. Distinguish class-count occurrences from actual
-calls: even J2534/PassThru/DiCE/ReadVin keywords in a
-constant pool only support a static lead, not a method call.
-Enforce per-class 1 MiB, overall decompressed budget,
-archive entry caps and stage progress reporting. Report
-classes scanned/skipped/parse-errors and anonymous JAR
-slots if positive; do not execute class code, reveal
-package/class names or inspect/copy proprietary method
-bodies. On zero hints, prioritize client-side integration
-and separately approved, redacted offline trace research.
+**Owner-local WAR Java constant-pool hint scan (v2, completed):**
+After correcting a PowerShell 5.1 `$HOME` collision in the
+first version (which failed before archive I/O), the v2
+read-only script completed `Result=OK`/`ScriptFinished` on
+VIDA-ancestor-confirmed WildFly `JavaPID=11600`, `EARSlot=2`,
+`WARSlot=1`.
+
+| Metric | Observed |
+|---|---:|
+| WEBINFLibJars | 31 |
+| JarsUnreadable / JarsSkippedByLimit | **0 / 0** |
+| JarEntriesInspected | **6518** |
+| JARClassesScanned | **5872** |
+| ExplodedClassesScanned | **279** |
+| ClassesSkippedByLimit / ClassParseErrors | **0 / 0** |
+| JARClassesWithJ2534UTF8 / PassThruUTF8 / DiCEUTF8 / ReadVinUTF8 | **0 / 0 / 0 / 0** |
+| ExplodedClassesWithJ2534UTF8 / PassThruUTF8 / DiCEUTF8 / ReadVinUTF8 | **0 / 0 / 0 / 1** |
+| JarsWithAnyKeywordHints | **0** |
+
+**Interpretation:** all **6151** `.class` files belonging
+to the examined 31 second-WAR JARs and exploded class
+tree were parsed in this bounded, **constant-pool-only**
+keyword test. One exploded web class contains at least one
+`CONSTANT_Utf8` entry matching the broad `(read.?vin)`
+pattern; zero such hits were reported for the 5872 classes
+in the 31 JARs. There were no `J2534`/`PassThru`/`DiCE`
+UTF8 hits under the tested patterns, but **absence of
+keyword matches is not absence of diagnostic code**.
+The single `ReadVin` hit is a potentially useful lead
+alongside the separately observed SQL `ScriptType.Description`
+value `ReadVin`; **no call or dataflow between them has
+been established**, and the UTF8 value might be a field,
+method, type descriptor, text literal, annotation or
+other metadata. No proprietary strings, filenames, paths,
+VIN or scripts were printed. No Java/SQL/network/ECU
+operations, deployments, registry or build changes.
+
+**Next bounded owner-local gate:** for only that one
+exploded `.class` file, classify the `ReadVin` matched
+constant-pool entries by structure (`CONSTANT_String`,
+`CONSTANT_Class`, `NameAndType`, field/method declaration
+names and descriptors), **counts only**. Do not print
+actual values, class/method names, code bodies or paths;
+apply strict class and pool limits. This is a static
+semantic-context check, not proof of SQL `GetScript`
+invocation, nor of any J2534 transaction. Then reassess
+whether to investigate the original client/SQL caller
+instead of recursively broadening WAR scans.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
