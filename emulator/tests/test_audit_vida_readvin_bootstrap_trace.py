@@ -576,5 +576,143 @@ class VidaBootstrapTraceTests(unittest.TestCase):
         self.assertFalse(json.loads(report)['client_vin_accepted'])
         self.assertFalse(json.loads(report)['actual_positive_ecu_reply_correlated'])
 
+
+    def test_73_explicit_source_ids_match_three_synthetic_rx_candidates(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3
+               + P2A + TXP2A + RXP240 + P2B + TXP2B + RXP250)
+        r = audit_text(log, 'VCC-225200-1', self._synthetic_rx_ids())
+        self.assertTrue(r['rx_expected_can_id_filter_supplied'])
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 1)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 1)
+        self.assertFalse(r['actual_positive_ecu_reply_correlated'])
+        self.assertFalse(r['client_vin_accepted'])
+
+    def test_74_wrong_p3_response_id_never_promoted_to_exact_match(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3
+               + P2A + TXP2A + RXP240 + P2B + TXP2B + RXP250)
+        ids = self._synthetic_rx_ids()
+        ids['p3_f114'] = 0x72f
+        r = audit_text(log, 'VCC-225200-1', ids)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 1)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 0)
+
+    def test_75_wrong_p2_response_id_never_promoted_to_exact_match(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3
+               + P2A + TXP2A + RXP240 + P2B + TXP2B + RXP250)
+        ids = self._synthetic_rx_ids()
+        ids['p2_b9fb_50'] = 0x01200007
+        r = audit_text(log, 'VCC-225200-1', ids)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 1)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 0)
+
+    def test_76_no_explicit_source_filter_never_promotes_exact_match(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3
+               + P2A + TXP2A + RXP240 + P2B + TXP2B + RXP250)
+        r = audit_text(log, 'VCC-225200-1')
+        self.assertFalse(r['rx_expected_can_id_filter_supplied'])
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 1)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 0)
+
+    def test_77_explicit_source_filter_requires_script_selector(self):
+        with self.assertRaises(ValueError):
+            audit_text(PREFACE + SELECT, expected_rx_can_ids=self._synthetic_rx_ids())
+
+    def test_78_reject_invalid_or_missing_source_id_dict(self):
+        from audit_vida_readvin_bootstrap_trace import _validate_rx_can_ids
+        good = self._synthetic_rx_ids()
+        variations = (None, {}, {'p3_f114': 0x72e},
+                      {'p3_f114': 0x72e, 'p2_b9fb_40': 0x01200003,
+                       'p2_b9fb_50': 0x01200005, 'unknown': 1},
+                      [0x72e, 0x01200003, 0x01200005])
+        for item in variations:
+            with self.subTest(item=item):
+                if item is None:
+                    # None explicitly means backward-compatible no-filter mode.
+                    self.assertFalse(audit_text(PREFACE + SELECT, 'VCC-225200-1', item)[
+                        'rx_expected_can_id_filter_supplied'])
+                else:
+                    with self.assertRaises(ValueError):
+                        _validate_rx_can_ids(item)
+        for key, value in (('p3_f114', True), ('p3_f114', '0x72e'),
+                           ('p3_f114', -1), ('p3_f114', 0),
+                           ('p3_f114', 0x726), ('p3_f114', 0x800),
+                           ('p2_b9fb_40', 0x7ff), ('p2_b9fb_40', 0x01200002),
+                           ('p2_b9fb_40', 0x20000001),
+                           ('p2_b9fb_50', 0x01200003)):
+            with self.subTest(key=key, value=value):
+                bad = dict(good)
+                bad[key] = value
+                with self.assertRaises(ValueError):
+                    audit_text(PREFACE + SELECT, 'VCC-225200-1', bad)
+
+    def test_79_source_id_filter_does_not_cross_getscript_window(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3
+               + SELECT + FETCH + RUN + P2A + TXP2A + RXP240
+               + P2B + TXP2B + RXP250)
+        r = audit_text(log, 'VCC-225200-1', self._synthetic_rx_ids())
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 0)
+
+    def test_80_explicit_rx_ids_do_not_count_echo(self):
+        echo = '[J2534] <--- (0) 00,00,07,26,62,F1,14,11,\n'
+        log = PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + echo
+        r = audit_text(log, 'VCC-225200-1', self._synthetic_rx_ids())
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 0)
+
+    def test_81_cli_rejects_partial_or_invalid_rx_address_args(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder, 'private.log')
+            out = Path(folder, 'result.json')
+            log.write_text(PREFACE + SELECT + FETCH + RUN, encoding='utf-8')
+            for extra in (['--rx-p3-can-id', '0x72e'],
+                          ['--rx-p3-can-id', '0xXYZ', '--rx-p2-40-can-id', '0x1200003',
+                           '--rx-p2-50-can-id', '0x1200005'],
+                          ['--rx-p3-can-id', '0x72e', '--rx-p2-40-can-id', '0x1200003',
+                           '--rx-p2-50-can-id', '0x1200005']):
+                with self.subTest(extra=extra):
+                    # The last variant lacks a script selector and must fail.
+                    with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                        main([str(log), '--output', str(out)] + extra)
+                    self.assertFalse(out.exists())
+
+    def test_82_cli_exact_can_ids_are_redacted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder, 'private.log')
+            out = Path(folder, 'result.json')
+            data = (PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3
+                    + P2A + TXP2A + RXP240 + P2B + TXP2B + RXP250)
+            log.write_text(data, encoding='utf-8')
+            args = [str(log), '--expected-script-id', 'VCC-225200-1',
+                    '--rx-p3-can-id', '0x72E', '--rx-p2-40-can-id', '0x01200003',
+                    '--rx-p2-50-can-id', '0x01200005', '--output', str(out)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(args)
+            report = out.read_text(encoding='utf-8')
+            self.assertEqual(json.loads(report)[
+                'sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 1)
+            self.assertTrue(json.loads(report)['rx_expected_can_id_filter_supplied'])
+            for token in ('VCC-225200-1', '0x72E', '0x01200003', '0x01200005', str(log)):
+                self.assertNotIn(token, report)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(args)
+
+    def test_83_source_match_not_sufficient_without_all_three_family_rx(self):
+        log = PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3 + P2A + TXP2A + RXP240
+        r = audit_text(log, 'VCC-225200-1', self._synthetic_rx_ids())
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 0)
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 1)
+
+    def test_84_source_match_not_sufficient_if_rx_precedes_tx(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + RXP3 + TXP3
+               + P2A + TXP2A + RXP240 + P2B + TXP2B + RXP250)
+        r = audit_text(log, 'VCC-225200-1', self._synthetic_rx_ids())
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates'], 0)
+
+    @staticmethod
+    def _synthetic_rx_ids():
+        # Fixture addresses ONLY, never claimed as measured vehicle addresses.
+        return {'p3_f114': 0x72e, 'p2_b9fb_40': 0x01200003,
+                'p2_b9fb_50': 0x01200005}
+
 if __name__ == '__main__':
     unittest.main()
