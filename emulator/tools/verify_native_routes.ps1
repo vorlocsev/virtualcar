@@ -2,11 +2,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
-    [Parameter(Mandatory=$true)][string]$OutputDirectory
+    [Parameter(Mandatory=$true)][string]$OutputDirectory,
+    [switch]$IdentityReplay
 )
 $ErrorActionPreference = 'Stop'
 if ([IntPtr]::Size -ne 4) {
-    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory
+    $extra = if ($IdentityReplay) { @('-IdentityReplay') } else { @() }
+    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory @extra
     exit $LASTEXITCODE
 }
 $dll = (Resolve-Path -LiteralPath $DllPath).Path
@@ -15,7 +17,8 @@ if (Test-Path -LiteralPath $directory) { throw 'Output directory must be new; re
 [void][IO.Directory]::CreateDirectory($directory)
 $isolatedDll = Join-Path $directory 'VirtualCarJ2534.dll'
 Copy-Item -LiteralPath $dll -Destination $isolatedDll
-# Deliberately no CEM node or positive CEM fixture.
+# No live ECU identity. The optional replay uses source-shaped SYNTHETIC
+# bytes already covered by the in-memory C transport tests.
 $profile = @'
 ; SYNTHETIC native route regression, not vehicle evidence.
 [Vehicle]
@@ -30,7 +33,8 @@ StrictRouting=1
 [D2_40]
 B9FBFrameCount=0
 [D2_50]
-B9FBFrameCount=0
+B9FBFrameCount=__FRAME_COUNT__
+__IDENTITY_FRAMES__
 [PassiveCAN]
 Enabled=0
 [PassiveTrace]
@@ -38,6 +42,31 @@ Enabled=0
 [Diagnostics]
 BackendTelemetryEnabled=1
 '@
+if ($IdentityReplay) {
+    # Synthetic only: same 13-frame transport fixture as virtualcar_test.c;
+    # it is NOT an XC90 V8 MY2009 or OEM CEM identity record.
+    $replay = @'
+B9FBFrame0=8F 50 F9 FB 57 00 30 66
+B9FBFrame1=09 70 28 30 30 35 0D 0A
+B9FBFrame2=0A 59 56 31 43 5A 30 30
+B9FBFrame3=0B 30 32 41 30 30 30 30
+B9FBFrame4=0C 30 30 31 0D 0A 32 35
+B9FBFrame5=0D 31 35 36 38 39 35 32
+B9FBFrame6=0E 0D 0A 32 39 35 0D 0A
+B9FBFrame7=0F 31 39 38 36 32 35 0D
+B9FBFrame8=08 0A 32 31 0D 0A 32 30
+B9FBFrame9=09 30 35 31 32 0D 0A 30
+B9FBFrameA=0A 30 30 30 34 33 33 38
+B9FBFrameB=0B 36 30 34 30 38 32 32
+B9FBFrameC=4F 30 36 39 33 31 0D 0A
+'@
+    $profile = $profile.Replace('__FRAME_COUNT__', '13').Replace('__IDENTITY_FRAMES__', $replay.Trim())
+} else {
+    $profile = $profile.Replace('__FRAME_COUNT__', '0').Replace('__IDENTITY_FRAMES__', '')
+}
+if ($profile.Contains('__FRAME_COUNT__') -or $profile.Contains('__IDENTITY_FRAMES__')) {
+    throw 'Synthetic profile fixture placeholders unresolved'
+}
 [IO.File]::WriteAllText((Join-Path $directory 'virtualcar.ini'), $profile, [Text.Encoding]::ASCII)
 $savedLocal = $env:LOCALAPPDATA
 $savedTemp = $env:TEMP
@@ -53,6 +82,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class NativeRouteCheck {
     const string Library = @"__ISOLATED_DLL__";
+    static readonly bool IdentityReplay = __IDENTITY_REPLAY__;
     [StructLayout(LayoutKind.Sequential)] public struct Msg {
         public uint ProtocolID, RxStatus, TxFlags, Timestamp, DataSize, ExtraDataIndex;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst=4128)] public byte[] Data;
@@ -75,14 +105,73 @@ public static class NativeRouteCheck {
     [DllImport(Library, CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruReadMsgs(uint channel, IntPtr msg, ref uint count, uint timeout);
     static void Check(bool condition, string gate) { if (!condition) throw new Exception(gate); }
-    static void Silent(uint channel, uint protocol, uint id, byte[] payload) {
+    static void Write(uint channel, uint protocol, uint id, byte[] payload) {
         Msg msg = new Msg(); msg.ProtocolID=protocol; msg.DataSize=(uint)payload.Length+4;
         msg.TxFlags=id>0x7ff ? 0x100u : 0u; msg.Data=new byte[4128];
         msg.Data[0]=(byte)(id>>24); msg.Data[1]=(byte)(id>>16);
         msg.Data[2]=(byte)(id>>8); msg.Data[3]=(byte)id;
         Array.Copy(payload,0,msg.Data,4,payload.Length);
         uint count=1; Check(PassThruWriteMsgs(channel,ref msg,ref count,10)==0 && count==1,"TX rejected");
+    }
+    static void Silent(uint channel, uint protocol, uint id, byte[] payload) {
+        Write(channel,protocol,id,payload);
         Empty128(channel);
+    }
+    static Msg ReceiveOne(uint channel, uint timeout) {
+        IntPtr buffer=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+        try {
+            uint count=1;
+            Check(PassThruReadMsgs(channel,buffer,ref count,timeout)==0 && count==1,
+                "Native read-only response missing");
+            return (Msg)Marshal.PtrToStructure(buffer,typeof(Msg));
+        } finally { Marshal.FreeHGlobal(buffer); }
+    }
+    static void CheckSyntheticB9FB(uint hs) {
+        // Independently assert every byte and J2534 field on the real 32-bit DLL.
+        byte[,] expected = new byte[13,8] {
+            {0x8F,0x50,0xF9,0xFB,0x57,0x00,0x30,0x66},
+            {0x09,0x70,0x28,0x30,0x30,0x35,0x0D,0x0A},
+            {0x0A,0x59,0x56,0x31,0x43,0x5A,0x30,0x30},
+            {0x0B,0x30,0x32,0x41,0x30,0x30,0x30,0x30},
+            {0x0C,0x30,0x30,0x31,0x0D,0x0A,0x32,0x35},
+            {0x0D,0x31,0x35,0x36,0x38,0x39,0x35,0x32},
+            {0x0E,0x0D,0x0A,0x32,0x39,0x35,0x0D,0x0A},
+            {0x0F,0x31,0x39,0x38,0x36,0x32,0x35,0x0D},
+            {0x08,0x0A,0x32,0x31,0x0D,0x0A,0x32,0x30},
+            {0x09,0x30,0x35,0x31,0x32,0x0D,0x0A,0x30},
+            {0x0A,0x30,0x30,0x30,0x34,0x33,0x33,0x38},
+            {0x0B,0x36,0x30,0x34,0x30,0x38,0x32,0x32},
+            {0x4F,0x30,0x36,0x39,0x33,0x31,0x0D,0x0A}
+        };
+        Write(hs,5,0x000ffffe,new byte[]{0xCB,0x50,0xB9,0xFB,0,0,0,0});
+        uint previous=0;
+        for(int i=0;i<13;i++){
+            Msg m=ReceiveOne(hs,150);
+            Check(m.ProtocolID==5 && m.DataSize==12 && m.ExtraDataIndex==12 &&
+                  m.RxStatus==0x100u,"B9FB J2534 metadata mismatch");
+            Check(m.Data[0]==1 && m.Data[1]==0x20 && m.Data[2]==0 && m.Data[3]==3,
+                  "B9FB source CAN ID mismatch");
+            for(int b=0;b<8;b++) Check(m.Data[4+b]==expected[i,b],"B9FB frame content/sequence mismatch");
+            if(i>0) Check(m.Timestamp!=previous,"B9FB replay did not advance its timestamp");
+            previous=m.Timestamp;
+        }
+        Empty128(hs);
+    }
+    static void CheckSyntheticEcmVin(uint iso) {
+        // Synthetic placeholder VIN from the isolated INI, not a vehicle ID.
+        Write(iso,6,0x7e0,new byte[]{0x22,0xF1,0x90});
+        Msg m=ReceiveOne(iso,150);
+        Check(m.ProtocolID==6 && m.DataSize==24 && m.ExtraDataIndex==24 &&
+              m.RxStatus==0,"ECM F190 J2534 metadata mismatch");
+        Check(m.Data[0]==0 && m.Data[1]==0 && m.Data[2]==7 && m.Data[3]==0xE8,
+              "ECM F190 response CAN ID mismatch");
+        Check(m.Data[4]==0x62 && m.Data[5]==0xF1 && m.Data[6]==0x90,
+              "ECM F190 UDS positive prefix mismatch");
+        byte[] synthetic=System.Text.Encoding.ASCII.GetBytes("YV1CZ0002A0000001");
+        Check(synthetic.Length==17,"Bad synthetic VIN fixture");
+        for(int i=0;i<synthetic.Length;i++)
+            Check(m.Data[7+i]==synthetic[i],"ECM F190 placeholder VIN mismatch");
+        Empty128(iso);
     }
     static void Empty128(uint channel) {
         int bytes=Marshal.SizeOf(typeof(Msg))*128;
@@ -108,10 +197,17 @@ public static class NativeRouteCheck {
             Silent(iso,6,0x7e0,new byte[]{0x3e,0x80});
             Console.WriteLine("PASS group 3: ISO15765 physical suppression");
             Silent(ls,5,0x000ffffe,new byte[]{0xcb,0x40,0xb9,0xfb,0,0,0,0});
-            Silent(hs,5,0x000ffffe,new byte[]{0xcb,0x50,0xb9,0xfb,0,0,0,0});
-            Console.WriteLine("PASS group 4: B9FB missing fixtures, no RX");
+            if(IdentityReplay) {
+                CheckSyntheticB9FB(hs);
+                Console.WriteLine("PASS group 4: synthetic 13-frame B9FB native x86 replay");
+            } else {
+                Silent(hs,5,0x000ffffe,new byte[]{0xcb,0x50,0xb9,0xfb,0,0,0,0});
+                Console.WriteLine("PASS group 4: B9FB missing fixtures, no RX");
+            }
             Check(PassThruConnect(device,5,0x800,250000,out wrong)==0,"250 connect failed");
             Silent(wrong,5,0x000ffffe,new byte[]{0xcb,0x50,0xb9,0xfb,0,0,0,0});
+            if(IdentityReplay)
+                Silent(ls,5,0x000ffffe,new byte[]{0xcb,0x50,0xb9,0xfb,0,0,0,0});
             Console.WriteLine("PASS group 5: strict B9FB baud rejection");
             Silent(hs,5,0x726,new byte[]{3,0x22,0xf1,0x14,0,0,0,0});
             Silent(iso,6,0x726,new byte[]{0x22,0xf1,0x14});
@@ -120,6 +216,10 @@ public static class NativeRouteCheck {
             Console.WriteLine("PASS group 7: functional suppression, no RX");
             Empty128(hs); Empty128(ls); Empty128(iso); Empty128(wrong);
             Console.WriteLine("PASS group 8: READ128 on all empty channels");
+            if(IdentityReplay) {
+                CheckSyntheticEcmVin(iso);
+                Console.WriteLine("PASS group 9: isolated synthetic ECM F190 native ISO15765 VIN");
+            }
         } finally {
             bool clean=true;
             if(wrong!=0) clean &= PassThruDisconnect(wrong)==0;
@@ -134,6 +234,7 @@ public static class NativeRouteCheck {
 }
 '@
     $source = $source.Replace('__ISOLATED_DLL__', $isolatedDll.Replace('"', '""'))
+    $source = $source.Replace('__IDENTITY_REPLAY__', $(if ($IdentityReplay) { 'true' } else { 'false' }))
     Add-Type -TypeDefinition $source -Language CSharp
     [NativeRouteCheck]::Run()
     $backend = Join-Path $directory 'VirtualCar/dev47-backend.jsonl'
