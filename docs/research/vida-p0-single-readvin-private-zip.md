@@ -87,3 +87,52 @@ Only a genuine authorized read-only CEM MY2009 RX capture could
 authorize a specific emulated reply. Current B9FBFrameCount=0
 and StrictRouting remain untouched, with no new Virtual Car
 binary publication.
+
+
+## First original installed ReadVin, 2026-11-08: corrected wrapped XML evidence
+
+The owner ran the exact previously VMware-validated PR #181 SHA
+013fa4c5f5e2d632d18e884535afed34ac50ac6d against their
+local SQL Server (local)\VIDA. Initial login required the owner's
+explicit opt-in local TrustServerCertificate. One ZIP for SQL ReadVin
+type ID 7 and language 15 was exported privately. The ZIP/XML parsed
+successfully; the owner shared **only aggregate JSON**, never original
+XML, ZIP bytes, VIN, node IDs or parameters.
+
+Original archive first-pass lexical flags:
+F114=true, AddVIN=true, SetX40Serial=true,
+B9FB=false, B9F0=false, B9FC=false.
+These are token detections in XML attributes/text, not executed
+diagnostic requests and not proof that D2 is absent.
+
+The original graph parser incorrectly reported zero nodes/handlers
+because it required exact root-relative paths ./nodes/node and
+./handlers/eventhandler. To diagnose this without leaking XML, the
+owner ran an independent local-only XML layout census:
+
+- Total XML elements: 182. Root has 2 child elements, depth 6.
+- Local-name counts at any depth: nodes=1, node=14,
+  handlers=1, eventhandler=27, call=27, propertyhandler=6,
+  parameter=3, other element instances=102.
+- XML has 14 nodeid attributes and 84 class attributes.
+- Attributes referencing ReadVinComponent: 7; VehicleIdentityOutput:
+  1; method AddVIN: 2; method SetX40Serial: 1.
+- No recognized nodes/handlers directly under the root. This proves
+  the old inspector's **structural assumption** was wrong; it does
+  not prove those 7 class attributes belong to 7 independent nodes.
+
+The follow-up changes to audit_vida_readvin_xml_graph.py now resolve
+node/eventhandler candidates **under nested wrapper sections**,
+with local-name matching, and explicitly flag unmatched candidates
+rather than treating them as absent. The aggregate ZIP audit exposes
+graph-layout categories and event/call counts. Eight additional
+synthetic regression tests exercise wrapped, namespace-qualified,
+out-of-section and duplicate structures. These changes are not
+equivalent to execution, reachable branches, runtime GetScript
+selection, ECU response or accepted VIN.
+
+**Owner next step:** after exact-source VMware CI succeeds on the
+new feature HEAD, update local checkout with Git fast-forward and
+re-run ONLY Python audit on the ALREADY EXPORTED private ZIP.
+No SQL or script ZIP re-export is required. Keep new aggregate
+report outside the repository with a new output filename.
