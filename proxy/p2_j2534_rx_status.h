@@ -20,4 +20,14 @@ static inline int p2_j2534_rx_read_is_data(uint32_t result, uint32_t rx_status) 
     return result == 0u && p2_j2534_rx_is_data(rx_status);
 }
 
+/* The driver's returned count must fit both the caller-allocated request
+   capacity and this observer's bounded scan. A success code alone is NOT
+   permission to dereference records beyond the caller's array. */
+static inline int p2_j2534_rx_batch_is_safe(uint32_t result,
+                                              uint32_t requested,
+                                              uint32_t returned) {
+    return result == 0u && returned > 0u && returned <= requested &&
+           returned <= 128u;
+}
+
 #endif
