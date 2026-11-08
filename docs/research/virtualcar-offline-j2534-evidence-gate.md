@@ -1196,6 +1196,58 @@ load/execute J2534 DLL via actual client, assert that
 SectorV recognizes CEM, or publish builds until
 registration is separately verified.
 
+## Owner-confirmed BIN7 x86 canonical J2534 registration in VMware (2026-11-08)
+
+After snapshot/no-physical-J2534 preflight (owner-reported) and
+guest-only staging of the 14-file hash-verified BIN7 lab bundle,
+the owner ran a guarded guest administrator PowerShell registering
+only the initially absent canonical Registry32 J2534 key
+`SOFTWARE\\PassThruSupport.04.04\\SectorV Virtual Car`.
+The script revalidated SHA256 of the staged package DLL and
+the exact package installer before invoking the package script.
+Output:
+
+```text
+VMwareGuest              : True
+Build                    : BIN7
+DLLHashVerified          : True
+InstallerHashVerified    : True
+CanonicalProviderPresent : True
+FunctionLibraryMatches   : True
+CANDeclared              : True
+ISO15765Declared         : True
+J2534Version0404         : True
+Result=PASS
+```
+
+**Proven scope:** the canonical guest x86 04.04 key now points
+to the staged BIN7 `VirtualCarJ2534.dll`, declares both CAN
+and ISO15765 and message version 0x0404. The old three alias
+keys were not targeted by the installer; no proof that a
+diagnostic client selects the canonical key or successfully
+loads the DLL. No J2534 API calls, CAN messages, SectorV/VDASH,
+ECM/CEM identity or VIN acceptance were tested by this
+registry operation. The historical 9.5 KiB alias DLL is
+a **different** binary and must not be confused with BIN7.
+
+**Next isolated guest-only functional gate:** use a 32-bit
+PowerShell process and a narrowly scoped **read-only
+J2534 ABI smoke** that loads **only the absolute staged BIN7
+DLL** after verifying canonical registry path, expected
+build SHA and local manifest checksum. Call only
+`PassThruOpen`, `PassThruReadVersion`, standard
+CAN/500k `PassThruConnect` (optional standard
+ISO15765/500k `PassThruConnect`), then
+`PassThruDisconnect` and `PassThruClose` in a
+finally cleanup. Do not call `WriteMsgs`,
+`StartPeriodicMsg`, `Ioctl`, PIN/SecurityAccess,
+programming or any physical adapter. Log only
+integer statuses and recognized build/API version
+strings, never VIN, CAN frames, private file paths
+or session raw logs. If any call fails, stop and do not
+launch a diagnostic client before investigation.
+This smoke is **not** ECU discovery acceptance.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
