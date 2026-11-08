@@ -87,6 +87,50 @@ research stage. Do not treat a reported `String` declaration
 as proof of a VIN from a CEM response, a selected GetScript,
 or a successful SectorV client identity.
 
+## Newly verified response-object boundary (same pinned original DLL)
+
+Further source IL inspection established a crucial type boundary:
+
+- `ReadVinComponent.Execute` MethodDef `0x06000426` calls
+  `VehCommBase.setupVehComm`, uses XML-declared `Identifier`
+  as a diagnostic AddParameter, applies `CanHiSpeedValue` and
+  `UseRelay` to SetupTester, then calls `VehCommBase.executeService`.
+- `VehCommBase.executeService` `0x06000420` invokes the
+  diagnostic service's `Execute` and stores its returned
+  `ResponseComponent` through `VehCommBase.set_Result`.
+- `VehCommBase.set_Result` `0x0600040B` assigns the
+  `Result` property with `Property.set_Value`.
+  `VehCommBase.get_Result` `0x0600040A` retrieves that property
+  and performs a CLR cast to `ResponseComponent`.
+- The original MethodDef signatures for
+  `VehicleIdentityOutput.AddVIN` `0x0600037D` and
+  `VehicleIdentityOutput.SetX40Serial` `0x0600037E` are
+  both `instance void (System.String)`. Thus an unmodified
+  `ReadVinComponent.Result` response object must **not** be
+  interpreted as a validated VIN or a string argument.
+  A subsequent parsing/conversion/selection step still needs evidence.
+
+The analyzer adds only categorical counts for source references from
+`ReadVinComponent`, direct references to its `Result` property,
+whether that property has XML `class=Response` or an unresolved/
+different class, and references to other/missing nodes.
+Unknown XML source metadata never upgrades to VIN evidence.
+No raw response or actual XML parameter values are disclosed.
+Output flags fix `direct_readvin_result_to_identity_string_flow_verified=false`
+and `readvin_result_is_accepted_vin=false`.
+
+Four additional synthetics cover response-object source, other
+ReadVin property, missing/mismatched XML class and missing/other
+component references. One further synthetic verifies the
+`System.String` identity method signature evidence is never a
+claim of actual conversion. With the original eight
+CLR-dispatch tests the local suite is now **21/21 PASS**
+(13 property-class + 8 dispatch).
+The GitHub source blobs exactly match the locally tested files:
+analyzer `b2ce93fafe06612232e3fe76f1be58be26a743de`;
+tests `ddaea237581a0106ff10ad24d3d5c14b49ccf856`.
+This is local test evidence, **not** Windows CI of the new PR head.
+
 ## Next gates
 
 1. Obtain the class-only private report if it can be produced
