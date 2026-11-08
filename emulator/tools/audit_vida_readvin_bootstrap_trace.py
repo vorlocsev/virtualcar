@@ -15,6 +15,7 @@ SCHEMA = 'virtualcar-vida-readvin-bootstrap-log-evidence-v1'
 MAX_BYTES = 8 * 1024 * 1024
 MAX_SESSIONS = 100
 MAX_LINE_LENGTH = 8192
+_GETSCRIPT = re.compile(r'\bSP:\s*GetScript\b', re.I)
 _SCRIPT = re.compile(r"\bSP:\s*GetScript\b.*?\bType:\s*['\"]ReadVin['\"]", re.I)
 _EMPTY = re.compile(r"\bProfile:\s*['\"]EMPTYPROFILE,?['\"]", re.I)
 _FETCHED = re.compile(r"\bFetched script:.*?(?:VCC-225200-1|Read VIN first readout)", re.I)
@@ -49,8 +50,11 @@ def audit_text(logtext):
     if not isinstance(logtext, str) or len(logtext.encode('utf-8')) > MAX_BYTES:
         raise ValueError('log is too large')
     summaries = []
+    complete_windows_by_session = []
     current = _fresh()
     tracked = False
+    request_families_in_window = set()
+    session_has_complete_window = False
     line_count = 0
     for line in logtext.splitlines():
         line_count += 1
@@ -59,15 +63,23 @@ def audit_text(logtext):
         if _SESSION.search(line):
             if tracked or any(current.values()):
                 summaries.append(current)
+                complete_windows_by_session.append(session_has_complete_window)
             if len(summaries) >= MAX_SESSIONS:
                 raise ValueError('too many sessions')
             current = _fresh()
             tracked = False
-        if _SCRIPT.search(line):
-            current['readvin_getscript_declarations'] += 1
-            if _EMPTY.search(line):
-                current['readvin_emptyprofile_selections'] += 1
-                tracked = True
+            request_families_in_window.clear()
+            session_has_complete_window = False
+        if _GETSCRIPT.search(line):
+            # A new selected script closes the previous bootstrap window,
+            # even when it is a different type or a profiled ReadVin.
+            request_families_in_window.clear()
+            is_readvin = bool(_SCRIPT.search(line))
+            tracked = is_readvin and bool(_EMPTY.search(line))
+            if is_readvin:
+                current['readvin_getscript_declarations'] += 1
+                if tracked:
+                    current['readvin_emptyprofile_selections'] += 1
             continue
         # Forbid unrelated sections in a log file from creating evidence.
         if not tracked:
@@ -81,8 +93,12 @@ def audit_text(logtext):
             ecu, service = req.group(1).lower(), req.group(2).lower()
             if ecu == '726' and service == '22f114':
                 current['vehcomm_p3_f114_requests'] += 1
+                request_families_in_window.add('p3_f114')
             elif ecu in ('40', '50') and service == 'b9fb':
                 current[f'vehcomm_p2_b9fb_target{ecu}_requests'] += 1
+                request_families_in_window.add('p2_b9fb_' + ecu)
+            if len(request_families_in_window) == 3:
+                session_has_complete_window = True
         if 'ERR_BUFFER_EMPTY' in line.upper():
             current['j2534_err_buffer_empty'] += 1
         if 'TRANSMITTED FRAME indication' in line:
@@ -111,14 +127,13 @@ def audit_text(logtext):
                 current['j2534_rx_p2_b9fb_positive_prefix_candidates'] += 1
     if tracked or any(current.values()):
         summaries.append(current)
+        complete_windows_by_session.append(session_has_complete_window)
     if len(summaries) > MAX_SESSIONS:
         raise ValueError('too many sessions')
     totals = {name: sum(s[name] for s in summaries) for name in _COUNTER_NAMES}
-    sessions_with_all_published_request_families = sum(
-        bool(s['readvin_emptyprofile_selections'] and s['vehcomm_p3_f114_requests']
-             and s['vehcomm_p2_b9fb_target40_requests'] and s['vehcomm_p2_b9fb_target50_requests'])
-        for s in summaries
-    )
+    # Only a single uninterrupted EMPTYPROFILE GetScript selection may
+    # satisfy the three-family gate. Never join separate scripts/windows.
+    sessions_with_all_published_request_families = sum(complete_windows_by_session)
     return {
         'schema_version': SCHEMA,
         'analysis_source': 'local_text_log_only_not_a_diagnostic_capture',
