@@ -137,7 +137,7 @@ def _parse_catalog(csv_bytes):
                 occurrences[value] = occurrences.get(value, 0) + 1
                 if has_metadata:
                     metadata_complete_ids[value] = metadata_complete_ids.get(value, 0) + 1
-                    if has_protocol_header and record['fkT122_Protocol'].strip():
+                    if has_protocol_header and _positive_id(record['fkT122_Protocol']) is not None:
                         protocol_complete_ids[value] = protocol_complete_ids.get(value, 0) + 1
     except (csv.Error, UnicodeError) as exc:
         raise ValueError('malformed CSV') from exc
