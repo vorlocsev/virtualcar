@@ -977,17 +977,46 @@ script did not print any class names, bytecode, proprietary
 XML, paths, runtime command lines, URLs or secrets; no
 network/SQL/vehicle I/O or binaries published.
 
-**Next bounded read-only gate:** inspect `CONSTANT_Utf8`
-entries across the same 325 classes **without printing
-values** for exact internal J2534 class name occurrences
-within type descriptors, signatures and strings, and
-separately inspect only the target J2534 class's file
-header/declared method flags (`native` count, interface/
-abstract flags) and safe keyword-count hints. Enforce
-strict entry/aggregate limits and retain process ancestry
-verification. The presence of a UTF8 match alone would
-not prove invocation. No disassembly, code execution,
-DLL loading, adapter changes or vehicle I/O.
+**Owner-local refined `CONSTANT_Utf8` and J2534 class-header scan:**
+The read-only operator script autodetected VIDA-descendant
+WildFly (`JavaPID=12004`, `VIDAAncestorConfirmed=True`)
+and re-opened the same EJB JAR in sorted EAR slot **2**.
+Aggregate findings: `OtherClassesScanned=324`,
+`ClassesSkippedBySize=0`, `ClassParseErrors=0`.
+**No peer reference hints** were found:
+`PeerExactInternalNameUTF8=0`, `PeerDescriptorTypeUTF8=0`,
+`PeerDottedNameUTF8=0`, `PeerAnyJ2534UTF8=0`,
+`SessionBeansWithExactTargetUTF8=0`.
+The target J2534-named class itself parsed successfully:
+`J2534TargetStatus=Parsed`, `J2534IsInterface=False`,
+`J2534IsAbstract=False`, `J2534Fields=5`,
+`J2534Methods=11`, `J2534NativeMethods=0`,
+`J2534AbstractMethods=0`.
+
+The negative results narrow static references **within this
+single JAR**: not only are exact `CONSTANT_Class` references
+absent (prior scan), but no other parsed class constant pool
+contains any case-insensitive `J2534` UTF8 substring under
+the script's tests. This does **not** prove the class is
+dead code or absent from VIDA's actual diagnostic path;
+other WAR/JAR modules, reflection and runtime factories
+remain possible. Zero `native` flags on the class's own
+methods does NOT exclude JNI/JNA in dependencies.
+No constant pool values, class names, bytecode, paths,
+URLs, passwords, VIN, ECU data or Java methods were
+exported or executed; no DB/network/J2534 device I/O,
+configuration/registry changes or binary publication.
+
+**Next bounded operator-local static gate:** inspect only
+the target class's JVM constant pool for **aggregate**
+method-name keywords and external class-reference family
+counts (e.g., native-library/JNA patterns, Java I/O/network,
+J2534 PassThru command hints). Apply 1 MiB class size
+limit; output booleans/counts only, never actual class,
+method, package, native-library or path names. The results
+are only static hints and must not be interpreted as proof
+of actual calls. In parallel, prioritise an eventual scan
+of other deployed modules only if this gate suggests it.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
