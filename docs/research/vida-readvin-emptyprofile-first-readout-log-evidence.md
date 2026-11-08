@@ -152,3 +152,64 @@ SQL procedure result and cannot claim their values.
 
 No inferred `F9 FB` or `62 F1 14` positive payload
 will be enabled in the emulator from this static evidence.
+
+## Original ServiceId → CarCom service catalog: next static evidence gate (2026-11-08)
+
+Original **SHA-verified owner DLLs** were inspected via a local
+read-only CLR metadata/IL reader, *never executed*:
+
+- `BizServices.Scripting.DLL` SHA256
+  `d93b61b7b7524942649fd534303735dd4390af6ffee848b82e91c8e47eb5e028`.
+  `VehCommBase.setupVehComm` MethodDef `0x0600041D`
+  reads the script node's `ServiceId` and chooses the
+  provider context by `EcuVariant`, `EcuType`, or
+  `EcuAddress`. `ReadVinComponent.Execute`
+  `0x06000426` adds `Identifier` as a service parameter,
+  then calls the diagnostic service's `Execute`.
+- `BizServices.CarCom.VehicleServices.DLL` SHA256
+  `1735d8ac20d63a20afe13742ea5156cce5a5328392bd3e44d9ec3cd8ae0dbd07`.
+  `SPService.GetService` `0x06000073` calls
+  stored procedure **`service_GetService`**, passing
+  **`@service`**; reads `service`, `mode`, `name`,
+  `description`, and binary `definition` fields,
+  then constructs `<service>` XML. A distinct
+  `SPService.getServiceFromFile` `0x06000070`
+  can read a local **`VehicleServices.xml`** catalog.
+- **7/7 local SHA256 and MethodDef feature gates passed**
+  on both original DLLs.
+- Independently checked public `spnda/volvo_vida_db`
+  `sql/extract_services.ps1`: exports the
+  `carcom.T111_Service` **`id`** column and
+  `service/mode` metadata as CSV, with definitions
+  stored in separate extracted XML files. This is a
+  convenient local reference schema, but its SQL
+  implementation of **`service_GetService`** was
+  not reviewed here.
+
+Created a **new standalone private-source classifier**, distributed
+only as a user-visible ZIP in this research conversation, *not
+committed as executable source in this PR yet*. It accepts
+one private selected ReadVin XML ZIP and the same-installation
+`T111_Service.csv`, and counts direct `ServiceId` Int
+declarations, candidate T111 ID matches, dynamic/duplicate
+declarations and any enabled `propertyhandler` setters
+into `ReadVin.ServiceId` or `Identifier`. It emits
+**only categorical counters and fixed false runtime flags**:
+no literal numeric ServiceId, Identifier values, VIN,
+ECU addresses, source XML or row text. The offline tool
+was locally verified **10/10 synthetic unit tests PASS**.
+The ZIP is byte-checked, contains source/tests/README/SHA256
+and has SHA256
+`aa18692a9cbf2e9857ddd23997221781902aba7898419e100b8eb2d65f487066`.
+
+**Crucial limitation:** an XML `ServiceId=23` matched to
+a T111 row `id=23` is *only* a static catalog candidate;
+it does NOT establish the actual service selected at runtime,
+its `service/mode` wire payload, the ECU configuration,
+GetScript selection, a CEM response, VIN acceptance or a
+suitable emulator replay fixture. Both original private
+selected ReadVin XML and owner T111 CSV are **not available**
+to this new checker here; no actual match reported.
+
+No emulator/J2534/CEM changes; the PR remains Draft and
+exact-head Windows CI has not executed.
