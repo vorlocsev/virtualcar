@@ -210,6 +210,28 @@ jobs:
           & llvm-readobj --file-headers $proxyObj
           if ($LASTEXITCODE -ne 0) { throw 'Native root proxy COFF inspection failed' }
 
+      - name: Link and verify root dev26 Windows x86 J2534 DLL
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # This invokes the SAME native compilation/linking code used by the
+          # canonical build_dev26.sh, but does not build Go assets or OneClick.
+          & bash -n ./build_dev26.sh
+          if ($LASTEXITCODE -ne 0) { throw 'Native root build script syntax failed' }
+          & bash ./build_dev26.sh --native-only
+          if ($LASTEXITCODE -ne 0) { throw 'Native root J2534 DLL link failed' }
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'cmd/oneclick/assets/VirtualCarTrace32.dll'
+          if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            throw 'Root VirtualCarTrace32.dll was not produced'
+          }
+          & llvm-readobj --file-headers --coff-exports $dll
+          if ($LASTEXITCODE -ne 0) { throw 'Root x86 PE inspection failed' }
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          & $python emulator/native-cpp/tests/verify_pe_exports.py $dll Win32
+          if ($LASTEXITCODE -ne 0) { throw 'Root DLL PE32/14 J2534 exports verification failed' }
+          Write-Host 'PASS: root VirtualCarTrace32.dll linked for Windows x86 with exactly 14 J2534 exports'
+          Write-Host 'No DLL registration, load, hardware access, artifact upload or release.'
+
       - name: Run legacy C protocol regression with Clang host compiler
         shell: powershell
         run: |
