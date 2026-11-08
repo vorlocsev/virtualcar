@@ -170,5 +170,104 @@ class VidaBootstrapTraceTests(unittest.TestCase):
         self.assertFalse(out['replay_approved'])
 
 
+
+    def test_22_expected_script_ordered_fetch_run_and_requests(self):
+        out = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertTrue(out['expected_script_id_filter_supplied'])
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+        self.assertFalse(out['runtime_getscript_selection_verified'])
+        self.assertFalse(out['client_vin_accepted'])
+
+    def test_23_run_without_prior_fetch_not_evidence(self):
+        out = audit_text(PREFACE + SELECT + RUN + P3 + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 0)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+
+    def test_24_requests_before_run_cannot_complete_ordered_gate(self):
+        out = audit_text(PREFACE + SELECT + P3 + P2A + P2B + FETCH + RUN,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 1)
+
+    def test_25_other_fetched_script_breaks_expected_pair(self):
+        other = "[ScriptProvider] Fetched script: 'OTHER-SCRIPT 1.8' title: 'Something else'\n"
+        out = audit_text(PREFACE + SELECT + FETCH + other + RUN + P3 + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 0)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+
+    def test_26_getscript_reset_and_unrelated_run_close_window(self):
+        other = "[ScriptProvider] SP: GetScript Type: 'VehCommSpecification' Profile: 'EMPTYPROFILE,'\n"
+        unexpected_run = "[Script] Running script: 'OTHER-SCRIPT 1.0'\n"
+        for log in (PREFACE + SELECT + FETCH + other + RUN + P3 + P2A + P2B,
+                    PREFACE + SELECT + FETCH + unexpected_run + RUN + P3 + P2A + P2B):
+            with self.subTest(log=log[:60]):
+                out = audit_text(log, 'VCC-225200-1')
+                self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 0)
+                self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+
+    def test_27_expected_label_exact_prefix_and_valid_version(self):
+        for other in ("[ScriptProvider] Fetched script: 'VCC-225200-12 1.8'\n",
+                      "[ScriptProvider] Fetched script: 'VCC-225200-1 EXTRA'\n"):
+            with self.subTest(other=other):
+                out = audit_text(PREFACE + SELECT + other + RUN + P3 + P2A + P2B,
+                                 'VCC-225200-1')
+                self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 0)
+        out = audit_text(PREFACE + SELECT + FETCH + RUN, 'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+
+    def test_28_run_and_requests_must_stay_inside_same_window(self):
+        out = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + SELECT + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+        out = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + PREFACE + SELECT + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+
+    def test_29_custom_expected_script_id_supported_without_vin_assumption(self):
+        fetched = "[ScriptProvider] Fetched script: 'PRIVATE-READVIN-CANDIDATE 2.4'\n"
+        running = "[Script] Running script: 'PRIVATE-READVIN-CANDIDATE 2.4'\n"
+        out = audit_text(PREFACE + SELECT + fetched + running + P3 + P2A + P2B,
+                         'PRIVATE-READVIN-CANDIDATE')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+        self.assertFalse(out['original_readvin_xml_binding_verified'])
+
+    def test_30_reject_unsafe_script_id_and_no_private_values_in_report(self):
+        for value in ('', ' X', 'X ', 'X\nY', 'X/../Y', 'X'*97, 123, False):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    audit_text(PREFACE + SELECT, value)
+        secret = 'PRIVATE-READVIN-CANDIDATE'
+        fetched = "[ScriptProvider] Fetched script: '" + secret + " 1.3'\n"
+        running = "[Script] Running script: '" + secret + " 1.3'\n"
+        text = json.dumps(audit_text(PREFACE + SELECT + fetched + running, secret))
+        self.assertNotIn(secret, text)
+        self.assertNotIn('EMPTYPROFILE', text)
+
+    def test_31_cli_expected_script_filter_stays_private(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder, 'private.log')
+            out = Path(folder, 'report.json')
+            log.write_text(PREFACE + SELECT + FETCH + RUN + P3 + P2A + P2B,
+                           encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                main([str(log), '--expected-script-id', 'VCC-225200-1',
+                      '--output', str(out)])
+            report = out.read_text(encoding='utf-8')
+            self.assertTrue(json.loads(report)['expected_script_id_filter_supplied'])
+            self.assertEqual(json.loads(report)['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+            self.assertNotIn('VCC-225200-1', report)
+            self.assertNotIn(str(log), report)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main([str(log), '--expected-script-id', 'VCC-225200-1',
+                      '--output', str(out)])
+
+
 if __name__ == '__main__':
     unittest.main()
