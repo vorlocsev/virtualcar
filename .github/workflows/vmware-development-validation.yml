@@ -78,6 +78,8 @@ on:
           - 013fa4c5f5e2d632d18e884535afed34ac50ac6d
           # Wrapped original VIDA XML graph inspection, immutable reviewed research head.
           - a47d7858a4c634517358a7fa3c552c998b795cc1
+          # P0 VIN-02 static catalog tests: immutable source SHA from Draft PR #192.
+          - 3e90a0d30d63133f489b8ce12894ac9288b6d340
 
 permissions:
   contents: read
