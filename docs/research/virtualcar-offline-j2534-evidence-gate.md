@@ -887,6 +887,56 @@ the complete package passes this limited integrity check
 can the owner consider a controlled, rollback-ready VMware
 diagnostic VM session, not physical J2534/ECU.
 
+## Owner-local BIN7 complete 14-file manifest check (2026-11-08)
+
+Owner completed a read-only check of all 14 expected
+`VirtualCar-VMware-LAB` files in the local package whose
+`BUILDINFO.source_commit` exactly matches
+`14b95e036daf7c908c9da57af0609013f5305062`.
+Output (names of personal files and local hashes withheld):
+
+```text
+Group              : BIN7
+ExpectedEntries    : 14
+ManifestEntries    : 14
+InvalidEntries     : 0
+DuplicateEntries   : 0
+MissingEntries     : 0
+MissingFiles       : 0
+ChecksumMismatches : 0
+UnreadableFiles    : 0
+BundleChecksumOK   : True
+Result=OK
+```
+
+Thus **all 14 allowlisted file hashes** match the companion
+local manifest, with no missing, duplicate or malformed entries.
+This validates **self-consistency against the local
+SHA256SUMS.txt**, not independently signed provenance
+or bitwise source-build reproducibility. The check did not
+enumerate arbitrary additional files outside the manifest
+and does not establish whether the current host is an
+isolated VMware guest or has a snapshot.
+**Never** infer J2534 client acceptance, XC90/CEM
+identity or safe runtime behavior from checksums.
+
+**Next read-only gate before considering a VM session:**
+check the selected BIN7 `BUILDINFO.json` and
+`virtualcar.ini` values **without displaying the raw
+contents or synthetic VIN**: source commit, x86 architecture,
+synthetic P2 profile label, read-only telemetry enabled,
+ECUCount=1, StrictRouting=1, PassiveCAN/PassiveTrace
+disabled, D2 section active fixture counts all zero,
+and extra D2 node disabled. If any fail, do not proceed
+to install/execute. Confirm explicitly that testing takes
+place **inside a snapshot-backed, disconnected
+VMware lab**, with no physical J2534 adapter or vehicle;
+do not alter the current Windows' 3 existing registry
+entries (two stale). When safety checks pass, any
+installation/diagnostic test must be separately planned
+for that isolated environment and **never automatically
+published or claimed successful**.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
