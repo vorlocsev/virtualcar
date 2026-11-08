@@ -162,6 +162,70 @@ re-audited, so the third leg is still **unconfirmed in actual
 selected VIDA XML** and the project must not generate a
 fabricated CEM VIN reply.
 
+## Original event-name wiring: stricter candidate gate (2026-11-08)
+
+A further bounded read-only review of the owner's **same SHA-pinned**
+original `BizServices.Scripting.DLL` identified the precise
+event delegate names, not just arbitrary XML eventhandler node IDs:
+
+- The original `ReadVinComponent` TypeDef extends `VehCommBase`,
+  which declares public `MethodDelegate` fields
+  `OnPositiveResponse` (FieldDef `0x040001B1`),
+  `OnNoResponse`, `OnNoContact` and
+  `OnNegativeResponse`. No duplicate event field is declared
+  by `ReadVinComponent`.
+- `VehCommBase.executeService` (MethodDef `0x06000420`)
+  stores `Result` through `set_Result`, then invokes the
+  `OnPositiveResponse` delegate along its positive response branch.
+  It invokes separate delegate fields for the no-response and
+  negative-response branches. This is a **static** branch observation,
+  not an observed positive response in the target car.
+- `ResultGet` declares public `OnGet` (FieldDef `0x040001BA`).
+  Its `Execute` (MethodDef `0x0600043F`) calls
+  `setProperties`, then invokes the `OnGet` delegate
+  if non-null.
+- `ScriptNode.GetEvents` (`0x0600008C`) registers
+  reflected event fields by their **actual names**.
+  `ScriptNode.CallMethodCallback` (`0x06000074`)
+  looks up the script's `EventHandlerCollection` using the
+  **source node ID AND callback event name**.
+  `ScriptEventHandler.Parse` (`0x060006A0`)
+  reads XML attributes `node` and `name`, not only node.
+
+The earlier three-leg classifier (v1) tested a reader-to-ResultGet
+event and ResultGet-to-identity event without checking the
+XML `name` against actual delegate names. Old synthetic XML
+omitted both event names, so it was a **false positive** for
+original runtime dispatch reachability.
+
+Schema v2 keeps the old weaker flags as explicitly incomplete
+declarations, but
+`candidate_three_leg_route_with_property_binding_lexically_present`
+now also requires: `ReadVin.OnPositiveResponse -> ResultGet.Execute`,
+the matching parser-enabled `ReadVin.Result -> ResultGet.InValue`
+property setter, and `ResultGet.OnGet -> AddVIN/SetX40Serial`
+from the **same ResultGet instance**. It exposes separate
+`candidate_addvin_route_with_event_names_lexically_present`
+and `candidate_x40_route_with_event_names_lexically_present`,
+and retains `candidate_three_leg_without_event_name_validation_lexically_present`
+for comparisons with legacy reports. Any of these flags are
+**static XML declarations only**. An event may never fire and
+a result may never be a valid VIN.
+
+Five additional synthetic regressions check empty/missing event
+names, `OnNoResponse` instead of positive response, wrong ResultGet
+event, separate X40 output, and disabled positive-response call.
+The new schema v2 files match locally tested Git blobs:
+route analyzer `bce5293b7f4ca48f2df5ee2b6fc58cd8632b480b`,
+22 route tests `6a8e660adb791ec6b3a236803944c3a2df44c01f`.
+**43/43** total Python synthetic tests PASS locally
+(22 route + 13 property-class + 8 CLR dispatch).
+
+This evidence does NOT establish that the original owner-selected
+ReadVin XML has this chain; the original private XML was not
+reloaded here. No client VIN, CEM response, physical J2534
+operation or ECU identity is thereby verified.
+
 ## Next real evidence gate
 
 Run only on an already authorized locally available original ReadVin
