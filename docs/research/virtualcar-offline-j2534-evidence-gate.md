@@ -1248,6 +1248,69 @@ or session raw logs. If any call fails, stop and do not
 launch a diagnostic client before investigation.
 This smoke is **not** ECU discovery acceptance.
 
+## Owner-confirmed BIN7 x86 J2534 ABI smoke in VMware (2026-11-08)
+
+After snapshot/disconnection confirmation (owner-reported),
+staging/14-entry local manifest integrity, synthetic safety
+profile, and canonical Registry32 registration of BIN7, the
+owner performed a **new** native J2534 DLL smoke from
+**32-bit Windows PowerShell** using the **staged absolute
+VirtualCarJ2534.dll** path. No physical adapter,
+`PassThruWriteMsgs`, CAN TX, emulator GUI, or diagnostic
+client was involved. Results as supplied by owner:
+
+```text
+[VirtualCar] BIN7 J2534 Smoke Test
+ProcessX86          : True
+OpenStatus          : 0
+ReadVersionStatus   : 0
+APIVersion          : 04.04
+DLLVersion          : VirtualCar-0.3.6.6
+CAN500kStatus       : 0
+ISO15765_500kStatus : 0
+CleanupOK           : True
+LastStage           : ConnectISO15765
+FailureReason       : None
+Result=PASS
+```
+
+**New verified function boundary**: in the owner's VM
+the actual x86 DLL successfully loaded, opened and closed
+a device, returned J2534 API and DLL version strings,
+allocated standard CAN/500k and ISO15765/500k
+**virtual channels**, and successfully disconnected/
+cleaned up. This is stronger than prior static 14/14
+PE export verification. It **does not** prove:
+CAN/ISO-TP frames sent or received, P2 CEM B9FB,
+CEM/ECM replies, VIN/model identity, SectorV/VDASH
+selecting this provider, or a vehicle detected.
+`PassThruConnect=0` is only channel allocation.
+
+**Next controlled client gate:** in the same isolated,
+snapshot-backed VMware guest, with no physical USB/J2534,
+run only one short **read-only SectorV discovery attempt**;
+select `SectorV Virtual Car (J2534)` explicitly,
+never let selection fall back silently to another alias.
+Before run record numeric sizes/UTC mtime and existence
+of local `%TEMP%\\SectorVVirtualCar.log` and
+`%LOCALAPPDATA%\\VirtualCar\\dev47-backend.jsonl`
+for a baseline, without deleting/replacing historical logs.
+Do not inspect/share raw log, VIN, payload, paths or IDs.
+Keep `virtualcar.ini` unmodified, no PIN/Security Access,
+firmware or configuration write. Note UI outcome
+(adapter visible, selected, client connected,
+ECU discovery yes/no, failure category) separately
+from log metadata. After exiting client, re-check log
+sizes/mtime and locally run existing vetted
+`audit_j2534_connect.py`,
+`audit_j2534_discovery.py`, and
+`audit_backend_evidence.py` on an
+**isolated new-session file/slice** where safe;
+never attribute accumulated multi-day historical
+sessions to this new test or count an RX delivery
+as client acceptance. If the client offers no
+read-only discovery route, stop without testing.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
