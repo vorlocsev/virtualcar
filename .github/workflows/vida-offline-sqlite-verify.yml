@@ -15,7 +15,7 @@ concurrency:
 jobs:
   verify-vida-offline:
     name: Verify 9 private VIDA SQLite copies
-    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorloc' && github.ref == 'refs/heads/main'
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Windows, X64, virtualcar-win]
     timeout-minutes: 90
     steps:
