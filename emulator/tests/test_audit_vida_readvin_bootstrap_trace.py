@@ -19,6 +19,9 @@ P2B = "[DiagConnection][VehCom] VehComm request: Ecu '50', Message 'B9FB'\n"
 TXP3 = '[J2534][VehCom] ---> (0) 00,00,07,26,22,F1,14,\n'
 TXP2A = '[J2534][VehCom] ---> (0) 00,0F,FF,FE,CB,40,B9,FB,00,00,00,00,\n'
 TXP2B = '[J2534][VehCom] ---> (0) 00,0F,FF,FE,CB,50,B9,FB,00,00,00,00,\n'
+RXP3 = '[J2534][VehCom] <--- (0) 00,00,07,2E,62,F1,14,11,\n'
+RXP240 = '[J2534][VehCom] <--- (0) 01,20,00,03,8F,40,F9,FB,01,00,00,00,\n'
+RXP250 = '[J2534][VehCom] <--- (0) 01,20,00,05,8F,50,F9,FB,01,00,00,00,\n'
 RXECHO = '[J2534][VehCom] <--- (0) 00,00,07,26,\n[J2534][VehCom] TRANSMITTED FRAME indication\n'
 ERROR = '[J2534][Error] J2534 function:PassThruReadMsgs failed with return value:ERR_BUFFER_EMPTY\n'
 
@@ -456,6 +459,122 @@ class VidaBootstrapTraceTests(unittest.TestCase):
         self.assertEqual(report['sessions_with_ordered_expected_script_request_before_tx_all_families'], 0)
         self.assertFalse(report['expected_script_id_filter_supplied'])
 
+
+
+    def test_58_ordered_request_tx_rx_prefixes_all_three_only_candidate(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN +
+                       P3 + TXP3 + RXP3 + P2A + TXP2A + RXP240 +
+                       P2B + TXP2B + RXP250, 'VCC-225200-1')
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 1)
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 1)
+        self.assertEqual(r['totals']['rx_p2_target40_prefix_after_ordered_request_tx_candidates'], 1)
+        self.assertEqual(r['totals']['rx_p2_target50_prefix_after_ordered_request_tx_candidates'], 1)
+        self.assertFalse(r['actual_positive_ecu_reply_correlated'])
+        self.assertFalse(r['client_vin_accepted'])
+        self.assertFalse(r['replay_approved'])
+
+    def test_59_rx_before_tx_not_matched_even_with_all_requests(self):
+        log = (PREFACE + SELECT + FETCH + RUN +
+               P3 + RXP3 + TXP3 + P2A + RXP240 + TXP2A +
+               P2B + RXP250 + TXP2B)
+        r = audit_text(log, 'VCC-225200-1')
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 0)
+        for key in ('rx_p3_prefix_after_ordered_request_tx_candidates',
+                    'rx_p2_target40_prefix_after_ordered_request_tx_candidates',
+                    'rx_p2_target50_prefix_after_ordered_request_tx_candidates'):
+            self.assertEqual(r['totals'][key], 0)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_before_tx_all_families'], 1)
+
+    def test_60_rx_after_tx_but_without_vehcomm_request_not_matched(self):
+        log = PREFACE + SELECT + FETCH + RUN + TXP3 + RXP3 + TXP2A + RXP240 + TXP2B + RXP250
+        r = audit_text(log, 'VCC-225200-1')
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 0)
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_61_tx_identifier_echoes_rejected_even_with_positive_prefix(self):
+        p3_echo = '[J2534] <--- (0) 00,00,07,26,62,F1,14,11,\n'
+        d2_echo40 = '[J2534] <--- (0) 00,0F,FF,FE,8F,40,F9,FB,\n'
+        d2_echo50 = '[J2534] <--- (0) 00,0F,FF,FE,8F,50,F9,FB,\n'
+        log = (PREFACE + SELECT + FETCH + RUN +
+               P3 + TXP3 + p3_echo + P2A + TXP2A + d2_echo40 +
+               P2B + TXP2B + d2_echo50)
+        r = audit_text(log, 'VCC-225200-1')
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 0)
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+        self.assertEqual(r['totals']['rx_p2_target40_prefix_after_ordered_request_tx_candidates'], 0)
+        self.assertEqual(r['totals']['rx_p2_target50_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_62_even_d2_can_id_is_not_a_valid_rx_prefix_candidate(self):
+        even = '[J2534] <--- (0) 01,20,00,02,8F,40,F9,FB,01,00,00,00,\n'
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P2A + TXP2A + even,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p2_target40_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_63_wrong_d2_target_cannot_complete_expected_target(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P2A + TXP2A + RXP250,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p2_target40_prefix_after_ordered_request_tx_candidates'], 0)
+        self.assertEqual(r['totals']['rx_p2_target50_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_64_getscript_boundary_clears_pending_rx_candidate(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 +
+                       SELECT + FETCH + RUN + RXP3,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_65_repeated_same_family_request_invalidates_stale_tx(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + P3 + RXP3,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + P3 + TXP3 + RXP3,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 1)
+
+    def test_66_tx_indication_and_tx_msg_status_in_rx_line_rejected(self):
+        for suffix in (' TRANSMITTED FRAME indication', ' transmitted frame INDICATION',
+                       ' TX_MSG_TYPE'):
+            with self.subTest(suffix=suffix):
+                candidate = RXP3.rstrip('\n') + suffix + '\n'
+                r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + candidate,
+                               'VCC-225200-1')
+                self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_67_mixed_direction_line_cannot_be_counted_as_rx(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 +
+                       RXP3.rstrip('\n') + ' ---> inline echo\n', 'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_68_no_expected_script_id_never_promotes_rx_to_ordered(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3)
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+        self.assertEqual(r['sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates'], 0)
+
+    def test_69_running_different_version_cannot_promote_rx(self):
+        wrong = "[Script] Running script: 'VCC-225200-1 3.0'\n"
+        r = audit_text(PREFACE + SELECT + FETCH + wrong + P3 + TXP3 + RXP3,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_70_duplicate_rx_prefix_only_consumes_one_outstanding_tx(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3 + RXP3,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 1)
+        self.assertEqual(r['totals']['j2534_rx_p3_positive_prefix_candidates'], 2)
+
+    def test_71_new_logsession_cannot_join_earlier_tx_and_later_rx(self):
+        r = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + TXP3 +
+                       PREFACE + SELECT + FETCH + RUN + RXP3,
+                       'VCC-225200-1')
+        self.assertEqual(r['totals']['rx_p3_prefix_after_ordered_request_tx_candidates'], 0)
+
+    def test_72_rx_candidate_counts_never_emit_private_payload(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + RXP3 +
+               'SENSITIVE_PRIVATE_VIN_MARKER\n')
+        report = json.dumps(audit_text(log, 'VCC-225200-1'))
+        self.assertNotIn('SENSITIVE_PRIVATE_VIN_MARKER', report)
+        self.assertNotIn('VCC-225200-1', report)
+        self.assertFalse(json.loads(report)['client_vin_accepted'])
+        self.assertFalse(json.loads(report)['actual_positive_ecu_reply_correlated'])
 
 if __name__ == '__main__':
     unittest.main()
