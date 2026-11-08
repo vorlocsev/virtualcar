@@ -80,6 +80,8 @@ on:
           - a47d7858a4c634517358a7fa3c552c998b795cc1
           # P0 VIN-02 static catalog tests: immutable source SHA from Draft PR #192.
           - 3e90a0d30d63133f489b8ce12894ac9288b6d340
+          # Owner-reviewed exact RxStatus x86 test commit from Draft PR #201.
+          - d06f8a13e2edd281138f4cfac2075c485d579a87
 
 permissions:
   contents: read
@@ -137,6 +139,7 @@ jobs:
             '013fa4c5f5e2d632d18e884535afed34ac50ac6d',
             'a47d7858a4c634517358a7fa3c552c998b795cc1',
             '3e90a0d30d63133f489b8ce12894ac9288b6d340'
+            'd06f8a13e2edd281138f4cfac2075c485d579a87'
           )
           if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
               $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
