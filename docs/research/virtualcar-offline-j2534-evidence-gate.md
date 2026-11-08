@@ -1311,6 +1311,42 @@ sessions to this new test or count an RX delivery
 as client acceptance. If the client offers no
 read-only discovery route, stop without testing.
 
+## Guest J2534/backend append-only log size comparison after SectorV window (2026-11-08)
+
+The owner captured two successive guest Windows log file size + UTC mtime
+snapshots around the planned short SectorV diagnostic-client
+test. They **have not yet reported the client's visible UI outcome**
+or positively attributed appended events to the client:
+
+| File | Baseline bytes | Later bytes | Delta | Later modified UTC |
+|---|---:|---:|---:|---|
+| `%TEMP%\\SectorVVirtualCar.log` | 24,572,641 | 24,623,280 | **+50,639** | 2026-11-08 09:32:04 |
+| `%LOCALAPPDATA%\\VirtualCar\\dev47-backend.jsonl` | 7,899,215 | 7,912,573 | **+13,358** | 2026-11-08 09:31:49 |
+
+The J2534 baseline mtime was 2026-11-08 09:21:10 UTC,
+whereas the backend baseline mtime was 2026-11-03 18:18:18 UTC.
+The append deltas are **only evidence that these files grew**
+within the observation window, not who wrote the bytes,
+which provider the GUI chose, or whether CEM identification
+was accepted. These are distinct sources and cannot be
+joined transaction-by-transaction by timestamps alone.
+The earlier historical log aggregates are NOT fresh test results.
+
+**Next owner-local, read-only gate:** with the client closed,
+analyze only fixed byte windows
+`[24572641,24623280)` of the J2534 log and
+`[7899215,7912573)` of the backend JSONL, discarding
+incomplete boundary lines and reporting only counts from
+the repository's existing audited offline analyzers.
+No raw log or CAN/VIN data should be printed, uploaded
+or committed, and no original log should be overwritten
+or truncated. Note that a window cut may leave incomplete
+transaction boundaries classified `unverified`.
+Obtain the human-observed SectorV UI state separately;
+neither log growth nor an RX status means client
+acceptance. No new DLL install, registration edits,
+physical J2534, PIN, or flash tasks required.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
