@@ -285,6 +285,78 @@ that any VIN was obtained, or that an actual XC90 V8 replied.
 The private original ReadVin ZIP has not been processed in this
 stage. Exact source Windows/VMware CI remains unrun; PR stays Draft.
 
+## Source-backed ResultGet output-property registration gate (2026-11-08)
+
+A new failure mode was found **in the prior synthetic fixture**:
+it supplied an XML extension `get property="Decoded"` but no
+corresponding directly declared ResultGet `<property name="Decoded"
+class="String"/>`. The prior strict *event-name + arity + Output*
+route therefore looked plausible even though the script's
+`ResultGet.setProperties` later accesses its output through
+`PropertyCollection.get_Item`. An extension `get` declaration
+alone is **not** evidence the output property exists or has a
+compatible type.
+
+Original owner-private unmodified `BizServices.Scripting.DLL`
+(SHA256 pinned above) was inspected again **without executing it**.
+Independent targeted metadata/IL checks: **5/5 PASS**:
+
+- `ScriptNode.Parse` MethodDef `0x06000089` has the immediate
+  XML `property` selector and a property-registration path.
+- `ResultGet.PropertySetup` `0x0600043D` explicitly registers
+  `InValue` with `PropertyCollection.CreateOrUpdate`.
+  This method alone does **not** establish registration of
+  an arbitrary output key such as `Decoded`.
+- `ResultGet.setProperties` `0x06000440` obtains `get`
+  output property name, looks up `PropertyCollection.get_Item`
+  and calls `Property.set_Value` on the selected output.
+- `ResultGet.SetPath` `0x0600043C` has a separate
+  `PropertyCollection.CreateOrUpdate` path. This may be
+  used to register output properties dynamically in some flows;
+  a missing direct XML declaration therefore must **not**
+  be presented as proof of runtime impossibility.
+
+The **v4 schema** adds two conservative, *stronger declaration-only*
+flags to the previous v3 structural/arity flags:
+
+- `candidate_addvin_route_direct_declared_string_output_lexically_present`
+- `candidate_x40_route_direct_declared_string_output_lexically_present`
+
+Both additionally require a directly declared, unique
+`<property name="..."` with `class="String"` on the
+**same ResultGet node**, matching the exact
+`<extension><get property="...">` destination key
+that the identity parameter references. A missing property,
+non-String/unknown class, duplicate property name,
+wrapper-only property or property registered on a different
+ResultGet leaves the new strict gate **false**. The weaker
+v3 flags remain present to preserve their distinct meaning.
+
+This does **not** establish the actual argument's CLR
+type, the success of `Property.set_Value`, event execution,
+or VIN acceptance. Specifically, a false v4 flag means
+**not statically established by a direct declared String
+property**, not necessarily that VIDA cannot execute the script.
+
+Eight additional *synthetic-only* regression groups test
+missing direct property, unique String, Byte class, wrapper
+placement, duplicate name, unrelated second ResultGet,
+separate X40 and wrong property name. All **58/58** local
+Python synthetic regressions PASS (37 ResultGet, 13
+property-class, 8 original CLR dispatch).
+
+The exact locally executed source Git blobs were committed
+and verified in GitHub:
+
+- route analyzer `af83516f1ba73a3276589c2aa91615e7867fc17e`;
+- route tests `4a239f77653dbc6bfb8d3b9f041fbe100f41df65`.
+
+Windows VMware CI for exact latest PR HEAD remains **unrun**.
+No owner's original private ReadVin ZIP has been processed
+by the v4 classifier. The privately collected redacted
+v2/v3 reports do not contain these output property classes.
+No runtime CEM/J2534 changes or compiled release.
+
 ## Next real evidence gate
 
 Run only on an already authorized locally available original ReadVin
