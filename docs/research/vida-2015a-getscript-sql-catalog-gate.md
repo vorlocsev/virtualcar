@@ -1502,19 +1502,62 @@ No full titles, paths, process command lines, URLs, PIDs,
 IP addresses, ports, VIN, or credentials printed; no
 applications launched, network calls or ECU actions.
 
-**Next owner-controlled bounded validation:** with the
-already-open VIDA-marked browser tab in view, run the
-existing passive `Inspect-VIDA-WildFlyTcpSampling.ps1`
-during **ordinary non-diagnostic UI navigation only**
-(e.g. existing home/help view), with no ECU/adapter actions,
-programming, VIN collection, database requests or service
-changes. An observed reverse TCP peer would establish
-browser/other process ↔ WildFly connectivity only; it
-would not identify an HTTP route or SQL procedure. If
-nothing is observed, do not repeat indefinite captures;
-instead classify other available client transports using
-separate non-invasive provenance checks. PR #172 remains
-draft; do not publish Virtual Car binaries.
+**Owner-run passive WildFly browser peer sampling with already-open VIDA UI (COMPLETED):**
+The owner re-ran the existing, non-mutating
+`Inspect-VIDA-WildFlyTcpSampling.ps1` with the VIDA-marked
+browser UI in use for ordinary non-diagnostic navigation.
+The run ended `Result=OK`/`ScriptFinished` and unique
+VIDA-descendant WildFly was verified.
+
+| Aggregate metric | Observed |
+|---|---:|
+| `VerifiedVidaWildFlyCount` | **1** |
+| `SamplesCompleted` | **20** |
+| `PeakExplicitLoopbackListeners` | **3** |
+| `SamplesWithServerEstablishedEndpoint` | **20** |
+| `PeakServerEstablishedEndpoints` | **6** |
+| `SamplesWithMatchedReverseTCPPeer` | **20** |
+| `PeakMatchedReverseTCPPairs` | **6** |
+| `DistinctClientProcessesObserved` | **2** |
+| `BrowserOrWebViewClientProcesses` | **2** |
+| `VidaMonitorClientProcesses` / `VidaDescendantClientProcesses` / `OtherClientProcesses` / `UnknownOrExitedClientProcesses` | **0 / 0 / 0 / 0** |
+
+**Interpretation:** unlike the previous idle series of 20
+zero-peer snapshots, **all 20 active-UI samples** observed
+at least one established **loopback browser/WebView ↔
+WildFly TCP connection**, and reverse 4-tuple matching
+attributed these connections to **two distinct browser/
+WebView process IDs**. The active UI is a strong likely
+source of the observed traffic because the operator used
+the already-open VIDA-marked browser, but process-name
+category alone **does not tie a particular tab or URL** to
+a particular TCP socket. Six is a **peak socket/tuple
+count**, NOT six VIDA calls, SQL queries, sessions, users,
+or distinct pages. The browser-to-WildFly peer and the
+previous WildFly-to-local-SQL peer are separately confirmed
+network legs at the process/TCP level, **not yet traced
+as a single application request or simultaneously in one
+snapshot**. No HTTP path/method, SQL database selected,
+`dbo.GetScript` invocation, `@scriptType` parameter, VIN
+read, DiCE/J2534 interaction or emulator interoperability
+has been demonstrated. No IPs, ports, PIDs, URLs, tokens,
+VIN, sensitive paths or SQL contents were exported. No
+SQL/HTTP requests created by the passive script, no ECU
+calls or deployment changes; no Virtual Car builds released.
+
+**Next bounded read-only gate:** consider a **single
+combined Windows TCP snapshot** while the same authorized,
+non-diagnostic VIDA browser UI is open, matching both
+browser/WebView ↔ WildFly listener endpoints and WildFly ↔
+local `sqlservr.exe` endpoints in the **same snapshot**,
+with only aggregate counts. This could establish concurrent
+presence of both transport legs, still not per-request
+causality or SQL procedure execution. Avoid further idle
+resampling, packet capture, URL/port disclosure, database
+queries, or vehicle/adapter operations. If confirmed,
+shift toward separate, explicitly authorized sanitized
+caller-identity evidence instead of more archive scans.
+PR #172 remains draft/unmerged; publish no builds.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
