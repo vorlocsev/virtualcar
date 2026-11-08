@@ -1076,6 +1076,44 @@ unattributed x86 DLL. Retain a reversible plan for
 registration that does not touch unrelated J2534 keys.
 No run/installation is approved by these findings alone.
 
+## VMware guest canonical J2534 provider absent (owner check, 2026-11-08)
+
+The owner inspected **only the exact expected** 32-bit registry
+key `HKLM\\SOFTWARE\\PassThruSupport.04.04\\SectorV Virtual Car`
+on the VMware guest (read-only). The output was:
+
+```text
+CanonicalProviderPresent : False
+DLLExists                : False
+ExpectedDLLName          : False
+CANDeclared              : False
+ISO15765Declared         : False
+J2534Version0404         : False
+Result=OK
+```
+
+**Interpretation constraint:** only `CanonicalProviderPresent=False`
+is an independently evaluated negative observation. The
+other five `False` booleans were initial defaults because
+the inspection skipped all DLL/metadata reads if the key
+did not exist. They **do not indicate** that BIN7's
+`VirtualCarJ2534.dll` is absent, lacks exports or fails to
+implement CAN/ISO15765. This result is consistent with
+the earlier exact-name `NOT_REGISTERED` check and the
+fact that three *other* name-matching J2534 provider keys
+were previously enumerated; no exact alias or registered
+BIN7 build has been confirmed.
+
+**Gate remains unchanged:** confirm via VMware host UI that
+a revertible snapshot exists, and that no USB/physical
+J2534 devices or vehicle are passed through. Then plan a
+*separate, controlled* guest-only installation/registration
+procedure with backup and rollback. Do not modify the
+three other aliases, run an installer, load the DLL, or
+use physical CAN merely because BIN7's static 14-file
+manifest and synthetic-profile checks passed. No positive
+SectorV/VDASH/CEM identity acceptance has been demonstrated.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
