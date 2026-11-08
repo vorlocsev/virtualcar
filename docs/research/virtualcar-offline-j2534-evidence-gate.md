@@ -1502,6 +1502,65 @@ CAN bytes, VIN, paths, session/request IDs). Do not
 change INI, fabricate CEM responses, enable CAN_PS
 or test against physical hardware yet.
 
+## BIN7 targeted three-exception J2534 transport classification (2026-11-08)
+
+The owner ran a **read-only** local analyzer on the SAME fixed
+50,639-byte J2534 append window after the first controlled
+SectorV GUI session, without sharing raw logs or payloads:
+
+```text
+[VirtualCar] BIN7 Exception Transport
+Route=D2 Protocol=CAN Baud=250000 Status=unsupported Reason=strict_route_rejected Count=1
+Route=P3 Protocol=CAN Baud=500000 Status=timeout Reason=j2534_read_timeout_observed Count=1
+Route=P3 Protocol=ISO15765 Baud=500000 Status=timeout Reason=j2534_read_timeout_observed Count=1
+ExceptionCount=3
+Result=OK
+```
+
+**Confirmed local strict-route explanation:** BIN7 source
+`emulator/src/virtualcar.c` initializes base D2
+`0x50/B9FB` at **500,000 bps**. The actual J2534
+channel for its one observed rejected request was **CAN
+250,000 bps**. With `StrictRouting=1`, the C code
+rejects any `c->baud != d->baud` and emits
+`unsupported_bus` before attempting to serve a
+fixture. This is **correct strict-route behavior for
+the configured synthetic profile**, not evidence
+that P2 MY2009 must use 500k on every vehicle/bus.
+Do not disable the safety gate merely to suppress
+one error.
+
+**P3-labeled timeout clarification:** two observed
+`j2534_read_timeout_observed` records concern
+one standard CAN/500k and one ISO15765/500k channel.
+The discovery analyzer broadly labels TX directed at
+P3 CAN ID candidates as `P3/other`; `service=other`
+**does not identify a validated UDS service or ECU**.
+The BIN7 native `PassThruReadMsgs` returns
+`ERR_TIMEOUT` after a nonzero caller-supplied
+read wait expires without RX, and logs a bounded
+timeout marker; **it is not a native ECU processing
+timeout or an independent client GUI failure
+confirmation**. BIN7 source intentionally does
+not fabricate replies for unmatched ID/protocol
+requests and lacks verified P3 CEM responses.
+Do not infer timeout root cause from 500k alone.
+
+**No new acceptance claim:** 10 CEM B9FB
+`no_fixture` remain consistent with
+`B9FBFrameCount=0` for synthetic profile,
+and backend's one CEM `unimplemented_probe`
+plus one `UNHANDLED` need no unsafe alteration.
+The **SectorV GUI state has not been supplied**,
+so exact provider selected, vehicle/ECU detection
+outcome and error dialog are still unverified.
+Recommended next evidence: owner reports GUI
+adapter-visible / connected / ECU-visible / error
+state, without VIN or private identifiers;
+no further test until UI evidence is reviewed.
+Do not use physical J2534, expand protocol
+aliases, change INI/registry or synthesize B9FB.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
