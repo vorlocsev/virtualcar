@@ -1347,6 +1347,82 @@ neither log growth nor an RX status means client
 acceptance. No new DLL install, registration edits,
 physical J2534, PIN, or flash tasks required.
 
+## Fresh bounded SectorV-window offline audit: P2 CEM B9FB (2026-11-08)
+
+The owner ran the **BIN7** read-only local analyzers against only the
+fixed append windows of the J2534 text log (50,639 bytes) and
+backend JSONL (13,358 bytes). Both boundaries coincided with
+whole lines, and no source log was overwritten or uploaded:
+
+```text
+[VirtualCar] SectorV Window Audit
+J2534WindowBytes=50639
+BackendWindowBytes=13358
+J2534CompleteLines=491
+BackendCompleteLines=52
+J2534BoundaryDropped=False
+BackendBoundaryDropped=False
+ConnectAttempts=29
+ConnectStatuses={'invalid_protocol': 14, 'ok': 15}
+DiscoveryTransactions=13
+DiscoveryStatuses={'no_fixture': 10, 'timeout': 2, 'unsupported': 1}
+CEM_40_B9FB=5 {'no_fixture': 5}
+CEM_50_B9FB=6 {'no_fixture': 5, 'unsupported': 1}
+BackendRequests=13
+BackendSessions=6
+BackendInvalidLines=0
+BackendStatuses={'no_fixture': 10, 'unsupported': 3}
+BackendProbe_D2_40_B9FB=5 {'no_fixture': 5}
+BackendProbe_D2_50_B9FB=6 {'no_fixture': 5, 'unsupported': 1}
+ClientAcceptanceVerified=False
+VehicleIdentityVerified=False
+Result=OK
+```
+
+**Positive progress:** the fresh window has 15 successful
+J2534 channel allocations, and **11 classified CEM B9FB
+requests** across D2 targets `0x40` (5) and `0x50` (6).
+This verifies actual synthetic D2 request reachability in
+the instrumented DLL but **does not** prove GUI adapter
+selection or client recognition without user-reported UI.
+There were no `delivered` transactions in either
+aggregate; vehicle identity/VIN is **NOT VERIFIED**.
+
+**Expected limitations:** exact BIN7 source
+`emulator/virtualcar-p2.ini` sets `B9FBFrameCount=0`
+for both targets; ten `no_fixture` statuses are
+consistent with deliberate absence of validated CEM
+response fixtures. Do not fabricate 2009 XC90/V8
+B9FB response payloads or promote 2005-era samples.
+
+**Different classifications, no forced correlation:**
+the discovery analyzer reports one `unsupported` CEM
+0x50 B9FB and two other `timeout` transactions;
+its `unsupported` means `strict_route_rejected`,
+and its `timeout` means a J2534 read timeout observed.
+The backend analyzer instead reports **three**
+`unsupported` (from `unsupported_bus`,
+`unhandled_request`, or `unimplemented_probe`)
+and ten `no_fixture` in six backend session groups.
+These are complementary classifiers with no
+shared per-request join asserted. `invalid_protocol=14`
+requires examination by **protocol category** before
+calling it a regression, because optional vendor
+J2534 protocols differ from standard CAN/ISO15765.
+
+**Next narrow gate:** owner-local bounded audit of the
+same byte windows to report only allowlisted
+`ConnectMode` categories, each
+`unsupported`/`timeout` discovery item's
+route/service/target/status/reason/protocol/baud,
+and backend reason counts without exposing
+session IDs, request IDs, frame contents, VIN,
+private paths or full traces. Separately request the
+**observed SectorV UI outcome** (adapter selectable,
+connection, ECU list, error text). Do not make any
+registry/INI changes, retest physical hardware,
+or synthesize missing B9FB responses.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
