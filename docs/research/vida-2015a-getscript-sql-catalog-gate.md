@@ -1336,18 +1336,58 @@ credentials, VIN or network requests were emitted or
 executed. No SQL procedure execution, adapter interaction,
 ECU writes, registry changes or build publication.
 
-**Next priority:** stop broad class-file scans of the
-examined second EAR. Seek **independent observable evidence
-of the SQL caller** (e.g. non-invasive process/connection
-provenance inventory, without SQL statements or sensitive
-endpoints), and identify whether relevant client components
-run outside the already scanned JBoss deployments. An
-active TCP connection alone would demonstrate connectivity,
-not that `GetScript` was called. Avoid executing SQL
-`GetScript` or involving physical ECUs; a sanitized,
-authorized offline virtual-J2534 trace remains a separate
-potential path. Keep draft PR #172 unmerged and do not
-publish Virtual Car binaries.
+**Owner-local passive SQL Server ↔ VIDA/WildFly TCP peer inventory (completed):**
+`Inspect-VIDA-SQLTcpPeers.ps1` finished `Result=OK` /
+`ScriptFinished`. It takes a Windows process inventory and
+single `Get-NetTCPConnection` snapshot, identifies local
+`sqlservr.exe` and verifies WildFly Java's ancestry to
+`VidaMonitor.exe`, then matches client/server `Established`
+TCP tuples by reversed address/port pairs. No SQL calls,
+connection attempts or packet capture were performed.
+
+| Aggregate metric | Result |
+|---|---:|
+| `LocalSQLServerProcessCount` | **1** |
+| `VerifiedVidaWildFlyCount` | **1** |
+| `SQLTcpListeningEndpoints` | **4** |
+| `SQLTcpEstablishedEndpoints` | **4** |
+| `SQLTcpPeerProcessesMatched` | **1** |
+| `VidaWildFlyPeerProcesses` | **1** |
+| `VidaMonitorPeerProcesses` | **0** |
+| `OtherOrUnclassifiedPeerProcesses` | **0** |
+
+**Interpretation:** this establishes **a live TCP link
+between a VIDA-descendant WildFly Java process and a local
+SQL Server process** at the instant of the snapshot. The
+four established SQL-owned **endpoints** must NOT be
+represented as four SQL queries, four distinct sessions or
+four separate clients. Because PID matching yields one
+Java peer process, we have process-level connection
+provenance, **not** database-name selection, query text,
+stored-procedure invocation, SQL login identity, or
+proof that `dbo.GetScript` was called with `@scriptType`.
+Coverage does not include Shared Memory, Named Pipes,
+remote SQL Server or activity outside the snapshot. The
+SQL client may be idle or service-related. All private
+IP/port/process command lines/paths, passwords, VIN and
+query bodies remain unreported. No Java/SQL/HTTP/J2534/
+ECU operations, registry changes, deployments or published
+Virtual Car builds.
+
+**Next bounded read-only gate:** inventory established
+loopback TCP client peers of the **three previously
+observed WildFly-owned listener endpoints** using a
+fresh single `Get-NetTCPConnection` snapshot, outputting
+only counts/categories (`VidaMonitor`, VIDA-descendant
+processes, common web-browser processes, other/unknown).
+Match server-side established tuples to the WildFly-owned
+listeners and reverse client endpoints, without printing
+addresses, ports, PIDs, URLs, names of proprietary programs
+or content. This may clarify the front-end → WildFly →
+SQL network topology if the front-end is connected at
+snapshot time. Zero matches are inconclusive and no result
+proves any specific HTTP endpoint or SQL procedure call.
+Keep draft PR #172 unmerged; publish no builds.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
