@@ -290,11 +290,34 @@ def _selected_variant_in_profile(t100_csv, t160_csv, t161_csv, variant_id, profi
     return (variant_id in variants and selected_profile_id is not None
             and (selected_profile_id, variant_id) in default_pairs)
 
+
+
+def _selected_script_in_profile_map(csv_bytes, profile_identifier, selected_script):
+    """Check only static ScriptProfileMap availability, never GetScript execution."""
+    if (not isinstance(selected_script, str) or not selected_script
+            or len(selected_script) > 128 or selected_script != selected_script.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in selected_script)):
+        raise ValueError('invalid selected script ID')
+    pairs = set()
+    for row in _bounded_fk_rows(csv_bytes, {'fkProfile', 'fkScript'}):
+        # The public VIDA filter_scripts implementation uses TRIM(fkProfile).
+        profile = row['fkProfile'].strip()
+        script = row['fkScript']
+        if (not profile or len(profile) > 128
+                or any(ord(char) < 32 or ord(char) == 127 for char in profile)
+                or not script or len(script) > 128 or script != script.strip()
+                or any(ord(char) < 32 or ord(char) == 127 for char in script)
+                or (profile, script) in pairs):
+            raise ValueError('invalid or duplicate ScriptProfileMap relation')
+        pairs.add((profile, script))
+    return (profile_identifier, selected_script) in pairs
+
 def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None,
                   protocol_catalog_bytes=None, service_ecu_variant_map_bytes=None,
                   selected_ecu_variant_id=None, t100_catalog_bytes=None,
                   t160_catalog_bytes=None, t161_catalog_bytes=None,
-                  selected_profile_identifier=None):
+                  selected_profile_identifier=None, script_profile_map_bytes=None,
+                  selected_script_id=None):
     content, nodes = _parse_xml(xml_bytes)
     service_ids, metadata_complete_ids, protocol_complete_ids, protocol_keys_by_service_id, rows, invalid_rows, empty_metadata = _parse_catalog(csv_bytes)
     protocol_catalog_ids = (_parse_protocol_catalog(protocol_catalog_bytes)
@@ -321,6 +344,17 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None,
             selected_variant, selected_profile_identifier)
     else:
         static_variant_profile_match = False
+    if (script_profile_map_bytes is None) != (selected_script_id is None):
+        raise ValueError('ScriptProfileMap and script selection must be supplied together')
+    if script_profile_map_bytes is not None:
+        if (not all(item is not None for item in profile_inputs)
+                or not static_variant_profile_match):
+            # A map row alone must not promote an unestablished profile chain.
+            raise ValueError('ScriptProfileMap requires a selected static ECU profile')
+        script_profile_eligible = _selected_script_in_profile_map(
+            script_profile_map_bytes, selected_profile_identifier, selected_script_id)
+    else:
+        script_profile_eligible = False
     definition_id, definition_content_present = (None, False)
     if service_definition_bytes is not None:
         definition_id, definition_content_present = _parse_service_definition(service_definition_bytes)
@@ -426,6 +460,11 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None,
         'single_readvin_with_selected_default_ecu_variant_profile_candidate_present': bool(
             len(readers) == 1 and variant_qualified_matches == 1
             and static_variant_profile_match),
+        'script_profile_map_csv_supplied': script_profile_map_bytes is not None,
+        'eligible_selected_script_for_static_ecu_profile_candidate_present': bool(
+            len(readers) == 1 and variant_qualified_matches == 1
+            and static_variant_profile_match and script_profile_eligible),
+        'actual_getscript_selected_script_verified': False,
         'selected_profile_is_target_vehicle_verified': False,
         'actual_ecu_variant_identity_verified': False,
         'actual_ecu_variant_service_support_verified': False,
@@ -476,6 +515,8 @@ def main(argv=None):
     ap.add_argument('--t160-catalog', type=Path, help='optional private T160_DefaultEcuVariant.csv')
     ap.add_argument('--t161-catalog', type=Path, help='optional private T161_Profile.csv')
     ap.add_argument('--profile-identifier', help='exact selected VIDA T161 profile identifier')
+    ap.add_argument('--script-profile-map', type=Path, help='optional private ScriptProfileMap.csv')
+    ap.add_argument('--script-id', help='exact selected script FK for static profile availability')
     ap.add_argument('--output', required=True, type=Path)
     a = ap.parse_args(argv)
     repo = Path(__file__).resolve().parents[2]
@@ -487,6 +528,8 @@ def main(argv=None):
         inputs.append(a.protocol_catalog)
     if a.t110_catalog is not None:
         inputs.append(a.t110_catalog)
+    if a.script_profile_map is not None:
+        inputs.append(a.script_profile_map)
     for item in (a.t100_catalog, a.t160_catalog, a.t161_catalog):
         if item is not None:
             inputs.append(item)
@@ -529,9 +572,17 @@ def main(argv=None):
                         or source.stat().st_size > MAX_CSV_BYTES):
                     raise ValueError('unsupported private ECU profile catalog')
                 profile_catalogs.append(source.read_bytes())
+        script_map = None
+        if a.script_profile_map is not None:
+            path = a.script_profile_map
+            if (path.is_symlink() or not path.is_file() or path.suffix.lower() != '.csv'
+                    or path.stat().st_size > MAX_CSV_BYTES):
+                raise ValueError('unsupported private ScriptProfileMap catalog')
+            script_map = path.read_bytes()
         report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes(),
                                definition, protocols, t110, a.ecu_variant_id,
-                               *profile_catalogs, a.profile_identifier)
+                               *profile_catalogs, a.profile_identifier,
+                               script_map, a.script_id)
         with a.output.open('x', encoding='utf-8') as out:
             json.dump(report, out, ensure_ascii=False, indent=2)
             out.write('\n')
