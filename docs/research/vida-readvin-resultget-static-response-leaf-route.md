@@ -226,6 +226,65 @@ ReadVin XML has this chain; the original private XML was not
 reloaded here. No client VIN, CEM response, physical J2534
 operation or ECU identity is thereby verified.
 
+## Original MethodDef signature and Output-node shape gate (2026-11-08)
+
+The earlier event-name-aware schema v2 still treated a callback with
+**extra or missing arguments** as a plausible complete VIN route.
+This is too permissive for the original SHA-pinned CLR implementation.
+
+Six read-only checks were repeated against the owner's original
+`BizServices.Scripting.DLL`, using **only CLR metadata and bounded
+method IL**, without executing the DLL: **6/6 PASS**.
+
+- The original DLL SHA-256 matched the pinned source.
+- `ResultGet.Execute` (MethodDef `0x0600043F`) has instance
+  method signature `void()`, requiring **0 direct XML parameters**.
+- `VehicleIdentityOutput.AddVIN` (`0x0600037D`) has signature
+  `void(System.String)`, requiring **exactly 1** direct argument.
+- `VehicleIdentityOutput.SetX40Serial` (`0x0600037E`) also
+  requires **exactly 1** `System.String` argument.
+- `Script.get_Output` (`0x06000637`) contains a literal
+  `Output` node lookup and uses `ScriptNodeCollection.Contains`
+  and `ScriptNodeCollection.get_Item`. An identity-output
+  component with another node ID is not the script's final
+  output object.
+
+The analyzer now has a **v3 schema** with two *additional* strong
+candidate flags:
+`candidate_addvin_route_arity_and_output_shape_lexically_present`
+and
+`candidate_x40_route_arity_and_output_shape_lexically_present`.
+Each requires the existing strict event-name + propertyhandler
+route, **0 direct parameters** on `ResultGet.Execute`,
+**1 direct parameter** on `AddVIN`/X40 and
+the output node ID literally `Output`.
+Wrong arity or a differently named identity-output node makes
+the strong candidate false. The weaker v2 event-name and
+three-leg fields are retained unchanged as incomplete evidence.
+
+The new checks do **not** validate the **type or content** of
+the evaluated argument. A `ResultGet` leaf may be null,
+non-string, wrong vehicle data or never execute; therefore
+`identity_argument_string_type_verified=false`,
+`vin_accepted_by_client=false` and all runtime/ECU/replay
+flags remain false.
+
+**7 new completely synthetic regressions** test a shape-matching
+AddVIN route, one extra Execute parameter, two AddVIN parameters,
+non-`Output` identity target, separate valid X40 route,
+missing AddVIN parameter, and nested/wrapper-hidden argument.
+The combined local Python suite is now **50/50 PASS**
+(29 route + 13 property-class + 8 CLR dispatch).
+Verified original binary metadata/IL: **6/6 PASS**.
+The exact GitHub blob SHA1s of the code tested locally:
+- route analyzer: `a36f3aa166c68749e4870dcb741bd80ddf33b2ce`;
+- route tests: `b77000cc455bd9719f40e3cd59ae2d61f85cb8c4`.
+
+This is NOT evidence that an original ReadVin XML was selected,
+that any VIN was obtained, or that an actual XC90 V8 replied.
+The private original ReadVin ZIP has not been processed in this
+stage. Exact source Windows/VMware CI remains unrun; PR stays Draft.
+
 ## Next real evidence gate
 
 Run only on an already authorized locally available original ReadVin
