@@ -1102,6 +1102,17 @@ int main(){
     probe_speed.Value=bitrates[bi];
     REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&speed_options,0)==ERR_OK);
     REQUIRE(channel(cid)->baud==bitrates[bi]);
+    /* J2534 SetConfig and passive bridge must agree after each switch. */
+    {
+     U32 k,synced=0;
+     for(k=0;k<P2_BRIDGE_MAX_CHANNELS;k++){
+      const p2_bridge_channel *bc=&g_vehicle_bridge.channels[k];
+      if(bc->active && bc->id==cid){
+       REQUIRE(bc->baud==bitrates[bi]);synced++;
+      }
+     }
+     REQUIRE(synced==1u);
+    }
     for(ti=0;ti<2;ti++)for(si=0;si<2;si++) {
      U8 request[8]={0xCF,targets[ti],services[si],0,0,0,0,0};
      int wrong_bus=(targets[ti]==0x40u?bitrates[bi]!=125000u:
