@@ -1401,19 +1401,52 @@ also ran `Remove-Module PSReadLine` in the current
 PowerShell session: this is a shell UI change unrelated
 to VIDA/SQL/J2534, not a server configuration change.
 
-**Next bounded passive gate:** while the user has a
-legitimate, already-open VIDA UI session (if any), take
-multiple short `Get-NetTCPConnection` snapshots, with
-repeated listener-ownership and process-ancestry checks,
-without actively requesting pages or attaching a car.
-Report only maximum established loopback server endpoints,
-count of snapshots with a matched peer, and distinct peer
-process categories. A series of zero snapshots remains
-inconclusive. If no active UI session exists, stop
-repeating blind TCP checks and focus on client process
-inventory / other runtime components. No SQL `GetScript`
-execution, physical ECU operation, or Virtual Car release.
-Keep draft PR #172 unmerged.
+**Owner-local passive 20-snapshot WildFly listener client sampling (completed):**
+`Inspect-VIDA-WildFlyTcpSampling.ps1` finished
+`Result=OK` / `ScriptFinished`, verifying a unique
+VIDA-descendant WildFly Java process and taking **20**
+read-only `Get-NetTCPConnection` snapshots with separate
+listener ownership, loopback and reverse TCP tuple checks.
+
+| Aggregate metric | Observed |
+|---|---:|
+| `VerifiedVidaWildFlyCount` | **1** |
+| `SamplesCompleted` | **20** |
+| `PeakExplicitLoopbackListeners` | **3** |
+| `SamplesWithServerEstablishedEndpoint` | **0** |
+| `PeakServerEstablishedEndpoints` | **0** |
+| `SamplesWithMatchedReverseTCPPeer` | **0** |
+| `PeakMatchedReverseTCPPairs` | **0** |
+| `DistinctClientProcessesObserved` | **0** |
+| Client categories (VidaMonitor, VIDA descendants, browser/WebView, other, unknown/exited) | **all 0** |
+
+**Interpretation:** none of the 20 sampled moments had an
+established inbound loopback TCP connection to the three
+explicitly listening WildFly endpoints. This is a stronger
+bounded *sampling observation* than the earlier single
+snapshot but **not proof the VIDA client never uses the
+server**: short-lived connections may fall between
+samples; a browser/UI may not have been active, or a
+separate transport/endpoint may be used. The previously
+observed WildFly ↔ local SQL Server connection remains a
+separate, positive process-level TCP observation, **not**
+a `dbo.GetScript` invocation. No API/SQL/HTTP/J2534/ECU
+requests were sent; the operator did not interact with the
+vehicle; no IPs, ports, paths, URLs, credentials or VIN
+were disclosed.
+
+**Next bounded read-only gate:** pivot to Windows process
+inventory around `VidaMonitor.exe` and the verified WildFly
+process (children/descendants, client/browser/WebView
+process categories, relevant executable architecture and
+process relationships), **counts and categories only**.
+Avoid repeatedly resampling idle TCP listeners. Do not
+start VIDA, load DLLs, inspect private command-line strings
+or modify SQL, registry, driver or ECU configuration.
+If candidate client processes are found, define a separate
+sanitized, authorized observation of how they communicate,
+without asserting HTTP/SQL procedure usage from process
+names alone. Keep draft PR #172 unmerged; publish no builds.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
