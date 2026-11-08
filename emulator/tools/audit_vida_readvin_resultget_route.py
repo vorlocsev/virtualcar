@@ -38,6 +38,8 @@ def audit_xml(xml_bytes):
 
     direct_gets = {}  # private IDs used locally only, never emitted
     readvin_event_target_ids = set()
+    readvin_event_pairs = set()
+    result_to_invalue_set_pairs = set()
     identity_get_source_ids = set()
     stats = {
         'resultget_node_declarations': len(resultget_nodes),
@@ -51,6 +53,12 @@ def audit_xml(xml_bytes):
         'getbyid_steps_missing_key': 0,
         'getbyname_steps_missing_key': 0,
         'unrecognized_extension_selection_steps': 0,
+        'direct_propertyhandler_declarations': 0,
+        'readvin_result_propertyhandler_declarations': 0,
+        'readvin_result_to_resultget_invalue_set_declarations': 0,
+        'enabled_readvin_result_to_resultget_invalue_sets': 0,
+        'disabled_readvin_result_to_resultget_invalue_sets': 0,
+        'readvin_result_setters_to_other_target_properties': 0,
         'readvin_event_to_resultget_execute_declarations': 0,
         'enabled_readvin_event_to_resultget_execute_declarations': 0,
         'identity_calls_using_resultget_property_reference': 0,
@@ -82,6 +90,29 @@ def audit_xml(xml_bytes):
                         stats['unrecognized_extension_selection_steps'] += 1
         stats['resultget_nodes_with_extension_get'] += int(bool(declared_outputs))
 
+    # Original Script.Parse selects handlers/propertyhandler. The original
+    # ScriptPropertyHandler.Parse selects direct 'set' children and stores
+    # source node/name; PropertyHandlerSet.Parse stores target node/property.
+    # PropertyHandlerSet.ctor initializes Enabled=True, then *presence* of
+    # disabled sets it false. Do not infer callback execution from XML.
+    for ph in content.findall('./handlers/propertyhandler'):
+        stats['direct_propertyhandler_declarations'] += 1
+        source_id = ph.attrib.get('node', '')
+        if source_id not in readvin_ids or ph.attrib.get('name') != 'Result':
+            continue
+        stats['readvin_result_propertyhandler_declarations'] += 1
+        for setter in ph.findall('./set'):
+            target_id = setter.attrib.get('node', '')
+            if target_id in resultget_ids and setter.attrib.get('property') == 'InValue':
+                stats['readvin_result_to_resultget_invalue_set_declarations'] += 1
+                if 'disabled' in setter.attrib:
+                    stats['disabled_readvin_result_to_resultget_invalue_sets'] += 1
+                else:
+                    stats['enabled_readvin_result_to_resultget_invalue_sets'] += 1
+                    result_to_invalue_set_pairs.add((source_id, target_id))
+            else:
+                stats['readvin_result_setters_to_other_target_properties'] += 1
+
     for handler in handlers:
         event_source_id = handler.attrib.get('node', '')
         for call in handler.findall('./call'):
@@ -93,6 +124,7 @@ def audit_xml(xml_bytes):
                 stats['enabled_readvin_event_to_resultget_execute_declarations'] += int(parser_enabled)
                 if parser_enabled:
                     readvin_event_target_ids.add(target_id)
+                    readvin_event_pairs.add((event_source_id, target_id))
             if not (target_id in identity_ids and call.attrib.get('method') in IDENTITY_METHODS):
                 continue
             for param in call.findall('./parameter'):
@@ -121,8 +153,16 @@ def audit_xml(xml_bytes):
         'original_carcom_dll_sha256': CARCOM_DLL_SHA256,
         'script_content_layout_verified': base['original_parser_content_child_layout_verified'],
         'categorical_declarations': stats,
+        # Historical two-event lexical gate is kept for compatibility. It
+        # is NOT proof that the response object reached ResultGet.InValue.
         'candidate_route_lexically_present': bool(
             readvin_event_target_ids & identity_get_source_ids),
+        'candidate_three_leg_route_with_property_binding_lexically_present': bool(
+            {extractor for _, extractor in
+             (readvin_event_pairs & result_to_invalue_set_pairs)} &
+            identity_get_source_ids),
+        'candidate_three_leg_requires_same_readvin_and_resultget_nodes': True,
+        'property_set_was_observed_at_runtime': False,
         'candidate_route_same_resultget_node_required': True,
         'declared_get_path_is_not_proven_response_value': True,
         'response_component_was_executed': False,
