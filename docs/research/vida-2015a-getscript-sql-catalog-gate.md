@@ -1155,17 +1155,52 @@ other metadata. No proprietary strings, filenames, paths,
 VIN or scripts were printed. No Java/SQL/network/ECU
 operations, deployments, registry or build changes.
 
-**Next bounded owner-local gate:** for only that one
-exploded `.class` file, classify the `ReadVin` matched
-constant-pool entries by structure (`CONSTANT_String`,
-`CONSTANT_Class`, `NameAndType`, field/method declaration
-names and descriptors), **counts only**. Do not print
-actual values, class/method names, code bodies or paths;
-apply strict class and pool limits. This is a static
-semantic-context check, not proof of SQL `GetScript`
-invocation, nor of any J2534 transaction. Then reassess
-whether to investigate the original client/SQL caller
-instead of recursively broadening WAR scans.
+**Owner-local `ReadVin`-hint structural classification (completed):**
+On VIDA-descendant WildFly `JavaPID=11600` in EAR 2 / WAR 1,
+`Inspect-VIDA-ReadVinClassContext.ps1` completed successfully
+(`Result=OK`, `ScriptFinished`). Parsed all 279 exploded
+classes with zero skipped/parse errors. One class matched
+the *broad* case-insensitive `read.?vin` regex, with these
+**aggregate counts**:
+
+| Metadata category | Count |
+|---|---:|
+| `ClassesWithReadVinUTF8Hint` | **1** |
+| `MatchedUTF8Entries` | **3** |
+| `ExactReadVinUTF8Entries` | **0** |
+| `MatchedStringConstants` / `MatchedClassConstants` | **0 / 0** |
+| `MatchedNameAndTypeNames` / descriptors | **1 / 0** |
+| `MatchedFieldRefMembers` / `MatchedMethodRefMembers` / `MatchedInterfaceMethodRefMembers` | **1 / 0 / 0** |
+| `MatchedFieldDeclarationNames` / descriptors | **1 / 0** |
+| `MatchedMethodDeclarationNames` / descriptors | **2 / 0** |
+| `MatchedUTF8Unclassified` | **0** |
+
+**Interpretation:** these facts are consistent with a
+field/property accompanied by two declared methods, such
+as a getter and setter, but the actual name, method
+signatures and behavior have not been recovered. No exact
+`ReadVin` UTF8 entry nor matching literal string / method
+reference was found. The broad regex may have matched a
+longer or modified identifier; it is **not** evidence of
+a call to SQL `GetScript`, any actual VIN read or a J2534
+transaction. The previously observed SQL metadata
+`ScriptType.Description=ReadVin` remains a distinct fact
+without a proven implementation link. This significantly
+weakens treating the single WAR keyword hit as a direct
+`GetScript` caller lead.
+
+**Next priority:** avoid open-ended WAR constant-pool
+searches and refocus on the **original VIDA-side SQL
+`GetScript` caller/selection of `@scriptType`**, and on
+an independently authorized **redacted, offline, read-only
+virtual J2534 trace** if available. For any further scan
+of the matching class, limit it to safe declaration flags
+and signature *shapes*, counts only, not names, methods'
+code bodies or private values; it should not displace
+higher-value caller evidence. No proprietary code,
+filenames, SQL scripts, paths, VIN or credentials disclosed;
+no SQL execution, network requests, vehicle I/O or
+published builds.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
