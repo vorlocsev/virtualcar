@@ -89,6 +89,79 @@ ReadVin ZIP is not present in this research environment and was
 **not** passed through the new tool. Do not claim that ResultGet was
 in the target selected XML or that SectorV recognizes XC90 V8.
 
+
+## Verified third XML leg: propertyhandler / set
+
+A second, independently bounded IL inspection of the **same original**
+BizServices.Scripting.DLL (SHA-256 pinned above) established:
+
+- `Script.Parse` MethodDef `0x0600066D` selects
+  `handlers/propertyhandler` records under `script/content`.
+- `ScriptPropertyHandler.Parse` `0x060006D3` reads
+  the source attributes `node` and `name`, and selects
+  immediate child `set` records.
+- `PropertyHandlerSet.Parse` `0x06000600` reads
+  target attributes `node` and `property`; **presence**
+  of a `disabled` attribute disables the setter even when
+  that attribute's text is `false`.
+- `PropertyHandlerSet..ctor` `0x060005F7` initializes the
+  setter's Enabled field to `true`.
+- `ScriptNode.SetPropertyCallback` `0x06000072` resolves
+  the source `(node, property)` in the collection, obtains
+  `Property.get_Value`, selects matching propertyhandler
+  records, tests setter Enabled and assigns the same object
+  to the target `Property.set_Value`.
+
+Five targeted original MethodDef checks **5/5 PASS** for these
+method names, IL literals and target calls. The actual binary
+was not executed; its private IL bytes are not in this repository.
+
+The classifier therefore checks the additional direct XML
+declaration analogous to:
+
+~~~xml
+<propertyhandler node="Reader" name="Result">
+  <set node="Extractor" property="InValue"/>
+</propertyhandler>
+~~~
+
+This markup is an invented **synthetic test example**, not an
+extracted VIDA script or target XC90 observation. The new
+`candidate_three_leg_route_with_property_binding_lexically_present`
+requires, within one private XML script, **all three**:
+
+1. A parser-enabled ReadVin event call to `ResultGet.Execute`.
+2. A parser-enabled `ReadVin.Result` propertyhandler setter
+   to the **same ResultGet's** `InValue`, from the **same
+   ReadVin node** as the event.
+3. A parser-enabled identity method call using that
+   ResultGet node's declared `get` output property.
+
+This is a strictly stronger candidate than the previous
+`candidate_route_lexically_present`, which is retained as a
+backward-compatible **two-event-only lexical** flag. The
+three-leg check remains *declaration-only*: it cannot verify
+callback ordering, an enabled event name, successful ECU
+response, actual run of `ResultGet`, extracted string type
+or the client's VIN acceptance.
+
+Six additional fully synthetic regressions verify absent
+propertyhandler, disabled setter (including literal false),
+wrong target property, wrapped setter, mismatched source
+ReadVin node and mismatched target ResultGet node. The
+latest local combined suite **38/38 PASS** (17 ResultGet
++ 13 PropertyClass + 8 CLR dispatch). Local tested source
+Git object hashes exactly match the updated GitHub files:
+
+- route analyzer `5d1ca0564ef3bffff834bf75972a7b4d91b978e9`;
+- ResultGet tests `d7dc19fb9f24360b3f190e1c54ce316fb5941847`.
+
+Windows VMware CI for the updated **exact PR HEAD** has not
+run. The owner's original private ReadVin ZIP was not
+re-audited, so the third leg is still **unconfirmed in actual
+selected VIDA XML** and the project must not generate a
+fabricated CEM VIN reply.
+
 ## Next real evidence gate
 
 Run only on an already authorized locally available original ReadVin
