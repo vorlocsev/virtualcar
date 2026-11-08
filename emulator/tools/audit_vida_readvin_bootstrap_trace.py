@@ -21,6 +21,12 @@ _EMPTY = re.compile(r"\bProfile:\s*['\"]EMPTYPROFILE,?['\"]", re.I)
 _FETCHED = re.compile(r"\bFetched script:.*?(?:VCC-225200-1|Read VIN first readout)", re.I)
 _RUNNING = re.compile(r"\bRunning script:.*?(?:VCC-225200-1|Read VIN first readout)", re.I)
 _RUNNING_ANY = re.compile(r"\bRunning script\s*:", re.I)
+_FETCHED_ANY = re.compile(r"\bFetched script\s*:", re.I)
+_FETCHED_LABEL = re.compile(r"\bFetched script:\s*['\"]([^'\"]{1,160})['\"]", re.I)
+_RUNNING_LABEL = re.compile(r"\bRunning script:\s*['\"]([^'\"]{1,160})['\"]", re.I)
+_EXPECTED_SCRIPT_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\Z')
+_VERSION = re.compile(r'[0-9]+(?:\.[0-9]+){0,3}\Z')
+
 _REQUEST = re.compile(r"\bVehComm request:\s*Ecu\s*['\"]([0-9A-Fa-f]{1,3})['\"]\s*,\s*Message\s*['\"]([0-9A-Fa-f]{4,16})['\"]", re.I)
 _HEXBYTE = re.compile(r'(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?![0-9A-Za-z])')
 _SESSION = re.compile(r'\bStarting new logsession\b', re.I)
@@ -47,14 +53,38 @@ def _can_frame(hextext):
     return can_id, vals[4:]
 
 
-def audit_text(logtext):
+def _matches_script_label(line, pattern, expected):
+    match = pattern.search(line)
+    if match is None:
+        return False
+    label = match.group(1)
+    if label == expected:
+        return True
+    prefix = expected + ' '
+    return label.startswith(prefix) and bool(_VERSION.fullmatch(label[len(prefix):]))
+
+
+def audit_text(logtext, expected_script_id=None):
+    # Optional strict label matching only. A log line is not proof of
+    # database selection, native execution or a positive ECU response.
+    if expected_script_id is not None and (
+            not isinstance(expected_script_id, str) or
+            _EXPECTED_SCRIPT_ID.fullmatch(expected_script_id) is None):
+        raise ValueError('invalid expected script identifier')
     if not isinstance(logtext, str) or len(logtext.encode('utf-8')) > MAX_BYTES:
         raise ValueError('log is too large')
     summaries = []
     complete_windows_by_session = []
+    ordered_run_by_session = []
+    ordered_run_with_requests_by_session = []
     current = _fresh()
     tracked = False
     request_families_in_window = set()
+    request_families_after_run = set()
+    expected_fetched = False
+    expected_running = False
+    session_has_ordered_run = False
+    session_has_ordered_run_with_requests = False
     session_has_complete_window = False
     line_count = 0
     for line in logtext.splitlines():
@@ -65,16 +95,26 @@ def audit_text(logtext):
             if tracked or any(current.values()):
                 summaries.append(current)
                 complete_windows_by_session.append(session_has_complete_window)
+                ordered_run_by_session.append(session_has_ordered_run)
+                ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
             if len(summaries) >= MAX_SESSIONS:
                 raise ValueError('too many sessions')
             current = _fresh()
             tracked = False
             request_families_in_window.clear()
+            request_families_after_run.clear()
+            expected_fetched = False
+            expected_running = False
             session_has_complete_window = False
+            session_has_ordered_run = False
+            session_has_ordered_run_with_requests = False
         if _GETSCRIPT.search(line):
             # A new selected script closes the previous bootstrap window,
             # even when it is a different type or a profiled ReadVin.
             request_families_in_window.clear()
+            request_families_after_run.clear()
+            expected_fetched = False
+            expected_running = False
             is_readvin = bool(_SCRIPT.search(line))
             tracked = is_readvin and bool(_EMPTY.search(line))
             if is_readvin:
@@ -85,13 +125,40 @@ def audit_text(logtext):
         # A different script can start without an intervening GetScript log line
         # (for example, a cached script). Close this bootstrap window rather
         # than attributing its later diagnostic traffic to ReadVin.
-        if _RUNNING_ANY.search(line) and not _RUNNING.search(line):
-            tracked = False
-            request_families_in_window.clear()
-            continue
+        if _RUNNING_ANY.search(line):
+            if expected_script_id is not None:
+                matching_run = _matches_script_label(
+                    line, _RUNNING_LABEL, expected_script_id)
+                if not matching_run:
+                    tracked = False
+                    request_families_in_window.clear()
+                    request_families_after_run.clear()
+                    expected_fetched = False
+                    expected_running = False
+                    continue
+                if tracked and expected_fetched:
+                    session_has_ordered_run = True
+                    expected_running = True
+                else:
+                    # A matching Running line without an earlier Fetched line
+                    # cannot establish this window's expected script chain.
+                    expected_running = False
+                    request_families_after_run.clear()
+                expected_fetched = False
+            elif not _RUNNING.search(line):
+                tracked = False
+                request_families_in_window.clear()
+                continue
         # Forbid unrelated sections in a log file from creating evidence.
         if not tracked:
             continue
+        if expected_script_id is not None and _FETCHED_ANY.search(line):
+            # Any new fetch supersedes the previous candidate. Do not join
+            # a Fetched line for one script with a Running line for another.
+            expected_fetched = _matches_script_label(
+                line, _FETCHED_LABEL, expected_script_id)
+            expected_running = False
+            request_families_after_run.clear()
         if _FETCHED.search(line):
             current['bootstrap_readvin_fetched'] += 1
         if _RUNNING.search(line):
@@ -107,6 +174,13 @@ def audit_text(logtext):
                 request_families_in_window.add('p2_b9fb_' + ecu)
             if len(request_families_in_window) == 3:
                 session_has_complete_window = True
+            if expected_running:
+                if ecu == '726' and service == '22f114':
+                    request_families_after_run.add('p3_f114')
+                elif ecu in ('40', '50') and service == 'b9fb':
+                    request_families_after_run.add('p2_b9fb_' + ecu)
+                if len(request_families_after_run) == 3:
+                    session_has_ordered_run_with_requests = True
         if 'ERR_BUFFER_EMPTY' in line.upper():
             current['j2534_err_buffer_empty'] += 1
         if 'TRANSMITTED FRAME indication' in line:
@@ -136,6 +210,8 @@ def audit_text(logtext):
     if tracked or any(current.values()):
         summaries.append(current)
         complete_windows_by_session.append(session_has_complete_window)
+        ordered_run_by_session.append(session_has_ordered_run)
+        ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
     if len(summaries) > MAX_SESSIONS:
         raise ValueError('too many sessions')
     totals = {name: sum(s[name] for s in summaries) for name in _COUNTER_NAMES}
@@ -147,6 +223,11 @@ def audit_text(logtext):
         'analysis_source': 'local_text_log_only_not_a_diagnostic_capture',
         'session_count': len(summaries),
         'sessions_with_all_three_request_families': sessions_with_all_published_request_families,
+        'expected_script_id_filter_supplied': expected_script_id is not None,
+        'sessions_with_ordered_expected_script_fetch_run_lines': sum(ordered_run_by_session),
+        'sessions_with_ordered_expected_script_run_and_three_request_families': sum(
+            ordered_run_with_requests_by_session),
+        'runtime_getscript_selection_verified': False,
         'session_counters': summaries,
         'totals': totals,
         'readvin_selected_from_actual_getscript_database_verified': False,
@@ -164,6 +245,7 @@ def audit_text(logtext):
 def main(argv=None):
     ap = argparse.ArgumentParser(description='Privacy-safe VIDA bootstrap ReadVin log classifier')
     ap.add_argument('private_log', type=Path)
+    ap.add_argument('--expected-script-id', help='private exact script ID for log-only sequence classification')
     ap.add_argument('--output', type=Path, required=True)
     args = ap.parse_args(argv)
     source = args.private_log.resolve()
@@ -177,7 +259,7 @@ def main(argv=None):
         raw = source.read_bytes()
         if b'\x00' in raw[:256]:
             raise ValueError('binary or UTF-16 log unsupported')
-        result = audit_text(raw.decode('utf-8-sig', errors='replace'))
+        result = audit_text(raw.decode('utf-8-sig', errors='replace'), args.expected_script_id)
         with out.open('x', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
             f.write('\n')
