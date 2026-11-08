@@ -68,6 +68,8 @@ on:
           - fix/vida-getscript-nondbo-visibility
           # P0 SectorV UI audit: immutable, locally reviewed feature HEAD.
           - a7bb8c235c9efa39f844207097e8352af9103baa
+          # Immutable P0 fresh-window source; owner-only self-hosted validation.
+          - 70d586b2d3562a6d612fbd6f4460c0e7a14b3992
 
 permissions:
   contents: read
