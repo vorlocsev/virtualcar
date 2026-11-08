@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from audit_vida_readvin_clr_dispatch import _load_private_zip
 from audit_vida_readvin_property_classes import audit_xml as audit_property_classes
 
-SCHEMA = 'virtualcar-vida-readvin-resultget-candidate-route-v1'
+SCHEMA = 'virtualcar-vida-readvin-resultget-candidate-route-v2'
 SCRIPT_DLL_SHA256 = 'd93b61b7b7524942649fd534303735dd4390af6ffee848b82e91c8e47eb5e028'
 CARCOM_DLL_SHA256 = '1735d8ac20d63a20afe13742ea5156cce5a5328392bd3e44d9ec3cd8ae0dbd07'
 IDENTITY_METHODS = ('AddVIN', 'SetX40Serial')
@@ -41,6 +41,10 @@ def audit_xml(xml_bytes):
     readvin_event_pairs = set()
     result_to_invalue_set_pairs = set()
     identity_get_source_ids = set()
+    positive_readvin_event_pairs = set()
+    onget_identity_source_ids = set()
+    onget_addvin_source_ids = set()
+    onget_x40_source_ids = set()
     stats = {
         'resultget_node_declarations': len(resultget_nodes),
         'resultget_nodes_with_direct_invalue_property': 0,
@@ -61,6 +65,12 @@ def audit_xml(xml_bytes):
         'readvin_result_setters_to_other_target_properties': 0,
         'readvin_event_to_resultget_execute_declarations': 0,
         'enabled_readvin_event_to_resultget_execute_declarations': 0,
+        'readvin_positive_response_to_resultget_execute_declarations': 0,
+        'enabled_readvin_positive_response_to_resultget_execute_declarations': 0,
+        'reader_execute_calls_with_other_or_absent_event_name': 0,
+        'resultget_onget_to_identity_declarations': 0,
+        'enabled_resultget_onget_to_identity_declarations': 0,
+        'resultget_to_identity_calls_with_other_or_absent_event_name': 0,
         'identity_calls_using_resultget_property_reference': 0,
         'identity_calls_using_declared_resultget_get_output': 0,
         'identity_calls_using_undeclared_resultget_output': 0,
@@ -125,6 +135,13 @@ def audit_xml(xml_bytes):
                 if parser_enabled:
                     readvin_event_target_ids.add(target_id)
                     readvin_event_pairs.add((event_source_id, target_id))
+                if handler.attrib.get('name') == 'OnPositiveResponse':
+                    stats['readvin_positive_response_to_resultget_execute_declarations'] += 1
+                    if parser_enabled:
+                        stats['enabled_readvin_positive_response_to_resultget_execute_declarations'] += 1
+                        positive_readvin_event_pairs.add((event_source_id, target_id))
+                else:
+                    stats['reader_execute_calls_with_other_or_absent_event_name'] += 1
             if not (target_id in identity_ids and call.attrib.get('method') in IDENTITY_METHODS):
                 continue
             for param in call.findall('./parameter'):
@@ -139,6 +156,17 @@ def audit_xml(xml_bytes):
                     stats['enabled_identity_calls_using_resultget_get_output'] += int(parser_enabled)
                     if parser_enabled:
                         identity_get_source_ids.add(source_id)
+                    if handler.attrib.get('node', '') == source_id and handler.attrib.get('name') == 'OnGet':
+                        stats['resultget_onget_to_identity_declarations'] += 1
+                        if parser_enabled:
+                            stats['enabled_resultget_onget_to_identity_declarations'] += 1
+                            onget_identity_source_ids.add(source_id)
+                            if call.attrib.get('method') == 'AddVIN':
+                                onget_addvin_source_ids.add(source_id)
+                            elif call.attrib.get('method') == 'SetX40Serial':
+                                onget_x40_source_ids.add(source_id)
+                    else:
+                        stats['resultget_to_identity_calls_with_other_or_absent_event_name'] += 1
                 elif not prop_name:
                     stats['identity_calls_using_undeclared_resultget_output'] += 1
                 else:
@@ -157,10 +185,31 @@ def audit_xml(xml_bytes):
         # is NOT proof that the response object reached ResultGet.InValue.
         'candidate_route_lexically_present': bool(
             readvin_event_target_ids & identity_get_source_ids),
-        'candidate_three_leg_route_with_property_binding_lexically_present': bool(
+        # This legacy flag is only the 3 structural legs; it does not
+        # ensure that the ORIGINAL event source names match real delegates.
+        'candidate_three_leg_without_event_name_validation_lexically_present': bool(
             {extractor for _, extractor in
              (readvin_event_pairs & result_to_invalue_set_pairs)} &
             identity_get_source_ids),
+        # Original VehCommBase exposes OnPositiveResponse, and ResultGet
+        # exposes OnGet. ScriptNode callback indexes by (node, event NAME).
+        # Requiring actual fields prevents three generic/missing-name
+        # handlers from being promoted to a plausible route. Still static.
+        'candidate_three_leg_route_with_property_binding_lexically_present': bool(
+            {extractor for _, extractor in
+             (positive_readvin_event_pairs & result_to_invalue_set_pairs)} &
+            onget_identity_source_ids),
+        'candidate_addvin_route_with_event_names_lexically_present': bool(
+            {extractor for _, extractor in
+             (positive_readvin_event_pairs & result_to_invalue_set_pairs)} &
+            onget_addvin_source_ids),
+        'candidate_x40_route_with_event_names_lexically_present': bool(
+            {extractor for _, extractor in
+             (positive_readvin_event_pairs & result_to_invalue_set_pairs)} &
+            onget_x40_source_ids),
+        'source_event_name_required': 'OnPositiveResponse',
+        'resultget_event_name_required': 'OnGet',
+        'event_delegates_were_observed_at_runtime': False,
         'candidate_three_leg_requires_same_readvin_and_resultget_nodes': True,
         'property_set_was_observed_at_runtime': False,
         'candidate_route_same_resultget_node_required': True,
