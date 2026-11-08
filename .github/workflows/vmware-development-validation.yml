@@ -1,31 +1,15 @@
 name: Virtual Car VMware development validation
 
 # One authoritative owner-only Windows self-hosted CI implementation.
-# Trusted development pushes run automatically. Manual dispatch and calls
+# Every development push runs automatically, without path exclusions.
+# Manual dispatch and calls
 # from legacy-named wrappers must originate at main, then checkout a trusted
 # source ref. NEVER run untrusted pull_request code on the persistent VM.
 # All old hosted runners have been retired; no artifacts or releases.
 on:
+  # Every owner-authored development push triggers full CI, including docs.
   push:
     branches: [development]
-    paths:
-      - "emulator/**"
-      - "proxy/**"
-      - "cmd/**"
-      - "trace_attribution/**"
-      - "tests/**"
-      - "scripts/**"
-      - "dotnet/**"
-      - "build_dev26.sh"
-      - ".github/workflows/**"
-      - "NuGet.Config"
-      - "global.json"
-      - "go.mod"
-      - "go.sum"
-      - "Directory.Build.*"
-      - "Directory.Packages.props"
-      - "pyproject.toml"
-      - "requirements*.txt"
   workflow_call:
     inputs:
       source_ref:
