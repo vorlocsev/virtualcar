@@ -352,6 +352,45 @@ CAN_PS текущей DLL и не даёт права трактовать
 Только после подтверждения среды планировать отдельный
 изолированный диагностический сеанс.
 
+## Four-view J2534 registry enumeration (owner's Windows, 2026-11-08)
+
+After the **narrow** check of the one expected 32-bit name reported
+`NOT_REGISTERED`, the owner ran a separate read-only enumeration
+counting provider subkeys and Virtual Car / SectorV **name matches**
+without revealing names, paths, DLLs or credentials:
+
+| Registry view | PassThruSupport version | Provider subkeys | Virtual Car / SectorV name matches |
+|---|---|---:|---:|
+| Registry32 | 04.04 | **6** | **3** |
+| Registry32 | 05.00 | 0 | 0 |
+| Registry64 | 04.04 | **1** | **0** |
+| Registry64 | 05.00 | 0 | 0 |
+
+**Interpretation:** at least three 32-bit 04.04 provider-key
+*names* match the laboratory adapter's old/new naming family.
+The exact key `SectorV Virtual Car` probed earlier is absent,
+but **other** names exist: the earlier `NOT_REGISTERED` output
+was deliberately narrow and does not establish no virtual
+provider registration in this Windows. A registry subkey match
+alone does **not** prove `FunctionLibrary` is populated,
+its DLL exists/has PE32 architecture, or any software used it.
+The one 64-bit 04.04 provider has no name match and is not
+claimed to be Virtual Car. These current settings are distinct
+from the mixed historical J2534 logs.
+
+**Next owner-local read-only check:** inspect only the **three
+matched 32-bit keys**, recording ordinal `Match`,
+`NameFamily`, whether `FunctionLibrary` is set,
+`DLLExists`, `PEMachine`, numeric-only `FileVersion`,
+and locally numbered `BinaryGroup` (equal SHA256 content
+without printing hashes). Never show paths, exact provider
+subkey names or other third-party providers; never load,
+register or execute DLLs, call the J2534 API, or change any
+setting. The helper `Inspect-VirtualCar-J2534Aliases.ps1`
+was constructed locally for the owner to inspect before
+running; no Windows execution or result of this helper
+is yet claimed.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
