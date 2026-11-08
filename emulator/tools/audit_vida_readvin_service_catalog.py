@@ -422,7 +422,7 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None,
         't110_service_ecu_variant_csv_supplied': service_ecu_variant_map_bytes is not None,
         'single_readvin_with_matching_t110_service_ecu_variant_candidate_present': bool(
             len(readers) == 1 and variant_qualified_matches == 1),
-        't100_t160_t161_profile_catalogs_supplied': t100_catalog_bytes is not None,
+        'ecu_profile_catalogs_supplied': t100_catalog_bytes is not None,
         'single_readvin_with_selected_default_ecu_variant_profile_candidate_present': bool(
             len(readers) == 1 and variant_qualified_matches == 1
             and static_variant_profile_match),
