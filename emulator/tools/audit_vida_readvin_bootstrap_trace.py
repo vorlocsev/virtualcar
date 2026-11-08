@@ -20,6 +20,7 @@ _SCRIPT = re.compile(r"\bSP:\s*GetScript\b.*?\bType:\s*['\"]ReadVin['\"]", re.I)
 _EMPTY = re.compile(r"\bProfile:\s*['\"]EMPTYPROFILE,?['\"]", re.I)
 _FETCHED = re.compile(r"\bFetched script:.*?(?:VCC-225200-1|Read VIN first readout)", re.I)
 _RUNNING = re.compile(r"\bRunning script:.*?(?:VCC-225200-1|Read VIN first readout)", re.I)
+_RUNNING_ANY = re.compile(r"\bRunning script\s*:", re.I)
 _REQUEST = re.compile(r"\bVehComm request:\s*Ecu\s*['\"]([0-9A-Fa-f]{1,3})['\"]\s*,\s*Message\s*['\"]([0-9A-Fa-f]{4,16})['\"]", re.I)
 _HEXBYTE = re.compile(r'(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?![0-9A-Za-z])')
 _SESSION = re.compile(r'\bStarting new logsession\b', re.I)
@@ -80,6 +81,13 @@ def audit_text(logtext):
                 current['readvin_getscript_declarations'] += 1
                 if tracked:
                     current['readvin_emptyprofile_selections'] += 1
+            continue
+        # A different script can start without an intervening GetScript log line
+        # (for example, a cached script). Close this bootstrap window rather
+        # than attributing its later diagnostic traffic to ReadVin.
+        if _RUNNING_ANY.search(line) and not _RUNNING.search(line):
+            tracked = False
+            request_families_in_window.clear()
             continue
         # Forbid unrelated sections in a log file from creating evidence.
         if not tracked:
