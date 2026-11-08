@@ -319,5 +319,63 @@ class VidaBootstrapTraceTests(unittest.TestCase):
         self.assertEqual(out['totals']['vehcomm_p3_f114_requests'], 1)
 
 
+
+    def test_38_expected_run_three_requests_and_three_tx_same_window(self):
+        evidence = PREFACE + SELECT + FETCH + RUN + P3 + TXP3 + P2A + TXP2A + P2B + TXP2B
+        report = audit_text(evidence, 'VCC-225200-1')
+        self.assertEqual(report['sessions_with_ordered_expected_script_requests_and_tx'], 1)
+        self.assertEqual(report['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+        self.assertFalse(report['actual_positive_ecu_reply_correlated'])
+        self.assertFalse(report['client_vin_accepted'])
+
+    def test_39_requests_without_three_tx_do_not_satisfy_strong_gate(self):
+        report = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + P2A + P2B + TXP3 + TXP2A,
+                            'VCC-225200-1')
+        self.assertEqual(report['sessions_with_ordered_expected_script_requests_and_tx'], 0)
+        self.assertEqual(report['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+
+    def test_40_tx_before_run_cannot_satisfy_strong_gate(self):
+        report = audit_text(PREFACE + SELECT + TXP3 + TXP2A + TXP2B + FETCH + RUN + P3 + P2A + P2B,
+                            'VCC-225200-1')
+        self.assertEqual(report['sessions_with_ordered_expected_script_requests_and_tx'], 0)
+        self.assertEqual(report['totals']['j2534_p3_f114_tx_frames'], 1)
+
+    def test_41_tx_split_across_two_getscript_windows_not_combined(self):
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + P2A + P2B + TXP3
+               + SELECT + FETCH + RUN + P3 + P2A + P2B + TXP2A + TXP2B)
+        report = audit_text(log, 'VCC-225200-1')
+        self.assertEqual(report['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+        self.assertEqual(report['sessions_with_ordered_expected_script_requests_and_tx'], 0)
+
+    def test_42_tx_wrong_id_or_rx_echo_never_completes_strong_gate(self):
+        bad_p3 = '[J2534] ---> (0) 00,00,07,25,22,F1,14,\n'
+        report = audit_text(PREFACE + SELECT + FETCH + RUN + P3 + P2A + P2B
+                            + bad_p3 + TXP2A + TXP2B + RXECHO, 'VCC-225200-1')
+        self.assertEqual(report['sessions_with_ordered_expected_script_requests_and_tx'], 0)
+        self.assertEqual(report['totals']['j2534_rx_id_only_or_short_lines'], 1)
+
+    def test_43_other_script_run_closes_tx_evidence_window(self):
+        unrelated = "[Script] Running script: 'OTHER-SCRIPT 1.0'\n"
+        log = (PREFACE + SELECT + FETCH + RUN + P3 + P2A + P2B + TXP3
+               + unrelated + TXP2A + TXP2B)
+        report = audit_text(log, 'VCC-225200-1')
+        self.assertEqual(report['sessions_with_ordered_expected_script_requests_and_tx'], 0)
+
+    def test_44_tx_before_requests_but_after_run_is_still_log_evidence(self):
+        log = PREFACE + SELECT + FETCH + RUN + TXP3 + TXP2A + TXP2B + P3 + P2A + P2B
+        report = audit_text(log, 'VCC-225200-1')
+        self.assertEqual(report['sessions_with_ordered_expected_script_requests_and_tx'], 1)
+        self.assertFalse(report['runtime_getscript_selection_verified'])
+
+    def test_45_strong_gate_private_expected_id_not_in_summary(self):
+        sensitive = 'PRIVATE-SCRIPT-ID'
+        fetch = "[ScriptProvider] Fetched script: 'PRIVATE-SCRIPT-ID 1.8'\n"
+        run = "[Script] Running script: 'PRIVATE-SCRIPT-ID 1.8'\n"
+        report = json.dumps(audit_text(PREFACE + SELECT + fetch + run
+                                       + P3 + P2A + P2B + TXP3 + TXP2A + TXP2B,
+                                       sensitive))
+        self.assertNotIn(sensitive, report)
+        self.assertEqual(json.loads(report)['sessions_with_ordered_expected_script_requests_and_tx'], 1)
+
 if __name__ == '__main__':
     unittest.main()
