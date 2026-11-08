@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ $# -gt 1 ]] || [[ $# -eq 1 && "${1:-}" != "--native-only" ]]; then
+  echo 'usage: build_dev26.sh [--native-only]' >&2
+  exit 2
+fi
 cd "$(dirname "$0")"
 mkdir -p _build cmd/oneclick/assets
 pushd _build >/dev/null
-lld-link /dll /noentry /def:../proxy/kernel32.def /implib:kernel32.lib /machine:x86
+MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' lld-link /dll /noentry /def:../proxy/kernel32.def /implib:kernel32.lib /machine:x86
 clang -target i686-pc-windows-msvc -fno-builtin -fno-stack-protector -ffreestanding -Werror -Wall -Wextra -c ../proxy/j2534_trace_proxy.c -o proxy.obj
 clang -target i686-pc-windows-msvc -fno-builtin -fno-stack-protector -ffreestanding -Werror -Wall -Wextra -c ../proxy/p2_message_classify.c -o classify.obj
 for f in p2_cem_router p2_ls_observer p2_vehicle_core p2_j2534_bridge freestanding_memory; do
@@ -16,8 +20,12 @@ done
 for spec in 'InitializeCriticalSection:4' 'EnterCriticalSection:4' 'LeaveCriticalSection:4'; do
   name=${spec%:*}; bytes=${spec#*:}; args+=("/alternatename:__imp__${name}@${bytes}=__imp__${name}")
 done
-lld-link "${args[@]}"
+MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' lld-link "${args[@]}"
 popd >/dev/null
+# CI needs the exact same native x86 linker path, without Go or package builds.
+if [[ "${1:-}" == "--native-only" ]]; then
+  exit 0
+fi
 for c in gcc clang; do
   "$c" -std=c99 -Werror -Wall -Wextra -pedantic -Iproxy \
   proxy/p2_cem_router.c proxy/p2_ls_observer.c proxy/p2_vehicle_core.c proxy/p2_j2534_bridge.c \
