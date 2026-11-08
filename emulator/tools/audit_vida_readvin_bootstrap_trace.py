@@ -30,6 +30,8 @@ _VERSION = re.compile(r'[0-9]+(?:\.[0-9]+){0,3}\Z')
 _REQUEST = re.compile(r"\bVehComm request:\s*Ecu\s*['\"]([0-9A-Fa-f]{1,3})['\"]\s*,\s*Message\s*['\"]([0-9A-Fa-f]{4,16})['\"]", re.I)
 _HEXBYTE = re.compile(r'(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?![0-9A-Za-z])')
 _SESSION = re.compile(r'\bStarting new logsession\b', re.I)
+_RX_FAMILIES = frozenset(('p3_f114', 'p2_b9fb_40', 'p2_b9fb_50'))
+_HEX_CAN_ID = re.compile(r'0[xX][0-9A-Fa-f]{1,8}\Z')
 _COUNTER_NAMES = (
     'readvin_getscript_declarations', 'readvin_emptyprofile_selections',
     'bootstrap_readvin_fetched', 'bootstrap_readvin_running',
@@ -87,13 +89,37 @@ def _matched_script_version(line, pattern, expected):
     return None
 
 
-def audit_text(logtext, expected_script_id=None):
+def _parse_rx_can_id(value):
+    if not isinstance(value, str) or _HEX_CAN_ID.fullmatch(value) is None:
+        raise ValueError('RX source CAN ID must be a hexadecimal 0x-prefixed value')
+    return int(value, 16)
+
+
+def _validate_rx_can_ids(rx_can_ids):
+    # User-provided source addresses, NEVER automatically inferred from a log.
+    if not isinstance(rx_can_ids, dict) or rx_can_ids.keys() != _RX_FAMILIES:
+        raise ValueError('all three explicit RX source CAN IDs are required')
+    if any(type(n) is not int for n in rx_can_ids.values()):
+        raise ValueError('RX IDs must be integers, not booleans or raw strings')
+    p3, p240, p250 = (rx_can_ids[k] for k in ('p3_f114', 'p2_b9fb_40', 'p2_b9fb_50'))
+    if not 0 < p3 <= 0x7ff or p3 == 0x726:
+        raise ValueError('invalid 11-bit P3 response source CAN ID')
+    if (any(not 0x7ff < n <= 0x1fffffff or not (n & 1) or n == 0xffffe
+            for n in (p240, p250)) or len({p3, p240, p250}) != 3):
+        raise ValueError('invalid or duplicate 29-bit P2 response source CAN IDs')
+
+
+def audit_text(logtext, expected_script_id=None, expected_rx_can_ids=None):
     # Optional strict label matching only. A log line is not proof of
     # database selection, native execution or a positive ECU response.
     if expected_script_id is not None and (
             not isinstance(expected_script_id, str) or
             _EXPECTED_SCRIPT_ID.fullmatch(expected_script_id) is None):
         raise ValueError('invalid expected script identifier')
+    if expected_rx_can_ids is not None:
+        if expected_script_id is None:
+            raise ValueError('explicit RX CAN IDs require a selected script ID')
+        _validate_rx_can_ids(expected_rx_can_ids)
     if not isinstance(logtext, str) or len(logtext.encode('utf-8')) > MAX_BYTES:
         raise ValueError('log is too large')
     summaries = []
@@ -103,6 +129,7 @@ def audit_text(logtext, expected_script_id=None):
     ordered_run_with_requests_and_tx_by_session = []
     ordered_req_before_tx_by_session = []
     ordered_request_tx_rx_by_session = []
+    exact_source_rx_by_session = []
     current = _fresh()
     tracked = False
     request_families_in_window = set()
@@ -112,6 +139,7 @@ def audit_text(logtext, expected_script_id=None):
     ordered_request_tx_families = set()
     pending_tx_rx_families = set()
     rx_prefix_families_in_window = set()
+    exact_source_rx_families_in_window = set()
     expected_fetched = False
     fetched_version = None
     expected_running = False
@@ -120,6 +148,7 @@ def audit_text(logtext, expected_script_id=None):
     session_has_ordered_run_with_requests_and_tx = False
     session_has_ordered_req_before_tx = False
     session_has_ordered_request_tx_rx = False
+    session_has_exact_source_rx = False
     session_has_complete_window = False
     line_count = 0
     for line in logtext.splitlines():
@@ -135,6 +164,7 @@ def audit_text(logtext, expected_script_id=None):
                 ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
                 ordered_req_before_tx_by_session.append(session_has_ordered_req_before_tx)
                 ordered_request_tx_rx_by_session.append(session_has_ordered_request_tx_rx)
+                exact_source_rx_by_session.append(session_has_exact_source_rx)
             if len(summaries) >= MAX_SESSIONS:
                 raise ValueError('too many sessions')
             current = _fresh()
@@ -146,6 +176,7 @@ def audit_text(logtext, expected_script_id=None):
             ordered_request_tx_families.clear()
             pending_tx_rx_families.clear()
             rx_prefix_families_in_window.clear()
+            exact_source_rx_families_in_window.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
@@ -155,6 +186,7 @@ def audit_text(logtext, expected_script_id=None):
             session_has_ordered_run_with_requests_and_tx = False
             session_has_ordered_req_before_tx = False
             session_has_ordered_request_tx_rx = False
+            session_has_exact_source_rx = False
         if _GETSCRIPT.search(line):
             # A new selected script closes the previous bootstrap window,
             # even when it is a different type or a profiled ReadVin.
@@ -165,6 +197,7 @@ def audit_text(logtext, expected_script_id=None):
             ordered_request_tx_families.clear()
             pending_tx_rx_families.clear()
             rx_prefix_families_in_window.clear()
+            exact_source_rx_families_in_window.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
@@ -194,6 +227,7 @@ def audit_text(logtext, expected_script_id=None):
                     ordered_request_tx_families.clear()
                     pending_tx_rx_families.clear()
                     rx_prefix_families_in_window.clear()
+                    exact_source_rx_families_in_window.clear()
                     expected_fetched = False
                     fetched_version = None
                     expected_running = False
@@ -211,6 +245,7 @@ def audit_text(logtext, expected_script_id=None):
                     ordered_request_tx_families.clear()
                     pending_tx_rx_families.clear()
                     rx_prefix_families_in_window.clear()
+                    exact_source_rx_families_in_window.clear()
                 expected_fetched = False
                 fetched_version = None
             elif not _RUNNING.search(line):
@@ -233,6 +268,7 @@ def audit_text(logtext, expected_script_id=None):
             ordered_request_tx_families.clear()
             pending_tx_rx_families.clear()
             rx_prefix_families_in_window.clear()
+            exact_source_rx_families_in_window.clear()
         if _FETCHED.search(line):
             current['bootstrap_readvin_fetched'] += 1
         if _RUNNING.search(line):
@@ -314,6 +350,11 @@ def audit_text(logtext, expected_script_id=None):
                 if rx_family in pending_tx_rx_families:
                     pending_tx_rx_families.remove(rx_family)
                     rx_prefix_families_in_window.add(rx_family)
+                    if (expected_rx_can_ids is not None and
+                            canid == expected_rx_can_ids[rx_family]):
+                        exact_source_rx_families_in_window.add(rx_family)
+                        if len(exact_source_rx_families_in_window) == 3:
+                            session_has_exact_source_rx = True
                     key = {
                         'p3_f114': 'rx_p3_prefix_after_ordered_request_tx_candidates',
                         'p2_b9fb_40': 'rx_p2_target40_prefix_after_ordered_request_tx_candidates',
@@ -335,6 +376,7 @@ def audit_text(logtext, expected_script_id=None):
         ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
         ordered_req_before_tx_by_session.append(session_has_ordered_req_before_tx)
         ordered_request_tx_rx_by_session.append(session_has_ordered_request_tx_rx)
+        exact_source_rx_by_session.append(session_has_exact_source_rx)
     if len(summaries) > MAX_SESSIONS:
         raise ValueError('too many sessions')
     totals = {name: sum(s[name] for s in summaries) for name in _COUNTER_NAMES}
@@ -356,6 +398,9 @@ def audit_text(logtext, expected_script_id=None):
             ordered_req_before_tx_by_session),
         'sessions_with_ordered_expected_script_request_tx_rx_prefix_candidates': sum(
             ordered_request_tx_rx_by_session),
+        'rx_expected_can_id_filter_supplied': expected_rx_can_ids is not None,
+        'sessions_with_ordered_expected_script_request_tx_exact_source_rx_prefix_candidates': sum(
+            exact_source_rx_by_session),
         'runtime_getscript_selection_verified': False,
         'session_counters': summaries,
         'totals': totals,
@@ -375,6 +420,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description='Privacy-safe VIDA bootstrap ReadVin log classifier')
     ap.add_argument('private_log', type=Path)
     ap.add_argument('--expected-script-id', help='private exact script ID for log-only sequence classification')
+    ap.add_argument('--rx-p3-can-id', help='optional expected P3 response source CAN ID (hex 0x...)')
+    ap.add_argument('--rx-p2-40-can-id', help='optional expected P2 0x40 response source CAN ID (hex 0x...)')
+    ap.add_argument('--rx-p2-50-can-id', help='optional expected P2 0x50 response source CAN ID (hex 0x...)')
     ap.add_argument('--output', type=Path, required=True)
     args = ap.parse_args(argv)
     source = args.private_log.resolve()
@@ -388,7 +436,16 @@ def main(argv=None):
         raw = source.read_bytes()
         if b'\x00' in raw[:256]:
             raise ValueError('binary or UTF-16 log unsupported')
-        result = audit_text(raw.decode('utf-8-sig', errors='replace'), args.expected_script_id)
+        supplied_rx = (args.rx_p3_can_id, args.rx_p2_40_can_id, args.rx_p2_50_can_id)
+        rx_source_filter = None
+        if any(value is not None for value in supplied_rx):
+            if any(value is None for value in supplied_rx):
+                raise ValueError('all three expected RX source CAN IDs are required')
+            rx_source_filter = dict(zip(
+                ('p3_f114', 'p2_b9fb_40', 'p2_b9fb_50'),
+                (_parse_rx_can_id(value) for value in supplied_rx)))
+        result = audit_text(raw.decode('utf-8-sig', errors='replace'),
+                            args.expected_script_id, rx_source_filter)
         with out.open('x', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
             f.write('\n')
