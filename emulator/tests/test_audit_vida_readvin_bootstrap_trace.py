@@ -269,5 +269,55 @@ class VidaBootstrapTraceTests(unittest.TestCase):
                       '--output', str(out)])
 
 
+
+    def test_32_different_fetched_and_running_versions_cannot_correlate(self):
+        wrong_run = "[Script] Running script: 'VCC-225200-1 2.4'\n"
+        out = audit_text(PREFACE + SELECT + FETCH + wrong_run + P3 + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 0)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+        self.assertEqual(out['totals']['vehcomm_p3_f114_requests'], 0)
+        self.assertFalse(out['client_vin_accepted'])
+
+    def test_33_versioned_fetch_unversioned_run_is_not_same_artifact(self):
+        no_version = "[Script] Running script: 'VCC-225200-1'\n"
+        out = audit_text(PREFACE + SELECT + FETCH + no_version + P3 + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 0)
+        self.assertEqual(out['sessions_with_all_three_request_families'], 0)
+
+    def test_34_unversioned_fetch_versioned_run_is_not_same_artifact(self):
+        no_version = "[ScriptProvider] Fetched script: 'VCC-225200-1'\n"
+        out = audit_text(PREFACE + SELECT + no_version + RUN + P3 + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 0)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 0)
+
+    def test_35_unversioned_fetch_and_run_match_if_both_omit_version(self):
+        no_version_fetch = "[ScriptProvider] Fetched script: 'VCC-225200-1'\n"
+        no_version_run = "[Script] Running script: 'VCC-225200-1'\n"
+        out = audit_text(PREFACE + SELECT + no_version_fetch + no_version_run
+                         + P3 + P2A + P2B, 'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+        self.assertFalse(out['runtime_getscript_selection_verified'])
+
+    def test_36_matching_numeric_version_still_matches(self):
+        fetch = "[ScriptProvider] Fetched script: 'VCC-225200-1 2.4.1'\n"
+        run = "[Script] Running script: 'VCC-225200-1 2.4.1'\n"
+        out = audit_text(PREFACE + SELECT + fetch + run + P3 + P2A + P2B,
+                         'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+
+    def test_37_new_getscript_after_mismatch_can_complete_new_window(self):
+        wrong_run = "[Script] Running script: 'VCC-225200-1 2.4'\n"
+        out = audit_text(PREFACE + SELECT + FETCH + wrong_run + P3 + SELECT
+                         + FETCH + RUN + P3 + P2A + P2B, 'VCC-225200-1')
+        self.assertEqual(out['sessions_with_ordered_expected_script_fetch_run_lines'], 1)
+        self.assertEqual(out['sessions_with_ordered_expected_script_run_and_three_request_families'], 1)
+        self.assertEqual(out['totals']['vehcomm_p3_f114_requests'], 1)
+
+
 if __name__ == '__main__':
     unittest.main()
