@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Bounded, read-only VIDA ReadVin.ServiceId vs T111_Service catalog classification.
+
+Static candidate only. Input source identifiers and service definitions never
+leave the process, and no wire request, valid ECU reply or VIN is inferred.
+"""
+import argparse
+import csv
+import io
+import json
+from pathlib import Path
+import re
+import xml.etree.ElementTree as ET
+import zipfile
+
+SCHEMA = 'virtualcar-vida-readvin-service-catalog-static-v1'
+MAX_ZIP_BYTES = 2 * 1024 * 1024
+MAX_XML_BYTES = 1024 * 1024
+MAX_CSV_BYTES = 4 * 1024 * 1024
+MAX_ELEMENTS = 20000
+MAX_ROWS = 50000
+MAX_CSV_LINE_LENGTH = 65536
+_NUMBER = re.compile(r'(?:0|[1-9][0-9]{0,9})\Z')
+
+
+def _positive_id(value):
+    if value is None or not _NUMBER.fullmatch(value):
+        return None
+    n = int(value)
+    return n if 0 <= n <= 2147483647 else None
+
+
+def _parse_xml(xml_bytes):
+    if (not isinstance(xml_bytes, bytes) or len(xml_bytes) > MAX_XML_BYTES
+            or b'\x00' in xml_bytes[:256]
+            or xml_bytes.startswith((b'\xff\xfe', b'\xfe\xff'))
+            or re.search(rb'<!\s*(?:DOCTYPE|ENTITY)\b', xml_bytes, re.I)):
+        raise ValueError('unsafe XML')
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise ValueError('invalid XML') from exc
+    if root.tag != 'script' or len(root.findall('./content')) != 1:
+        raise ValueError('unexpected script structure')
+    content = root.find('./content')
+    nodes = content.findall('./nodes/node')
+    handlers = content.findall('./handlers/eventhandler')
+    if not nodes or not handlers:
+        raise ValueError('missing script nodes or handlers')
+    if sum(1 for _ in root.iter()) > MAX_ELEMENTS:
+        raise ValueError('too many XML elements')
+    ids = [n.attrib.get('nodeid', '') for n in nodes]
+    if any(not i or len(i) > 128 for i in ids) or len(set(ids)) != len(ids):
+        raise ValueError('unsafe or duplicate node identifiers')
+    return content, nodes
+
+
+def _parse_catalog(csv_bytes):
+    if (not isinstance(csv_bytes, bytes) or len(csv_bytes) > MAX_CSV_BYTES
+            or b'\x00' in csv_bytes):
+        raise ValueError('unsafe CSV')
+    try:
+        text = csv_bytes.decode('utf-8-sig')
+    except UnicodeError as exc:
+        raise ValueError('unsupported CSV encoding') from exc
+    if any(len(line) > MAX_CSV_LINE_LENGTH for line in text.splitlines()):
+        raise ValueError('CSV line too long')
+    reader = csv.DictReader(io.StringIO(text, newline=''), strict=True)
+    if not reader.fieldnames or 'id' not in reader.fieldnames or len(set(reader.fieldnames)) != len(reader.fieldnames):
+        raise ValueError('expected unique id header')
+    occurrences = {}
+    total = invalid = 0
+    try:
+        for record in reader:
+            total += 1
+            if total > MAX_ROWS or None in record:
+                raise ValueError('invalid CSV structure')
+            value = _positive_id(record.get('id'))
+            if value is None:
+                invalid += 1
+            else:
+                occurrences[value] = occurrences.get(value, 0) + 1
+    except (csv.Error, UnicodeError) as exc:
+        raise ValueError('malformed CSV') from exc
+    return occurrences, total, invalid
+
+
+def audit_sources(xml_bytes, csv_bytes):
+    content, nodes = _parse_xml(xml_bytes)
+    service_ids, rows, invalid_rows = _parse_catalog(csv_bytes)
+    readers = {n.attrib['nodeid']: n for n in nodes
+               if n.attrib.get('class', '').rsplit('.', 1)[-1] == 'ReadVinComponent'}
+    # Original XML property-handler setters can replace a literal ServiceId.
+    overrides = set()
+    identifier_setters = set()
+    for handler in content.findall('./handlers/propertyhandler'):
+        for setter in handler.findall('./set'):
+            target = setter.attrib.get('node')
+            if target not in readers or 'disabled' in setter.attrib:
+                continue
+            if setter.attrib.get('property') == 'ServiceId':
+                overrides.add(target)
+            if setter.attrib.get('property') == 'Identifier':
+                identifier_setters.add(target)
+
+    counters = {
+        'readvin_nodes': len(readers),
+        'readvin_nodes_with_serviceid_property': 0,
+        'readvin_nodes_with_unique_direct_int_literal': 0,
+        'readvin_nodes_with_missing_or_nonliteral_serviceid': 0,
+        'readvin_nodes_with_duplicate_serviceid_properties': 0,
+        'readvin_nodes_with_enabled_serviceid_setter': len(overrides),
+        'readvin_nodes_with_enabled_identifier_setter': len(identifier_setters),
+        'readvin_nodes_with_identifier_property': 0,
+        'catalog_rows': rows,
+        'catalog_invalid_id_rows': invalid_rows,
+        'catalog_unique_numeric_ids': len(service_ids),
+        'catalog_duplicate_numeric_id_rows': sum(n - 1 for n in service_ids.values()),
+        'literal_ids_with_unique_catalog_row_no_declared_override': 0,
+        'literal_ids_without_catalog_row': 0,
+        'literal_ids_with_duplicate_catalog_rows': 0,
+        'literal_ids_with_declared_override': 0,
+    }
+    for node_id, node in readers.items():
+        props = node.findall('./property')
+        service_props = [p for p in props if p.attrib.get('name') == 'ServiceId']
+        counters['readvin_nodes_with_identifier_property'] += int(any(
+            p.attrib.get('name') == 'Identifier' for p in props))
+        counters['readvin_nodes_with_serviceid_property'] += int(bool(service_props))
+        if len(service_props) > 1:
+            counters['readvin_nodes_with_duplicate_serviceid_properties'] += 1
+            continue
+        value = (_positive_id(service_props[0].attrib.get('value'))
+                 if len(service_props) == 1 and service_props[0].attrib.get('class') == 'Int'
+                 else None)
+        if value is None:
+            counters['readvin_nodes_with_missing_or_nonliteral_serviceid'] += 1
+            continue
+        counters['readvin_nodes_with_unique_direct_int_literal'] += 1
+        count = service_ids.get(value, 0)
+        if count == 0:
+            counters['literal_ids_without_catalog_row'] += 1
+        elif count > 1:
+            counters['literal_ids_with_duplicate_catalog_rows'] += 1
+        elif node_id in overrides:
+            counters['literal_ids_with_declared_override'] += 1
+        else:
+            counters['literal_ids_with_unique_catalog_row_no_declared_override'] += 1
+
+    return {
+        'schema_version': SCHEMA,
+        'classification': 'readvin_xml_to_t111_id_static_declarations_only',
+        'counts': counters,
+        'static_unique_catalog_candidate_present': bool(
+            counters['literal_ids_with_unique_catalog_row_no_declared_override']),
+        'same_installation_provenance_verified': False,
+        'original_getscript_runtime_selection_verified': False,
+        'runtime_serviceid_or_propertyhandler_value_verified': False,
+        'carcom_service_definition_or_mode_verified': False,
+        'j2534_tx_or_ecu_rx_verified': False,
+        'accepted_vin_verified': False,
+        'xc90_v8_my2009_identified': False,
+        'emulator_replay_approved': False,
+    }
+
+
+def _read_zip(path):
+    if path.is_symlink() or not path.is_file() or path.suffix.lower() != '.zip':
+        raise ValueError('unsupported ZIP path')
+    if not 30 <= path.stat().st_size <= MAX_ZIP_BYTES:
+        raise ValueError('ZIP size outside bounds')
+    with zipfile.ZipFile(path) as archive:
+        members = archive.infolist()
+        if len(members) != 1:
+            raise ValueError('one ZIP member required')
+        item = members[0]
+        if (item.is_dir() or item.flag_bits & 1 or not item.compress_size
+                or item.file_size > MAX_XML_BYTES
+                or item.file_size > 100 * item.compress_size
+                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,120}', item.filename)):
+            raise ValueError('unsafe ZIP member')
+        with archive.open(item) as stream:
+            data = stream.read(MAX_XML_BYTES + 1)
+        if len(data) != item.file_size or len(data) > MAX_XML_BYTES:
+            raise ValueError('ZIP decompression limit')
+    return data
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description='Privacy-safe static ReadVin to T111 catalog cross-check')
+    ap.add_argument('readvin_zip', type=Path)
+    ap.add_argument('t111_csv', type=Path)
+    ap.add_argument('--output', required=True, type=Path)
+    a = ap.parse_args(argv)
+    repo = Path(__file__).resolve().parents[2]
+    dest = a.output.resolve()
+    inputs = [a.readvin_zip, a.t111_csv]
+    if (dest == repo or repo in dest.parents
+            or dest in (p.resolve() for p in inputs)
+            or a.output.is_symlink() or a.output.parent.is_symlink()):
+        ap.error('unsafe output location')
+    try:
+        if (a.t111_csv.is_symlink() or not a.t111_csv.is_file()
+                or a.t111_csv.stat().st_size > MAX_CSV_BYTES):
+            raise ValueError('unsupported catalog file')
+        report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes())
+        with a.output.open('x', encoding='utf-8') as out:
+            json.dump(report, out, ensure_ascii=False, indent=2)
+            out.write('\n')
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        ap.error('private input rejected: ' + type(exc).__name__)
+    print('Static candidate categories saved. No service execution or accepted VIN verified.')
+
+
+if __name__ == '__main__':
+    main()
