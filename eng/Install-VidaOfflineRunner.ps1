@@ -39,8 +39,8 @@ $pythonManifest = 'E:\VirtualCar\Tools\python312.path'
 if ($source -eq $destination) {
     throw 'Source and destination directories must differ.'
 }
-if ($destination -match '(?i)[\/]_work([\/]|$)' -or
-    $destination -match '(?i)[\/]\.git([\/]|$)') {
+if ($destination -match '(?i)[\\/]_work([\\/]|$)' -or
+    $destination -match '(?i)[\\/]\.git([\\/]|$)') {
     throw 'Refusing to store private data inside a GitHub workspace.'
 }
 if (-not (Test-Path -LiteralPath $source -PathType Container)) {
