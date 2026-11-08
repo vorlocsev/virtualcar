@@ -28,6 +28,16 @@ one-edge output calls were seen. The XML graph declarations DO
 NOT prove code executed, callback enabled, data flowed, a VIN
 was accepted, or the intended XC90 V8 profile was selected.
 
+Independent disabled-attribute comparison also agrees for all
+three identity method declarations: 3/3 calls have a parameter
+child; all 3/3 have **absent/unspecified** literal disabled
+attributes in both v2 and v3. No call has an explicit enabled
+literal. Absence of disabled is NOT equivalent to successful
+callback execution, VIN propagation or even proven enabled
+status. The new cross-check reports only fixed-category counts,
+not parameter names or values. It passed 11 synthetic cases,
+and an owner-original source v2/v3 run with 7/7 shared counts.
+
 F114 was present as a lexical token in the original XML; B9FB
 was absent as a lexical token there. Neither establishes what a
 different VIDA edition or actual car might request. The user's
@@ -39,11 +49,11 @@ bytes, and are not committed to this PR.
 - emulator/tools/audit_vida_redacted_consistency.py reads ONLY
   existing, already-redacted JSON v2 and v3 reports, each bounded
   to 128 KiB, checks explicit schemas, seven counter overlaps,
-  role partitions, declared distance bins and false runtime/VIN
+  role partitions, declared distance bins, parameter-child and disabled-attribute counts, and false runtime/VIN
   acceptance flags. Writes a NEW categorically redacted JSON
   outside the repository. No source data passthrough.
 - emulator/tests/test_audit_vida_redacted_consistency.py contains
-  eight synthetic-only regression groups for agreement,
+  eleven synthetic-only regression groups for agreement,
   contradiction, forged success, boolean/count type mismatch,
   invalid path partitions, partial graphs, privacy/exclusivity,
   schema and oversized-file rejection.
