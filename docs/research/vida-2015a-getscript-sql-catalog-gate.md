@@ -1707,6 +1707,33 @@ Virtual Car interoperability.
 Windows SQL Server Configuration Manager under `SQL Server Network Configuration → Protocols for VIDA` visibly reports all three **server-side** protocols **Enabled**: `Shared Memory`, `Named Pipes` and `TCP/IP`.
 This confirms the instance is configured to allow those transports, **not** which protocol a given VIDA client selected. The previously observed WildFly ↔ local SQL TCP socket evidence independently establishes TCP use for that Java process, while availability of Named Pipes/Shared Memory leaves other client paths possible. The screenshot did not show TCP/IP bind details, active protocol usage, SQL query text, `GetScript` execution or J2534 data. No configuration changes, service restarts or binary releases performed. Any follow-up screenshots of TCP/IP properties should redact local addresses, hostnames and credentials.
 
+**Owner screenshot: TCP/IP instance properties (2026-11-08):**
+The `SQL Server (VIDA)` TCP/IP **Protocol** tab shows
+`Enabled=Yes`, `Listen All=Yes`, and `Keep Alive=30000 ms`.
+The **IP Addresses** tab under `IPAll` shows a **nonblank
+numeric `TCP Dynamic Ports` value** and **blank `TCP Port`**.
+This is a currently assigned **dynamic TCP port** for the
+named instance, **not a fixed TCP port**; the number may
+change after SQL service restart. The exact numeric port
+and all network interface addresses are deliberately
+omitted from this shared repository note.
+
+Because `Listen All=Yes`, the `IPAll` network settings
+apply to addresses bound to the machine, and individual
+`IPn Enabled=No` fields visible in the screenshot are
+**ignored for binding selection** while this mode is active.
+This configuration is compatible with the independently
+confirmed VIDA-descendant WildFly ↔ SQL Server TCP path.
+`Listen All` does not, by itself, prove a service is
+reachable across a firewall, nor show which other clients
+use Shared Memory or Named Pipes. Review local firewall
+network exposure separately before considering any
+hardening change; do not disable/change SQL protocols,
+ports or restart the working VIDA service during research.
+Microsoft guidance: `TCP/IP Properties (Protocols tab)`
+and `How to check SQL Server dynamic versus static ports`.
+No settings were applied and no binaries published.
+
 **Decision: close the low-yield SQL/TCP reconnaissance
 loop at this evidence level.** Do not keep polling an idle
 procedure plan cache or re-run broad JVM keyword searches.
