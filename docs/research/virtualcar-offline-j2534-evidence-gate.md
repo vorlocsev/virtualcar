@@ -664,6 +664,46 @@ J2534 вызовы и 119 завершённых B9FB нельзя присво�
 менять J2534 registry и не делать вывод об успешном
 CEM identity по имеющимся историческим журналам.
 
+## Owner local file inventory: 24 named VirtualCarJ2534.dll (2026-11-08)
+
+The owner ran a **read-only** local inventory of exact-name
+`VirtualCarJ2534.dll` files under their own Downloads, Desktop and
+Documents folders. Only sanitized metadata was printed. Results:
+
+- **24** named DLL copies, modified **2026-11-01 to 2026-11-03 UTC**;
+  sizes **59–71.5 KiB**.
+- All **24** were found with adjacent `virtualcar.ini`.
+- **9** had an adjacent `VirtualCarControl.exe`.
+- **4** had an adjacent `BUILDINFO.json`. Those four include two
+  copies dated Nov 3 (71.5 KiB and 70.5 KiB), and Nov 2
+  (65 KiB and 66 KiB), all with the control EXE and INI.
+  No private filenames beyond these standard names, paths,
+  VIN, INI content or hashes were exported.
+- The independently registered **9.5 KiB x86 DLL** is named
+  neither `VirtualCarJ2534.dll` nor `VirtualCarJ2534Cpp.dll`;
+  it remains un-attributed. It must **not** be conflated
+  with the 24 archive/extracted DLL copies or with the
+  historical logged sessions.
+
+**Interpretation:** candidate lab bundles clearly exist on this
+Windows, but timestamp and size are insufficient to conclude
+build ancestry, functional status or client acceptance.
+`BUILDINFO.json` may help establish commit provenance;
+do not print arbitrary raw metadata, URLs, machine paths,
+private profile values or all file hashes.
+
+**Next owner-local read-only gate:** compute SHA256 **only
+locally** to group same-content DLLs by ordinal `BinaryGroup`,
+without displaying hash values, using exact-name DLL matches;
+also show counts of candidates grouped by size and the
+presence of `BUILDINFO.json`, `VirtualCarControl.exe`,
+`virtualcar.ini`. For the four `BUILDINFO.json` candidates,
+inspect only the **top-level key names**, not values, first
+to establish safe schema before selecting allowlisted
+`commit/version` metadata. All paths and content stay local.
+No `gh` downloads, no firmware/ECU interaction, no
+J2534 registration edits, and no binaries/releases published.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
