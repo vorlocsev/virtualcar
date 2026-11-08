@@ -1259,18 +1259,57 @@ literal or remote call, and does not prove VIDA lacks the
 stored procedure. There is still no observed original VIDA
 client SQL invocation or `@scriptType` binding.
 
-**Next narrow, read-only gate:** classify the longer
-`GetScript`-bearing UTF8 entries in those same 27 classes
-by **structural usage**, reporting only class counts for
-`CONSTANT_String` references, Java method/field declaration
-and member-ref names, and heuristic SQL-shaped text, with
-no literal contents, class/package or file names, code
-bodies, SQL/HTTP execution, or ECU activity. A SQL-shaped
-string is still only static text, not proof of execution.
-After this discriminate potential SQL-shaped hints from
-ordinary `getScript...` Java identifiers, pivot to the
-separate 325-class EJB JAR or original VIDA SQL caller if
-warranted. Keep draft PR #172 unmerged; publish no builds.
+**Owner-local longer `GetScript` structural-context scan (completed):**
+The operator ran `Inspect-VIDA-GetScriptLongContext.ps1` on
+verified VIDA-descendant WildFly `JavaPID=11600`, EAR slot
+2 / WAR slot 1; scan completed `Result=OK`/`ScriptFinished`.
+All **5872 JAR classes** (31 readable JARs; 6518 ZIP entries)
+and **279 exploded classes** were read with **0** skips,
+unreadable JARs or parse errors.
+
+| Class-count metric | JAR | Exploded |
+|---|---:|---:|
+| Has case-insensitive substring `getscript` in `CONSTANT_Utf8` | **26** | **1** |
+| Has exact `GetScript` UTF8 entry / exact named method or ref | 0 | 0 |
+| Has token-like longer `getscript` identifier | **26** | **1** |
+| Has a `CONSTANT_String` referencing UTF8 with `getscript` | **1** | 0 |
+| Has heuristic SQL-shaped `getscript` UTF8 or `CONSTANT_String` | **0 / 0** | **0 / 0** |
+| Declares a longer `getscript...`-named Java method | **17** | **1** |
+| References a longer `getscript...`-named Java method | **14** | 0 |
+| Declares/references similarly named field | 0 / 0 | 0 / 0 |
+| Contains `scriptType` / `DiagSwdlRepository` / exact `ReadVin` | 0 / 0 / 0 | 0 / 0 / 0 |
+
+Anonymous JAR slots remain **1:2**, **14:18**, **19:6**;
+all have 0 SQL-shaped UTF8/string matches under the
+probe's specific regex and 0 exact member-ref matches.
+The class-count method-declaration and reference categories
+**may overlap**, so must NOT be summed as unique classes.
+The one JAR `CONSTANT_String` with `getscript` is **not**
+classified as a SQL-shaped literal by this bounded
+heuristic; do not claim it is a real SQL caller.
+
+**Interpretation:** the 27 original broad `GetScript`
+hits are most consistent with **longer Java symbol names**,
+not evidence of a direct stored-procedure call. The one
+string-constant hit deserves only minimal weight absent
+SQL syntax. The heuristic is not exhaustive; e.g. string
+construction, unusual SQL syntax, other modules or remote
+calls could evade it. Neither the original VIDA caller nor
+its runtime `@scriptType` was observed. No class contents,
+Java method bodies, names/paths, SQL text, VIN or
+credentials were disclosed, and no Java/SQL/network/ECU
+requests executed.
+
+**Next priority:** stop rescanning the second WAR and
+perform a **single bounded passive constant-pool scan of
+the separate root EJB JAR** (325 `.class`, 20 declared
+session beans), targeting broad/exact `GetScript`, SQL-
+shaped literals, `scriptType`, repository and `ReadVin`
+metadata, counting only aggregate classes and bean
+implementation classes. If there is no compelling evidence,
+prioritize original VIDA client-side SQL call proof or
+sanitized, independently authorized offline J2534 trace.
+Keep PR #172 as draft and publish no Virtual Car builds.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
