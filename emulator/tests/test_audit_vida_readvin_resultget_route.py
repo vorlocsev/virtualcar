@@ -356,6 +356,80 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
         self.assertFalse(report['candidate_addvin_route_direct_declared_string_output_lexically_present'])
         self.assertEqual(report['categorical_declarations']['get_outputs_without_direct_property'], 1)
 
+    def test_38_original_setpath_contract_is_not_scriptable(self):
+        r = audit_xml(xml())
+        self.assertEqual(r['original_resultget_setpath_signature'],
+                         'void(string, ResponsePath, ResponseNodeType)')
+        self.assertFalse(r['original_resultget_setpath_scriptable_attribute_present'])
+        self.assertTrue(r['original_resultget_execute_scriptable_attribute_present'])
+        self.assertEqual(r['original_setpath_primitive_response_node_enum_value'], 7)
+        self.assertEqual(r['original_setpath_primitive_registers_property_class'], 'String')
+        self.assertEqual(r['original_setpath_other_node_types_register_property_class'], 'Response')
+        self.assertFalse(r['setpath_invoked_by_original_runtime_verified'])
+
+    def test_39_three_arg_setpath_xml_call_cannot_promote_missing_string_property(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        insert = (b'<call node="Extractor" method="SetPath">'
+                  b'<parameter class="String" value="Decoded"/>'
+                  b'<parameter node="Reader" property="Result"/>'
+                  b'<parameter class="Int" value="7"/>'
+                  b'</call>')
+        raw = raw.replace(b'<eventhandler node="Reader" name="OnPositiveResponse">',
+                          b'<eventhandler node="Reader" name="OnPositiveResponse">' + insert)
+        r = audit_xml(raw)
+        self.assertEqual(r['categorical_declarations'][
+            'resultget_setpath_event_calls_with_three_direct_args'], 1)
+        self.assertTrue(r['candidate_addvin_route_arity_and_output_shape_lexically_present'])
+        self.assertFalse(r['candidate_addvin_route_direct_declared_string_output_lexically_present'])
+        self.assertFalse(r['setpath_called_from_script_event_verified'])
+        self.assertNotIn('Decoded', json.dumps(r))
+
+    def test_40_setpath_wrong_arity_is_reported_without_executing_it(self):
+        raw = xml().replace(b'<eventhandler node="Reader" name="OnPositiveResponse">',
+                          b'<eventhandler node="Reader" name="OnPositiveResponse">'
+                          b'<call node="Extractor" method="SetPath">'
+                          b'<parameter value="X" class="String"/></call>')
+        r = audit_xml(raw)
+        self.assertEqual(r['categorical_declarations'][
+            'resultget_setpath_event_call_declarations'], 1)
+        self.assertEqual(r['categorical_declarations'][
+            'resultget_setpath_event_calls_with_wrong_direct_arg_count'], 1)
+        self.assertFalse(r['setpath_called_from_script_event_verified'])
+
+    def test_41_setpath_disabled_literal_false_is_not_eligible(self):
+        raw = xml().replace(b'<eventhandler node="Reader" name="OnPositiveResponse">',
+                          b'<eventhandler node="Reader" name="OnPositiveResponse">'
+                          b'<call node="Extractor" method="SetPath" disabled="false"/>')
+        r = audit_xml(raw)
+        self.assertEqual(r['categorical_declarations'][
+            'resultget_setpath_event_calls_disabled_by_attribute'], 1)
+        self.assertFalse(r['setpath_invoked_by_original_runtime_verified'])
+
+    def test_42_setpath_call_on_unrelated_component_not_claimed(self):
+        raw = xml().replace(b'<eventhandler node="Reader" name="OnPositiveResponse">',
+                          b'<eventhandler node="Reader" name="OnPositiveResponse">'
+                          b'<call node="Identity" method="SetPath"/>')
+        r = audit_xml(raw)
+        self.assertEqual(r['categorical_declarations'][
+            'resultget_setpath_event_call_declarations'], 0)
+
+    def test_43_setpath_xml_call_does_not_generate_get_or_runtime_output(self):
+        raw = xml(gets='').replace(b'<eventhandler node="Reader" name="OnPositiveResponse">',
+                          b'<eventhandler node="Reader" name="OnPositiveResponse">'
+                          b'<call node="Extractor" method="SetPath">'
+                          b'<parameter class="String" value="SECRET"/>'
+                          b'<parameter class="Response" value="PATH"/>'
+                          b'<parameter class="Int" value="7"/>'
+                          b'</call>')
+        r = audit_xml(raw)
+        self.assertEqual(r['categorical_declarations'][
+            'direct_get_property_declarations'], 0)
+        self.assertFalse(r['candidate_addvin_route_arity_and_output_shape_lexically_present'])
+        self.assertFalse(r['setpath_generated_get_selection_path_verified'])
+        self.assertNotIn('SECRET', json.dumps(r))
+        self.assertNotIn('PATH', json.dumps(r))
+
     def test_10_private_zip_safe_new_json_exclusive_and_symlink(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)
