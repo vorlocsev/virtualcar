@@ -96,11 +96,815 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # Defense in depth: workflow_dispatch choice UI is not a checkout trust boundary.
+      # Keep this literal allowlist in sync with source_ref.options above.
+      # This step MUST execute before any checkout of the selected source.
+      - name: Validate owner-approved source ref before checkout
+        shell: powershell
+        env:
+          VC_SELECTED_SOURCE_REF: ${{ inputs.source_ref || 'development' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $approved = @(
+            'development',
+            'feature/m5a-secure-local-ipc-preflight',
+            'feature/sqlite-10gb-vmware-runner',
+            'feature/m5b-cpp-named-pipe-client',
+            'feature/m5c1-bounded-lifecycle-preflight',
+            'feature/m5c2-authenticated-session-lifecycle',
+            'feature/m5d1-readonly-vcrd-contract',
+            'feature/m5d2a-csharp-synthetic-read-host',
+            'feature/m5d2b-native-readonly-ipc-client',
+            'feature/m5d2c-inflight-read-cancel-recovery',
+            'feature/m5d2d-synthetic-read-replay-stress',
+            'feature/m5d2ea-synthetic-reply-faults',
+            'feature/m5d2eb-offline-cancel-restart-races',
+            'feature/m5d2eb-host-three-epochs-x86-x64',
+            'feature/p0-sectorv-j2534-evidence-boundaries',
+            'feature/p0-b9fb-target50-evidence-guard',
+            'feature/p0-b9fb50-protocol-metadata-gate',
+            'feature/p0-explicit-a3-a6-unimplemented-evidence',
+            'research/vida-2015a-getscript-catalog-only-inspector',
+            'research/vida-readvin-script-selection-evidence',
+            'fix/vida-session-release-provenance-gate',
+            'feature/vida-readvin-xml-graph-safe-audit',
+            'feature/vida-jboss-startup-provenance-audit',
+            'research/vida-original-vinvalidator-ascii-shape-gate',
+            'fix/vida-getscript-nondbo-visibility',
+            'a7bb8c235c9efa39f844207097e8352af9103baa',
+            '70d586b2d3562a6d612fbd6f4460c0e7a14b3992',
+            '7fd4231c70189d418643f3f8d832f1c96b34c0b9',
+            '258f03e72c14b6d49629a7e23d4d7adcaa77bcf8',
+            '013fa4c5f5e2d632d18e884535afed34ac50ac6d',
+            'a47d7858a4c634517358a7fa3c552c998b795cc1',
+            '3e90a0d30d63133f489b8ce12894ac9288b6d340'
+          )
+          if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
+              $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
+            throw 'Refusing source_ref outside the committed allowlist'
+          }
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and
+              $env:VC_SELECTED_SOURCE_REF -cne 'development') {
+            throw 'Development push may only validate development'
+          }
+          Write-Host 'Trusted source ref allowlist gate passed'
+
       - name: Checkout selected trusted source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || 'development' }}
           persist-credentials: false
+
+      - name: Verify immutable commit matches selected SHA
+        shell: powershell
+        env:
+          VC_SELECTED_SOURCE_REF: ${{ inputs.source_ref || 'development' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VC_SELECTED_SOURCE_REF -cmatch '^[0-9a-f]{40}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host ('Source commit: ' + (git rev-parse HEAD))
+          Write-Host ('Runner: ' + $env:RUNNER_NAME)
+          Write-Host ('OS: ' + [System.Environment]::OSVersion.Version)
+          Write-Host ('Architecture: ' + [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
+
+          $pythonManifest = 'E:\VirtualCar\Tools\python312.path'
+          if (-not (Test-Path -LiteralPath $pythonManifest)) { throw 'Python manifest is missing' }
+          $python = (Get-Content -LiteralPath $pythonManifest -Raw).Trim()
+          if (-not (Test-Path -LiteralPath $python)) { throw "Python not found: $python" }
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Python 3.12 failed' }
+          & $python -m pip --version
+          if ($LASTEXITCODE -ne 0) { throw 'pip is unavailable' }
+
+          $goVersion = go version
+          Write-Host $goVersion
+          if ($LASTEXITCODE -ne 0) { throw 'Go is unavailable' }
+
+          $dotnetSdks = dotnet --list-sdks | Out-String
+          Write-Host $dotnetSdks
+          if ($dotnetSdks -notmatch '10\.0\.') { throw '.NET 10 SDK is not installed for the runner service' }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere.exe not found' }
+          $vs2022 = & $vswhere -latest -products '*' -version '[17.0,18.0)' -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vs2022)) { throw 'Visual Studio 2022 Build Tools not found' }
+          Write-Host ('Visual Studio 2022: ' + $vs2022)
+
+          cmake --version
+          if ($LASTEXITCODE -ne 0) { throw 'CMake is unavailable' }
+
+      - name: Run complete Python emulator test suite
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          & $python -m unittest discover -s emulator/tests -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Python emulator test suite failed' }
+
+      - name: Verify LLVM and Git Bash for legacy x86 build
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($tool in @('clang','lld-link','bash','llvm-readobj')) {
+            $cmd = Get-Command $tool -ErrorAction SilentlyContinue
+            if (-not $cmd) { throw "Required tool is missing from Runner PATH: $tool" }
+            Write-Host ("AVAILABLE: {0} => {1}" -f $tool,$cmd.Source)
+          }
+          clang --version
+          if ($LASTEXITCODE -ne 0) { throw 'Clang is not executable' }
+          lld-link --version
+          if ($LASTEXITCODE -ne 0) { throw 'LLD-Link is not executable' }
+
+      - name: Run legacy C protocol regression with Clang host compiler
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testExe = Join-Path $env:RUNNER_TEMP 'virtualcar-c-host-tests.exe'
+          $env:VIRTUALCAR_ROUTE_EVIDENCE = Join-Path $env:RUNNER_TEMP 'virtualcar-c-host-route-evidence.jsonl'
+          clang -std=c11 -O2 -Wall -Wextra -D_CRT_SECURE_NO_WARNINGS -o $testExe emulator/tests/virtualcar_test.c emulator/src/p2core/p2_cem_router.c emulator/src/p2core/p2_ls_observer.c emulator/src/p2core/p2_vehicle_core.c emulator/src/p2core/p2_j2534_bridge.c
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy C host regression compilation failed' }
+          & $testExe
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy C host regression failed' }
+
+      - name: Cross-build legacy J2534 C DLL for Windows x86 with Clang and LLD
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location emulator
+          try {
+            & bash ./build-cross.sh
+            if ($LASTEXITCODE -ne 0) { throw 'Clang/LLD Windows x86 legacy DLL build failed' }
+          } finally {
+            Pop-Location
+          }
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          if (-not (Test-Path -LiteralPath $dll)) { throw 'Legacy x86 J2534 DLL was not produced' }
+          llvm-readobj --coff-exports $dll
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM could not inspect the legacy x86 DLL export table' }
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          & $python emulator/native-cpp/tests/verify_pe_exports.py $dll Win32
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy x86 DLL PE architecture/export verification failed' }
+
+      - name: Run legacy C x86 DLL native route regression and evidence audit
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $routeDir = Join-Path $env:RUNNER_TEMP 'virtualcar-native-route-regression'
+          $audit = Join-Path $env:RUNNER_TEMP 'virtualcar-native-route-audit.json'
+          if (Test-Path -LiteralPath $routeDir) { throw 'Refusing to reuse native route regression directory' }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll -OutputDirectory $routeDir
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy x86 DLL native route regression failed' }
+          $evidence = Join-Path $routeDir 'VirtualCar\dev47-backend.jsonl'
+          if (-not (Test-Path -LiteralPath $evidence)) { throw 'Native route regression evidence is missing' }
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          & $python emulator/tools/verify_native_routes.py $evidence --output $audit
+          if ($LASTEXITCODE -ne 0) { throw 'Native route evidence audit failed' }
+
+      - name: Run Go control tests and vet
+        shell: powershell
+        working-directory: emulator/control
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./... -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Go control tests failed' }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Go vet failed' }
+
+      - name: Configure and build native C++ x86
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE '.ci-build\native-x86'
+          cmake -S emulator/native-cpp -B $buildDir -G 'Visual Studio 17 2022' -A Win32
+          if ($LASTEXITCODE -ne 0) { throw 'CMake x86 configuration failed' }
+          cmake --build $buildDir --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x86 build failed' }
+          ctest --test-dir $buildDir -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x86 CTest suite failed' }
+          $parityExe = Join-Path $buildDir 'Release\vc_legacy_c_cpp_parity.exe'
+          $legacyDll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $parityDir = Join-Path $env:RUNNER_TEMP 'virtualcar-m4b2-native-parity'
+          if (-not (Test-Path -LiteralPath $legacyDll)) { throw 'Independently built legacy C x86 DLL is missing' }
+          if (-not (Test-Path -LiteralPath $parityExe)) { throw 'C/C++ parity executable is missing' }
+          if (Test-Path -LiteralPath $parityDir) { throw 'Refusing to reuse C/C++ parity directory' }
+          & $parityExe $legacyDll $parityDir
+          if ($LASTEXITCODE -ne 0) { throw 'Actual legacy C DLL versus C++20 RX parity failed' }
+
+      - name: Configure and build native C++ x64
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE '.ci-build\native-x64'
+          cmake -S emulator/native-cpp -B $buildDir -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'CMake x64 configuration failed' }
+          cmake --build $buildDir --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x64 build failed' }
+          ctest --test-dir $buildDir -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'C++ x64 CTest suite failed' }
+
+      - name: Run .NET 10 managed core checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project emulator/managed/VirtualCar.Core.Checks/VirtualCar.Core.Checks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw '.NET Core checks failed' }
+
+      - name: Run .NET 10 SQLite storage checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project emulator/managed/VirtualCar.Storage.Checks/VirtualCar.Storage.Checks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw '.NET SQLite storage checks failed' }
+
+      - name: Run .NET 10 scenario compiler checks
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project emulator/managed/VirtualCar.Scenarios.Checks/VirtualCar.Scenarios.Checks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw '.NET scenario compiler checks failed' }
+
+      - name: Run M5A local IPC checks when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = 'emulator/managed/VirtualCar.Service.Checks/VirtualCar.Service.Checks.csproj'
+          if (Test-Path -LiteralPath $project) {
+            dotnet run --project $project -c Release
+            if ($LASTEXITCODE -ne 0) { throw 'M5A local IPC integration checks failed' }
+          } else {
+            Write-Host 'SKIP: M5A service project is not present at this source ref.'
+          }
+
+      - name: Run M5B native C++ x86/x64 clients against C# Host when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clientX86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe'
+          $clientX64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe'
+          if (-not (Test-Path -LiteralPath $clientX86) -and -not (Test-Path -LiteralPath $clientX64)) {
+            Write-Host 'SKIP: M5B native IPC client is not present at this source ref.'
+            return
+          }
+          if (-not (Test-Path -LiteralPath $clientX86) -or -not (Test-Path -LiteralPath $clientX64)) {
+            throw 'M5B requires both x86 and x64 native IPC clients.'
+          }
+          if (-not (Test-Path -LiteralPath $serviceDll)) {
+            throw "M5B C# test host is missing: $serviceDll"
+          }
+
+          # Windows PowerShell 5.1 Start-Process -PassThru may expose an
+          # empty ExitCode even after WaitForExit, causing a false failure.
+          # Keep the original owning .NET Process handle and check ExitCode
+          # only after an actual successful WaitForExit.
+          function Start-M5BHost {
+            param(
+              [Parameter(Mandatory=$true)][string]$Dll,
+              [Parameter(Mandatory=$true)][string]$PipeName,
+              [Parameter(Mandatory=$true)][ValidateSet('session','no-session')][string]$Mode
+            )
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = (Get-Command dotnet -ErrorAction Stop).Source
+            $info.Arguments = ('"{0}" --serve-once "{1}" {2}' -f $Dll, $PipeName, $Mode)
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            # Child stdout/stderr are inherited so failure details remain in
+            # the Actions log. Avoid unconsumed redirected pipes/deadlocks.
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw "Could not start M5B C# host ($Mode)"
+            }
+            return $process
+          }
+
+          function Assert-M5BHostExit {
+            param(
+              [Parameter(Mandatory=$true)][System.Diagnostics.Process]$Process,
+              [Parameter(Mandatory=$true)][string]$Label
+            )
+            if (-not $Process.WaitForExit(15000)) {
+              throw "C# Host ($Label) did not terminate within deadline"
+            }
+            # ExitCode is a non-null Int32 from the retained Process handle.
+            [int]$exitCode = $Process.ExitCode
+            if ($exitCode -ne 0) {
+              throw "C# Host ($Label) exited with code $exitCode"
+            }
+            Write-Host "PASS: C# Host ($Label) exited with code 0"
+          }
+
+          function Stop-M5BHost {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally {
+              $Process.Dispose()
+            }
+          }
+
+          foreach ($arch in @('x86', 'x64')) {
+            $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+
+            $rejectPipe = 'vcm5b-reject-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $rejectServer = $null
+            try {
+              $rejectServer = Start-M5BHost -Dll $serviceDll -PipeName $rejectPipe -Mode 'no-session'
+              $wrongPid = [uint32]($rejectServer.Id + 1)
+              & $client --reject-peer $rejectPipe $wrongPid
+              $rejectExit = $LASTEXITCODE
+              if ($rejectExit -ne 0) {
+                throw "C++ $arch client did not reject wrong server PID (exit $rejectExit)"
+              }
+              Assert-M5BHostExit -Process $rejectServer -Label "$arch wrong-PID rejection"
+            } finally {
+              Stop-M5BHost -Process $rejectServer
+            }
+
+            $pipeName = 'vcm5b-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $server = $null
+            try {
+              $server = Start-M5BHost -Dll $serviceDll -PipeName $pipeName -Mode 'session'
+              & $client --connect $pipeName $server.Id
+              $clientExit = $LASTEXITCODE
+              if ($clientExit -ne 0) {
+                throw "C++ $arch client failed with exit code $clientExit"
+              }
+              Assert-M5BHostExit -Process $server -Label "$arch HELLO/KEEPALIVE/GOODBYE"
+              Write-Host "PASS: native C++ $arch <-> C# Host HELLO/KEEPALIVE/GOODBYE"
+            } finally {
+              Stop-M5BHost -Process $server
+            }
+          }
+
+      - name: Run M5C2 authenticated lifecycle, host-loss and restart checks when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'emulator/native-cpp/src/authenticated_session.cpp'
+          if (-not (Test-Path -LiteralPath $source)) {
+            Write-Host 'SKIP: M5C2 authenticated lifecycle source is not present at this source ref.'
+            return
+          }
+
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clientX86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe'
+          $clientX64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe'
+          if (-not (Test-Path -LiteralPath $serviceDll)) { throw 'M5C2 C# test host is missing' }
+          if (-not (Test-Path -LiteralPath $clientX86) -or -not (Test-Path -LiteralPath $clientX64)) {
+            throw 'M5C2 requires both x86 and x64 native IPC clients.'
+          }
+
+          function Start-M5C2Host {
+            param([Parameter(Mandatory=$true)][string]$Dll,
+                  [Parameter(Mandatory=$true)][string]$PipeName)
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = (Get-Command dotnet -ErrorAction Stop).Source
+            $info.Arguments = ('"{0}" --serve-once "{1}" session' -f $Dll, $PipeName)
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw 'Could not start M5C2 C# Host'
+            }
+            return $process
+          }
+
+          function Stop-M5C2Host {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally { $Process.Dispose() }
+          }
+
+          function Assert-M5C2HostExit {
+            param([Parameter(Mandatory=$true)][System.Diagnostics.Process]$Process,
+                  [Parameter(Mandatory=$true)][string]$Label)
+            if (-not $Process.WaitForExit(15000)) {
+              throw "M5C2 C# Host ($Label) did not terminate within deadline"
+            }
+            [int]$exitCode = $Process.ExitCode
+            if ($exitCode -ne 0) { throw "M5C2 C# Host ($Label) exited with code $exitCode" }
+            Write-Host "PASS: M5C2 C# Host ($Label) exited with code 0"
+          }
+
+          foreach ($arch in @('x86', 'x64')) {
+            $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+
+            $normalPipe = 'vcm5c2-normal-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $normalHost = $null
+            try {
+              $normalHost = Start-M5C2Host -Dll $serviceDll -PipeName $normalPipe
+              & $client --lifecycle $normalPipe $normalHost.Id
+              $clientExit = $LASTEXITCODE
+              if ($clientExit -ne 0) { throw "M5C2 $arch authenticated lifecycle failed ($clientExit)" }
+              Assert-M5C2HostExit -Process $normalHost -Label "$arch authenticated lifecycle"
+              Write-Host "PASS: M5C2 $arch authenticated session, heartbeat and bounded channels"
+            } finally { Stop-M5C2Host -Process $normalHost }
+
+            $expiryPipe = 'vcm5c2-expiry-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $expiryHost = $null
+            try {
+              $expiryHost = Start-M5C2Host -Dll $serviceDll -PipeName $expiryPipe
+              & $client --lifecycle-expire $expiryPipe $expiryHost.Id
+              $clientExit = $LASTEXITCODE
+              if ($clientExit -ne 0) { throw "M5C2 $arch lease expiry failed ($clientExit)" }
+              Assert-M5C2HostExit -Process $expiryHost -Label "$arch lease expiry"
+              Write-Host "PASS: M5C2 $arch heartbeat lease expiry revokes channels and closes Host session"
+            } finally { Stop-M5C2Host -Process $expiryHost }
+
+            $restartPipe = 'vcm5c2-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $readyFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-ready-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $lostFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-revoked-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.lost')
+            $pidFile = Join-Path $env:RUNNER_TEMP ('m5c2-host-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N') + '.pid')
+            if (Test-Path -LiteralPath $readyFile) { Remove-Item -LiteralPath $readyFile -Force }
+            if (Test-Path -LiteralPath $lostFile) { Remove-Item -LiteralPath $lostFile -Force }
+            if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
+            $firstHost = $null
+            $secondHost = $null
+            $clientProcess = $null
+            try {
+              $firstHost = Start-M5C2Host -Dll $serviceDll -PipeName $restartPipe
+              $clientInfo = New-Object System.Diagnostics.ProcessStartInfo
+              $clientInfo.FileName = $client
+              $clientInfo.Arguments = ('--lifecycle-restart "{0}" {1} "{2}" "{3}" "{4}"' -f $restartPipe, $firstHost.Id, $readyFile, $lostFile, $pidFile)
+              $clientInfo.UseShellExecute = $false
+              $clientInfo.CreateNoWindow = $true
+              $clientProcess = New-Object System.Diagnostics.Process
+              $clientProcess.StartInfo = $clientInfo
+              if (-not $clientProcess.Start()) { throw "Could not start M5C2 $arch restart client" }
+
+              $readyDeadline = [DateTime]::UtcNow.AddSeconds(15)
+              while (-not (Test-Path -LiteralPath $readyFile) -and
+                     -not $clientProcess.HasExited -and
+                     [DateTime]::UtcNow -lt $readyDeadline) {
+                Start-Sleep -Milliseconds 50
+              }
+              if (-not (Test-Path -LiteralPath $readyFile)) {
+                if ($clientProcess.HasExited) {
+                  throw "M5C2 $arch host-loss client exited early ($($clientProcess.ExitCode))"
+                }
+                throw "M5C2 $arch host-loss signal did not arrive"
+              }
+
+              # Terminate the exact child Process object started above.
+              # The native client never reopens or kills a PID.
+              $firstHost.Kill()
+              if (-not $firstHost.WaitForExit(5000)) {
+                throw "M5C2 $arch original Host process did not terminate"
+              }
+              Write-Host "PASS: M5C2 $arch original synthetic Host process terminated"
+
+              $lostDeadline = [DateTime]::UtcNow.AddSeconds(15)
+              while (-not (Test-Path -LiteralPath $lostFile) -and
+                     -not $clientProcess.HasExited -and
+                     [DateTime]::UtcNow -lt $lostDeadline) {
+                Start-Sleep -Milliseconds 50
+              }
+              if (-not (Test-Path -LiteralPath $lostFile)) {
+                if ($clientProcess.HasExited) {
+                  throw "M5C2 $arch client exited before confirming local revocation ($($clientProcess.ExitCode))"
+                }
+                throw "M5C2 $arch client did not confirm host-loss revocation"
+              }
+              Write-Host "PASS: M5C2 $arch client detected pipe loss and revoked session/channels"
+
+              $firstHost.Dispose()
+              $firstHost = $null
+
+              $secondHost = Start-M5C2Host -Dll $serviceDll -PipeName $restartPipe
+              [System.IO.File]::WriteAllText($pidFile, [string]$secondHost.Id, [System.Text.Encoding]::ASCII)
+              if (-not $clientProcess.WaitForExit(20000)) {
+                throw "M5C2 $arch client did not complete Host restart recovery"
+              }
+              [int]$restartExit = $clientProcess.ExitCode
+              if ($restartExit -ne 0) { throw "M5C2 $arch host restart recovery failed ($restartExit)" }
+              Assert-M5C2HostExit -Process $secondHost -Label "$arch restarted Host"
+              Write-Host "PASS: M5C2 $arch stale session revoked; restarted Host recovered with same token numbers and new process identity"
+            } finally {
+              if ($null -ne $clientProcess) {
+                if (-not $clientProcess.HasExited) {
+                  $clientProcess.Kill()
+                  [void]$clientProcess.WaitForExit(5000)
+                }
+                $clientProcess.Dispose()
+              }
+              Stop-M5C2Host -Process $firstHost
+              Stop-M5C2Host -Process $secondHost
+              if (Test-Path -LiteralPath $readyFile) { Remove-Item -LiteralPath $readyFile -Force }
+              if (Test-Path -LiteralPath $lostFile) { Remove-Item -LiteralPath $lostFile -Force }
+              if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
+            }
+          }
+
+      - name: Run M5D2b native synthetic read-only x86/x64 against C# Host when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'docs/architecture/VIRTUALCAR-M5D2B-NATIVE-READONLY-CLIENT.md')) {
+            Write-Host 'SKIP: M5D2b native read client is not present at this source ref.'
+            return
+          }
+          $serviceDll = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clientX86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe'
+          $clientX64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe'
+          if (-not (Test-Path -LiteralPath $serviceDll) -or
+              -not (Test-Path -LiteralPath $clientX86) -or
+              -not (Test-Path -LiteralPath $clientX64)) {
+            throw 'M5D2b requires managed C# Host plus x86 and x64 native test executables.'
+          }
+
+          function Start-M5D2BHost {
+            param(
+              [Parameter(Mandatory=$true)][string]$Dll,
+              [Parameter(Mandatory=$true)][string]$PipeName,
+              [Parameter(Mandatory=$true)][ValidateSet('read-session','session','fault-header','fault-body','fault-stall','fault-operation','fault-did')][string]$Mode
+            )
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = (Get-Command dotnet -ErrorAction Stop).Source
+            $info.Arguments = ('"{0}" --serve-once "{1}" {2}' -f $Dll, $PipeName, $Mode)
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw 'Could not start M5D2b synthetic C# Host'
+            }
+            return $process
+          }
+
+          function Stop-M5D2BHost {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally { $Process.Dispose() }
+          }
+
+          $cases = @(
+            @{label='sealed fixture reads'; flag='--readonly'; mode='read-session'},
+            @{label='wrong CAN route denial'; flag='--readonly-deny'; mode='read-session'},
+            @{label='missing fixture denial'; flag='--readonly-no-fixture'; mode='session'},
+            @{label='expired lease denial'; flag='--readonly-expire'; mode='read-session'}
+          )
+          # M5D-2d feature explicitly opts in to extended serial stress.
+          # Earlier trusted source refs retain the original four cases.
+          if (Test-Path -LiteralPath 'docs/architecture/VIRTUALCAR-M5D2D-SYNTHETIC-REPLAY-STRESS.md') {
+            $cases += @{label='64 serial synthetic fixture reads'; flag='--readonly-stress'; mode='read-session'}
+          }
+          # M5D-2eA negative reply injection exists only in this trusted
+          # feature source and later merged development. Never run a mode
+          # from arbitrary workflow_dispatch text or a fork checkout.
+          if (Test-Path -LiteralPath 'docs/architecture/VIRTUALCAR-M5D2EA-FAULT-REPLY-NEGATIVE.md') {
+            $cases += @(
+              @{label='partial VCLB header'; flag='--fault-header'; mode='fault-header'},
+              @{label='partial VCRD body'; flag='--fault-body'; mode='fault-body'},
+              @{label='stalled partial VCRD body'; flag='--fault-stall'; mode='fault-stall'},
+              @{label='mismatched VCRD operation'; flag='--fault-operation'; mode='fault-operation'},
+              @{label='mismatched allowlisted DID'; flag='--fault-did'; mode='fault-did'}
+            )
+          }
+          foreach ($arch in @('x86', 'x64')) {
+            $client = if ($arch -eq 'x86') { $clientX86 } else { $clientX64 }
+            foreach ($case in $cases) {
+              $pipeName = 'vcm5d2b-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+              $server = $null
+              try {
+                $server = Start-M5D2BHost -Dll $serviceDll -PipeName $pipeName -Mode $case.mode
+                if ($case.flag -like '--fault-*') {
+                  # Capture and validate the specific native mode output.
+                  # A default no-args test executable may exit 0 but MUST
+                  # NOT pass this negative-response acceptance gate.
+                  $outputLines = @(& $client $case.flag $pipeName $server.Id)
+                  $testExit = $LASTEXITCODE
+                  foreach ($line in $outputLines) { Write-Host $line }
+                  $expectedLine = 'PASS: M5D2e ' + $case.flag + ' rejected, zero data, zero pending state'
+                  if ($testExit -ne 0 -or -not ($outputLines -contains $expectedLine)) {
+                    throw ("M5D2e {0} {1} failed (exit {2}, no exact success marker)" -f $arch, $case.label, $testExit)
+                  }
+                } else {
+                  & $client $case.flag $pipeName $server.Id
+                  $testExit = $LASTEXITCODE
+                  if ($testExit -ne 0) {
+                    throw ("M5D2b {0} {1} failed (exit {2})" -f $arch, $case.label, $testExit)
+                  }
+                }
+                if (-not $server.WaitForExit(15000)) {
+                  throw ("M5D2b {0} {1} C# Host did not exit" -f $arch, $case.label)
+                }
+                [int]$exitCode = $server.ExitCode
+                if ($exitCode -ne 0) {
+                  throw ("M5D2b {0} {1} C# Host exited with {2}" -f $arch, $case.label, $exitCode)
+                }
+                if ($case.flag -like '--fault-*') {
+                  Write-Host ("PASS: M5D2eA {0} {1} rejected, fail-closed" -f $arch, $case.label)
+                } elseif ($case.flag -eq '--readonly-stress') {
+                  Write-Host ("PASS: M5D2d {0} 64-read native C++ <-> C# Host synthetic stress" -f $arch)
+                } else {
+                  Write-Host ("PASS: M5D2b {0} {1} native C++ <-> C# Host" -f $arch, $case.label)
+                }
+              } finally { Stop-M5D2BHost -Process $server }
+            }
+          }
+
+      - name: Run M5D2c active read cancel and Host restart x86/x64 when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'docs/architecture/VIRTUALCAR-M5D2C-INFLIGHT-CANCEL-RECOVERY.md')) {
+            Write-Host 'SKIP: M5D2c active-read code not present on selected trusted ref.'
+            return
+          }
+
+          $service = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $clients = @{
+            x86 = (Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_client_checks.exe')
+            x64 = (Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_client_checks.exe')
+          }
+          if (-not (Test-Path -LiteralPath $service) -or
+              -not (Test-Path -LiteralPath $clients.x86) -or
+              -not (Test-Path -LiteralPath $clients.x64)) {
+            throw 'M5D2c requires the managed test Host and native Win32/x64 clients.'
+          }
+
+          function Start-M5D2CProcess {
+            param([string]$File, [string]$CommandLine)
+            if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+              throw ('Refusing M5D2c child launch without required mode arguments: ' + $File)
+            }
+            $info = New-Object System.Diagnostics.ProcessStartInfo
+            $info.FileName = $File
+            $info.Arguments = $CommandLine
+            $info.UseShellExecute = $false
+            $info.CreateNoWindow = $true
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $info
+            if (-not $process.Start()) {
+              $process.Dispose()
+              throw ('Unable to launch synthetic child: ' + $File)
+            }
+            return $process
+          }
+
+          function Stop-M5D2CChild {
+            param([System.Diagnostics.Process]$Process)
+            if ($null -eq $Process) { return }
+            try {
+              if (-not $Process.HasExited) {
+                # Kill only the exact owned Process child handle, not an
+                # arbitrary PID which might have been reused by Windows.
+                $Process.Kill()
+                [void]$Process.WaitForExit(5000)
+              }
+            } finally { $Process.Dispose() }
+          }
+
+          function Wait-M5D2CMarker {
+            param([string]$Path, [string]$Value, [System.Diagnostics.Process]$Client)
+            $deadline = [DateTime]::UtcNow.AddSeconds(12)
+            while ([DateTime]::UtcNow -lt $deadline) {
+              if (Test-Path -LiteralPath $Path) {
+                if ((Get-Content -LiteralPath $Path -Raw).Trim() -eq $Value) { return }
+              }
+              if ($Client.HasExited) {
+                throw ('M5D2c client exited before ' + $Value + ': ' + $Client.ExitCode)
+              }
+              Start-Sleep -Milliseconds 50
+            }
+            throw ('M5D2c timed out waiting for ' + $Value)
+          }
+
+          function Assert-M5D2CExit {
+            param([System.Diagnostics.Process]$Process, [string]$Label)
+            if (-not $Process.WaitForExit(20000)) {
+              throw ('M5D2c ' + $Label + ' did not terminate')
+            }
+            if ($Process.ExitCode -ne 0) {
+              throw ('M5D2c ' + $Label + ' exited with ' + $Process.ExitCode)
+            }
+          }
+
+          foreach ($arch in @('x86','x64')) {
+            $native = $clients[$arch]
+            $pipe = 'vcm5d2c-cancel-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $ready = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $heldHost = $null
+            $client = $null
+            try {
+              $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $service,$pipe,$ready)
+              $heldHost = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -CommandLine $hostArgs
+              $client = Start-M5D2CProcess -File $native -CommandLine ('--readonly-cancel "{0}" {1} "{2}"' -f $pipe,$heldHost.Id,$ready)
+              Wait-M5D2CMarker -Path $ready -Value 'accepted' -Client $client
+              Assert-M5D2CExit -Process $client -Label "$arch concurrent read cancellation"
+              Assert-M5D2CExit -Process $heldHost -Label "$arch canceled Host cleanup"
+              Write-Host "PASS: M5D2c $arch accepted read canceled, no stale reply, Host cleanup"
+            } finally {
+              Stop-M5D2CChild -Process $client
+              Stop-M5D2CChild -Process $heldHost
+              if (Test-Path -LiteralPath $ready) { Remove-Item -LiteralPath $ready -Force }
+            }
+
+            $pipe = 'vcm5d2c-restart-' + $arch + '-' + [guid]::NewGuid().ToString('N')
+            $ready = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.ready')
+            $lost = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.lost')
+            $nextPid = Join-Path $env:RUNNER_TEMP ('vcm5d2c-' + [guid]::NewGuid().ToString('N') + '.pid')
+            $first = $null
+            $second = $null
+            $reader = $null
+            try {
+              $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $service,$pipe,$ready)
+              $first = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -CommandLine $hostArgs
+              $clientArgs = ('--readonly-crash-restart "{0}" {1} "{2}" "{3}" "{4}"' -f $pipe,$first.Id,$ready,$lost,$nextPid)
+              $reader = Start-M5D2CProcess -File $native -CommandLine $clientArgs
+              Wait-M5D2CMarker -Path $ready -Value 'accepted' -Client $reader
+
+              $first.Kill()
+              if (-not $first.WaitForExit(5000)) {
+                throw "M5D2c $arch held Host did not stop"
+              }
+              Wait-M5D2CMarker -Path $lost -Value 'revoked' -Client $reader
+              Stop-M5D2CChild -Process $first
+              $first = $null
+
+              $secondArgs = ('"{0}" --serve-once "{1}" read-session' -f $service,$pipe)
+              $second = Start-M5D2CProcess -File (Get-Command dotnet -ErrorAction Stop).Source -CommandLine $secondArgs
+              [System.IO.File]::WriteAllText($nextPid,[string]$second.Id,[System.Text.Encoding]::ASCII)
+              Assert-M5D2CExit -Process $reader -Label "$arch read/revoke/reconnect client"
+              Assert-M5D2CExit -Process $second -Label "$arch restarted Host cleanup"
+              Write-Host "PASS: M5D2c $arch killed accepted read Host, revoked, restarted with safe PID+FILETIME"
+            } finally {
+              Stop-M5D2CChild -Process $reader
+              Stop-M5D2CChild -Process $first
+              Stop-M5D2CChild -Process $second
+              foreach ($p in @($ready,$lost,$nextPid)) {
+                if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+              }
+            }
+          }
+
+      - name: Run M5D2eB authenticated triple Host crash/cancel cycles on x86/x64 when present
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $doc = 'docs/architecture/VIRTUALCAR-M5D2EB-HOST-EPOCHS.md'
+          if (-not (Test-Path -LiteralPath $doc)) {
+            Write-Host 'SKIP: M5D2eB Host epoch integration feature is not present on selected source ref.'
+            return
+          }
+          $runner = 'emulator/tools/verify_m5d2eb_restarts.ps1'
+          if (-not (Test-Path -LiteralPath $runner)) {
+            throw 'M5D2eB stage exists but its runner script is missing'
+          }
+          $service = Join-Path $env:GITHUB_WORKSPACE 'emulator/managed/VirtualCar.Service.Checks/bin/Release/net10.0/VirtualCar.Service.Checks.dll'
+          $x86 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x86/Release/vc_ipc_restarts_checks.exe'
+          $x64 = Join-Path $env:GITHUB_WORKSPACE '.ci-build/native-x64/Release/vc_ipc_restarts_checks.exe'
+          & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $runner -ServiceDll $service -NativeX86 $x86 -NativeX64 $x64
+          if ($LASTEXITCODE -ne 0) {
+            throw ('M5D2eB x86/x64 Host epoch tests failed with code ' + $LASTEXITCODE)
+          }
+          Write-Host 'PASS: M5D2eB x86/x64 synthetic Host crash/cancel/recovery, no artifact upload'
+
+      - name: Validation summary
+        if: success()
+        shell: powershell
+        run: |
+          Write-Host ('Validated source ref: ' + '${{ inputs.source_ref || 'development' }}')
+          Write-Host 'PASS: Python emulator tests'
+          Write-Host 'PASS: legacy C host regression'
+          Write-Host 'PASS: Clang/LLD legacy Windows x86 DLL build and PE export validation'
+          Write-Host 'PASS: legacy x86 DLL native route regression and evidence audit'
+          Write-Host 'PASS: Go control tests and vet'
+          Write-Host 'PASS: Native C++ x86 configure/build/CTest and actual C/C++ parity'
+          Write-Host 'PASS: Native C++ x64 configure/build/CTest'
+          Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
+          Write-Host 'M5A/M5B IPC and M5C2 authenticated lifecycle/host restart checks run when the selected source contains the projects.'
+          Write-Host 'No artifacts uploaded. No releases or deployments performed.'
+) {
+            $actual = (git rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -cne $env:VC_SELECTED_SOURCE_REF) {
+              throw 'Checked-out HEAD does not match approved immutable SHA'
+            }
+            Write-Host 'Exact immutable source commit verified'
+          }
 
       - name: Verify local toolchain
         shell: powershell
