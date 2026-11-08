@@ -110,3 +110,45 @@ tests: `aef6bcbfb92c92412fe7b8e175056429731240a8`.
 - Owner-only Windows VMware workflow has not run on
   this research commit. Keep PR Draft; no runtime or
   release changes.
+
+## Why literal B9FB may be absent in one ReadVin XML
+
+A second set of original-source static tests was executed against the
+owner's same SHA-pinned `BizServices.Scripting.DLL`:
+**4/4 MethodDef path assertions PASS**, without executing the binary:
+
+- `ReadVinComponent.PropertySetup` (0x06000424) registers
+  `CanHiSpeedValue`, `UseRelay`, `BusId`, `Identifier`,
+  `Mode` and `EcuVariant` properties. It inherits further
+  `VehCommBase` properties, including `ServiceId`.
+- `ReadVinComponent.Execute` (0x06000426) reads
+  `CanHiSpeedValue` and `UseRelay`, sets up the communication
+  provider, adds `Identifier` as a service parameter,
+  calls `SetupTester`, then `VehCommBase.executeService`.
+- `VehCommBase.setupVehComm` (0x0600041D) reads `ServiceId`,
+  chooses communication context through `Mode` and
+  `CreateFromEcuVariant`/`CreateFromEcuType`/
+  `CreateFromEcuAddress`.
+- `VehCommBase.executeService` (0x06000420) calls the provider's
+  service `Execute`, stores a response object with
+  `set_Result`, then dispatches status-dependent delegates.
+
+This gives a code-grounded explanation for a critical analysis
+pitfall: **the script's literal XML need not contain the full
+CAN request `B9 FB`**. Service selection plus `Identifier`
+are interpreted by the diagnostic provider. One original
+redacted XML summary happened to contain lexical `F114`
+but not `B9FB`. That difference is not evidence that its
+runtime cannot issue `B9FB`, nor proof that it does.
+
+The next missing source is therefore the **exact**
+`ReadVin` script's **`ServiceId`, `Mode`, `Identifier`
+declarations and property handlers**, reconciled with the
+`T111_Service` definition and selected ECU configuration
+from the *same* VIDA installation. The public `spnda`
+exporter can extract those tables, but this research PR
+does not have the owner's private selected ReadVin ZIP or
+SQL procedure result and cannot claim their values.
+
+No inferred `F9 FB` or `62 F1 14` positive payload
+will be enabled in the emulator from this static evidence.
