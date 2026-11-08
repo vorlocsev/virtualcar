@@ -351,5 +351,126 @@ class ServiceCatalogTests(unittest.TestCase):
                     audit_sources(xml(), t111, definition, raw)
 
 
+    def test_34_t110_explicit_variant_and_service_join_is_static_only(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        t122 = b'id,identifier\n7,D2\n'
+        definition = b'<service id="100"><command/></service>'
+        t110 = b'id,fkT100_EcuVariant,fkT111_Service\n1,55,100\n2,56,100\n'
+        r = audit_sources(xml(), t111, definition, t122, t110, '55')
+        self.assertTrue(r['t110_service_ecu_variant_csv_supplied'])
+        self.assertTrue(r['single_readvin_with_matching_t110_service_ecu_variant_candidate_present'])
+        for name in ('actual_ecu_variant_identity_verified',
+                     'actual_ecu_variant_service_support_verified',
+                     'accepted_vin_verified', 'emulator_replay_approved'):
+            self.assertFalse(r[name])
+
+    def test_35_t110_wrong_variant_and_service_do_not_match(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        t122 = b'id,identifier\n7,D2\n'
+        definition = b'<service id="100"><command/></service>'
+        for entries, selected in ((b'55,101\n', '55'), (b'56,100\n', '55'),
+                                  (b'55,101\n56,100\n', '55')):
+            with self.subTest(selected=selected, entries=entries):
+                t110 = b'fkT100_EcuVariant,fkT111_Service\n' + entries
+                r = audit_sources(xml(), t111, definition, t122, t110, selected)
+                self.assertTrue(r['single_readvin_with_matching_t122_protocol_reference_candidate_present'])
+                self.assertFalse(r['single_readvin_with_matching_t110_service_ecu_variant_candidate_present'])
+
+    def test_36_t110_requires_complete_source_chain(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        t122 = b'id,identifier\n7,D2\n'
+        definition = b'<service id="100"><command/></service>'
+        t110 = b'fkT100_EcuVariant,fkT111_Service\n55,100\n'
+        for xml_source, catalog, service_def, protocols in (
+                (xml(), t111, None, t122),
+                (xml(), t111, definition, None),
+                (xml(), b'id,service,mode\n100,ReadVin,0\n', definition, t122),
+                (xml('<property name="ServiceId" class="Int" value="101"/>'),
+                 t111, definition, t122)):
+            with self.subTest(has_definition=service_def is not None):
+                r = audit_sources(xml_source, catalog, service_def, protocols, t110, '55')
+                self.assertFalse(r['single_readvin_with_matching_t110_service_ecu_variant_candidate_present'])
+
+    def test_37_t110_rejects_duplicate_invalid_and_missing_links(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        t122 = b'id,identifier\n7,D2\n'
+        rows = (b'55,100\n55,100\n', b'55,NULL\n', b'-1,100\n',
+                b'0,100\n', b'55,0\n', b'55,100,EXTRA\n', b'55\n',
+                b'INVALID,100\n')
+        for row in rows:
+            with self.subTest(row=row):
+                t110 = b'fkT100_EcuVariant,fkT111_Service\n' + row
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), t111, definition, t122, t110, '55')
+
+    def test_38_t110_rejects_ambiguous_headers_and_empty_table(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        t122 = b'id,identifier\n7,D2\n'
+        bad = (b'', b'fkT100_EcuVariant\n55\n',
+               b'fkT111_Service\n100\n',
+               b'fkT100_EcuVariant,fkT111_Service,fkT111_Service\n55,100,100\n',
+               b'fkT100_EcuVariant,fkT111_Service\n',
+               b'fkT100_EcuVariant,fkT111_Service\n55,100\x00\n',
+               b'fkT100_EcuVariant,fkT111_Service\n55,\xff\n',
+               b'fkT100_EcuVariant,fkT111_Service\n55,100\n' + b' ' * (MAX_CSV_BYTES + 1))
+        for t110 in bad:
+            with self.subTest(length=len(t110)):
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), t111, definition, t122, t110, '55')
+
+    def test_39_t110_requires_both_catalog_and_canonical_variant_id(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><command/></service>'
+        t122 = b'id,identifier\n7,D2\n'
+        t110 = b'fkT100_EcuVariant,fkT111_Service\n55,100\n'
+        with self.assertRaises(ValueError):
+            audit_sources(xml(), t111, definition, t122, t110)
+        with self.assertRaises(ValueError):
+            audit_sources(xml(), t111, definition, t122, selected_ecu_variant_id='55')
+        for selected in ('055', '0', '-55', '0x37', '', '2147483648', 55, None):
+            with self.subTest(selected=selected):
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), t111, definition, t122, t110, selected)
+
+    def test_40_t110_private_ecu_and_service_ids_never_reported(self):
+        t111 = b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n'
+        definition = b'<service id="100"><secret>PRIVATE_XML</secret></service>'
+        t122 = b'id,identifier\n7,PRIVATE_PROTOCOL\n'
+        t110 = b'fkT100_EcuVariant,fkT111_Service,annotation\n7345,100,PRIVATE_ECU_VARIANT\n'
+        result = json.dumps(audit_sources(xml(), t111, definition, t122, t110, '7345'))
+        self.assertTrue(json.loads(result)['single_readvin_with_matching_t110_service_ecu_variant_candidate_present'])
+        for token in ('7345', 'PRIVATE_ECU_VARIANT', 'PRIVATE_PROTOCOL', 'PRIVATE_XML', '100'):
+            self.assertNotIn(token, result)
+
+    def test_41_t110_optional_cli_private_and_exclusive(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            z = folder / 'readvin.zip'
+            catalog = folder / 'T111_Service.csv'
+            definition = folder / '100.xml'
+            protocol = folder / 'T122_Protocol.csv'
+            t110 = folder / 'T110_Service_EcuVariant.csv'
+            result = folder / 'redacted.json'
+            with zipfile.ZipFile(z, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('script.xml', xml())
+            catalog.write_bytes(b'id,fkT122_Protocol,service,mode\n100,7,ReadVin,0\n')
+            definition.write_bytes(b'<service id="100"><command/></service>')
+            protocol.write_bytes(b'id,identifier\n7,PRIVATE_PROTOCOL_NAME\n')
+            t110.write_bytes(b'fkT100_EcuVariant,fkT111_Service\n55,100\n')
+            args = [str(z), str(catalog), '--service-definition', str(definition),
+                    '--protocol-catalog', str(protocol), '--t110-catalog', str(t110),
+                    '--ecu-variant-id', '55', '--output', str(result)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(args)
+            saved = result.read_text(encoding='utf-8')
+            self.assertTrue(json.loads(saved)['single_readvin_with_matching_t110_service_ecu_variant_candidate_present'])
+            for secret in ('PRIVATE_PROTOCOL_NAME', '55', str(t110), str(definition)):
+                self.assertNotIn(secret, saved)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(args)
+
+
 if __name__ == '__main__':
     unittest.main()
