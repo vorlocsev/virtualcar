@@ -145,6 +145,41 @@ jobs:
           lld-link --version
           if ($LASTEXITCODE -ne 0) { throw 'LLD-Link is not executable' }
 
+      # Validate the original root proxy/ implementation as well as emulator/.
+      # These checks are read-only; they do not load a vehicle DLL or contact
+      # any adapter. Only owner-reviewed refs reach this persistent runner.
+      - name: Test root dev26 J2534 RxStatus and bridge, compile proxy x86
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rxExe = Join-Path $env:RUNNER_TEMP 'virtualcar-dev26-rx-status.exe'
+          $bridgeExe = Join-Path $env:RUNNER_TEMP 'virtualcar-dev26-bridge.exe'
+          $proxyObj = Join-Path $env:RUNNER_TEMP 'virtualcar-dev26-x86-proxy.obj'
+          $bridgeObj = Join-Path $env:RUNNER_TEMP 'virtualcar-dev26-x86-bridge.obj'
+          # Unit test uses current checked-out source, including RxStatus bits
+          # and failed PassThruReadMsgs stale-buffer suppression.
+          & clang -std=c99 -O2 -Werror -Wall -Wextra -pedantic -Iproxy tests/test_rx_status.c -o $rxExe
+          if ($LASTEXITCODE -ne 0) { throw 'Native root RxStatus test compilation failed' }
+          & $rxExe
+          if ($LASTEXITCODE -ne 0) { throw 'Native root RxStatus test failed' }
+
+          & clang -std=c99 -O2 -Werror -Wall -Wextra -pedantic -Iproxy `
+            proxy/p2_cem_router.c proxy/p2_ls_observer.c proxy/p2_vehicle_core.c `
+            proxy/p2_j2534_bridge.c tests/test_bridge.c -o $bridgeExe
+          if ($LASTEXITCODE -ne 0) { throw 'Native root bridge test compilation failed' }
+          & $bridgeExe
+          if ($LASTEXITCODE -ne 0) { throw 'Native root bridge test failed' }
+
+          # Compilation checks x86 ABI/C99, not a full DLL link or client run.
+          & clang -target i686-pc-windows-msvc -fno-builtin -fno-stack-protector `
+            -ffreestanding -Werror -Wall -Wextra -c proxy/j2534_trace_proxy.c -o $proxyObj
+          if ($LASTEXITCODE -ne 0) { throw 'Native root proxy Windows x86 compilation failed' }
+          & clang -target i686-pc-windows-msvc -fno-builtin -fno-stack-protector `
+            -ffreestanding -Werror -Wall -Wextra -c proxy/p2_j2534_bridge.c -o $bridgeObj
+          if ($LASTEXITCODE -ne 0) { throw 'Native root bridge Windows x86 compilation failed' }
+          & llvm-readobj --file-headers $proxyObj
+          if ($LASTEXITCODE -ne 0) { throw 'Native root proxy COFF inspection failed' }
+
       - name: Run legacy C protocol regression with Clang host compiler
         shell: powershell
         run: |
