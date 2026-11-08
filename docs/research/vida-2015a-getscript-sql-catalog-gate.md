@@ -1087,18 +1087,50 @@ or native libraries embedded in JARs. No content of the
 of 31 JARs does **not** establish a J2534 driver or actual
 vehicle communication.
 
-**Next bounded owner-local static gate:** inspect only ZIP
-central directory **entry names and sizes** within the 31
-`WEB-INF/lib` JAR archives (plus a recursively bounded
-count of `.class` files under each `WEB-INF/classes`),
-returning aggregate total classes, number of archives
-readable, per-archive class-count tiers, and separate
-J2534/PassThru/diagnostic class-leaf-name hint counts.
-Enforce per-archive and cumulative entry limits; avoid
-printing JAR, class, package, path, URL, manifest or
-configuration names/content. Do not extract or execute
-code, send requests, change the registry, or attach DiCE.
-Treat filename hints only as clues, not proof of use.
+**Owner-local WAR JAR ZIP metadata gate completed:**
+Operator ran `Inspect-VIDA-WARJarMetadata.ps1` successfully
+(`Result=OK`, `ScriptFinished`), on verified VIDA-descendant
+WildFly `JavaPID=11600`, `EARSlot=2`, `WARSlot=1`.
+
+| Metric | Observed |
+|---|---:|
+| WEBINFLibJars / ReadableJars | **31 / 31** |
+| JarsSkippedLarge / JarsSkippedEntryLimit / UnreadableJars | **0 / 0 / 0** |
+| JarEntriesInspected | **6518** |
+| ClassEntriesFound | **5872** |
+| J2534ClassNameHints / PassThruClassNameHints / DiCEClassNameHints | **0 / 0 / 0** |
+| DiagnosisClassNameHints / VehicleClassNameHints | **0 / 0** |
+| JarsWithAdapterNameHints | **0** |
+| WARExplodedClassFiles | **279** |
+| WARClassTreeLimitReached | **False** |
+| WARJ2534ClassNameHints / WARPassThruClassNameHints / WARDiCEClassNameHints | **0 / 0 / 0** |
+
+The second EAR/WAR has **6151 `.class` files total across
+31 first-level `WEB-INF/lib` JAR archives and exploded
+`WEB-INF/classes`**. These are **class leaf-filename**
+checks and ZIP central-directory inventory only. All
+readable, no skips; do **not** misstate zero filename hints
+as no J2534/PassThru/DICE code or no VIDA diagnostics.
+The 325-class EJB root JAR from the earlier gate is a
+**separate artifact**, not included in these 6151 files.
+No archive was extracted, and no bytecode or class constant
+pool in these 31 JARs was read in this inventory. No paths,
+names of proprietary classes, endpoints, VIN or credentials
+were emitted, nor device/SQL/HTTP requests sent.
+
+**Next bounded owner-local passive gate:** count `CONSTANT_Utf8`
+keyword hints in class constant pools across the **31 web
+JARs and 279 exploded classes**, without printing values or
+filenames. Distinguish class-count occurrences from actual
+calls: even J2534/PassThru/DiCE/ReadVin keywords in a
+constant pool only support a static lead, not a method call.
+Enforce per-class 1 MiB, overall decompressed budget,
+archive entry caps and stage progress reporting. Report
+classes scanned/skipped/parse-errors and anonymous JAR
+slots if positive; do not execute class code, reveal
+package/class names or inspect/copy proprietary method
+bodies. On zero hints, prioritize client-side integration
+and separately approved, redacted offline trace research.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
