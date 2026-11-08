@@ -260,6 +260,27 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
         self.assertFalse(result['candidate_addvin_route_arity_and_output_shape_lexically_present'])
         self.assertFalse(result['vin_accepted_by_client'])
 
+    def test_28_addvin_no_argument_not_callable(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<parameter node="Extractor" property="Decoded"/>', b'')
+        result = audit_xml(raw)
+        self.assertFalse(result['candidate_addvin_route_arity_and_output_shape_lexically_present'])
+        self.assertEqual(result['categorical_declarations'][
+            'identity_calls_with_wrong_direct_argument_count'], 1)
+        self.assertFalse(result['vin_accepted_by_client'])
+
+    def test_29_wrapped_argument_not_selected_by_original_call_parser(self):
+        raw = xml().replace(b'nodeid="Identity"', b'nodeid="Output"').replace(
+            b'node="Identity"', b'node="Output"')
+        raw = raw.replace(b'<parameter node="Extractor" property="Decoded"/>',
+                          b'<parameters><parameter node="Extractor" property="Decoded"/></parameters>')
+        result = audit_xml(raw)
+        self.assertFalse(result['candidate_addvin_route_arity_and_output_shape_lexically_present'])
+        self.assertEqual(result['categorical_declarations'][
+            'identity_calls_with_wrong_direct_argument_count'], 1)
+        self.assertFalse(result['identity_argument_string_type_verified'])
+
     def test_10_private_zip_safe_new_json_exclusive_and_symlink(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)
