@@ -27,7 +27,7 @@ def example():
             "connection": "connected",
             "ecu_list": "empty",
             "vehicle_identity": "not_displayed",
-            "error_category": "vehicle_unrecognized"
+            "error_category": "vin_read_failed"
         }
     }
 
@@ -38,9 +38,10 @@ class SectorVUiObservationTests(unittest.TestCase):
         self.assertTrue(result["connection_displayed_in_gui"])
         self.assertFalse(result["vehicle_identity_displayed_in_gui"])
         self.assertFalse(result["ecu_list_populated_in_gui"])
-        self.assertEqual(result["first_next_gate"], "review_same_run_b9fb_delivery_and_verified_fixture")
+        self.assertEqual(result["first_next_gate"], "review_same_run_vin_read_request_and_b9fb_delivery")
         self.assertEqual(result["client_acceptance_e2e"], "not_verified")
         self.assertFalse(result["replay_approved"])
+        self.assertEqual(result["observed_gui_states"]["error_category"], "vin_read_failed")
 
     def test_02_positive_gui_still_needs_independent_provenance(self):
         case = example()
