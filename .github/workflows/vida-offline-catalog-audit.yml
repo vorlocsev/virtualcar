@@ -1,0 +1,78 @@
+name: VIDA offline catalog research (owner VM)
+
+# Explicit owner-only read-only metadata research of nine owner-local SQLite
+# copies on the persistent self-hosted Windows VM. NEVER print original data.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virtualcar-vida-offline-catalog
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: ReadVin and CarCom catalog evidence (no raw data)
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, virtualcar-win]
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout only reviewed immutable catalog analyzer and tests
+        uses: actions/checkout@v4
+        with:
+          # Intentionally pinned to reviewed immutable research source.
+          ref: 28446078e136f87b97f13d9be5a920aca88c9e5e
+          persist-credentials: false
+          sparse-checkout: |
+            emulator/tools/audit_vida_offline_catalog.py
+            emulator/tests/test_vida_offline_catalog_audit.py
+          sparse-checkout-cone-mode: false
+
+      - name: Run synthetic-only privacy regressions
+        shell: powershell
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = 'E:\VirtualCar\Tools\python312.path'
+          if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+            throw 'Python runtime manifest not present on authorized VM.'
+          }
+          $python = (Get-Content -LiteralPath $manifest -Raw).Trim()
+          & $python -m unittest discover -s emulator/tests -p test_vida_offline_catalog_audit.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic VIDA catalog privacy tests failed.' }
+
+      - name: Verify nine private SQLite source files locally
+        shell: powershell
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          $data = 'E:\VirtualCar\VIDA-private'
+          $verifier = 'E:\VirtualCar\VIDA-tools\verify_offline_collection.py'
+          if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) {
+            throw 'Trusted owner-local validator is missing.'
+          }
+          & $python $verifier --folder $data
+          if ($LASTEXITCODE -ne 0) { throw 'Owner-local dataset verification failed.' }
+
+      - name: Generate only predefined redacted catalog counters
+        shell: powershell
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          $script = Join-Path $env:GITHUB_WORKSPACE 'emulator\tools\audit_vida_offline_catalog.py'
+          if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+            throw 'Reviewed pinned analyzer script unavailable.'
+          }
+          Write-Host 'VIDA_CATALOG_AUDIT_BEGIN'
+          & $python $script --folder 'E:\VirtualCar\VIDA-private'
+          if ($LASTEXITCODE -ne 0) { throw 'VIDA catalog research failed.' }
+          Write-Host 'VIDA_CATALOG_AUDIT_END'
+          Write-Host 'No source table records, VIN values, XML, ZIP bytes or SQL definitions were published.'
