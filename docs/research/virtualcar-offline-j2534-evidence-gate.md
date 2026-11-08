@@ -704,6 +704,52 @@ to establish safe schema before selecting allowlisted
 No `gh` downloads, no firmware/ECU interaction, no
 J2534 registration edits, and no binaries/releases published.
 
+## Owner hashes 24 candidate VirtualCarJ2534.dll copies locally (2026-11-08)
+
+The owner has run the next read-only inventory (hashes were
+used **locally only** to assign anonymous ordinal labels,
+never printed or uploaded):
+
+```text
+[VirtualCar] TotalCopies=24
+[VirtualCar] UniqueBinaries=11
+[VirtualCar] BuildInfoCandidates:
+Group SizeKiB ControlApp KnownFields
+BIN7   71.5      True       architecture,version
+BIN8   70.5      True       architecture,version
+BIN9   65        True       architecture,version
+BIN11  66        True       architecture,version
+Result=OK
+```
+
+There are **11 content-distinct DLL files among 24 copies**,
+and four full-looking bundles include `BUILDINFO.json`,
+`VirtualCarControl.exe`, `virtualcar.ini`. These four
+have top-level **discovered allowlisted** BUILDINFO
+key names `architecture` and `version`; other metadata
+keys or nested provenance were **not enumerated**.
+Do **not** infer a commit SHA, branch, CI build identity
+or newest version from file modification time, SHA256
+group ordinal or size. None of these files were run,
+and their association with earlier accumulated logs is
+unknown. The **currently registered** 9.5 KiB x86
+DLL remains a separate unattributed file.
+
+**Next local read-only gate:** for those four candidates,
+extract only top-level `architecture` and `version`
+values after validating they are short, non-sensitive
+plain strings, plus independently read the x86/x64
+PE machine header. Report `Group`, `PEMachine`,
+`Version`, `DeclaredArchitecture`; never print
+paths, raw BUILDINFO, hashes or configuration. Use
+the **same sorted file order and hash grouping** as
+previously to preserve BIN7/8/9/11 labels.
+If metadata is missing or unexpectedly complex,
+report only `Unknown` rather than dumping it.
+Further provenance and controlled VMware testing
+will need verified build identity; no registry
+modifications or physical J2534 testing now.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
