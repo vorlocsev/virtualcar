@@ -193,7 +193,9 @@ class ServiceCatalogTests(unittest.TestCase):
     def test_20_missing_protocol_column_or_value_blocks_definition_shape(self):
         definition = b'<service id="100"><definition/></service>'
         for cat in (b'id,service,mode\n100,ReadVin,0\n',
-                    b'id,fkT122_Protocol,service,mode\n100,,ReadVin,0\n'):
+                    b'id,fkT122_Protocol,service,mode\n100,,ReadVin,0\n',
+                    b'id,fkT122_Protocol,service,mode\n100,NULL,ReadVin,0\n',
+                    b'id,fkT122_Protocol,service,mode\n100,-1,ReadVin,0\n'):
             with self.subTest(cat=cat):
                 result = audit_sources(xml(), cat, definition)
                 self.assertTrue(result['single_readvin_with_service_mode_metadata_candidate_present'])
@@ -228,11 +230,11 @@ class ServiceCatalogTests(unittest.TestCase):
 
     def test_24_private_definition_and_metadata_never_emitted(self):
         secret = 'SENSITIVE_SERVICE_XML_PAYLOAD'
-        cat = b'id,fkT122_Protocol,service,mode\n100,PRIVATE_PROTOCOL,SECRET_SVC,0\n'
+        cat = b'id,fkT122_Protocol,service,mode\n100,707,SECRET_SVC,0\n'
         definition = ('<service id="100"><data>' + secret + '</data></service>').encode()
         result = json.dumps(audit_sources(xml(), cat, definition))
         self.assertTrue(json.loads(result)['single_readvin_with_matching_service_definition_root_candidate_present'])
-        for token in (secret, 'PRIVATE_PROTOCOL', 'SECRET_SVC', '100', 'Reader'):
+        for token in (secret, '707', 'SECRET_SVC', '100', 'Reader'):
             self.assertNotIn(token, result)
 
     def test_25_optional_cli_service_definition_keeps_private_file_local(self):
