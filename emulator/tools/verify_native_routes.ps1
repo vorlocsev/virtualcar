@@ -7,8 +7,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ([IntPtr]::Size -ne 4) {
-    $extra = if ($IdentityReplay) { @('-IdentityReplay') } else { @() }
-    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory @extra
+    if ($IdentityReplay) {
+        & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory -IdentityReplay
+    } else {
+        & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory
+    }
     exit $LASTEXITCODE
 }
 $dll = (Resolve-Path -LiteralPath $DllPath).Path
