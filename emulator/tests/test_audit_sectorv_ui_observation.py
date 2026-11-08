@@ -123,6 +123,33 @@ class SectorVUiObservationTests(unittest.TestCase):
                 audit(case)
 
     def test_07_enforce_single_run_no_hardware_no_writes(self):
+        screenshot = example()
+        screenshot.update({
+            "scenario": "unknown_lab",
+            "source": "screenshot_ui_observation",
+            "run_scope": "single_client_ui_observation",
+            "read_only": None,
+            "physical_adapter_disconnected": None
+        })
+        report = audit(screenshot)
+        self.assertIsNone(report["read_only_reported"])
+        self.assertIsNone(report["physical_adapter_disconnected_reported"])
+        self.assertFalse(report["isolation_independently_verified"])
+        self.assertEqual(report["source"], "screenshot_ui_observation_unverified")
+        self.assertEqual(report["first_next_gate"],
+                         "obtain_isolated_same_run_j2534_vin_read_evidence")
+        self.assertEqual(report["client_acceptance_e2e"], "not_verified")
+        for changed, value in [
+            ("scenario", "P2_MY2009_lab"),
+            ("run_scope", "single_vm_client_run"),
+            ("read_only", True),
+            ("physical_adapter_disconnected", True),
+            ("physical_adapter_disconnected", False),
+        ]:
+            invalid = copy.deepcopy(screenshot)
+            invalid[changed] = value
+            with self.subTest(screenshot_field=changed), self.assertRaises(ValueError):
+                audit(invalid)
         for key, value in [
             ("client", "VDASH"),
             ("source", "j2534_inferred"),
@@ -154,6 +181,22 @@ class SectorVUiObservationTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     main([str(src), "--output", str(dst)])
             self.assertEqual(json.loads(dst.read_text(encoding="utf-8")), report)
+            screenshot = example()
+            screenshot.update({
+                "scenario": "unknown_lab",
+                "source": "screenshot_ui_observation",
+                "run_scope": "single_client_ui_observation",
+                "read_only": None,
+                "physical_adapter_disconnected": None
+            })
+            src.write_text(json.dumps(screenshot), encoding="utf-8")
+            screenshot_output = Path(td) / "screenshot-safe-report.json"
+            with contextlib.redirect_stdout(io.StringIO()):
+                main([str(src), "--output", str(screenshot_output)])
+            screenshot_text = screenshot_output.read_text(encoding="utf-8")
+            self.assertIn('"read_only_reported": null', screenshot_text)
+            self.assertNotIn("local-sensitive-input", screenshot_text)
+            self.assertIn('"client_acceptance_e2e": "not_verified"', screenshot_text)
             src.write_bytes(b"x" * 8193)
             other = Path(td) / "other.json"
             with contextlib.redirect_stderr(io.StringIO()):
