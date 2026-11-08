@@ -17,6 +17,7 @@ SCHEMA = 'virtualcar-vida-readvin-service-catalog-static-v1'
 MAX_ZIP_BYTES = 2 * 1024 * 1024
 MAX_XML_BYTES = 1024 * 1024
 MAX_CSV_BYTES = 4 * 1024 * 1024
+MAX_SERVICE_DEFINITION_BYTES = 1024 * 1024
 MAX_ELEMENTS = 20000
 MAX_DEPTH = 96  # Matches the bounded original-IL XML classifier.
 MAX_ROWS = 50000
@@ -64,6 +65,40 @@ def _parse_xml(xml_bytes):
     return content, nodes
 
 
+def _parse_service_definition(data):
+    """Read only the exporter's <service id="..."> wrapper, never its payload."""
+    if (not isinstance(data, bytes) or not data or
+            len(data) > MAX_SERVICE_DEFINITION_BYTES or
+            b'\x00' in data[:256] or
+            data.startswith((b'\xff\xfe', b'\xfe\xff')) or
+            re.search(rb'<!\s*(?:DOCTYPE|ENTITY)\b', data, re.I)):
+        raise ValueError('unsafe service definition XML')
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise ValueError('invalid service definition XML') from exc
+    if root.tag != 'service':
+        raise ValueError('unexpected service definition root')
+    service_id = _positive_id(root.attrib.get('id'))
+    if service_id is None:
+        raise ValueError('invalid service definition id')
+    pending = [(root, 0)]
+    count = 0
+    content_present = False
+    while pending:
+        node, depth = pending.pop()
+        count += 1
+        if count > MAX_ELEMENTS or depth > MAX_DEPTH:
+            raise ValueError('excessive service definition complexity')
+        if node is not root or (node.text and node.text.strip()):
+            content_present = True
+        pending.extend((child, depth + 1) for child in node)
+    # Empty root has no definition; fail closed rather than treating it as evidence.
+    if not content_present:
+        raise ValueError('empty service definition')
+    return service_id, True
+
+
 def _parse_catalog(csv_bytes):
     if (not isinstance(csv_bytes, bytes) or len(csv_bytes) > MAX_CSV_BYTES
             or b'\x00' in csv_bytes):
@@ -83,6 +118,8 @@ def _parse_catalog(csv_bytes):
         raise ValueError('expected unique T111 service catalog headers')
     occurrences = {}
     metadata_complete_ids = {}
+    protocol_complete_ids = {}
+    has_protocol_header = 'fkT122_Protocol' in reader.fieldnames
     total = invalid = empty_metadata = 0
     try:
         for record in reader:
@@ -100,14 +137,19 @@ def _parse_catalog(csv_bytes):
                 occurrences[value] = occurrences.get(value, 0) + 1
                 if has_metadata:
                     metadata_complete_ids[value] = metadata_complete_ids.get(value, 0) + 1
+                    if has_protocol_header and record['fkT122_Protocol'].strip():
+                        protocol_complete_ids[value] = protocol_complete_ids.get(value, 0) + 1
     except (csv.Error, UnicodeError) as exc:
         raise ValueError('malformed CSV') from exc
-    return occurrences, metadata_complete_ids, total, invalid, empty_metadata
+    return occurrences, metadata_complete_ids, protocol_complete_ids, total, invalid, empty_metadata
 
 
-def audit_sources(xml_bytes, csv_bytes):
+def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None):
     content, nodes = _parse_xml(xml_bytes)
-    service_ids, metadata_complete_ids, rows, invalid_rows, empty_metadata = _parse_catalog(csv_bytes)
+    service_ids, metadata_complete_ids, protocol_complete_ids, rows, invalid_rows, empty_metadata = _parse_catalog(csv_bytes)
+    definition_id, definition_content_present = (None, False)
+    if service_definition_bytes is not None:
+        definition_id, definition_content_present = _parse_service_definition(service_definition_bytes)
     readers = {n.attrib['nodeid']: n for n in nodes
                if n.attrib.get('class', '').rsplit('.', 1)[-1] == 'ReadVinComponent'}
     # Original XML property-handler setters can replace a literal ServiceId.
@@ -144,6 +186,7 @@ def audit_sources(xml_bytes, csv_bytes):
         'literal_ids_with_duplicate_catalog_rows': 0,
         'literal_ids_with_declared_override': 0,
     }
+    definition_qualified_matches = 0
     for node_id, node in readers.items():
         props = node.findall('./property')
         service_props = [p for p in props if p.attrib.get('name') == 'ServiceId']
@@ -171,6 +214,9 @@ def audit_sources(xml_bytes, csv_bytes):
             counters['literal_ids_with_unique_catalog_row_no_declared_override'] += 1
             if metadata_complete_ids.get(value, 0) == 1:
                 counters['literal_ids_with_unique_catalog_row_and_nonempty_service_mode'] += 1
+                if (definition_content_present and definition_id == value and
+                        protocol_complete_ids.get(value, 0) == 1):
+                    definition_qualified_matches += 1
             else:
                 counters['literal_ids_with_unique_catalog_row_but_empty_service_or_mode'] += 1
 
@@ -185,6 +231,10 @@ def audit_sources(xml_bytes, csv_bytes):
         'single_readvin_with_service_mode_metadata_candidate_present': bool(
             counters['readvin_nodes'] == 1 and
             counters['literal_ids_with_unique_catalog_row_and_nonempty_service_mode'] == 1),
+        'service_definition_xml_supplied': service_definition_bytes is not None,
+        'single_readvin_with_matching_service_definition_root_candidate_present': bool(
+            len(readers) == 1 and definition_qualified_matches == 1),
+        'original_service_definition_runtime_verified': False,
         'same_installation_provenance_verified': False,
         'original_getscript_runtime_selection_verified': False,
         'runtime_serviceid_or_propertyhandler_value_verified': False,
@@ -222,11 +272,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description='Privacy-safe static ReadVin to T111 catalog cross-check')
     ap.add_argument('readvin_zip', type=Path)
     ap.add_argument('t111_csv', type=Path)
+    ap.add_argument('--service-definition', type=Path, help='optional private extracted_services/<id>.xml')
     ap.add_argument('--output', required=True, type=Path)
     a = ap.parse_args(argv)
     repo = Path(__file__).resolve().parents[2]
     dest = a.output.resolve()
     inputs = [a.readvin_zip, a.t111_csv]
+    if a.service_definition is not None:
+        inputs.append(a.service_definition)
     if (dest == repo or repo in dest.parents
             or dest in (p.resolve() for p in inputs)
             or a.output.is_symlink() or a.output.parent.is_symlink()):
@@ -235,7 +288,14 @@ def main(argv=None):
         if (a.t111_csv.is_symlink() or not a.t111_csv.is_file()
                 or a.t111_csv.stat().st_size > MAX_CSV_BYTES):
             raise ValueError('unsupported catalog file')
-        report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes())
+        definition = None
+        if a.service_definition is not None:
+            path = a.service_definition
+            if (path.is_symlink() or not path.is_file() or path.suffix.lower() != '.xml'
+                    or path.stat().st_size > MAX_SERVICE_DEFINITION_BYTES):
+                raise ValueError('unsupported private service definition')
+            definition = path.read_bytes()
+        report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes(), definition)
         with a.output.open('x', encoding='utf-8') as out:
             json.dump(report, out, ensure_ascii=False, indent=2)
             out.write('\n')
