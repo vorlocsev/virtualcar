@@ -1031,6 +1031,51 @@ paths or raw diagnostic data. Do not install or register
 the candidate, change host keys, or run SectorV until
 the VM-safety prerequisites are confirmed.
 
+## Owner guest Windows VMware and J2534 read-only inventory (2026-11-08)
+
+After the static BIN7 package SHA256 14/14 and corrected profile
+safety 11/11 checks passed, the owner ran the read-only
+guest-environment inspection:
+
+```text
+VMwareDetected  J2534Providers  VirtualCarMatches  RegistryModified
+True            6               3                  False
+Result=OK
+```
+
+The OS hardware strings matched VMware, and the Registry32
+`HKLM\SOFTWARE\PassThruSupport.04.04` key contained six provider
+subkeys, three with names resembling Virtual Car or legacy SectorV.
+The output's `RegistryModified=False` was a literal field printed
+by the read-only script, **not** an independent registry change audit.
+These counts match an earlier local check but **do not** prove
+whether it is the same Windows installation or exact DLL set
+without further read-only verification.
+
+The source `emulator/scripts/install.ps1` creates/updates
+the **exact** 32-bit provider key
+`SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car`, with
+`FunctionLibrary` pointing to the package
+`VirtualCarJ2534.dll`, `CAN=1`, `ISO15765=1`
+and `MessageVersion=0x0404`. The earlier narrow inspection
+did not find that exact key on the inspected Windows, and
+the other three name matches previously included an
+unattributed existing 9.5 KiB x86 DLL plus two paths
+to nonexistent files. A **provider count is not
+hardware presence or client acceptance proof**.
+
+**Hard gate before touching any Windows registration or
+executing BIN7:** in the VMware application (host-side),
+manually confirm an existing snapshot/revert point and
+no physical USB/J2534 adapter passthrough, nor a
+connected real vehicle. The guest-side manufacturer/model
+check cannot prove a snapshot or absence of physical
+passthrough. Confirm that BIN7's vetted package is
+available inside this VM; do not mix with the existing
+unattributed x86 DLL. Retain a reversible plan for
+registration that does not touch unrelated J2534 keys.
+No run/installation is approved by these findings alone.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
