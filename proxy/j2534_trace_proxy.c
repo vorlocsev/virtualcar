@@ -178,11 +178,14 @@ DWORD WINAPI PassThruDisconnect(DWORD channel){DWORD st;ensure_loaded();st=real_
   if(st==0 && g_bridge_ready){EnterCriticalSection(&g_bridge_lock);p2_bridge_disconnect(&g_bridge,channel);LeaveCriticalSection(&g_bridge_lock);}
   event_log("disconnect",channel,st,0,0,P2_OTHER,0,0,0);return st;}
 DWORD WINAPI PassThruReadMsgs(DWORD channel,PASSTHRU_MSG *msgs,DWORD *num,DWORD timeout){
-    DWORD st,count=0,requested=num?*num:0,i,idx=0; p2_kind kind=P2_OTHER;
+    DWORD st,count=0,requested=num?*num:0,i,idx=0; int valid_batch=0;
+    p2_kind kind=P2_OTHER;
     const char *core_rx=0;
     ensure_loaded();st=real_read?real_read(channel,msgs,num,timeout):ERR_FAILED;
     count=num?*num:0;
-    if(st==0 && msgs && count>0 && count<=128 && g_bridge_ready){
+    /* Never dereference driver-reported records beyond caller capacity. */
+    valid_batch=msgs && p2_j2534_rx_batch_is_safe(st,requested,count);
+    if(valid_batch && g_bridge_ready){
       EnterCriticalSection(&g_bridge_lock);
       for(i=0;i<count;++i){
         const char *v;
@@ -193,12 +196,12 @@ DWORD WINAPI PassThruReadMsgs(DWORD channel,PASSTHRU_MSG *msgs,DWORD *num,DWORD 
       }
       LeaveCriticalSection(&g_bridge_lock);
     }
-    if(st==0 && msgs && count>0 && count<=128){
+    if(valid_batch){
       for(i=0;i<count;++i){p2_kind k=msg_kind(&msgs[i],1,st);if(k!=P2_OTHER){kind=k;idx=i;break;}}
     }
     event_log_extra("read",channel,st,requested,count,kind,
-              (st==0 && msgs && count>idx && count<=128)?msg_canid(&msgs[idx]):0,
-              (st==0 && msgs && count>idx && count<=128)?msg_len(&msgs[idx]):0,0,
+              (valid_batch && count>idx)?msg_canid(&msgs[idx]):0,
+              (valid_batch && count>idx)?msg_len(&msgs[idx]):0,0,
               0,0,0,core_rx,0);
     return st;
 }
