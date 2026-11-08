@@ -458,6 +458,76 @@ provider the diagnostic application is configured to select.
 Не исправлять реестр и не удалять две устаревшие записи
 до проверки, какую выбирает клиент.
 
+## Статические PE-экспорты существующей J2534 DLL (2026-11-08)
+
+Владелец повторно выполнил локальный PowerShell + Python
+read-only PE export inspection **единственного существующего
+x86 файла**, найденного через реестр. В предыдущем
+PowerShell первая попытка была прервана из-за
+отдельной интерактивной строки `else {`, но
+переработанный независимый static-PE считыватель
+успешно завершился:
+
+```text
+[VirtualCar] PEExportInspection
+PEMachine=x86
+TotalExportNames=14
+ExactJ2534Exports=14/14
+PassThruOpen=Exact
+PassThruClose=Exact
+PassThruConnect=Exact
+PassThruDisconnect=Exact
+PassThruReadMsgs=Exact
+PassThruWriteMsgs=Exact
+PassThruStartPeriodicMsg=Exact
+PassThruStopPeriodicMsg=Exact
+PassThruStartMsgFilter=Exact
+PassThruStopMsgFilter=Exact
+PassThruSetProgrammingVoltage=Exact
+PassThruReadVersion=Exact
+PassThruGetLastError=Exact
+PassThruIoctl=Exact
+Result=OK
+```
+
+Это доказывает **наличие имён в PE export directory**,
+но не ABI calling convention или фактическое поведение,
+не успех `PassThruOpen/Connect`, не готовность ISO15765
+и не признание ECU клиентом. Исполняемый код не запускали.
+
+**Выявлена конкретная гипотеза для проверки происхождения:
+** `emulator/native-cpp/CMakeLists.txt` собирает
+`VirtualCarJ2534Cpp` из
+`emulator/native-cpp/src/j2534_fail_closed.cpp`
+как **M3 fail-closed ABI validation DLL**, прямо запрещённую
+к регистрации как функциональный PassThru.
+Она также декларирует **14 бездекорированных
+`PassThru*` экспортов**, но `PassThruOpen`
+завершает `ERR_DEVICE_NOT_CONNECTED`,
+`PassThruWriteMsgs` блокирует TX, не
+открывает транспорт/IPC/автомобиль и не эмулирует ECU.
+Поскольку её имя сборки `VirtualCarJ2534Cpp`
+и бинарное происхождение **не доказано** для
+локальной DLL 9,5 KiB, нельзя объявлять
+установленный файл M3 только из совпадения
+числа экспортов.
+
+**Следующий безопасный дифференцирующий признак**:
+локально без запуска DLL проверить наличие
+точных embedded ASCII strings
+`Virtual Car lab service not connected`,
+`Virtual Car lab operation unavailable`,
+`Null J2534 parameter` из известного
+fail-closed исходника. Вывести только
+логические индикаторы присутствия, без текста
+других строк, содержимого бинарника, пути
+или полного хеша. Даже если все найдены,
+это **сильная сигнатура кода**, не
+криптографическая проверка происхождения;
+если нет, это не доказывает рабочий эмулятор.
+Ничего не устанавливать, не загружать DLL,
+не обращаться к J2534 или реальному автомобилю.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
