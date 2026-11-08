@@ -387,9 +387,38 @@ without printing hashes). Never show paths, exact provider
 subkey names or other third-party providers; never load,
 register or execute DLLs, call the J2534 API, or change any
 setting. The helper `Inspect-VirtualCar-J2534Aliases.ps1`
-was constructed locally for the owner to inspect before
-running; no Windows execution or result of this helper
-is yet claimed.
+was constructed for offline owner review, but the owner
+reported that the downloaded file was unavailable and
+instead **ran equivalent inline read-only PowerShell**.
+
+**Owner-run exact result (2026-11-08):** of the three
+name-matching `Registry32/PassThruSupport.04.04` entries
+(sorted by registry subkey name), **Entry 1** has
+`DLLExists=True`, `PEMachine=x86`, `FileVersion=Unknown`,
+`BinaryGroup=DLL1`; **Entry 2 and Entry 3** have
+`DLLExists=False`, `PEMachine=Unknown`, `FileVersion=Unknown`,
+`BinaryGroup=None`. The result confirms **one existing x86
+PE image** referenced by a matching J2534 registry entry,
+plus **two stale/broken FunctionLibrary path references**.
+It does not prove that Entry 1 has all required J2534
+exports, can be loaded by a client, is the current official
+Virtual Car build, or was used for historical logs.
+`FileVersion=Unknown` means the check did not find a
+numeric standard file-version resource; it is **not** a
+reliable failure criterion. No paths, hashes or provider
+names were exposed; no DLL was loaded or called.
+
+**Next safe gate:** on this same Windows, inspect only
+Entry 1's declaration metadata (`CAN`, `ISO15765`,
+`MessageVersion`) plus local file size/timestamp, **without**
+revealing paths or provider names and **without** changing
+any registry keys. Consider a subsequent static PE export
+inspection if suitable tooling exists; registry declarations
+and x86 header alone do not establish functional J2534 ABI.
+Do not delete Entries 2/3 yet, auto-register Entry 1,
+or use the physical J2534/vehicle. First verify whether
+this Windows is the intended isolated VM and which exact
+provider the diagnostic application is configured to select.
 
 ## Доказательства, имеющиеся сейчас
 
