@@ -15,15 +15,19 @@ from audit_vida_readvin_resultget_route import audit_xml, main
 def xml(gets='<get property="Decoded"><getbyid key="101"/><getbyname key="VIN"/></get>',
         invalue='<property name="InValue" class="Response"/>',
         identity_param='<parameter node="Extractor" property="Decoded"/>',
-        disabled='', reader_call=True, output_method='AddVIN', ext=''):
+        disabled='', reader_call=True, output_method='AddVIN', ext='',
+        binding=True, binding_disabled=''):
     reader = '<eventhandler node="Reader"><call node="Extractor" method="Execute"/></eventhandler>' if reader_call else ''
     output = ('<eventhandler node="Extractor"><call node="Identity" method="' + output_method + '"' +
               disabled + '>' + identity_param + '</call></eventhandler>')
+    binding_xml = ('<propertyhandler node="Reader" name="Result">'
+                   '<set node="Extractor" property="InValue"' +
+                   binding_disabled + '/></propertyhandler>') if binding else ''
     return ('<script><content><nodes>'
             '<node nodeid="Reader" class="X.ReadVinComponent"><property name="Result" class="Response"/></node>'
             '<node nodeid="Extractor" class="X.ResultGet">' + invalue + '<extension>' + gets + ext + '</extension></node>'
             '<node nodeid="Identity" class="X.VehicleIdentityOutput"/>'
-            '</nodes><handlers>' + reader + output + '</handlers></content></script>').encode()
+            '</nodes><handlers>' + reader + output + binding_xml + '</handlers></content></script>').encode()
 
 
 def counts(b):
@@ -39,6 +43,8 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
         self.assertEqual(c['getbyname_steps_with_key'], 1)
         self.assertEqual(c['identity_calls_using_declared_resultget_get_output'], 1)
         self.assertTrue(r['candidate_route_lexically_present'])
+        self.assertTrue(r['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertEqual(c['enabled_readvin_result_to_resultget_invalue_sets'], 1)
         self.assertFalse(r['vin_accepted_by_client'])
         self.assertFalse(r['resultget_setproperties_was_executed'])
 
@@ -105,6 +111,60 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
         self.assertEqual(r['categorical_declarations']['enabled_identity_calls_using_resultget_get_output'], 1)
         self.assertFalse(r['candidate_route_lexically_present'])
         self.assertTrue(r['candidate_route_same_resultget_node_required'])
+
+    def test_12_without_propertyhandler_only_two_event_legs_are_present(self):
+        result = audit_xml(xml(binding=False))
+        self.assertTrue(result['candidate_route_lexically_present'])
+        self.assertFalse(result['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertEqual(result['categorical_declarations'][
+            'readvin_result_to_resultget_invalue_set_declarations'], 0)
+
+    def test_13_disabled_false_property_setter_must_not_complete_route(self):
+        result = audit_xml(xml(binding_disabled=' disabled="false"'))
+        assert result['candidate_route_lexically_present']
+        self.assertFalse(result['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertEqual(result['categorical_declarations'][
+            'disabled_readvin_result_to_resultget_invalue_sets'], 1)
+
+    def test_14_wrong_property_setter_cannot_bridge_result(self):
+        raw = xml().replace(b'<set node="Extractor" property="InValue"/>',
+                            b'<set node="Extractor" property="Other"/>')
+        result = audit_xml(raw)
+        self.assertFalse(result['candidate_three_leg_route_with_property_binding_lexically_present'])
+        self.assertEqual(result['categorical_declarations'][
+            'readvin_result_setters_to_other_target_properties'], 1)
+
+    def test_15_wrapped_set_ignored_like_original_parser(self):
+        raw = xml().replace(b'<set node="Extractor" property="InValue"/>',
+                            b'<wrapper><set node="Extractor" property="InValue"/></wrapper>')
+        result = audit_xml(raw)
+        self.assertEqual(result['categorical_declarations'][
+            'readvin_result_to_resultget_invalue_set_declarations'], 0)
+        self.assertFalse(result['candidate_three_leg_route_with_property_binding_lexically_present'])
+
+    def test_16_propertyhandler_from_different_readvin_not_same_route(self):
+        raw = xml().replace(
+            b'<node nodeid="Extractor"',
+            b'<node nodeid="Reader2" class="X.ReadVinComponent"/>'
+            b'<node nodeid="Extractor"',
+        ).replace(b'<propertyhandler node="Reader"',
+                  b'<propertyhandler node="Reader2"')
+        result = audit_xml(raw)
+        self.assertEqual(result['categorical_declarations'][
+            'enabled_readvin_result_to_resultget_invalue_sets'], 1)
+        self.assertTrue(result['candidate_route_lexically_present'])
+        self.assertFalse(result['candidate_three_leg_route_with_property_binding_lexically_present'])
+
+    def test_17_propertyhandler_to_different_resultget_not_same_route(self):
+        raw = xml().replace(
+            b'<node nodeid="Identity"',
+            b'<node nodeid="OtherExtractor" class="X.ResultGet"/>'
+            b'<node nodeid="Identity"',
+        ).replace(b'<set node="Extractor" property="InValue"/>',
+                  b'<set node="OtherExtractor" property="InValue"/>')
+        result = audit_xml(raw)
+        self.assertTrue(result['candidate_route_lexically_present'])
+        self.assertFalse(result['candidate_three_leg_route_with_property_binding_lexically_present'])
 
     def test_10_private_zip_safe_new_json_exclusive_and_symlink(self):
         with tempfile.TemporaryDirectory() as d:
