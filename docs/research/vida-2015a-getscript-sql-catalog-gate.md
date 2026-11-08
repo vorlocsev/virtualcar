@@ -1189,18 +1189,54 @@ without a proven implementation link. This significantly
 weakens treating the single WAR keyword hit as a direct
 `GetScript` caller lead.
 
-**Next priority:** avoid open-ended WAR constant-pool
-searches and refocus on the **original VIDA-side SQL
-`GetScript` caller/selection of `@scriptType`**, and on
-an independently authorized **redacted, offline, read-only
-virtual J2534 trace** if available. For any further scan
-of the matching class, limit it to safe declaration flags
-and signature *shapes*, counts only, not names, methods'
-code bodies or private values; it should not displace
-higher-value caller evidence. No proprietary code,
-filenames, SQL scripts, paths, VIN or credentials disclosed;
-no SQL execution, network requests, vehicle I/O or
-published builds.
+**Owner-local second-WAR SQL-caller UTF8 hint scan (completed):**
+The `Inspect-VIDA-SQLCallerHints.ps1` script finished
+`Result=OK`/`ScriptFinished` on VIDA-descendant WildFly
+`JavaPID=11600` (EAR slot 2 / WAR slot 1). It parsed all
+**5872 JAR class entries** in **31 readable JARs**, plus
+**279 exploded classes**, with **0** unreadable/skipped
+JARs/classes or class parsing errors; `JarEntriesInspected=6518`.
+
+| Keyword-bearing class count | JAR | Exploded classes |
+|---|---:|---:|
+| `GetScript` (substring, case-insensitive) | **26** | **1** |
+| `scriptType` (substring, case-insensitive) | 0 | 0 |
+| `DiagSwdlRepository` (substring, case-insensitive) | 0 | 0 |
+| `ReadVin` (exact UTF8 entry) | 0 | 0 |
+
+The 26 JAR `GetScript` UTF8 hints occurred in **three
+anonymous archive slots**: slot 1 = **2** classes; slot 14
+= **18**; slot 19 = **6**. `JarsWithAnyKeywordHints=3`.
+**Critical caveat:** source inspection of the *probe itself*
+confirmed it tests `(?i)getscript` as a **substring** in
+`CONSTANT_Utf8`, with NO word boundary or JVM symbolic
+reference semantics. Therefore a name such as
+`getScriptName` or `getScriptEngine` may count. The 27 total
+classes are **not** proof that any code invokes SQL
+`dbo.GetScript`, nor that the original VIDA client binds
+the `@scriptType` parameter. The simultaneous zero
+`scriptType` and database-name hints gives no positive
+link to the separate `DiagSwdlRepository` metadata.
+The earlier one broad `read.?vin` property-shaped match
+also did not have an exact `ReadVin` string entry.
+No method bytecode, proprietary identifiers or string
+contents, paths, credentials or VIN were exported; no
+Java class executed, SQL queried, HTTP/J2534/ECU requests
+sent or Virtual Car builds published.
+
+**Next bounded classification gate:** in the *same
+previously scoped* 6151 classes only, distinguish exact
+`GetScript` UTF8 entries from **prefix/longer-identifier
+matches**. Count structural contexts for exact entries:
+`CONSTANT_String`, class member declarations,
+`NameAndType`, `Methodref` and `InterfaceMethodref`, and
+optionally count same-class overlap with any
+`scriptType`/repository terms. Publish only counts and
+anonymous JAR slots; never full symbols, methods' code,
+paths or literal strings. A positive exact `GetScript`
+method reference remains *static Java linkage*, **not** a
+proven stored-procedure call. Prioritize independent,
+authorized, sanitized caller or trace evidence thereafter.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
