@@ -114,5 +114,64 @@ class ServiceCatalogTests(unittest.TestCase):
             audit_sources(xml(), b'id,id\n100,100\n')
 
 
+    def test_10_t111_schema_requires_service_and_mode_headers(self):
+        for raw in (b'id,mode\n100,0\n', b'id,service\n100,ReadVin\n',
+                    b'id,service,mode,mode\n100,ReadVin,0,1\n'):
+            with self.subTest(csv=raw):
+                with self.assertRaises(ValueError):
+                    audit_sources(xml(), raw)
+
+    def test_11_incomplete_csv_row_is_rejected(self):
+        with self.assertRaises(ValueError):
+            audit_sources(xml(), b'id,service,mode\n100,ReadVin\n')
+        with self.assertRaises(ValueError):
+            audit_sources(xml(), b'id,service,mode\n100,ReadVin,0,extra\n')
+
+    def test_12_complete_metadata_is_shape_only(self):
+        r = audit_sources(xml(), csv('100,ReadVin,0\n'))
+        self.assertTrue(r['single_readvin_with_service_mode_metadata_candidate_present'])
+        self.assertEqual(r['counts']['literal_ids_with_unique_catalog_row_and_nonempty_service_mode'], 1)
+        for f in ('carcom_service_definition_or_mode_verified', 'same_installation_provenance_verified',
+                  'original_getscript_runtime_selection_verified', 'accepted_vin_verified',
+                  'emulator_replay_approved'):
+            self.assertFalse(r[f])
+
+    def test_13_blank_service_or_mode_stays_nonpromotable(self):
+        for row in ('100,,0\n', '100,ReadVin,\n', '100, ,  \n'):
+            with self.subTest(row=row):
+                r = audit_sources(xml(), csv(row))
+                self.assertTrue(r['static_unique_catalog_candidate_present'])
+                self.assertFalse(r['single_readvin_with_service_mode_metadata_candidate_present'])
+                self.assertEqual(r['counts']['catalog_rows_with_empty_service_or_mode'], 1)
+
+    def test_14_multiple_readvin_nodes_not_one_static_service(self):
+        extra = '<node nodeid="Reader2" class="X.ReadVinComponent">' + (
+            '<property name="ServiceId" class="Int" value="101"/></node>')
+        r = audit_sources(xml(nodes=extra), csv('100,First,0\n101,Second,0\n'))
+        self.assertEqual(r['counts']['readvin_nodes'], 2)
+        self.assertEqual(r['counts']['literal_ids_with_unique_catalog_row_and_nonempty_service_mode'], 2)
+        self.assertTrue(r['static_unique_catalog_candidate_present'])
+        self.assertFalse(r['single_readvin_with_service_mode_metadata_candidate_present'])
+
+    def test_15_dynamic_setter_blocks_complete_metadata_candidate(self):
+        setter = '<propertyhandler node="Input" name="Result">' + (
+            '<set node="Reader" property="ServiceId"/></propertyhandler>')
+        r = audit_sources(xml(setter=setter), csv())
+        self.assertFalse(r['single_readvin_with_service_mode_metadata_candidate_present'])
+        self.assertEqual(r['counts']['literal_ids_with_declared_override'], 1)
+
+    def test_16_excessively_deep_xml_fails_closed(self):
+        raw = xml().replace(b'</content>', b'<x>' * 100 + b'</x>' * 100 + b'</content>')
+        with self.assertRaises(ValueError):
+            audit_sources(raw, csv())
+
+    def test_17_metadata_values_never_appear_in_report(self):
+        secret = 'SENSITIVE_SERVICE_METADATA_TOKEN'
+        report = json.dumps(audit_sources(xml(), csv('100,' + secret + ',0\n')))
+        self.assertTrue(json.loads(report)['single_readvin_with_service_mode_metadata_candidate_present'])
+        self.assertNotIn(secret, report)
+        self.assertNotIn('ReadVin', report)
+
+
 if __name__ == '__main__':
     unittest.main()
