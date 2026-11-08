@@ -66,6 +66,8 @@ on:
           - feature/vida-jboss-startup-provenance-audit
           - research/vida-original-vinvalidator-ascii-shape-gate
           - fix/vida-getscript-nondbo-visibility
+          # P0 SectorV UI audit: immutable, locally reviewed feature HEAD.
+          - a7bb8c235c9efa39f844207097e8352af9103baa
 
 permissions:
   contents: read
