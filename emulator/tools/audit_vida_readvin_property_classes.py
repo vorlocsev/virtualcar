@@ -73,6 +73,15 @@ def audit_xml(data):
             'direct_parameter_declarations': 0,
             'source_property_reference_parameters': 0,
             'source_property_class_bins': _bins(),
+            # Declaration-only categories grounded in the original IL:
+            # VehCommBase.get_Result casts ReadVinComponent.Result to
+            # ResponseComponent; it does not extract or validate a VIN.
+            'references_from_readvin_component': 0,
+            'readvin_result_response_object_references': 0,
+            'readvin_result_declared_response_class': 0,
+            'readvin_result_class_unresolved_or_other': 0,
+            'references_from_other_declared_components': 0,
+            'references_to_missing_nodes': 0,
             'source_properties_not_in_xml': 0,
             'constant_value_class_parameters': 0,
             'constant_class_bins': _bins(),
@@ -96,14 +105,32 @@ def audit_xml(data):
                 out['direct_parameter_declarations'] += 1
                 if 'node' in param.attrib:
                     out['source_property_reference_parameters'] += 1
-                    source = properties.get(param.attrib.get('node', ''), {})
+                    source_id = param.attrib.get('node', '')
+                    source_node = by_id.get(source_id)
+                    source = properties.get(source_id, {})
                     name = param.attrib.get('property', '')
+                    if source_node is None:
+                        out['references_to_missing_nodes'] += 1
+                    elif (source_node.attrib.get('class', '').rsplit('.', 1)[-1]
+                          == 'ReadVinComponent'):
+                        out['references_from_readvin_component'] += 1
+                        if name == 'Result':
+                            out['readvin_result_response_object_references'] += 1
+                    else:
+                        out['references_from_other_declared_components'] += 1
                     if not name or name not in source:
                         out['source_properties_not_in_xml'] += 1
                         class_name = None
                     else:
                         class_name = source[name]
                     out['source_property_class_bins'][_class_bin(class_name)] += 1
+                    if (source_node is not None and name == 'Result' and
+                            source_node.attrib.get('class', '').rsplit('.', 1)[-1]
+                            == 'ReadVinComponent'):
+                        if class_name == 'Response':
+                            out['readvin_result_declared_response_class'] += 1
+                        else:
+                            out['readvin_result_class_unresolved_or_other'] += 1
                 else:
                     out['constant_value_class_parameters'] += 1
                     out['constant_class_bins'][_class_bin(param.attrib.get('class', ''))] += 1
@@ -113,6 +140,8 @@ def audit_xml(data):
         'original_parser_content_child_layout_verified': True,
         'original_managed_assembly_sha256': 'd93b61b7b7524942649fd534303735dd4390af6ffee848b82e91c8e47eb5e028',
         'property_class_enum_cases_verified_in_original_il': list(PROPERTY_CLASSES),
+        'readvin_result_original_il_getter_contract': 'ResponseComponent',
+        'readvin_result_is_accepted_vin': False,
         'identity_method_parameter_declarations': report,
         'any_argument_runtime_value_computed': False,
         'getscript_selected_script_verified': False,
