@@ -96,12 +96,76 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # Validate workflow_dispatch input before checkout of any selected source.
+      # Keep this case-sensitive list synchronized with source_ref.options above.
+      - name: Validate owner-approved source ref before checkout
+        shell: powershell
+        env:
+          VC_SELECTED_SOURCE_REF: ${{ inputs.source_ref || 'development' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $approved = @(
+            'development',
+            'feature/m5a-secure-local-ipc-preflight',
+            'feature/sqlite-10gb-vmware-runner',
+            'feature/m5b-cpp-named-pipe-client',
+            'feature/m5c1-bounded-lifecycle-preflight',
+            'feature/m5c2-authenticated-session-lifecycle',
+            'feature/m5d1-readonly-vcrd-contract',
+            'feature/m5d2a-csharp-synthetic-read-host',
+            'feature/m5d2b-native-readonly-ipc-client',
+            'feature/m5d2c-inflight-read-cancel-recovery',
+            'feature/m5d2d-synthetic-read-replay-stress',
+            'feature/m5d2ea-synthetic-reply-faults',
+            'feature/m5d2eb-offline-cancel-restart-races',
+            'feature/m5d2eb-host-three-epochs-x86-x64',
+            'feature/p0-sectorv-j2534-evidence-boundaries',
+            'feature/p0-b9fb-target50-evidence-guard',
+            'feature/p0-b9fb50-protocol-metadata-gate',
+            'feature/p0-explicit-a3-a6-unimplemented-evidence',
+            'research/vida-2015a-getscript-catalog-only-inspector',
+            'research/vida-readvin-script-selection-evidence',
+            'fix/vida-session-release-provenance-gate',
+            'feature/vida-readvin-xml-graph-safe-audit',
+            'feature/vida-jboss-startup-provenance-audit',
+            'research/vida-original-vinvalidator-ascii-shape-gate',
+            'fix/vida-getscript-nondbo-visibility',
+            'a7bb8c235c9efa39f844207097e8352af9103baa',
+            '70d586b2d3562a6d612fbd6f4460c0e7a14b3992',
+            '7fd4231c70189d418643f3f8d832f1c96b34c0b9',
+            '258f03e72c14b6d49629a7e23d4d7adcaa77bcf8',
+            '013fa4c5f5e2d632d18e884535afed34ac50ac6d',
+            'a47d7858a4c634517358a7fa3c552c998b795cc1',
+            '3e90a0d30d63133f489b8ce12894ac9288b6d340'
+          )
+          if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
+              $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
+            throw 'Refusing source_ref outside the committed allowlist'
+          }
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and
+              $env:VC_SELECTED_SOURCE_REF -cne 'development') {
+            throw 'Development push may only validate development'
+          }
+          Write-Host 'Trusted source ref allowlist gate passed'
       - name: Checkout selected trusted source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || 'development' }}
           persist-credentials: false
 
+      - name: Verify immutable commit matches selected SHA
+        shell: powershell
+        env:
+          VC_SELECTED_SOURCE_REF: ${{ inputs.source_ref || 'development' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VC_SELECTED_SOURCE_REF -cmatch '^[0-9a-f]{40}$') {
+            $actual = (git rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -cne $env:VC_SELECTED_SOURCE_REF) {
+              throw 'Checked-out HEAD does not match approved immutable SHA'
+            }
+            Write-Host 'Exact immutable source commit verified'
+          }
       - name: Verify local toolchain
         shell: powershell
         run: |
