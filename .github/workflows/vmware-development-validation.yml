@@ -72,6 +72,8 @@ on:
           - 70d586b2d3562a6d612fbd6f4460c0e7a14b3992
           # Read-only B9FB VIN year-code comparison: immutable reviewed feature source.
           - 7fd4231c70189d418643f3f8d832f1c96b34c0b9
+          # VIDA SQL storage catalog-only inspector: exact, locally reviewed PR #179 SHA.
+          - 258f03e72c14b6d49629a7e23d4d7adcaa77bcf8
 
 permissions:
   contents: read
