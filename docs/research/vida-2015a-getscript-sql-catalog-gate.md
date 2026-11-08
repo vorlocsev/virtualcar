@@ -1588,19 +1588,62 @@ SQL queries, stored procedure invocations, databases or
 independent application requests. No SQL `dbo.GetScript`
 execution, VIN read, or J2534/DiCE workflow established.
 
-**Next decision:** perform **at most one targeted passive
-classification diagnostic** that reports WildFly loopback
-server-endpoint presence, reverse peer matches before
-browser name filtering, and peer category lookup with
-fresh PID metadata, while also counting SQL peers from
-the same existing TCP snapshots. Report counts only, no
-ports, IPs, URLs, PID, path, process command-line, SQL
-statement, packet contents or VIN. If it still yields no
-browser/server connections, stop network repetition and
-pivot to independently authorized sanitized original
-caller/database-session metadata, not unbounded JAR scans.
-Keep draft PR #172 unmerged; no application changes or
-Virtual Car binaries published.
+**Owner-run combined TCP diagnostic distinguishing absent sockets from missed browser classification (COMPLETED):**
+`Inspect-VIDA-BrowserWildFlySQLDiagnostic.ps1` finished
+`Result=OK` / `ScriptFinished` after 10 passive snapshots.
+Verified one VIDA-descendant WildFly Java and one local
+SQL Server process; peak 3 explicit WildFly loopback
+listeners.
+
+| Aggregate metric | Observed |
+|---|---:|
+| `SamplesCompleted` | **10** |
+| `SamplesWithWildFlyInboundServerSockets` | **0** |
+| `PeakWildFlyInboundServerSockets` | **0** |
+| `SamplesWithAnyReversePeerToWildFly` | **0** |
+| `PeakMatchedAnyReversePeerPairs` | **0** |
+| `SamplesWithUnknownReversePeer` / `SamplesWithNonBrowserReversePeer` | **0 / 0** |
+| `SamplesWithBrowserToWildFlyTCP` / `SamplesWithBothLegsInSameSnapshot` | **0 / 0** |
+| `SamplesWithWildFlyToLocalSQLTCP` | **10** |
+| `PeakMatchedWildFlySQLPairs` | **9** |
+| `BrowserClientProcessesDiscoveredAfterInitialInventory` | **0** |
+| Distinct browser, non-browser, unknown reverse peer processes | **0 / 0 / 0** |
+
+**Interpretation:** the combined scan's `0/10` browser
+result is now shown to stem from **zero observed inbound
+established WildFly listener sockets** in that sampled
+interval, **not from a browser/non-browser label miss**.
+This does **not** invalidate the earlier positive `20/20`
+browser/WebView-to-WildFly observations in a different
+interval. UI idleness is plausible but **not observed as a
+cause**. The WildFly↔local SQL TCP peer remained observed
+in **10/10** samples, independently of inbound browser
+connections, consistent with long-lived SQL connectivity.
+Nine is the **peak TCP endpoint-pair count**, not nine
+queries or a stored-procedure invocation. No browser route,
+SQL text, actual `dbo.GetScript` invocation, `@scriptType`,
+VIN, adapter activity, or end-to-end request causality was
+established. No IPs, ports, PIDs, URLs, paths, proprietary
+scripts, credentials or VIN emitted; the diagnostic sent no
+HTTP/SQL/vehicle calls and made no configuration changes.
+
+**Next priority: stop TCP repetition.** The transport
+provenance evidence is sufficient for the current stage:
+VIDA browser/WebView ↔ WildFly and WildFly ↔ SQL Server
+have each been observed, but at different times. The key
+remaining research question is **which original VIDA client
+or server path invokes `dbo.GetScript` and with what
+runtime `@scriptType`**, not more Java keyword searches or
+socket counts. Design any further inspection as a
+separately approved, tightly scoped **read-only SQL
+session/procedure metadata** task, beginning with sanitized
+session ownership/database-name counts and explicitly
+**not** invoking `dbo.GetScript` or exporting query text,
+VIN, usernames or secrets. If authorized data remains
+insufficient, mark the SQL caller unresolved and pivot to
+an independently authorized offline virtual-J2534 trace.
+Keep draft PR #172 unmerged; no app changes or published
+Virtual Car binaries.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
