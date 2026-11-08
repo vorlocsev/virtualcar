@@ -28,6 +28,12 @@ int main(void) {
     assert(!p2_j2534_rx_is_data(0x181u));
     assert(!p2_j2534_rx_is_data(0x189u));
     assert(!p2_j2534_rx_is_data(0x380u)); GROUP();
-    printf("dev26: %u/8 native J2534 RxStatus groups OK\n", groups);
-    return groups == 8u ? 0 : 1;
+    /* A failed read may leave the buffer and message count untouched. */
+    assert(p2_j2534_rx_read_is_data(0u, 0u));
+    assert(p2_j2534_rx_read_is_data(0u, 0x180u));
+    assert(!p2_j2534_rx_read_is_data(7u, 0u));
+    assert(!p2_j2534_rx_read_is_data(16u, 0x180u));
+    assert(!p2_j2534_rx_read_is_data(0u, 0x009u)); GROUP();
+    printf("dev26: %u/9 native J2534 RxStatus groups OK\n", groups);
+    return groups == 9u ? 0 : 1;
 }
