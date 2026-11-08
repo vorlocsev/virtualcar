@@ -15,6 +15,15 @@ A nested XML call may contain another call and its parameter. A
 naive search through all descendants would misattribute a nested
 child call's parameter to its enclosing AddVIN method call.
 
+A second ambiguity arises if the nested child itself names AddVIN:
+a recursive handler walk might promote that inner call to a separate
+executable identity event even though the original dispatch semantics
+are unknown. The analyzer now keeps its structural call tag count,
+but skips nested calls for identity method declarations. It records a
+fixed count call_elements_nested_under_call_not_promoted and marks
+such XML as graph_layout.status=unresolved_or_partial. Non-nested
+sibling calls inside ordinary wrapper elements remain classifiable.
+
 ## Change
 
 Each identity output group gains a fixed, additive JSON section
@@ -40,13 +49,13 @@ flags are preserved unchanged.
 
 ## Tests and release boundary
 
-Eight synthetic regressions cover nearest-call ownership, nested
+Ten synthetic regressions cover nearest-call ownership, nested
 foreign calls, unrelated attribute false matches, reference-key
 matching, disabled-attribute caution, wrapped parameters,
-AddVIN versus SetX40Serial separation, namespaced XML and privacy.
+AddVIN versus SetX40Serial separation, namespaced XML, nested-call event rejection, wrapped sibling calls and privacy.
 
 The standalone local binding-shape checker was separately
-verified with 20/20 synthetic tests; the original redacted
+updated to v4.1 and verified with 22/22 synthetic tests; the original redacted
 cross-report comparison suite passed 11/11. Neither constitutes
 Windows CI of this exact new GitHub commit.
 
