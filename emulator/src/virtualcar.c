@@ -1659,16 +1659,24 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
         SCONFIG_LIST *list=(SCONFIG_LIST*)input;
+        U32 speed_changed=0;
         if(!list||(!list->ConfigPtr&&list->NumOfParams)){unlock_state();return error(ERR_NULL_PARAMETER);}
         if(list->NumOfParams>64){unlock_state();return error(ERR_INVALID_IOCTL_VALUE);}
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
+                if(s->Parameter==1){
+                    if(c->baud!=s->Value)speed_changed=1;
+                    c->baud=s->Value;
+                }
                 log_set_config(id,s->Parameter,s->Value);
             }
             if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
         }
+        /* The passive CEM observer must see the same effective channel speed
+           as the J2534 transport after SET_CONFIG. Never create ECU RX. */
+        if(speed_changed)
+            p2_bridge_connect(&g_vehicle_bridge,id,c->protocol,c->baud);
         unlock_state();return error(ERR_OK);
     }
     unlock_state();return error(ERR_INVALID_IOCTL_ID);
