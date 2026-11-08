@@ -68,8 +68,41 @@ def audit_xml_bytes(xml_data):
             raise ValueError("excessive XML structure")
         stack.extend((child, depth + 1) for child in node)
 
-    nodes = root.findall("./nodes/node")
-    handlers = root.findall("./handlers/eventhandler")
+    # VIDA XML may nest sections under version/metadata wrappers. Resolve
+    # by the semantic section ancestor, not only ./nodes and ./handlers.
+    # Do not misclassify incidental <node>/<call> outside these sections.
+    def local_name(element):
+        return element.tag.rsplit("}", 1)[-1] if isinstance(element.tag, str) else ""
+
+    parent = {child: owner for owner in root.iter() for child in owner}
+
+    def has_section_ancestor(element, section):
+        current = parent.get(element)
+        while current is not None:
+            if local_name(current) == section:
+                return True
+            current = parent.get(current)
+        return False
+
+    def nearest_handler(element):
+        current = parent.get(element)
+        while current is not None:
+            if local_name(current) in ("eventhandler", "propertyhandler"):
+                return current
+            current = parent.get(current)
+        return None
+
+    all_nodes = [e for e in root.iter() if local_name(e) == "node"]
+    all_handlers = [e for e in root.iter() if local_name(e) == "eventhandler"]
+    all_calls = [e for e in root.iter() if local_name(e) == "call"]
+    nodes = [e for e in all_nodes if has_section_ancestor(e, "nodes")]
+    handlers = [e for e in all_handlers if has_section_ancestor(e, "handlers")]
+    unclassified_nodes = len(all_nodes) - len(nodes)
+    unclassified_handlers = len(all_handlers) - len(handlers)
+    direct_path_matched = bool(root.findall("./nodes/node")) and bool(
+        root.findall("./handlers/eventhandler"))
+    graph_sections_found = any(local_name(e) == "nodes" for e in root.iter()) and any(
+        local_name(e) == "handlers" for e in root.iter())
     node_by_id = {}
     for node in nodes:
         node_id = node.attrib.get("nodeid", "")
@@ -94,7 +127,9 @@ def audit_xml_bytes(xml_data):
     other_target_identity_method = 0
     for handler in handlers:
         source = node_by_id.get(handler.attrib.get("node", ""))
-        for call in handler.findall("./call"):
+        for call in handler.iter():
+            if local_name(call) != "call" or nearest_handler(call) is not handler:
+                continue
             calls += 1
             method_name = call.attrib.get("method")
             if method_name not in IDENTITY_METHODS:
@@ -117,6 +152,19 @@ def audit_xml_bytes(xml_data):
         "source_kind": "private_vida_xml_static_structure_only",
         "xml_structure_parsed": True,
         "xml_elements_examined": count,
+        "graph_layout": {
+            "status": ("unresolved_or_partial" if not graph_sections_found or
+                       unclassified_nodes or unclassified_handlers or
+                       len(all_calls) != calls else
+                       "direct_sections" if direct_path_matched else "nested_sections"),
+            "node_elements_any_depth": len(all_nodes),
+            "eventhandler_elements_any_depth": len(all_handlers),
+            "call_elements_any_depth": len(all_calls),
+            "node_elements_outside_nodes_section": unclassified_nodes,
+            "eventhandler_elements_outside_handlers_section": unclassified_handlers,
+            "call_elements_not_in_parsed_eventhandlers": len(all_calls) - calls,
+            "section_anchors_present": graph_sections_found,
+        },
         "node_count": len(nodes),
         "event_handler_count": len(handlers),
         "declared_call_count": calls,
