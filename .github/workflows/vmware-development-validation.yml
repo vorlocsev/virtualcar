@@ -82,11 +82,57 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # Persistent self-hosted Windows runners may retain a sparse checkout
+      # from older source refs. A git clean/reset can report success while the
+      # subsequent checkout fails to replace tracked files. Start fresh, but
+      # only inside this repository's exact disposable runner workspace.
+      - name: Recreate isolated repository checkout on persistent VMware runner
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REPOSITORY -cne 'vorlocsev/virtualcar') {
+            throw 'Refusing to clean workspace for another repository'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_WORKSPACE) -or
+              [string]::IsNullOrWhiteSpace($env:GITHUB_WORKSPACE)) {
+            throw 'Runner workspace variables are missing'
+          }
+          $actual = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\')
+          $expected = [IO.Path]::GetFullPath(
+            (Join-Path $env:RUNNER_WORKSPACE 'virtualcar')).TrimEnd('\')
+          if (-not [String]::Equals($actual, $expected,
+                  [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Refusing to clean outside the expected Virtual Car checkout'
+          }
+          if (Test-Path -LiteralPath $actual) {
+            Get-ChildItem -LiteralPath $actual -Force |
+              ForEach-Object {
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+              }
+            if (@(Get-ChildItem -LiteralPath $actual -Force).Count -ne 0) {
+              throw 'Runner checkout directory is not empty'
+            }
+          }
+
       - name: Checkout selected trusted source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || 'development' }}
+          ref: ${{ github.event_name == 'push' && github.sha || inputs.source_ref || 'development' }}
           persist-credentials: false
+
+      - name: Verify push checkout is the triggering immutable commit
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $actual = (git rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -cne $env:GITHUB_SHA) {
+              throw 'Push validation checked out a different commit than the trigger'
+            }
+            if (-not (Test-Path -LiteralPath 'emulator/tests/test_audit_j2534_discovery.py')) {
+              throw 'Checkout is incomplete: emulator test files missing'
+            }
+          }
 
       - name: Verify local toolchain
         shell: powershell
