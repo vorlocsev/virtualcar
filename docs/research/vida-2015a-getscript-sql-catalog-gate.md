@@ -939,19 +939,55 @@ it is NOT evidence that any bean calls it or that VIDA
 uses J2534 in a ReadVin diagnostic session. No class code
 or methods were run, loaded, extracted or exported.
 
-**Next bounded owner-local, read-only gate:** parse only
-Java `.class` **constant-pool structural references** in
-the same archive, using per-entry/aggregate uncompressed
-size limits, robust support for Java class constant tags,
-and only output counts of classes declaring a
-`CONSTANT_Class` reference to the one J2534-named type;
-add count for the 20 declared bean implementation classes
-if feasible. No raw constant-pool strings, class names,
-bytecode, method bodies, paths or VIN output. References
-would prove static class linkage, not actual runtime calls;
-zero reference count may miss reflection or dependencies
-outside this archive. Do not change registry, VIDA server,
-ECU, virtual adapter or build publication.
+**Owner-local static J2534 `CONSTANT_Class` reference scan (completed):**
+On the restarted VIDA/WildFly Java PID **12004**, a new
+read-only script independently recovered the current Java
+process by confirming ancestry to `VidaMonitor.exe` instead
+of relying on stale PID 4324. The operator ran the script
+twice, both returning identical aggregate metrics:
+
+| Metric | Observed |
+|---|---:|
+| JavaPID | 12004 |
+| VIDAAncestorConfirmed | True |
+| EARSlot | 2 |
+| J2534TargetClasses | 1 |
+| TotalClasses | 325 |
+| DeclaredSessionBeans | 20 |
+| OtherClassesScanned | **324** |
+| ClassesSkippedBySize | **0** |
+| ClassParseErrors | **0** |
+| ClassesReferencingJ2534 | **0** |
+| SessionBeansReferencingJ2534 | **0** |
+| ReferenceType | `CONSTANT_Class` |
+
+This is a **complete scan of other classes in that one
+EJB JAR for exact JVM `CONSTANT_Class` references to the
+single J2534-named type**, as resolved from its ZIP entry
+path. There are **no such references among 324 peers**.
+This refutes a **direct class-constant dependency within
+this archive** as the currently observed path, but does
+NOT establish that the class is unused, that runtime
+Java/J2534 integration is absent, or that VIDA never uses
+it: bytecode descriptors/UTF8 metadata, reflection,
+interfaces, dynamic loading and classes in other archives
+have not been evaluated. `CONSTANT_Class` references also
+do not prove runtime invocation when present. The parse
+script did not print any class names, bytecode, proprietary
+XML, paths, runtime command lines, URLs or secrets; no
+network/SQL/vehicle I/O or binaries published.
+
+**Next bounded read-only gate:** inspect `CONSTANT_Utf8`
+entries across the same 325 classes **without printing
+values** for exact internal J2534 class name occurrences
+within type descriptors, signatures and strings, and
+separately inspect only the target J2534 class's file
+header/declared method flags (`native` count, interface/
+abstract flags) and safe keyword-count hints. Enforce
+strict entry/aggregate limits and retain process ancestry
+verification. The presence of a UTF8 match alone would
+not prove invocation. No disassembly, code execution,
+DLL loading, adapter changes or vehicle I/O.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
