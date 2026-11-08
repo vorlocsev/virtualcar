@@ -54,7 +54,7 @@ def audit(private_archive):
             "readvin_component_count": graph["readvin_component_node_count"],
             "vehicle_identity_output_count": graph["vehicle_identity_output_node_count"],
             "declared_identity_edges": graph["declared_identity_method_edges"],
-            "unresolved_identity_targets": graph["unresolved_identity_method_targets"],
+            "unresolved_identity_targets": graph["identity_method_calls_with_unresolved_target"],
         },
         "script_selected_by_getscript_runtime": False,
         "b9fb_to_vin_runtime_flow_verified": False,
