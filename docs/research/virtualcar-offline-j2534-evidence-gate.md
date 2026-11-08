@@ -844,6 +844,49 @@ trusted source origin, correct J2534 behavior or actual
 vehicle identity. No J2534 DLL loading, client calls or
 physical CAN testing at this stage.
 
+## Owner-local BIN7 J2534 DLL manifest check (2026-11-08)
+
+The owner selected the candidate with
+`BUILDINFO.source_commit` prefix `14b95e036daf`
+(the GitHub-resolvable merge commit
+`14b95e036daf7c908c9da57af0609013f5305062`),
+and ran a read-only local verification of its adjacent
+`SHA256SUMS.txt` entry for `VirtualCarJ2534.dll`.
+
+```text
+Group              : BIN7
+SourceCommit12     : 14b95e036daf
+ManifestPresent    : True
+DLLChecksumEntries : 1
+DLLChecksumMatches : True
+Result=OK
+```
+
+**Narrow conclusion:** this DLL's SHA256 matches exactly
+one corresponding entry in the **local** manifest. This
+supports same-package file integrity relative to the local
+manifest; it does **not** authenticate package origin,
+independently verify the source-to-binary build, validate the
+**rest of the bundle**, J2534 functionality, CEM identity,
+or historic session attribution. A locally editable manifest
+could have been edited together with the binary.
+
+The source packaging tool
+`emulator/tools/package_vmware_lab.py` generates a manifest
+with **14** allowlisted entries (12 copied source files,
+generated `virtualcar.ini`, and generated `BUILDINFO.json`);
+the manifest itself is not listed. It packages two 32-bit PE
+binaries, synthetic read-only P2 config and three analyzers.
+The next read-only owner-local check should validate all
+**14 exact listed filenames**, compare every local hash,
+and report only counts of missing, mismatched, unexpected
+and duplicate manifest entries. **Do not print** filenames,
+source content, raw INI, VIN, hashes, paths or raw binaries.
+Do not register/execute DLL or modify registry. Only after
+the complete package passes this limited integrity check
+can the owner consider a controlled, rollback-ready VMware
+diagnostic VM session, not physical J2534/ECU.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
