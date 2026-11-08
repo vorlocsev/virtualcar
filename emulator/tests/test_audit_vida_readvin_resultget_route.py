@@ -89,6 +89,23 @@ class ReadVinResultGetRouteTests(unittest.TestCase):
         self.assertFalse(r['vin_accepted_by_client'])
         self.assertFalse(r['xc90_v8_my2009_verified'])
 
+    def test_11_unrelated_resultget_nodes_cannot_make_false_path(self):
+        raw = xml()
+        raw = raw.replace(
+            b'<node nodeid="Identity"',
+            b'<node nodeid="OtherExtractor" class="X.ResultGet">'
+            b'<property name="InValue" class="Response"/>'
+            b'<extension><get property="Decoded"/></extension></node>'
+            b'<node nodeid="Identity"',
+        ).replace(b'<parameter node="Extractor" property="Decoded"/>',
+                  b'<parameter node="OtherExtractor" property="Decoded"/>')
+        r = audit_xml(raw)
+        self.assertEqual(r['categorical_declarations']['resultget_node_declarations'], 2)
+        self.assertEqual(r['categorical_declarations']['enabled_readvin_event_to_resultget_execute_declarations'], 1)
+        self.assertEqual(r['categorical_declarations']['enabled_identity_calls_using_resultget_get_output'], 1)
+        self.assertFalse(r['candidate_route_lexically_present'])
+        self.assertTrue(r['candidate_route_same_resultget_node_required'])
+
     def test_10_private_zip_safe_new_json_exclusive_and_symlink(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)
