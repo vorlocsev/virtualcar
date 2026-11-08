@@ -278,6 +278,19 @@ jobs:
           & $python emulator/tools/verify_native_routes.py $evidence --output $audit
           if ($LASTEXITCODE -ne 0) { throw 'Native route evidence audit failed' }
 
+          # Separate fresh process and INI: the negative/no-fixture auditor above
+          # must remain unchanged. This is SYNTHETIC wire fidelity, not VIDA VIN
+          # acceptance or proof of OEM XC90 identity.
+          $identityDir = Join-Path $env:RUNNER_TEMP 'virtualcar-native-synthetic-identity'
+          if (Test-Path -LiteralPath $identityDir) {
+            throw 'Refusing to reuse native synthetic identity directory'
+          }
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll -OutputDirectory $identityDir -IdentityReplay
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Native x86 synthetic CEM B9FB/ECM F190 wire verification failed'
+          }
+          Write-Host 'PASS: native x86 synthetic 13-frame D2 and ISO15765 ECM F190 wire'
+          
       - name: Run Go control tests and vet
         shell: powershell
         working-directory: emulator/control
