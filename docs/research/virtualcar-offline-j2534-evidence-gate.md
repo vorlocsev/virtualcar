@@ -937,6 +937,57 @@ installation/diagnostic test must be separately planned
 for that isolated environment and **never automatically
 published or claimed successful**.
 
+## BIN7 SafetyPreflight: one PassiveTrace false negative (2026-11-08)
+
+The owner ran a read-only locally reconstructed BIN7 configuration
+preflight after a Python-to-PowerShell argument quoting issue and a
+path-variable capture issue; the final **PowerShell-only** preflight
+reported:
+
+```text
+BuildInfoValid=True
+SyntheticProfileDeclared=True
+SyntheticVIN=True
+ECUCountOne=True
+StrictRouting=True
+PassiveCANDisabled=True
+PassiveTraceDisabled=False
+D2FixturesDisabled=True
+ExtraD2NodesDisabled=True
+TelemetryEnabled=True
+NoVerifiedIdentityClaim=True
+Result=FAIL
+```
+
+**Important correction based on source-commit inspection:** the
+source `emulator/virtualcar-p2.ini` at BIN7 commit
+`14b95e036daf7c908c9da57af0609013f5305062` **does
+not include a `[PassiveTrace]` section**. In the exact
+commit's `emulator/src/virtualcar.c`, the runtime uses
+`GetPrivateProfileStringA("PassiveTrace","Enabled","0",...)`
+and only activates the trace when `parse_num(v,0)==1`.
+The same commit's
+`emulator/tools/package_vmware_lab.py` uses
+`cfg.getint("PassiveTrace", "Enabled", fallback=0)`,
+which allows a missing section as **disabled**. The owner
+preflight had erroneously required the literal
+`[PassiveTrace] Enabled=0`, so this one failing item
+is **consistent with a false-positive preflight failure**
+rather than evidence of enabled trace replay.
+
+**Caveat:** the local BIN7 `virtualcar.ini` has not yet
+been independently probed to show whether the section
+is indeed absent versus explicitly `Enabled=1` or
+some unexpected value. Keep `SafetyPreflight` status
+**NOT YET PASS** until an owner-local read-only check
+distinguishes `MissingSection`, `MissingEnabledKey`,
+`ExplicitZero`, `ExplicitOne`, `Unexpected` with
+no raw INI, VIN or local paths printed. If missing,
+treat as disabled **as runtime does**; if explicit 1
+or unexpected, stop and review privately before any
+DLL loading/registration/VM test. Do not alter the
+14-file manifest or modify user files to force a pass.
+
 ## Доказательства, имеющиеся сейчас
 
 - В предыдущих исследованиях подтверждены браузер/WebView ↔ WildFly TCP
