@@ -92,9 +92,23 @@ def audit_xml_bytes(xml_data):
             current = parent.get(current)
         return None
 
+    def nearest_call(element):
+        # Attribute declarations under a nested child call must not be
+        # promoted as parameters of the enclosing identity method call.
+        current = parent.get(element)
+        while current is not None:
+            if local_name(current) == "call":
+                return current
+            current = parent.get(current)
+        return None
+
     all_nodes = [e for e in root.iter() if local_name(e) == "node"]
     all_handlers = [e for e in root.iter() if local_name(e) == "eventhandler"]
     all_calls = [e for e in root.iter() if local_name(e) == "call"]
+    # Nested <call> elements have ambiguous event-source semantics.
+    # Count them for structural completeness, but never promote them to
+    # a candidate executable identity event or potential VIN path.
+    nested_calls = sum(nearest_call(e) is not None for e in all_calls)
     nodes = [e for e in all_nodes if has_section_ancestor(e, "nodes")]
     handlers = [e for e in all_handlers if has_section_ancestor(e, "handlers")]
     unclassified_nodes = len(all_nodes) - len(nodes)
@@ -123,6 +137,18 @@ def audit_xml_bytes(xml_data):
                          "absent_disabled_attribute": 0,
                          "unrecognized_disabled_literal": 0, "readvin_source_node": 0},
     }
+    # Only these *attribute names* can claim a lexical node reference.
+    # Even a recognized key and exact ID match is NOT a runtime binding.
+    reference_keys = {"node", "ref", "source"}
+    reader_ids = {k for k, v in node_by_id.items() if _kind(v) == "readvin_component"}
+    for group in classified.values():
+        group["parameter_declarations_only"] = {
+            "calls_with_parameter_child": 0,
+            "declared_parameter_children": 0,
+            "calls_with_reference_like_key_matching_node_id": 0,
+            "calls_with_reference_like_key_matching_reader_id": 0,
+            "calls_with_parameter_text": 0,
+        }
     unresolved_target = 0
     other_target_identity_method = 0
     for handler in handlers:
@@ -131,6 +157,10 @@ def audit_xml_bytes(xml_data):
             if local_name(call) != "call" or nearest_handler(call) is not handler:
                 continue
             calls += 1
+            if nearest_call(call) is not None:
+                # Its XML parameter belongs to this inner call, but its
+                # event-source/dispatch semantics are NOT established.
+                continue
             method_name = call.attrib.get("method")
             if method_name not in IDENTITY_METHODS:
                 continue
@@ -144,6 +174,23 @@ def audit_xml_bytes(xml_data):
             group = classified[method_name]
             group["declared"] += 1
             group[_disabled(call.attrib.get("disabled"))] += 1
+            # Nearest-call ownership prevents one nested call's parameter
+            # from being counted as a sibling/outer AddVIN argument.
+            params = [e for e in call.iter()
+                      if local_name(e) == "parameter" and nearest_call(e) is call]
+            counts = group["parameter_declarations_only"]
+            counts["calls_with_parameter_child"] += int(bool(params))
+            counts["declared_parameter_children"] += len(params)
+            has_ref = has_reader_ref = has_text = False
+            for param in params:
+                has_text |= any(bool((e.text or "").strip()) for e in param.iter())
+                for key, value in param.attrib.items():
+                    local_key = key.rsplit("}", 1)[-1]
+                    has_ref |= local_key in reference_keys and value in node_by_id
+                    has_reader_ref |= local_key in reference_keys and value in reader_ids
+            counts["calls_with_reference_like_key_matching_node_id"] += int(has_ref)
+            counts["calls_with_reference_like_key_matching_reader_id"] += int(has_reader_ref)
+            counts["calls_with_parameter_text"] += int(has_text)
             if _kind(source) == "readvin_component":
                 group["readvin_source_node"] += 1
 
@@ -155,11 +202,12 @@ def audit_xml_bytes(xml_data):
         "graph_layout": {
             "status": ("unresolved_or_partial" if not graph_sections_found or
                        unclassified_nodes or unclassified_handlers or
-                       len(all_calls) != calls else
+                       len(all_calls) != calls or nested_calls else
                        "direct_sections" if direct_path_matched else "nested_sections"),
             "node_elements_any_depth": len(all_nodes),
             "eventhandler_elements_any_depth": len(all_handlers),
             "call_elements_any_depth": len(all_calls),
+            "call_elements_nested_under_call_not_promoted": nested_calls,
             "node_elements_outside_nodes_section": unclassified_nodes,
             "eventhandler_elements_outside_handlers_section": unclassified_handlers,
             "call_elements_not_in_parsed_eventhandlers": len(all_calls) - calls,
