@@ -37,6 +37,8 @@ def audit_xml(xml_bytes):
     identity_ids = {i for i, node in by_id.items() if _class_is(node, 'VehicleIdentityOutput')}
 
     direct_gets = {}  # private IDs used locally only, never emitted
+    readvin_event_target_ids = set()
+    identity_get_source_ids = set()
     stats = {
         'resultget_node_declarations': len(resultget_nodes),
         'resultget_nodes_with_direct_invalue_property': 0,
@@ -89,6 +91,8 @@ def audit_xml(xml_bytes):
                     call.attrib.get('method') == 'Execute'):
                 stats['readvin_event_to_resultget_execute_declarations'] += 1
                 stats['enabled_readvin_event_to_resultget_execute_declarations'] += int(parser_enabled)
+                if parser_enabled:
+                    readvin_event_target_ids.add(target_id)
             if not (target_id in identity_ids and call.attrib.get('method') in IDENTITY_METHODS):
                 continue
             for param in call.findall('./parameter'):
@@ -101,6 +105,8 @@ def audit_xml(xml_bytes):
                 if prop_name in direct_gets[source_id]:
                     stats['identity_calls_using_declared_resultget_get_output'] += 1
                     stats['enabled_identity_calls_using_resultget_get_output'] += int(parser_enabled)
+                    if parser_enabled:
+                        identity_get_source_ids.add(source_id)
                 elif not prop_name:
                     stats['identity_calls_using_undeclared_resultget_output'] += 1
                 else:
@@ -116,8 +122,8 @@ def audit_xml(xml_bytes):
         'script_content_layout_verified': base['original_parser_content_child_layout_verified'],
         'categorical_declarations': stats,
         'candidate_route_lexically_present': bool(
-            stats['enabled_readvin_event_to_resultget_execute_declarations'] and
-            stats['enabled_identity_calls_using_resultget_get_output']),
+            readvin_event_target_ids & identity_get_source_ids),
+        'candidate_route_same_resultget_node_required': True,
         'declared_get_path_is_not_proven_response_value': True,
         'response_component_was_executed': False,
         'resultget_setproperties_was_executed': False,
