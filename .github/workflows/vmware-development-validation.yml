@@ -70,6 +70,8 @@ on:
           - a7bb8c235c9efa39f844207097e8352af9103baa
           # Immutable P0 fresh-window source; owner-only self-hosted validation.
           - 70d586b2d3562a6d612fbd6f4460c0e7a14b3992
+          # Read-only B9FB VIN year-code comparison: immutable reviewed feature source.
+          - 7fd4231c70189d418643f3f8d832f1c96b34c0b9
 
 permissions:
   contents: read
