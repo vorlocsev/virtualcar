@@ -183,11 +183,59 @@ def _parse_protocol_catalog(csv_bytes):
         raise ValueError('empty T122 protocol catalog')
     return ids
 
-def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None, protocol_catalog_bytes=None):
+def _parse_service_ecu_variant_map(csv_bytes):
+    """Validate original T110 relationship table; return private FK pairs only."""
+    if (not isinstance(csv_bytes, bytes) or len(csv_bytes) > MAX_CSV_BYTES
+            or b'\x00' in csv_bytes):
+        raise ValueError('unsafe T110 CSV')
+    try:
+        data = csv_bytes.decode('utf-8-sig')
+    except UnicodeError as exc:
+        raise ValueError('unsupported T110 CSV encoding') from exc
+    if any(len(line) > MAX_CSV_LINE_LENGTH for line in data.splitlines()):
+        raise ValueError('T110 CSV line too long')
+    reader = csv.DictReader(io.StringIO(data, newline=''), strict=True)
+    if (not reader.fieldnames or
+            not {'fkT100_EcuVariant', 'fkT111_Service'}.issubset(reader.fieldnames) or
+            len(set(reader.fieldnames)) != len(reader.fieldnames)):
+        raise ValueError('expected T110 foreign-key columns')
+    pairs = set()
+    try:
+        for row_index, record in enumerate(reader, 1):
+            if (row_index > MAX_ROWS or None in record or
+                    any(value is None for value in record.values())):
+                raise ValueError('invalid T110 row structure')
+            variant = _positive_id(record['fkT100_EcuVariant'])
+            service = _positive_id(record['fkT111_Service'])
+            if (variant is None or variant == 0 or service is None or service == 0
+                    or (variant, service) in pairs):
+                raise ValueError('invalid or duplicate T110 relationship')
+            pairs.add((variant, service))
+    except (csv.Error, UnicodeError) as exc:
+        raise ValueError('malformed T110 CSV') from exc
+    if not pairs:
+        raise ValueError('empty T110 catalog')
+    return pairs
+
+
+def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None,
+                  protocol_catalog_bytes=None, service_ecu_variant_map_bytes=None,
+                  selected_ecu_variant_id=None):
     content, nodes = _parse_xml(xml_bytes)
     service_ids, metadata_complete_ids, protocol_complete_ids, protocol_keys_by_service_id, rows, invalid_rows, empty_metadata = _parse_catalog(csv_bytes)
     protocol_catalog_ids = (_parse_protocol_catalog(protocol_catalog_bytes)
                             if protocol_catalog_bytes is not None else None)
+    if ((service_ecu_variant_map_bytes is None) != (selected_ecu_variant_id is None)):
+        raise ValueError('T110 input and selected ECU variant ID must be supplied together')
+    t110_pairs = None
+    selected_variant = None
+    if service_ecu_variant_map_bytes is not None:
+        if not isinstance(selected_ecu_variant_id, str):
+            raise ValueError('selected ECU variant must be a canonical decimal string')
+        selected_variant = _positive_id(selected_ecu_variant_id)
+        if selected_variant is None or selected_variant == 0:
+            raise ValueError('invalid selected ECU variant ID')
+        t110_pairs = _parse_service_ecu_variant_map(service_ecu_variant_map_bytes)
     definition_id, definition_content_present = (None, False)
     if service_definition_bytes is not None:
         definition_id, definition_content_present = _parse_service_definition(service_definition_bytes)
@@ -229,6 +277,7 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None, protocol_
     }
     definition_qualified_matches = 0
     protocol_qualified_matches = 0
+    variant_qualified_matches = 0
     for node_id, node in readers.items():
         props = node.findall('./property')
         service_props = [p for p in props if p.attrib.get('name') == 'ServiceId']
@@ -262,6 +311,9 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None, protocol_
                     if (protocol_catalog_ids is not None and
                             protocol_keys_by_service_id.get(value) in protocol_catalog_ids):
                         protocol_qualified_matches += 1
+                        if (t110_pairs is not None and
+                                (selected_variant, value) in t110_pairs):
+                            variant_qualified_matches += 1
             else:
                 counters['literal_ids_with_unique_catalog_row_but_empty_service_or_mode'] += 1
 
@@ -282,6 +334,11 @@ def audit_sources(xml_bytes, csv_bytes, service_definition_bytes=None, protocol_
         'protocol_catalog_csv_supplied': protocol_catalog_bytes is not None,
         'single_readvin_with_matching_t122_protocol_reference_candidate_present': bool(
             len(readers) == 1 and protocol_qualified_matches == 1),
+        't110_service_ecu_variant_csv_supplied': service_ecu_variant_map_bytes is not None,
+        'single_readvin_with_matching_t110_service_ecu_variant_candidate_present': bool(
+            len(readers) == 1 and variant_qualified_matches == 1),
+        'actual_ecu_variant_identity_verified': False,
+        'actual_ecu_variant_service_support_verified': False,
         'actual_protocol_transport_verified': False,
         'original_service_definition_runtime_verified': False,
         'same_installation_provenance_verified': False,
@@ -323,6 +380,8 @@ def main(argv=None):
     ap.add_argument('t111_csv', type=Path)
     ap.add_argument('--service-definition', type=Path, help='optional private extracted_services/<id>.xml')
     ap.add_argument('--protocol-catalog', type=Path, help='optional same-installation T122_Protocol.csv')
+    ap.add_argument('--t110-catalog', type=Path, help='optional same-installation T110_Service_EcuVariant.csv')
+    ap.add_argument('--ecu-variant-id', help='canonical numeric T100_EcuVariant ID to filter the T110 map')
     ap.add_argument('--output', required=True, type=Path)
     a = ap.parse_args(argv)
     repo = Path(__file__).resolve().parents[2]
@@ -332,6 +391,8 @@ def main(argv=None):
         inputs.append(a.service_definition)
     if a.protocol_catalog is not None:
         inputs.append(a.protocol_catalog)
+    if a.t110_catalog is not None:
+        inputs.append(a.t110_catalog)
     if (dest == repo or repo in dest.parents
             or dest in (p.resolve() for p in inputs)
             or a.output.is_symlink() or a.output.parent.is_symlink()):
@@ -354,7 +415,15 @@ def main(argv=None):
                     or path.stat().st_size > MAX_CSV_BYTES):
                 raise ValueError('unsupported private T122 protocol catalog')
             protocols = path.read_bytes()
-        report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes(), definition, protocols)
+        t110 = None
+        if a.t110_catalog is not None:
+            path = a.t110_catalog
+            if (path.is_symlink() or not path.is_file() or path.suffix.lower() != '.csv'
+                    or path.stat().st_size > MAX_CSV_BYTES):
+                raise ValueError('unsupported private T110 service-to-ECU catalog')
+            t110 = path.read_bytes()
+        report = audit_sources(_read_zip(a.readvin_zip), a.t111_csv.read_bytes(),
+                               definition, protocols, t110, a.ecu_variant_id)
         with a.output.open('x', encoding='utf-8') as out:
             json.dump(report, out, ensure_ascii=False, indent=2)
             out.write('\n')
