@@ -13,6 +13,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if ($ConfigureRunnerService) {
+    $principal = [Security.Principal.WindowsPrincipal]::new(
+        [Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Configuring Windows runner service requires elevated PowerShell.'
+    }
+}
+
 $names = @(
     'DiagSwdlRepository', 'CarCom', 'BaseData', 'DiagSwdlSession',
     'DiceTiming', 'ImageRepository', 'EPC', 'servicerep_ru-RU',
