@@ -159,8 +159,9 @@ static void event_log(const char *ev,DWORD channel,DWORD status,DWORD requested,
                       p2_kind kind,DWORD canid,DWORD size,DWORD misc){
     event_log_extra(ev,channel,status,requested,count,kind,canid,size,misc,0,0,0,0,0);
 }
-static p2_kind msg_kind(PASSTHRU_MSG *m,int rx){
-    if(!m || m->DataSize>4128u || (rx && !p2_j2534_rx_is_data(m->RxStatus)))return P2_OTHER;
+static p2_kind msg_kind(PASSTHRU_MSG *m,int rx,DWORD read_result){
+    if(!m || m->DataSize>4128u ||
+       (rx && !p2_j2534_rx_read_is_data(read_result,m->RxStatus)))return P2_OTHER;
     return p2_classify(m->Data,m->DataSize,rx);
 }
 static DWORD msg_canid(PASSTHRU_MSG *m){return (!m||m->DataSize>4128u)?0:p2_can_id(m->Data,m->DataSize);}
@@ -192,12 +193,12 @@ DWORD WINAPI PassThruReadMsgs(DWORD channel,PASSTHRU_MSG *msgs,DWORD *num,DWORD 
       }
       LeaveCriticalSection(&g_bridge_lock);
     }
-    if(msgs && count>0 && count<=128){
-      for(i=0;i<count;++i){p2_kind k=msg_kind(&msgs[i],1);if(k!=P2_OTHER){kind=k;idx=i;break;}}
+    if(st==0 && msgs && count>0 && count<=128){
+      for(i=0;i<count;++i){p2_kind k=msg_kind(&msgs[i],1,st);if(k!=P2_OTHER){kind=k;idx=i;break;}}
     }
     event_log_extra("read",channel,st,requested,count,kind,
-              (msgs&&count>idx&&count<=128)?msg_canid(&msgs[idx]):0,
-              (msgs&&count>idx&&count<=128)?msg_len(&msgs[idx]):0,0,
+              (st==0 && msgs && count>idx && count<=128)?msg_canid(&msgs[idx]):0,
+              (st==0 && msgs && count>idx && count<=128)?msg_len(&msgs[idx]):0,0,
               0,0,0,core_rx,0);
     return st;
 }
@@ -206,7 +207,7 @@ DWORD WINAPI PassThruWriteMsgs(DWORD channel,PASSTHRU_MSG *msgs,DWORD *num,DWORD
     const char *core_name=0;
     DWORD core_decision=0;
     if(msgs && requested>0 && requested<=128){
-      for(i=0;i<requested;++i){p2_kind k=msg_kind(&msgs[i],0);if(k!=P2_OTHER){kind=k;idx=i;break;}}
+      for(i=0;i<requested;++i){p2_kind k=msg_kind(&msgs[i],0,0u);if(k!=P2_OTHER){kind=k;idx=i;break;}}
     }
     ensure_loaded();st=real_write?real_write(channel,msgs,num,timeout):ERR_FAILED;
     count=num?*num:0;
