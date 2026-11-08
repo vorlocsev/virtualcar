@@ -80,15 +80,18 @@ def audit_text(logtext, expected_script_id=None):
     complete_windows_by_session = []
     ordered_run_by_session = []
     ordered_run_with_requests_by_session = []
+    ordered_run_with_requests_and_tx_by_session = []
     current = _fresh()
     tracked = False
     request_families_in_window = set()
     request_families_after_run = set()
+    tx_families_after_run = set()
     expected_fetched = False
     fetched_version = None
     expected_running = False
     session_has_ordered_run = False
     session_has_ordered_run_with_requests = False
+    session_has_ordered_run_with_requests_and_tx = False
     session_has_complete_window = False
     line_count = 0
     for line in logtext.splitlines():
@@ -101,23 +104,27 @@ def audit_text(logtext, expected_script_id=None):
                 complete_windows_by_session.append(session_has_complete_window)
                 ordered_run_by_session.append(session_has_ordered_run)
                 ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
+                ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
             if len(summaries) >= MAX_SESSIONS:
                 raise ValueError('too many sessions')
             current = _fresh()
             tracked = False
             request_families_in_window.clear()
             request_families_after_run.clear()
+            tx_families_after_run.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
             session_has_complete_window = False
             session_has_ordered_run = False
             session_has_ordered_run_with_requests = False
+            session_has_ordered_run_with_requests_and_tx = False
         if _GETSCRIPT.search(line):
             # A new selected script closes the previous bootstrap window,
             # even when it is a different type or a profiled ReadVin.
             request_families_in_window.clear()
             request_families_after_run.clear()
+            tx_families_after_run.clear()
             expected_fetched = False
             fetched_version = None
             expected_running = False
@@ -142,6 +149,7 @@ def audit_text(logtext, expected_script_id=None):
                     tracked = False
                     request_families_in_window.clear()
                     request_families_after_run.clear()
+                    tx_families_after_run.clear()
                     expected_fetched = False
                     fetched_version = None
                     expected_running = False
@@ -154,6 +162,7 @@ def audit_text(logtext, expected_script_id=None):
                     # cannot establish this window's expected script chain.
                     expected_running = False
                     request_families_after_run.clear()
+                    tx_families_after_run.clear()
                 expected_fetched = False
                 fetched_version = None
             elif not _RUNNING.search(line):
@@ -171,6 +180,7 @@ def audit_text(logtext, expected_script_id=None):
             expected_fetched = fetched_version is not None
             expected_running = False
             request_families_after_run.clear()
+            tx_families_after_run.clear()
         if _FETCHED.search(line):
             current['bootstrap_readvin_fetched'] += 1
         if _RUNNING.search(line):
@@ -193,6 +203,8 @@ def audit_text(logtext, expected_script_id=None):
                     request_families_after_run.add('p2_b9fb_' + ecu)
                 if len(request_families_after_run) == 3:
                     session_has_ordered_run_with_requests = True
+                    if len(tx_families_after_run) == 3:
+                        session_has_ordered_run_with_requests_and_tx = True
         if 'ERR_BUFFER_EMPTY' in line.upper():
             current['j2534_err_buffer_empty'] += 1
         if 'TRANSMITTED FRAME indication' in line:
@@ -202,10 +214,20 @@ def audit_text(logtext, expected_script_id=None):
             if frame is None:
                 continue
             canid, payload = frame
+            tx_family = None
             if canid == 0x726 and payload[:3] == [0x22, 0xf1, 0x14]:
                 current['j2534_p3_f114_tx_frames'] += 1
-            elif canid == 0xffffe and len(payload) >= 4 and payload[0] == 0xcb and payload[1] in (0x40, 0x50) and payload[2:4] == [0xb9, 0xfb]:
+                tx_family = 'p3_f114'
+            elif (canid == 0xffffe and len(payload) >= 4 and
+                  payload[0] == 0xcb and payload[1] in (0x40, 0x50) and
+                  payload[2:4] == [0xb9, 0xfb]):
                 current[f'j2534_p2_b9fb_target{payload[1]:02x}_tx_frames'] += 1
+                tx_family = 'p2_b9fb_' + f'{payload[1]:02x}'
+            if expected_running and tx_family:
+                tx_families_after_run.add(tx_family)
+                if (len(request_families_after_run) == 3 and
+                        len(tx_families_after_run) == 3):
+                    session_has_ordered_run_with_requests_and_tx = True
         if '<---' in line:
             current['j2534_rx_direction_lines'] += 1
             frame = _can_frame(line.split('<---', 1)[1])
@@ -224,6 +246,7 @@ def audit_text(logtext, expected_script_id=None):
         complete_windows_by_session.append(session_has_complete_window)
         ordered_run_by_session.append(session_has_ordered_run)
         ordered_run_with_requests_by_session.append(session_has_ordered_run_with_requests)
+        ordered_run_with_requests_and_tx_by_session.append(session_has_ordered_run_with_requests_and_tx)
     if len(summaries) > MAX_SESSIONS:
         raise ValueError('too many sessions')
     totals = {name: sum(s[name] for s in summaries) for name in _COUNTER_NAMES}
@@ -239,6 +262,8 @@ def audit_text(logtext, expected_script_id=None):
         'sessions_with_ordered_expected_script_fetch_run_lines': sum(ordered_run_by_session),
         'sessions_with_ordered_expected_script_run_and_three_request_families': sum(
             ordered_run_with_requests_by_session),
+        'sessions_with_ordered_expected_script_requests_and_tx': sum(
+            ordered_run_with_requests_and_tx_by_session),
         'runtime_getscript_selection_verified': False,
         'session_counters': summaries,
         'totals': totals,
