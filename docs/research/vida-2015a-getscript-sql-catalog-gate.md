@@ -1055,17 +1055,50 @@ Zero native/PassThru/JNA references in the target class
 does not rule out the rest of VIDA reaching DiCE/J2534 via
 a different module, factory, interface, process or DLL.
 
-**Next safe, bounded, read-only gate:** pivot away from
-this probable data model. Enumerate **counts only** of
-nested `WEB-INF/lib` JARs, exploded `WEB-INF/classes`,
-other first-level artifacts within the two exploded WARs,
-and optionally `META-INF`/manifest presence. No archive
-extraction, file-content searches, Java execution,
-server/registry/J2534 mutations, URLs or confidential
-names/paths/credentials/VIN output. Use these counts to
-prioritize which application module to inspect next; do
-not assert a VIDA→J2534 communication path without
-separate evidence.
+**Owner-local deployed WAR inventory (read-only, completed):**
+The bounded WAR inventory script completed with
+`[VIDA] Result=OK` on `JavaPID=11600`,
+`VIDAAncestorConfirmed=True`, `ExplodedWARCount=2`.
+It reported, in sorted EAR/WAR slots:
+
+| Metric | EAR 1 / WAR 1 | EAR 2 / WAR 1 |
+|---|---:|---:|
+| WEBINFExists | True | True |
+| LIBExists | False | **True** |
+| LIBFiles | 0 | **31** |
+| LIBJarFiles | 0 | **31** |
+| LIBNativeDLLFiles | 0 | 0 |
+| LIBDirectories | 0 | 0 |
+| CLASSESExists | True | True |
+| CLASSESImmediateClasses | 0 | 0 |
+| CLASSESSubdirectories | 1 | 1 |
+| WARImmediateDirectories | 2 | **12** |
+| WARImmediateFiles | 0 | **3** |
+
+The second EAR's exploded WAR therefore contains **31
+first-level JAR archives under `WEB-INF/lib`**, a useful
+lead beyond the earlier EJB JAR whose `J2534`-named class
+was consistent with a JavaBean/DTO. Counts are immediate
+children only: `CLASSESImmediateClasses=0` does **not**
+exclude nested package classes; `LIBNativeDLLFiles=0`
+does **not** establish absence of native DLLs elsewhere
+or native libraries embedded in JARs. No content of the
+31 archives has been examined in this gate. The presence
+of 31 JARs does **not** establish a J2534 driver or actual
+vehicle communication.
+
+**Next bounded owner-local static gate:** inspect only ZIP
+central directory **entry names and sizes** within the 31
+`WEB-INF/lib` JAR archives (plus a recursively bounded
+count of `.class` files under each `WEB-INF/classes`),
+returning aggregate total classes, number of archives
+readable, per-archive class-count tiers, and separate
+J2534/PassThru/diagnostic class-leaf-name hint counts.
+Enforce per-archive and cumulative entry limits; avoid
+printing JAR, class, package, path, URL, manifest or
+configuration names/content. Do not extract or execute
+code, send requests, change the registry, or attach DiCE.
+Treat filename hints only as clues, not proof of use.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
