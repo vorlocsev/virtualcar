@@ -1224,19 +1224,53 @@ contents, paths, credentials or VIN were exported; no
 Java class executed, SQL queried, HTTP/J2534/ECU requests
 sent or Virtual Car builds published.
 
-**Next bounded classification gate:** in the *same
-previously scoped* 6151 classes only, distinguish exact
-`GetScript` UTF8 entries from **prefix/longer-identifier
-matches**. Count structural contexts for exact entries:
-`CONSTANT_String`, class member declarations,
-`NameAndType`, `Methodref` and `InterfaceMethodref`, and
-optionally count same-class overlap with any
-`scriptType`/repository terms. Publish only counts and
-anonymous JAR slots; never full symbols, methods' code,
-paths or literal strings. A positive exact `GetScript`
-method reference remains *static Java linkage*, **not** a
-proven stored-procedure call. Prioritize independent,
-authorized, sanitized caller or trace evidence thereafter.
+**Owner-local exact-`GetScript` JVM metadata classification (completed):**
+The `Inspect-VIDA-GetScriptExactContext.ps1` operator run
+finished `Result=OK`/`ScriptFinished` on descendant
+WildFly `JavaPID=11600`, EAR 2 / WAR 1, 31 readable JARs,
+`JarEntriesInspected=6518`, **5872 JAR classes + 279
+exploded classes**, 0 skipped/unreadable/parse errors.
+
+| Class-count metric | JAR | Exploded |
+|---|---:|---:|
+| Case-insensitive substring `GetScript` in UTF8 | **26** | **1** |
+| Exact UTF8 entry `GetScript` | **0** | **0** |
+| Longer-only substring hits | **26** | **1** |
+| Exact declared method name | 0 | 0 |
+| Exact `Methodref` / `InterfaceMethodref` member | 0 / 0 | 0 / 0 |
+| Exact `CONSTANT_String` literal | 0 | 0 |
+| `scriptType` / repository-name / exact `ReadVin` | 0 / 0 / 0 | 0 / 0 / 0 |
+
+Anonymous JAR slot counts were identical to the broad
+scan: **slot 1: 2; slot 14: 18; slot 19: 6**; every slot
+had zero exact `GetScript` UTF8 entries and exact member
+references. The previously reported 27 class hits are
+**all longer UTF8 values**, not a class or declared method
+whose UTF8 entry is exactly `GetScript`.
+
+**Important limit:** the absence of an *exact* UTF8 value
+`GetScript` does not rule out a Java `CONSTANT_String`
+literal containing an entire SQL command such as
+`EXEC dbo.GetScript ...`, which would be a **longer** UTF8
+value, or construction of such a command at runtime. The
+negative exact-name scan therefore narrows Java-symbol
+claims only; it **does not refute** a possible SQL text
+literal or remote call, and does not prove VIDA lacks the
+stored procedure. There is still no observed original VIDA
+client SQL invocation or `@scriptType` binding.
+
+**Next narrow, read-only gate:** classify the longer
+`GetScript`-bearing UTF8 entries in those same 27 classes
+by **structural usage**, reporting only class counts for
+`CONSTANT_String` references, Java method/field declaration
+and member-ref names, and heuristic SQL-shaped text, with
+no literal contents, class/package or file names, code
+bodies, SQL/HTTP execution, or ECU activity. A SQL-shaped
+string is still only static text, not proof of execution.
+After this discriminate potential SQL-shaped hints from
+ordinary `getScript...` Java identifiers, pivot to the
+separate 325-class EJB JAR or original VIDA SQL caller if
+warranted. Keep draft PR #172 unmerged; publish no builds.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
