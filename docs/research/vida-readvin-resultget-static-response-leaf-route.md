@@ -369,3 +369,84 @@ selection and client VIN acceptance. The emulator keeps
 SecurityAccess, programming or firmware writes.
 
 This is research-only. No CEM, J2534 or executable release changes.
+
+## Original ResultGet.SetPath dynamic-registration contract (2026-11-08)
+
+The owner's original **unmodified** Scripting and CarCom DLLs were
+verified again by SHA-256, static MethodDef IL, FieldDef/Constant
+metadata and CustomAttribute metadata: **10/10 targeted local
+assertions PASS**. No original .NET method was executed.
+
+Exact original `ResultGet.SetPath` MethodDef `0x0600043C`
+has the CLR signature
+`void(System.String, ResponsePath, ResponseNodeType)`.
+Its behavior is **conditional on the third argument**:
+
+| Original `ResponseNodeType` | Resulting `PropertyClass` |
+| --- | --- |
+| `Primitive = 7` | `String = 2` |
+| All other values | `Response = 5` |
+
+The enum value `Primitive=7` was confirmed independently from
+the original CarCom DLL's FieldDef/Constant table, not inferred
+from its field order. The first conditional branch in `SetPath`
+checks this enum value, then calls `PropertyCollection.CreateOrUpdate`
+with the matching PropertyClass. The method also selects or creates
+an extension `get` element by its output `property` attribute
+and invokes `ResponsePath.Save` to store the selection path.
+
+**Important registration boundary:**
+
+- `ResultGet.SetPath` is a **public** instance method, but in this
+  original SHA-pinned scripting assembly it has **NO**
+  `[Scriptable]` CustomAttribute.
+- `ResultGet.Execute` **does** have `[Scriptable]`.
+- `ScriptNode.GetMethods` (MethodDef `0x0600008B`) registers
+  callable XML methods using reflected `GetCustomAttributes`
+  and a `Scriptable` type check.
+- No direct original call site for `ResultGet.SetPath` was found
+  in the scripting assembly's examined IL. This is **not** proof
+  that the method is never invoked by a separate owner application,
+  compiled helper or reflection.
+
+Consequently the previous v4 "direct XML String property" flag
+is intentionally **only a conservative evidence category**.
+A legitimate external `SetPath` call can create a String property
+and corresponding extension get selector even when neither was
+directly declared in the original XML. However, a synthetic XML
+`<call node="Extractor" method="SetPath">...` declaration
+**cannot prove that this non-Scriptable method was executable via
+the original event-dispatch registry**.
+
+Schema **v5** therefore preserves every v4 route flag and adds
+fixed categorical counts of direct XML calls targeting ResultGet
+`SetPath`, including the number with 3 direct parameters,
+incorrect arity and presence-disabled declarations. None of
+these calls is promoted to dynamic output registration evidence.
+
+Fixed original-source fields in the redacted JSON report the
+signature, `Primitive=7 -> String` and `other -> Response`
+contract, `SetPath` absent / `Execute` present
+`[Scriptable]` metadata, and **all dynamic invocation/runtime
+success flags false**. No XML value, path, node key, VIN,
+original DLL bytes or private source location is emitted.
+
+**6 new synthetic regressions** cover source contract,
+apparently valid 3-parameter but unregistered SetPath XML call,
+wrong arity, `disabled="false"`, targeting an unrelated
+component, and no extension get creation without an actual
+external call. **64/64 local Python tests PASS**
+(43 ResultGet route + 13 PropertyClass + 8 CLR dispatch).
+
+Original-source-only categorical evidence report:
+`virtualcar-vida-setpath-original-clr-static-v1`,
+**10/10 PASS**. Exact GitHub route analyzer/test Git blob
+SHA1s match locally executed bytes:
+
+- Analyzer `454ec32fffe0fb3cd56a278b9358a7701dfcaa04`.
+- Tests `1adcf46858457bb8bbe6ceba4a1ee070dbd38fed`.
+
+No original private ReadVin XML ZIP or actual same-session
+VIDA client/CEM VIN acceptance was inspected in this step.
+No emulator J2534/CEM runtime or compiled release changed.
+The exact updated GitHub PR HEAD still lacks Windows VMware CI.
