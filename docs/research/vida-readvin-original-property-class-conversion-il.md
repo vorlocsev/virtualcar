@@ -131,6 +131,32 @@ analyzer `b2ce93fafe06612232e3fe76f1be58be26a743de`;
 tests `ddaea237581a0106ff10ad24d3d5c14b49ccf856`.
 This is local test evidence, **not** Windows CI of the new PR head.
 
+## Candidate response-node-to-string operations in original CarCom
+
+A separate original owner-provided
+`BizServices.CarCom.VehicleServices.DLL` has SHA-256
+`1735d8ac20d63a20afe13742ea5156cce5a5328392bd3e44d9ec3cd8ae0dbd07`.
+A bounded **static-only** MethodDef review finds these possible
+mechanisms, not confirmed ReadVin XML calls:
+
+| Original MethodDef | Verified static operation |
+| --- | --- |
+| `ResponseComponent.SelectNode` `0x060000FB` | Splits a path on `/`; each segment selects a nested response item through `getSelectionValue`, with numeric versus name-based lookup |
+| `ResponseComponent.ToValue` `0x060000FA` | Casts to `ResponseLeaf` and calls virtual `ResponseLeaf.GetValue` |
+| `ResponseStringLeaf.GetValue` `0x06000122` | Returns a stored string value |
+| `ResponseStringLeaf.ToString` `0x06000121` | Also returns its stored string value |
+
+The methods provide a **possible** response tree -> leaf -> string
+conversion route. They do not establish which XML intermediate node
+calls them or which CarCom path addresses any XC90 VIN.
+
+Together with the pinned original scripting DLL signatures,
+`AddVIN` `0x0600037D` and `SetX40Serial` `0x0600037E`
+both take one `System.String` argument, while
+`VehCommBase.get_Result` returns `ResponseComponent`.
+The type boundary must **not** be silently collapsed into
+`VIN accepted` or an emulated CEM response.
+
 ## Next gates
 
 1. Obtain the class-only private report if it can be produced
