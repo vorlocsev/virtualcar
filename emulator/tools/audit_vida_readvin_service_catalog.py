@@ -18,6 +18,7 @@ MAX_ZIP_BYTES = 2 * 1024 * 1024
 MAX_XML_BYTES = 1024 * 1024
 MAX_CSV_BYTES = 4 * 1024 * 1024
 MAX_ELEMENTS = 20000
+MAX_DEPTH = 96  # Matches the bounded original-IL XML classifier.
 MAX_ROWS = 50000
 MAX_CSV_LINE_LENGTH = 65536
 _NUMBER = re.compile(r'(?:0|[1-9][0-9]{0,9})\Z')
@@ -47,8 +48,16 @@ def _parse_xml(xml_bytes):
     handlers = content.findall('./handlers/eventhandler')
     if not nodes or not handlers:
         raise ValueError('missing script nodes or handlers')
-    if sum(1 for _ in root.iter()) > MAX_ELEMENTS:
-        raise ValueError('too many XML elements')
+    # Iterative depth check avoids recursion and rejects XML structures that
+    # the original SHA-pinned parser's bounded audit cannot safely classify.
+    pending = [(root, 0)]
+    count = 0
+    while pending:
+        item, depth = pending.pop()
+        count += 1
+        if count > MAX_ELEMENTS or depth > MAX_DEPTH:
+            raise ValueError('excessive XML complexity')
+        pending.extend((child, depth + 1) for child in item)
     ids = [n.attrib.get('nodeid', '') for n in nodes]
     if any(not i or len(i) > 128 for i in ids) or len(set(ids)) != len(ids):
         raise ValueError('unsafe or duplicate node identifiers')
@@ -66,28 +75,39 @@ def _parse_catalog(csv_bytes):
     if any(len(line) > MAX_CSV_LINE_LENGTH for line in text.splitlines()):
         raise ValueError('CSV line too long')
     reader = csv.DictReader(io.StringIO(text, newline=''), strict=True)
-    if not reader.fieldnames or 'id' not in reader.fieldnames or len(set(reader.fieldnames)) != len(reader.fieldnames):
-        raise ValueError('expected unique id header')
+    # An arbitrary CSV with an id column is not sufficient to establish
+    # the documented T111_Service schema. This is still NOT provenance proof.
+    if (not reader.fieldnames or
+            not {'id', 'service', 'mode'}.issubset(reader.fieldnames) or
+            len(set(reader.fieldnames)) != len(reader.fieldnames)):
+        raise ValueError('expected unique T111 service catalog headers')
     occurrences = {}
-    total = invalid = 0
+    metadata_complete_ids = {}
+    total = invalid = empty_metadata = 0
     try:
         for record in reader:
             total += 1
-            if total > MAX_ROWS or None in record:
+            if (total > MAX_ROWS or None in record or
+                    any(v is None for v in record.values())):
                 raise ValueError('invalid CSV structure')
+            has_metadata = bool(record['service'].strip() and record['mode'].strip())
+            if not has_metadata:
+                empty_metadata += 1
             value = _positive_id(record.get('id'))
             if value is None:
                 invalid += 1
             else:
                 occurrences[value] = occurrences.get(value, 0) + 1
+                if has_metadata:
+                    metadata_complete_ids[value] = metadata_complete_ids.get(value, 0) + 1
     except (csv.Error, UnicodeError) as exc:
         raise ValueError('malformed CSV') from exc
-    return occurrences, total, invalid
+    return occurrences, metadata_complete_ids, total, invalid, empty_metadata
 
 
 def audit_sources(xml_bytes, csv_bytes):
     content, nodes = _parse_xml(xml_bytes)
-    service_ids, rows, invalid_rows = _parse_catalog(csv_bytes)
+    service_ids, metadata_complete_ids, rows, invalid_rows, empty_metadata = _parse_catalog(csv_bytes)
     readers = {n.attrib['nodeid']: n for n in nodes
                if n.attrib.get('class', '').rsplit('.', 1)[-1] == 'ReadVinComponent'}
     # Original XML property-handler setters can replace a literal ServiceId.
@@ -114,9 +134,12 @@ def audit_sources(xml_bytes, csv_bytes):
         'readvin_nodes_with_identifier_property': 0,
         'catalog_rows': rows,
         'catalog_invalid_id_rows': invalid_rows,
+        'catalog_rows_with_empty_service_or_mode': empty_metadata,
         'catalog_unique_numeric_ids': len(service_ids),
         'catalog_duplicate_numeric_id_rows': sum(n - 1 for n in service_ids.values()),
         'literal_ids_with_unique_catalog_row_no_declared_override': 0,
+        'literal_ids_with_unique_catalog_row_and_nonempty_service_mode': 0,
+        'literal_ids_with_unique_catalog_row_but_empty_service_or_mode': 0,
         'literal_ids_without_catalog_row': 0,
         'literal_ids_with_duplicate_catalog_rows': 0,
         'literal_ids_with_declared_override': 0,
@@ -146,6 +169,10 @@ def audit_sources(xml_bytes, csv_bytes):
             counters['literal_ids_with_declared_override'] += 1
         else:
             counters['literal_ids_with_unique_catalog_row_no_declared_override'] += 1
+            if metadata_complete_ids.get(value, 0) == 1:
+                counters['literal_ids_with_unique_catalog_row_and_nonempty_service_mode'] += 1
+            else:
+                counters['literal_ids_with_unique_catalog_row_but_empty_service_or_mode'] += 1
 
     return {
         'schema_version': SCHEMA,
@@ -153,6 +180,11 @@ def audit_sources(xml_bytes, csv_bytes):
         'counts': counters,
         'static_unique_catalog_candidate_present': bool(
             counters['literal_ids_with_unique_catalog_row_no_declared_override']),
+        # This stronger shape gate still proves no selected GetScript or
+        # protocol bytes. Do not collapse multiple ReadVin readers into one.
+        'single_readvin_with_service_mode_metadata_candidate_present': bool(
+            counters['readvin_nodes'] == 1 and
+            counters['literal_ids_with_unique_catalog_row_and_nonempty_service_mode'] == 1),
         'same_installation_provenance_verified': False,
         'original_getscript_runtime_selection_verified': False,
         'runtime_serviceid_or_propertyhandler_value_verified': False,
