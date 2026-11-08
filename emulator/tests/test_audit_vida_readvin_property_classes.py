@@ -76,6 +76,46 @@ class OriginalPropertyClassTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             audit_xml(build().replace(b'<content>', b'').replace(b'</content>', b''))
 
+    def test_09_readvin_result_response_object_requires_another_conversion(self):
+        r = audit_xml(build(node_props='<property name="Result" class="Response"/>'))
+        g = r['identity_method_parameter_declarations']['addvin']
+        self.assertEqual(g['references_from_readvin_component'], 1)
+        self.assertEqual(g['readvin_result_response_object_references'], 1)
+        self.assertEqual(g['readvin_result_declared_response_class'], 1)
+        self.assertEqual(g['readvin_result_class_unresolved_or_other'], 0)
+        self.assertEqual(r['readvin_result_original_il_getter_contract'], 'ResponseComponent')
+        self.assertFalse(r['readvin_result_is_accepted_vin'])
+
+    def test_10_other_readvin_property_is_not_a_response_result(self):
+        r = audit_xml(build(node_props='<property name="Result" class="Response"/>',
+                            params='<parameter node="Reader" property="CanHiSpeedValue"/>'))
+        g = r['identity_method_parameter_declarations']['addvin']
+        self.assertEqual(g['references_from_readvin_component'], 1)
+        self.assertEqual(g['readvin_result_response_object_references'], 0)
+        self.assertEqual(g['source_properties_not_in_xml'], 1)
+
+    def test_11_missing_or_mismatched_result_class_must_not_claim_vin(self):
+        for declared in ('String', ''):
+            with self.subTest(declared=declared):
+                props = '<property name="Result" class="String"/>' if declared else ''
+                r = audit_xml(build(node_props=props))
+                g = r['identity_method_parameter_declarations']['addvin']
+                self.assertEqual(g['readvin_result_response_object_references'], 1)
+                self.assertEqual(g['readvin_result_declared_response_class'], 0)
+                self.assertEqual(g['readvin_result_class_unresolved_or_other'], 1)
+                self.assertFalse(r['readvin_result_is_accepted_vin'])
+
+    def test_12_other_component_and_missing_node_reference_separated(self):
+        r = audit_xml(build(params='<parameter node="Output" property="Result"/>'))
+        g = r['identity_method_parameter_declarations']['addvin']
+        self.assertEqual(g['references_from_other_declared_components'], 1)
+        self.assertEqual(g['references_to_missing_nodes'], 0)
+        self.assertEqual(g['references_from_readvin_component'], 0)
+        r = audit_xml(build(params='<parameter node="Missing" property="Result"/>'))
+        g = r['identity_method_parameter_declarations']['addvin']
+        self.assertEqual(g['references_from_other_declared_components'], 0)
+        self.assertEqual(g['references_to_missing_nodes'], 1)
+
     def test_08_bounded_zip_cli_redacted_and_exclusive(self):
         with tempfile.TemporaryDirectory() as d:
             z, out = Path(d, 'private.zip'), Path(d, 'safe.json')
