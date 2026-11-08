@@ -116,6 +116,14 @@ class OriginalPropertyClassTests(unittest.TestCase):
         self.assertEqual(g['references_from_other_declared_components'], 0)
         self.assertEqual(g['references_to_missing_nodes'], 1)
 
+    def test_13_identity_string_signature_does_not_convert_response(self):
+        result = audit_xml(build(node_props='<property name="Result" class="Response"/>'))
+        self.assertEqual(result['addvin_original_il_argument_type'], 'System.String')
+        self.assertEqual(result['setx40serial_original_il_argument_type'], 'System.String')
+        self.assertEqual(result['readvin_result_original_il_getter_contract'], 'ResponseComponent')
+        self.assertFalse(result['direct_readvin_result_to_identity_string_flow_verified'])
+        self.assertFalse(result['vin_accepted_by_client'])
+
     def test_08_bounded_zip_cli_redacted_and_exclusive(self):
         with tempfile.TemporaryDirectory() as d:
             z, out = Path(d, 'private.zip'), Path(d, 'safe.json')
