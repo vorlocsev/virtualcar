@@ -1673,21 +1673,51 @@ credentials, login names, paths, IPs or PIDs exported.
 No SQL `GetScript` execution, writes, network/adapter/ECU
 operations or Virtual Car builds published.
 
-**Next bounded metadata gate:** if the owner approves one
-more read-only SQL SELECT, inspect only the **plan-cache
-aggregate for the already-known procedure**
-`DiagSwdlRepository.dbo.GetScript`, using
-`sys.dm_exec_procedure_stats`, scoped by database and
-object identifiers; report whether a cache row is present,
-aggregate execution count and coarse recency only.
-A cache hit is evidence that *some* caller executed the
-procedure while its plan remained cached, **not** evidence
-that WildFly was that caller or which `@scriptType` value
-was used. No cache row is **inconclusive** because plans
-expire/evict and the view reports only cached completed
-procedure executions. Do not execute the procedure or
-obtain SQL text. Keep draft PR #172 unmerged and no
-Virtual Car binaries published.
+**Owner-run `dbo.GetScript` SQL plan-cache metadata check (COMPLETED):**
+`Inspect-VIDA-GetScriptCacheStats.ps1` returned
+`Result=OK` / `ScriptFinished`. It opened a local integrated-
+auth SQL connection to `\.\VIDA` and executed **one read-only
+`SELECT`** resolving database/object identifiers and
+filtering `sys.dm_exec_procedure_stats`; **it did not execute
+`dbo.GetScript`**, retrieve SQL source, or export sensitive data.
+
+| Aggregate observation | Result |
+|---|---|
+| `LocalSQLMetadataConnectionOpened` | **True** |
+| `TargetDatabaseMetadataVisible` | **True** |
+| `GetScriptProcedureMetadataVisible` | **True** |
+| `CachedGetScriptPlanRows` | **0** |
+| `CachedGetScriptExecutionCount` | **0** |
+| `MostRecentCachedExecutionAge` | **NotAvailable** |
+
+**Critical interpretation:** the zero execution-count result
+arises from **no matching cached procedure-plan rows** in
+the metadata snapshot. It does **not** mean the procedure
+has never run, nor that VIDA/WildFly cannot call it. Plans
+can be evicted, recompilations can replace entries, and
+the DMV provides only extant cached-plan statistics. The
+procedure and database metadata were resolvable, but no
+actual execution or original caller was demonstrated.
+The nine previously observed SQL user sessions reporting
+WildFly's process ID likewise do not prove a call to this
+specific procedure, parameter selection, VIN access or
+Virtual Car interoperability.
+
+**Decision: close the low-yield SQL/TCP reconnaissance
+loop at this evidence level.** Do not keep polling an idle
+procedure plan cache or re-run broad JVM keyword searches.
+Treat `dbo.GetScript` as **present, original caller and
+runtime `@scriptType` unresolved**. The higher-value next
+step for the Virtual Car emulator is a separately authorized,
+**offline-only, read-only virtual J2534 diagnostic trace**
+with sanitized metadata sufficient to answer whether a
+client opens the provider, selects CAN/ISO15765, transmits
+and receives frames, and obtains an actual VIN/ECU
+identification response. Do not emit original VIN, secret
+values, tokens, proprietary SQL/scripts, raw unredacted
+vehicle traces, or make ECU/programming requests; distinguish
+metadata observed from functionality verified. Keep draft
+PR #172 unmerged and publish no Virtual Car builds.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
