@@ -1300,16 +1300,54 @@ Java method bodies, names/paths, SQL text, VIN or
 credentials were disclosed, and no Java/SQL/network/ECU
 requests executed.
 
-**Next priority:** stop rescanning the second WAR and
-perform a **single bounded passive constant-pool scan of
-the separate root EJB JAR** (325 `.class`, 20 declared
-session beans), targeting broad/exact `GetScript`, SQL-
-shaped literals, `scriptType`, repository and `ReadVin`
-metadata, counting only aggregate classes and bean
-implementation classes. If there is no compelling evidence,
-prioritize original VIDA client-side SQL call proof or
-sanitized, independently authorized offline J2534 trace.
-Keep PR #172 as draft and publish no Virtual Car builds.
+**Owner-local EJB JAR SQL/diagnostic UTF8 scan (completed):**
+`Inspect-VIDA-EJBSQLHints.ps1` completed `Result=OK` and
+`ScriptFinished` in the VIDA-descendant WildFly process
+`JavaPID=11600`; inspected only the **one separate root
+EJB JAR in sorted EAR slot 2**, not the 31 web JARs.
+
+| Metric | Observed |
+|---|---:|
+| EJBJarCount | **1** |
+| ClassEntriesFound / ClassesScanned | **325 / 325** |
+| SessionBeansDeclared | **20** |
+| ClassesSkippedByLimit / ClassParseErrors | **0 / 0** |
+| ClassesWithGetScriptUTF8 / ExactGetScriptUTF8 / GetScriptStringConstant | **0 / 0 / 0** |
+| ClassesWithSQLShapedUTF8 / SQLShapedStringConstant | **0 / 0** |
+| ClassesDeclaringGetScriptNamedMethod / ReferencingGetScriptNamedMethod | **0 / 0** |
+| ClassesWithScriptTypeUTF8 / RepositoryUTF8 / ExactReadVinUTF8 | **0 / 0 / 0** |
+| ClassesWithJ2534UTF8 / PassThruUTF8 / DiCEUTF8 | **1 / 0 / 0** |
+| BeansWithGetScriptUTF8 / SQLShapedUTF8 / ScriptTypeUTF8 / RepositoryUTF8 / ExactReadVinUTF8 | **0 / 0 / 0 / 0 / 0** |
+
+The sole `J2534`-bearing class is consistent with the
+previously characterized **5-field/11-method JavaBean/DTO**
+member of this JAR. There are **no matching static hints
+under the probe's patterns** for SQL `dbo.GetScript`,
+`@scriptType` or exact `ReadVin` among 325 classes (including
+20 EJB bean implementation classes). This does NOT prove
+SQL or J2534 is unused: runtime query composition,
+external dependencies, other modules, or clients could
+implement the functionality. Across the second WAR's
+6151 classes and this separate EJB JAR's 325, **6476 class
+files have been scanned under varying bounded metadata
+probes**, not a complete whole-VIDA code/runtime analysis.
+No class bodies, proprietary identifiers, paths, scripts,
+credentials, VIN or network requests were emitted or
+executed. No SQL procedure execution, adapter interaction,
+ECU writes, registry changes or build publication.
+
+**Next priority:** stop broad class-file scans of the
+examined second EAR. Seek **independent observable evidence
+of the SQL caller** (e.g. non-invasive process/connection
+provenance inventory, without SQL statements or sensitive
+endpoints), and identify whether relevant client components
+run outside the already scanned JBoss deployments. An
+active TCP connection alone would demonstrate connectivity,
+not that `GetScript` was called. Avoid executing SQL
+`GetScript` or involving physical ECUs; a sanitized,
+authorized offline virtual-J2534 trace remains a separate
+potential path. Keep draft PR #172 unmerged and do not
+publish Virtual Car binaries.
 
 **Completed structural metadata gate.** Shift focus away
 from adding more XML tree counts to independent evidence:
