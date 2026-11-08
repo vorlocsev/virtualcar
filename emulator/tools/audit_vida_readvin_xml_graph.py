@@ -92,6 +92,16 @@ def audit_xml_bytes(xml_data):
             current = parent.get(current)
         return None
 
+    def nearest_call(element):
+        # Attribute declarations under a nested child call must not be
+        # promoted as parameters of the enclosing identity method call.
+        current = parent.get(element)
+        while current is not None:
+            if local_name(current) == "call":
+                return current
+            current = parent.get(current)
+        return None
+
     all_nodes = [e for e in root.iter() if local_name(e) == "node"]
     all_handlers = [e for e in root.iter() if local_name(e) == "eventhandler"]
     all_calls = [e for e in root.iter() if local_name(e) == "call"]
@@ -123,6 +133,18 @@ def audit_xml_bytes(xml_data):
                          "absent_disabled_attribute": 0,
                          "unrecognized_disabled_literal": 0, "readvin_source_node": 0},
     }
+    # Only these *attribute names* can claim a lexical node reference.
+    # Even a recognized key and exact ID match is NOT a runtime binding.
+    reference_keys = {"node", "ref", "source"}
+    reader_ids = {k for k, v in node_by_id.items() if _kind(v) == "readvin_component"}
+    for group in classified.values():
+        group["parameter_declarations_only"] = {
+            "calls_with_parameter_child": 0,
+            "declared_parameter_children": 0,
+            "calls_with_reference_like_key_matching_node_id": 0,
+            "calls_with_reference_like_key_matching_reader_id": 0,
+            "calls_with_parameter_text": 0,
+        }
     unresolved_target = 0
     other_target_identity_method = 0
     for handler in handlers:
@@ -144,6 +166,23 @@ def audit_xml_bytes(xml_data):
             group = classified[method_name]
             group["declared"] += 1
             group[_disabled(call.attrib.get("disabled"))] += 1
+            # Nearest-call ownership prevents one nested call's parameter
+            # from being counted as a sibling/outer AddVIN argument.
+            params = [e for e in call.iter()
+                      if local_name(e) == "parameter" and nearest_call(e) is call]
+            counts = group["parameter_declarations_only"]
+            counts["calls_with_parameter_child"] += int(bool(params))
+            counts["declared_parameter_children"] += len(params)
+            has_ref = has_reader_ref = has_text = False
+            for param in params:
+                has_text |= any(bool((e.text or "").strip()) for e in param.iter())
+                for key, value in param.attrib.items():
+                    local_key = key.rsplit("}", 1)[-1]
+                    has_ref |= local_key in reference_keys and value in node_by_id
+                    has_reader_ref |= local_key in reference_keys and value in reader_ids
+            counts["calls_with_reference_like_key_matching_node_id"] += int(has_ref)
+            counts["calls_with_reference_like_key_matching_reader_id"] += int(has_reader_ref)
+            counts["calls_with_parameter_text"] += int(has_text)
             if _kind(source) == "readvin_component":
                 group["readvin_source_node"] += 1
 
