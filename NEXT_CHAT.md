@@ -1,5 +1,16 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## CI gate: rapid Windows F10 backup filename collision (2026-11-09)
+
+- [PR #278](https://github.com/vorlocsev/virtualcar/pull/278) merged `development` `d0f4baab8197e7f62a2ca9ac9b4a2fcad170d38c`.
+- Automatic owner-only VMware [CI #42655587265](https://github.com/vorlocsev/virtualcar/actions/runs/42655587265) **FAILED**, not green: all 8 new raw-CAN ISO-TP CLEAR_RX native checks passed, but `go test ./...` failed `TestBackendTelemetryF10ToggleBackups` because 2 rapid toggles produced only one `.dev49-*.bak` backup on Windows.
+- Source reason: `emulator/control/backend_config.go` names backups with `time.Now().UnixNano()`. Consecutive calls can receive the same clock value on Windows, allowing the later backup rename to replace the previous backup. This is independent of the native J2534 change.
+- Narrow Go fix: cryptographically random 128-bit backup suffix, explicit existence refusal, unchanged original rollback and file permissions. Synthetic regression toggles eight times and requires all eight distinct exact-byte snapshots with no temporary leftovers.
+- **Gate:** focused follow-up PR into `development`, then fresh automatic owner-only VMware full **SUCCESS** on exact merged SHA including both Go tests and all eight native J2534 tests. Do not count #42655587265 as success. SectorV GUI/P0 Issue #4 remains unverified; no `main` merge or release.
+
+---
+
+
 ## P0: CLEAR_RX_BUFFER must cancel staged raw CAN ISO-TP (2026-11-09)
 
 - Latest verified baseline before this patch: `development` `751f3053fdece867e166377d93ee8fef0450b171`, automatic owner-only [VMware #42652390551](https://github.com/vorlocsev/virtualcar/actions/runs/42652390551) **SUCCESS** (30/30).

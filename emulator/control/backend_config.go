@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
+	"crypto/rand"
 )
 
 // dev49: read-only ECU telemetry is opt-in. This editor preserves unrelated
@@ -122,7 +122,19 @@ func toggleBackendTelemetry(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	backup := fmt.Sprintf("%s.dev49-%d.bak", path, time.Now().UnixNano())
+	// Windows can report the same UnixNano value for rapid consecutive
+	// toggles. A timestamp-only backup name can overwrite the first backup.
+	// Use an unpredictable, independent suffix and refuse any collision.
+	var nonce [16]byte
+	if _, err = rand.Read(nonce[:]); err != nil {
+		return false, err
+	}
+	backup := fmt.Sprintf("%s.dev49-%x.bak", path, nonce)
+	if _, statErr := os.Lstat(backup); statErr == nil {
+		return false, fmt.Errorf("backup name collision")
+	} else if !os.IsNotExist(statErr) {
+		return false, statErr
+	}
 	if err = os.Rename(path, backup); err != nil {
 		return false, err
 	}
