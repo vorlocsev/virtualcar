@@ -756,11 +756,80 @@ static void test_write_transport_boundaries(U32 dev){
  puts("PASS J2534 WriteMsgs: protocol isolation, classic CAN DLC and batch boundaries");
 }
 
+/* J2534 TX identifiers are bounded by 29 CAN bits independently of
+   the driver flags. These are synthetic lab requests, not OEM traffic. */
+static void test_can_id_range_guard(U32 dev){
+ const U8 marker[8]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0u};
+ const U8 uds_vin[3]={0x22u,0xF1u,0x90u};
+ U32 can=0,iso=0,n,prior_events,prior_tx,prior_a3;
+ PASSTHRU_MSG msg,rx,batch[2];
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000u,&iso)==ERR_OK);
+ prior_events=backend_len;
+ prior_tx=g_vehicle_bridge.inspected_tx;
+ prior_a3=g_vehicle_bridge.vehicle.a3_shape_seen;
+ /* 1. First out-of-range ID on CAN: no backend event or observer mutation. */
+ msg=frame(PROTO_CAN,0x20000000u,marker,8u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_INVALID_MSG&&n==0);
+ REQUIRE(backend_len==prior_events&&g_vehicle_bridge.inspected_tx==prior_tx);
+ REQUIRE(channel(can)->count==0);
+ /* 2. All-one ID is invalid even if the CAN_29BIT_ID flag is set. */
+ msg=frame(PROTO_CAN,0xFFFFFFFFu,marker,8u);
+ msg.TxFlags=CAN_29BIT_ID;
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_INVALID_MSG&&n==0);
+ REQUIRE(backend_len==prior_events&&g_vehicle_bridge.inspected_tx==prior_tx);
+ /* 3. ISO15765 must enforce the same physical CAN identifier boundary. */
+ msg=frame(PROTO_ISO15765,0x20000000u,uds_vin,3u);
+ n=1;REQUIRE(PassThruWriteMsgs(iso,&msg,&n,0)==ERR_INVALID_MSG&&n==0);
+ REQUIRE(backend_len==prior_events&&g_vehicle_bridge.inspected_tx==prior_tx);
+ REQUIRE(channel(iso)->count==0);
+ /* 4. The extended-ID flag cannot override an invalid 30-bit identifier. */
+ msg.TxFlags=CAN_29BIT_ID;
+ n=1;REQUIRE(PassThruWriteMsgs(iso,&msg,&n,0)==ERR_INVALID_MSG&&n==0);
+ REQUIRE(backend_len==prior_events&&g_vehicle_bridge.inspected_tx==prior_tx);
+ /* 5. The exact 29-bit maximum is valid on raw CAN (no fabricated ECU). */
+ msg=frame(PROTO_CAN,0x1FFFFFFFu,marker,8u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_OK&&n==1);
+ n=1;REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 6. The same maximum identifier is valid on ISO15765. */
+ msg=frame(PROTO_ISO15765,0x1FFFFFFFu,uds_vin,3u);
+ n=1;REQUIRE(PassThruWriteMsgs(iso,&msg,&n,0)==ERR_OK&&n==1);
+ n=1;REQUIRE(PassThruReadMsgs(iso,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 7. A regular 11-bit CAN ID is not blocked by the range guard. */
+ msg=frame(PROTO_CAN,0x7FFu,marker,8u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_OK&&n==1);
+ n=1;REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 8. Mixed valid-then-invalid batch returns the successful count and
+    never attributes the invalid second ID to a vehicle request. */
+ batch[0]=frame(PROTO_CAN,0x1FFFFFFFu,marker,8u);
+ batch[1]=frame(PROTO_CAN,0x20000000u,marker,8u);
+ prior_tx=g_vehicle_bridge.inspected_tx;
+ n=2;REQUIRE(PassThruWriteMsgs(can,batch,&n,0)==ERR_INVALID_MSG&&n==1);
+ REQUIRE(g_vehicle_bridge.inspected_tx==prior_tx+1u);
+ REQUIRE(channel(can)->count==0);
+ /* 9. Invalid first entry does not send the following valid message. */
+ batch[0]=frame(PROTO_CAN,0xE0000000u,marker,8u);
+ batch[1]=frame(PROTO_CAN,0x1FFFFFFFu,marker,8u);
+ prior_tx=g_vehicle_bridge.inspected_tx;prior_events=backend_len;
+ n=2;REQUIRE(PassThruWriteMsgs(can,batch,&n,0)==ERR_INVALID_MSG&&n==0);
+ REQUIRE(backend_len==prior_events&&g_vehicle_bridge.inspected_tx==prior_tx);
+ /* 10. A normal read-only ISO F190 is unaffected. */
+ msg=frame(PROTO_ISO15765,0x7E0u,uds_vin,3u);
+ n=1;REQUIRE(PassThruWriteMsgs(iso,&msg,&n,0)==ERR_OK&&n==1);
+ rx=readmsg(iso);REQUIRE(rx.ProtocolID==PROTO_ISO15765);
+ REQUIRE(rx.Data[4]==0x62u&&rx.Data[5]==0xF1u&&rx.Data[6]==0x90u);
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==prior_a3);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ puts("PASS J2534 CAN ID range: 29-bit bounds, valid IDs and batch isolation");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_write_transport_boundaries(dev);
+ test_can_id_range_guard(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
