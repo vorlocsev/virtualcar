@@ -53,6 +53,10 @@ typedef struct {
     uint32_t generated_reply_count;       /* always zero */
 } p2_vehicle_tx_assessment;
 
+/* Explicit, read-only configuration selection; does not construct ECU replies.
+   Returns false for an unsupported MY, without modifying *out. */
+bool p2_vehicle_xc90_model_year_config(unsigned model_year, bool engine_b8444s,
+                                        p2_vehicle_config *out);
 p2_vehicle_config p2_vehicle_xc90_v8_my2009_config(void);
 void p2_vehicle_init(p2_vehicle *vehicle, const p2_vehicle_config *cfg);
 
