@@ -182,7 +182,9 @@ $referenceDll = "C:\VirtualCarLab\Reference\VirtualCarJ2534.dll"
 $tool = ".\tools\audit_sectorv_ui_window_triage.py"
 $ui = Join-Path $private "sectorv-ui-private.json"
 $triage = Join-Path $private "bin7-one-run-triage.redacted.json"
-py -3 $tool --window-report $report --ui-observation $ui --output $triage --operator-same-run-confirmed
+# При наличии снимка модулей из этого сеанса передайте его третьим входом.
+# Без снимка просто уберите --module-snapshot и соответствующий аргумент.
+py -3 $tool --window-report $report --ui-observation $ui --module-snapshot $moduleReport --output $triage --operator-same-run-confirmed
 ```
 
 **Флаг `--operator-same-run-confirmed` допустим только когда оба источника
@@ -190,6 +192,25 @@ py -3 $tool --window-report $report --ui-observation $ui --output $triage --oper
 анализатора уже установлен `--operator-one-run-confirmed`. Без
 подтверждения запустите без флага; итог будет `run_pairing=unpaired`.
 Для одиночного исторического скриншота флаг недопустим.
+
+При переданном `--module-snapshot` итоговый JSON отдельно содержит
+`operator_module_snapshot`: факт локального наблюдения совпавшего по
+имени процесса, категорию сравнения зарегистрированной и эталонной DLL,
+а также следующий безопасный шаг по этому **отдельному** источнику.
+Снимок необязателен; старый режим двух входных файлов сохранён.
+Анализатор проверяет точную схему, категории, ограничения размера
+и соответствие рекомендаций наблюдениям. Локальные пути, VIN,
+имена модулей и хеши не принимаются и не копируются.
+
+**Ограничение:** отдельный снимок, даже со значением
+`registered_library_loaded_in_name_matched_client`, не является
+аттестацией того, что это подлинный SectorV в той же гостевой машине,
+что он использовал DLL для конкретных J2534-запросов или что VIN принят.
+Поля `j2534_binary_loaded_in_gui_client=not_verified`,
+`transaction_level_correlation=not_established` и
+`client_vehicle_identity_accepted=not_verified` сохраняются.
+`operator_module_snapshot.next_safe_gate` не подменяет основной
+`first_next_gate` анализа протокола и интерфейса.
 
 Результат `audit_sectorv_ui_window_triage.py` полностью категоризирован.
 Он покажет количество запросов B9FB и запросов с ненулевым числом RX
