@@ -1,5 +1,39 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: prevent D2 generation merging across channel reuse (2026-11-09)
+
+- Starting exact verified `development` `12b408737dfcf2a8c485e03e248efeed4d1fd01a`,
+  [automatic VMware #42627094581](https://github.com/vorlocsev/virtualcar/actions/runs/42627094581)
+  **SUCCESS**, 549 Python tests (548 passed, one skipped), 30/30 CI steps.
+- Source-reviewed C `PassThruDisconnect` emits a 4-byte
+  `PassThruDisconnect channel (BE)` followed by a bare
+  `PassThruDisconnect`; a later Connect may reuse the same 1-based
+  channel and reset D2 generation to 1 without calling Open/Close.
+  The current `_native_d2_delivery_tags` grouping uses PID/device
+  session/channel/generation, so the two channel lifetimes could
+  incorrectly concatenate into one complete 13-frame B9FB series.
+- Focused fix: maintain per-channel lifetime epoch for each PID/device
+  session, increment as soon as a valid disconnect-channel metadata
+  record appears, even if final bare event is truncated. A bare
+  unscoped disconnect or malformed channel metadata conservatively
+  splits all generations. Parallel channels and different PIDs remain
+  independent. These epochs remain private; no raw identifiers in
+  redacted output. Native C emitter, J2534 TX/RX and fixtures unchanged.
+- Eight new offline synthetic regressions: same-channel reconnect
+  generation reset, unrelated channel disconnect, parallel channels,
+  metadata-only partial disconnect, malformed channel metadata, missing
+  metadata, unrelated PID, and Open/Close device boundary.
+- **Gate:** submit focused PR to `development`, then verify automatic
+  owner-only VMware CI on the exact merged SHA. A green previous CI
+  does not validate this new change.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) still
+  awaits a genuine isolated read-only SectorV GUI attempt in the user's
+  Windows VMware guest, with actual adapter selection, B9FB, VIN and
+  ECU observations. Do not claim OEM ECU acceptance, physical adapter
+  testing, `main` merge or a release.
+
+---
+
 ## P0: bounded Begin/Finish D2 generation evidence (2026-11-09)
 
 - Starting exact verified `development`: `e87b70a585f87ef315183976543d55a38886bf7f`;
