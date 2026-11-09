@@ -62,6 +62,38 @@ class P2ImportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.set_lab_vin(frames,'INVALID')
 
+    def test_known_13frame_final_header_all_seven_shorter_values_rejected(self):
+        # The public response is already redacted; all modifications are synthetic.
+        original=module.sessions(
+            (ROOT/'samples'/'p2_b9fb_public_redacted.txt').read_text().splitlines(),
+            0x50,0xFB)[0]
+        self.assertEqual(len(original),13)
+        self.assertEqual(original[-1][1][0],0x4F)
+        module.validate_response(original,0x50,0xFB)
+        for final in range(0x48,0x4F):
+            with self.subTest(final=f'{final:02X}'):
+                broken=list(original)
+                broken[-1]=(broken[-1][0],bytes([final])+broken[-1][1][1:])
+                with self.assertRaisesRegex(ValueError,'Invalid final D2 marker'):
+                    module.validate_response(broken,0x50,0xFB)
+
+    def test_other_d2_lengths_and_start_family_not_forced_to_4f(self):
+        original=module.sessions(
+            (ROOT/'samples'/'p2_b9fb_public_redacted.txt').read_text().splitlines(),
+            0x50,0xFB)[0]
+        # Twelve-frame and 0x10-series are generic, unverified formats.
+        twelve=list(original[:12])
+        twelve[-1]=(twelve[-1][0],bytes([0x48])+twelve[-1][1][1:])
+        module.validate_response(twelve,0x50,0xFB)
+        alternative=list(original)
+        for i,(can_id,data) in enumerate(alternative):
+            if i==0: head=0x97
+            elif i==len(alternative)-1: head=0x48
+            else: head=0x10|(i&7)
+            alternative[i]=(can_id,bytes([head])+data[1:])
+        module.validate_response(alternative,0x50,0xFB)
+        # These transport-level tests never assert OEM identity acceptance.
+
     def test_missing_rx_does_not_form_session(self):
         self.assertEqual(module.sessions(['TX (app request) 00 0F FF FE CB 50 B9 FB 00 00 00 00'],0x50,0xFB),[])
 

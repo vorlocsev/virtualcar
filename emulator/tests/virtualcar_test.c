@@ -824,12 +824,54 @@ static void test_can_id_range_guard(U32 dev){
  puts("PASS J2534 CAN ID range: 29-bit bounds, valid IDs and batch isolation");
 }
 
+/* The observed 13-frame D2 transport must not silently interpret 0x48..0x4E
+   final markers as seven data bytes. This guards only the 0x08-series example;
+   different documented sub-block forms remain transport-unverified. */
+static void test_known_b9fb_13frame_final_marker(void){
+ D2_PROFILE d={0};
+ U32 i;
+ d.target=0x50u;d.subcommand=0xFBu;d.response_id=0x01200003u;
+ d.frame_count=13u;
+ d.frame[0][0]=0x8Fu;d.frame[0][1]=0x50u;
+ d.frame[0][2]=0xF9u;d.frame[0][3]=0xFBu;
+ for(i=1;i<12u;i++)d.frame[i][0]=(U8)(0x08u|(i&7u));
+ /* 1: published final frame marker is exactly 0x4F. */
+ d.frame[12][0]=0x4Fu;REQUIRE(validate_d2_fixture(&d));
+ /* 2: all seven alternative 4x terminal lengths are refused. */
+ for(i=0x48u;i<=0x4Eu;i++){
+  d.frame[12][0]=(U8)i;REQUIRE(!validate_d2_fixture(&d));
+ }
+ /* 3: valid terminal is still accepted after invalid probes. */
+ d.frame[12][0]=0x4Fu;REQUIRE(validate_d2_fixture(&d));
+ /* 4: an early terminal in the 13-frame exchange never succeeds. */
+ d.frame[4][0]=0x4Fu;REQUIRE(!validate_d2_fixture(&d));
+ d.frame[4][0]=0x0Cu;
+ /* 5: intermediate sequence tampering still fails. */
+ d.frame[7][0]=0x0Au;REQUIRE(!validate_d2_fixture(&d));
+ d.frame[7][0]=0x0Fu;REQUIRE(validate_d2_fixture(&d));
+ /* 6: the same published 13-frame header shape works for target 0x40. */
+ d.target=0x40u;d.frame[0][1]=0x40u;
+ REQUIRE(validate_d2_fixture(&d));
+ /* 7: a different frame count keeps its existing general final framing. */
+ d.target=0x50u;d.frame[0][1]=0x50u;
+ d.frame_count=12u;d.frame[11][0]=0x48u;
+ REQUIRE(validate_d2_fixture(&d));
+ /* 8: separately encoded 0x10-series transport is not generalized into
+    the observed 0x08-series 4F rule. It is not proven to match an OEM ECU. */
+ d.frame_count=13u;d.frame[0][0]=0x97u;
+ for(i=1;i<12u;i++)d.frame[i][0]=(U8)(0x10u|(i&7u));
+ d.frame[12][0]=0x48u;
+ REQUIRE(validate_d2_fixture(&d));
+ puts("PASS D2 B9FB 13-frame final 4F boundary, synthetic native audit");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
+ test_known_b9fb_13frame_final_marker();
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);

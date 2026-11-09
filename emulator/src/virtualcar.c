@@ -615,6 +615,11 @@ static int validate_d2_fixture(const D2_PROFILE *d){
         U8 header=d->frame[k][0];
         if(header>=0x48 && header<=0x4F){
             if(k!=d->frame_count-1)return 0;
+            /* The published 13-frame 0x08-series D2 example carries
+               seven data bytes in the last frame (0x4F). A different
+               terminal marker would imply a shorter final payload;
+               do not silently accept its seven padded bytes as B9FB. */
+            if(base==0x08 && d->frame_count==13u && header!=0x4Fu)return 0;
             final=1;continue;
         }
         /* Sub-block ends but the D2 response has not ended. */

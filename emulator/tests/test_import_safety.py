@@ -114,5 +114,24 @@ class ImportSafetyTests(unittest.TestCase):
             self.assertEqual(profile.read_bytes(), old_profile)
 
 
+    def test_09_corrupted_final_marker_cannot_be_imported_as_lab_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, profile = inputs(directory)
+            sample = (ROOT / 'samples/p2_b9fb_public_redacted.txt').read_text(
+                encoding='utf-8')
+            # Replace only the last 13-frame terminal header, not payload data.
+            original = '0x03, 0x4f, 0x30'
+            corrupted = '0x03, 0x48, 0x30'
+            self.assertEqual(sample.count(original), 1)
+            source.write_text(sample.replace(original, corrupted), encoding='utf-8')
+            old_source, old_profile = source.read_bytes(), profile.read_bytes()
+            output = Path(directory) / 'must-not-be-created.ini'
+            self.assertEqual(call_import(source, profile, output), 2)
+            self.assertFalse(output.exists())
+            self.assertEqual(source.read_bytes(), old_source)
+            self.assertEqual(profile.read_bytes(), old_profile)
+
+
+
 if __name__ == '__main__':
     unittest.main()

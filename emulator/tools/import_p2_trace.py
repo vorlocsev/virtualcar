@@ -99,6 +99,11 @@ def validate_response(frames, target, opcode):
             head=frame[0]
             if 0x48<=head<=0x4F:
                 if i!=len(frames)-1:raise ValueError('Early D2 final frame')
+                # Match the Go fixture audit and native DLL: the observed
+                # 13-frame, 0x08-series B9FB layout uses all 7 payload bytes
+                # in its final frame. Do not treat shorter 0x48..0x4E as 4F.
+                if base == 0x08 and len(frames) == 13 and head != 0x4F:
+                    raise ValueError('Invalid final D2 marker in 13-frame example')
                 return
             if (head&0xF8)==0x50:
                 if i==len(frames)-1:raise ValueError('Incomplete D2 sub-block')
