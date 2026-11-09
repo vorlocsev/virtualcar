@@ -865,6 +865,134 @@ static void test_known_b9fb_13frame_final_marker(void){
  puts("PASS D2 B9FB 13-frame final 4F boundary, synthetic native audit");
 }
 
+/* A follow-up D2 read-only request supersedes the old exchange on the
+   same J2534 channel even if its target/opcode has no recorded fixture.
+   No real CEM identity or positive A3/A6 response is synthesized. */
+static void test_d2_unknown_target_supersession(U32 dev){
+ D2_PROFILE saved_fb=g_d2[2],saved_fc=g_d2[5];
+ U32 saved_strict=g_p2_strict_routing;
+ U32 ch1=0,ch2=0,n,i;
+ U64 first,second;
+ CHANNEL *ch;
+ PASSTHRU_MSG rx,msg;
+ const char *start,*terminal;
+ const U8 fb[]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
+ const U8 unknown[]={0xCBu,0x61u,0xB9u,0xFBu,0,0,0,0};
+ const U8 missing_fc[]={0xCBu,0x50u,0xB9u,0xFCu,0,0,0,0};
+ const U8 other_can[]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0u};
+ /* Explicit opt-in synthetic lab fixture on known HS target 0x50. */
+ bytes_zero(&g_d2[2],sizeof(g_d2[2]));
+ g_d2[2].target=0x50u;g_d2[2].subcommand=0xFBu;
+ g_d2[2].response_id=0x01200003u;g_d2[2].baud=500000u;
+ g_d2[2].frame_count=3u;
+ g_d2[2].frame[0][0]=0x8Fu;g_d2[2].frame[0][1]=0x50u;
+ g_d2[2].frame[0][2]=0xF9u;g_d2[2].frame[0][3]=0xFBu;
+ g_d2[2].frame[1][0]=0x09u;g_d2[2].frame[2][0]=0x4Cu;
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ g_d2[5].frame_count=0u;g_p2_strict_routing=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch1)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch2)==ERR_OK);
+ ch=channel(ch1);
+
+ /* 1. A missing, unconfigured D2 target must abort staged and queued FB
+    before it can erroneously deliver old B9FB bytes as a new reply. */
+ start=backend_lines+backend_len;
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=last_tx_request(start);REQUIRE(first&&ch->d2_count==3u&&ch->count==1u);
+ msg=frame(PROTO_CAN,0x000FFFFEu,unknown,8);send(ch1,&msg);
+ second=last_tx_request(start);
+ REQUIRE(second&&second!=first);
+ REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+ REQUIRE(terminal_for(start,second,"missing_profile","no_response")==1);
+ REQUIRE(terminal_count_for(start,first)==1&&terminal_count_for(start,second)==1);
+ REQUIRE(ch->d2_count==0u&&ch->d2_trace==0u&&ch->count==0u);
+ tick+=100;n=1;REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 2. Even if all old D2 frames are queued, the absent target removes
+    them, not just the staged tail. */
+ start=backend_lines+backend_len;
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=last_tx_request(start);
+ tick+=100;for(i=0;i<2;i++)pump_d2(ch);
+ REQUIRE(ch->count==3u&&ch->d2_count==0u);
+ msg=frame(PROTO_CAN,0x000FFFFEu,unknown,8);send(ch1,&msg);
+ REQUIRE(ch->count==0u);
+ REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+ REQUIRE(event_count_since(start,"\"kind\":\"rx_dropped\"")==3u);
+
+ /* 3. A *known* target but unconfigured B9FC also cancels old B9FB.
+    No accidental B9FC or B9FB positive reply is generated. */
+ start=backend_lines+backend_len;
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=last_tx_request(start);
+ msg=frame(PROTO_CAN,0x000FFFFEu,missing_fc,8);send(ch1,&msg);
+ second=last_tx_request(start);
+ REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+ REQUIRE(terminal_for(start,second,"missing_profile","no_response")==1);
+ REQUIRE(ch->count==0u&&ch->d2_count==0u);
+
+ /* 4. Missing D2 on channel 2 does not cancel a pending response on 1. */
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=ch->d2_trace;REQUIRE(first&&ch->count==1u);
+ msg=frame(PROTO_CAN,0x000FFFFEu,unknown,8);send(ch2,&msg);
+ REQUIRE(ch->d2_trace==first&&ch->count==1u);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x09u);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x4Cu);
+
+ /* 5. Unrelated raw CAN traffic must not cancel a staged D2 reply. */
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=ch->d2_trace;REQUIRE(first);
+ msg=frame(PROTO_CAN,0x555u,other_can,8);send(ch1,&msg);
+ REQUIRE(ch->d2_trace==first&&ch->count==1u);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x09u);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x4Cu);
+
+ /* 6. An untraced, unrelated RX remains FIFO-ordered after cancellation. */
+ fill_untraced_rx(ch,1u);
+ start=backend_lines+backend_len;
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=last_tx_request(start);REQUIRE(ch->count==2u);
+ msg=frame(PROTO_CAN,0x000FFFFEu,unknown,8);send(ch1,&msg);
+ REQUIRE(ch->count==1u&&ch->d2_count==0u);
+ REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+ rx=readmsg(ch1);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ n=1;REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 7. The first D2 frame already delivered cannot be revoked; only its
+    remaining staged frames are cancelled with a single old terminal. */
+ start=backend_lines+backend_len;
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=last_tx_request(start);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ msg=frame(PROTO_CAN,0x000FFFFEu,unknown,8);send(ch1,&msg);
+ REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+ REQUIRE(terminal_count_for(start,first)==1);
+ tick+=100;n=1;REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 8. Retrying the *same* known target still supersedes the old reply
+    and emits only the new recorded, read-only three-frame fixture. */
+ start=backend_lines+backend_len;
+ msg=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&msg);
+ first=last_tx_request(start);
+ send(ch1,&msg);second=last_tx_request(start);
+ REQUIRE(first&&second&&first!=second);
+ REQUIRE(terminal_for(start,first,"d2_superseded","aborted")==1);
+ REQUIRE(ch->count==1u&&ch->d2_count==3u);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x09u);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(start,second,"none","responded")==1);
+ REQUIRE(terminal_count_for(start,second)==1);
+ n=1;REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ REQUIRE(PassThruDisconnect(ch2)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ch1)==ERR_OK);
+ g_d2[2]=saved_fb;g_d2[5]=saved_fc;g_p2_strict_routing=saved_strict;
+ puts("PASS P0 D2 retry isolation: unconfigured target, B9FC and channel FIFO");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
@@ -872,6 +1000,7 @@ int main(){
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_known_b9fb_13frame_final_marker();
+ test_d2_unknown_target_supersession(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
