@@ -201,6 +201,26 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         self.assertNotIn(str(self.dir), proc.stderr)
 
 
+    def test_16_finish_surfaces_safe_action_without_private_log_content(self):
+        self.begin()
+        run = self.run_helper("Finish", "-NonInteractive",
+                              "-SingleRunConfirmed", *STATES)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        result = json.loads(
+            (self.session / "p0-triage.redacted.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["first_next_gate"],
+                         "obtain_provider_endpoint_evidence")
+        self.assertTrue(result["first_next_action_ru"])
+        # The operator prints the second instruction line in addition to the
+        # original fixed summary, not raw input logs or local source paths.
+        self.assertGreaterEqual(len(run.stdout.splitlines()), 2)
+        self.assertNotIn(str(self.dir), run.stdout)
+        self.assertNotIn("DEADBEEF", run.stdout)
+        self.assertEqual(result["client_vehicle_identity_accepted"],
+                         "not_verified")
+        self.assertFalse(result["oem_vin_and_ecu_verified"])
+
+
 
 if __name__ == "__main__":
     unittest.main()
