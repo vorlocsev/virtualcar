@@ -1,5 +1,16 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: read-only PE32/x86 reference preflight for operator GUI capture (2026-11-09)
+
+- Last **verified** baseline: `development` `753c7492502b21fed05a6eb8f61f13f0b6b47307`, automatic [owner-only VMware CI #42656561052](https://github.com/vorlocsev/virtualcar/actions/runs/42656561052) **SUCCESS** (30/30, native CLEAR_RX and Go F10 backups included). No newer GUI evidence.
+- Concrete operator gap: `audit_vmware_sectorv_process.ps1` can compare a registered x86 J2534 provider against a supplied reference DLL by bytes, yet its `reference_dll_pe32` output was permanently `not_assessed_by_this_tool`; an identical but incompatible x64 or invalid reference could receive the same apparent comparison outcome as an x86 reference.
+- Narrow improvement: operator-only bounded, read-only PE/COFF Machine+Magic inspection of optional reference DLL; categorize `x86_pe32_header / other_pe / invalid_pe / unverifiable / not_compared`, never execute or load it, expose no paths or hash. Align strict Python redacted triage validation and recommendation; preserve historical `not_assessed_by_this_tool` input compatibility. Invalid or other-architecture PE header must not be treated as an x86 preflight.
+- Eight PowerShell synthetic header/gate checks plus eight Python categorical triage cases, spoofing rejection; 32-bit J2534 runtime, ECU payloads, CAN, SecurityAccess and build outputs unchanged.
+- **Gate:** focused PR to `development`, then exact merged-SHA full automatic owner-only VMware CI **SUCCESS**. Never infer SectorV GUI VIN/ECU success from this operator preflight; [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains open pending a real isolated read-only Windows GUI guest run with x86 binding, CEM B9FB, VIN and ECU evidence. No `main` merge or release.
+
+---
+
+
 ## CI gate: rapid Windows F10 backup filename collision (2026-11-09)
 
 - [PR #278](https://github.com/vorlocsev/virtualcar/pull/278) merged `development` `d0f4baab8197e7f62a2ca9ac9b4a2fcad170d38c`.
