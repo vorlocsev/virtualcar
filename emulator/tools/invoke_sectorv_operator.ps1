@@ -98,7 +98,11 @@ try {
                        '--isolated-read-only-vm', '--physical-adapter-disconnected')
         foreach ($item in $observations) {
             $value = Select-Observation -Label $item[1] -Value $item[2] -Allowed $item[3]
-            $phaseArgs += @('--' + $item[0], $value)
+            # Build the switch as ONE string. An isolated '--' terminates
+            # argparse option parsing and silently loses all six GUI states.
+            $option = '--' + [string]$item[0]
+            $phaseArgs += $option
+            $phaseArgs += [string]$value
         }
         if ($SingleRunConfirmed) { $phaseArgs += '--single-run-confirmed' }
         $moduleReport = Join-Path $SessionDir 'p0-module.redacted.json'
