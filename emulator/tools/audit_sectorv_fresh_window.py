@@ -301,7 +301,17 @@ def summarize(j2534_lines, backend_lines, *, operator_one_run=False):
         "client_vehicle_identity_accepted": "not_verified",
         "replay_approved": False,
         "connect": {"attempts": connect["connect"]["attempts"],
-                    "statuses": dict(sorted(connect["connect"]["statuses"].items()))},
+                    "statuses": dict(sorted(connect["connect"]["statuses"].items())),
+                    # Exact BE metadata only; categorical protocol, flags,
+                    # baud and SET_CONFIG handling, never raw values or paths.
+                    # Sourced from this same already-bounded J2534 window.
+                    "mode_evidence": {
+                        "connect_modes": connect["connect"]["modes"],
+                        "invalid_connect_events": connect["connect"]["invalid_events"],
+                        "set_config_events": connect["set_config"]["events"],
+                        "invalid_set_config_events": connect["set_config"]["invalid_events"],
+                        "set_config_parameters": connect["set_config"]["parameters"],
+                    }},
         "discovery": {"transactions": len(tx),
                       "statuses": dict(sorted(discovery["counts"].items())),
                       "d2": targets,

@@ -11,7 +11,11 @@ from pathlib import Path
 import sys
 
 from audit_sectorv_fresh_window import REPORT_SCHEMA as WINDOW_SCHEMA, SERVICES, STATUSES
-from audit_j2534_connect import STATUS as CONNECT_STATUS
+from audit_j2534_connect import (
+    STATUS as CONNECT_STATUS, PROTOCOLS as CONNECT_PROTOCOLS,
+    FLAGS as CONNECT_FLAGS, BAUDS as CONNECT_BAUDS,
+    PARAMS as CONNECT_PARAMS,
+)
 from audit_sectorv_ui_observation import audit as audit_gui
 
 SCHEMA = "virtualcar-sectorv-ui-window-triage-v1"
@@ -302,12 +306,81 @@ def _check_window(report):
            for status, n in d2_status_totals.items()):
         raise ValueError("D2 status counts contradict discovery total")
     connect = report["connect"]
-    if type(connect) is not dict or set(connect) != {"attempts", "statuses"}:
+    old_connect_fields = {"attempts", "statuses"}
+    new_connect_fields = old_connect_fields | {"mode_evidence"}
+    if type(connect) is not dict or set(connect) not in (
+            old_connect_fields, new_connect_fields):
         raise ValueError("invalid connect summary")
     attempts = _uint(connect["attempts"])
-    _check_status_counts(connect["statuses"],
-                         frozenset(CONNECT_STATUS.values()) | {"other_error"},
-                         attempts)
+    allowed_statuses = frozenset(CONNECT_STATUS.values()) | {"other_error"}
+    _check_status_counts(connect["statuses"], allowed_statuses, attempts)
+    if "mode_evidence" in connect:
+        evidence = connect["mode_evidence"]
+        if type(evidence) is not dict or set(evidence) != {
+                "connect_modes", "invalid_connect_events",
+                "set_config_events", "invalid_set_config_events",
+                "set_config_parameters"}:
+            raise ValueError("invalid bounded J2534 connect mode metadata")
+        for key in ("invalid_connect_events", "set_config_events",
+                    "invalid_set_config_events"):
+            _uint(evidence[key])
+        modes = evidence["connect_modes"]
+        if type(modes) is not list or len(modes) > attempts:
+            raise ValueError("invalid connect mode list")
+        proto = frozenset(CONNECT_PROTOCOLS.values()) | {"other"}
+        flags = frozenset(CONNECT_FLAGS.values()) | {"other"}
+        bauds = frozenset(CONNECT_BAUDS.values()) | {"other"}
+        modes_seen = set()
+        status_totals = {}
+        for entry in modes:
+            if type(entry) is not dict or set(entry) != {
+                    "protocol", "flags", "baud_bps", "status", "count"}:
+                raise ValueError("unexpected connect mode fields")
+            values = (entry["protocol"], entry["flags"],
+                      entry["baud_bps"], entry["status"])
+            if (any(type(value) is not str for value in values)
+                    or values[0] not in proto or values[1] not in flags
+                    or values[2] not in bauds or values[3] not in allowed_statuses
+                    or values in modes_seen):
+                raise ValueError("invalid or duplicate connect mode")
+            modes_seen.add(values)
+            count = _uint(entry["count"])
+            if count == 0:
+                raise ValueError("empty connect mode")
+            status_totals[values[3]] = status_totals.get(values[3], 0) + count
+        if status_totals != connect["statuses"]:
+            raise ValueError("connect modes contradict status totals")
+        configured = evidence["set_config_parameters"]
+        config_total = _uint(evidence["set_config_events"])
+        if type(configured) is not list or len(configured) > config_total:
+            raise ValueError("invalid SET_CONFIG parameter summary")
+        allowed_params = frozenset(CONNECT_PARAMS.values()) | {"other"}
+        config_seen = set()
+        counted = 0
+        for entry in configured:
+            if type(entry) is not dict or set(entry) != {
+                    "parameter", "handling", "count"}:
+                raise ValueError("unexpected SET_CONFIG fields")
+            parameter, handling = entry["parameter"], entry["handling"]
+            if (type(parameter) is not str or parameter not in allowed_params
+                    or type(handling) is not str
+                    or handling not in ("applied_baud", "accepted_no_effect")
+                    or (parameter, handling) in config_seen
+                    or (handling == "applied_baud" and parameter != "DATA_RATE")):
+                raise ValueError("unverified SET_CONFIG semantics")
+            config_seen.add((parameter, handling))
+            count = _uint(entry["count"])
+            if count == 0:
+                raise ValueError("empty SET_CONFIG group")
+            counted += count
+        if counted != config_total:
+            raise ValueError("SET_CONFIG mode totals contradict events")
+        max_lines = report["windows"]["j2534"]["complete_lines"]
+        if (attempts + evidence["invalid_connect_events"] > max_lines
+                or config_total + evidence["invalid_set_config_events"] > max_lines
+                or (attempts + evidence["invalid_connect_events"] +
+                    config_total + evidence["invalid_set_config_events"] > max_lines)):
+            raise ValueError("J2534 metadata exceeds bounded source lines")
     backend = report["backend"]
     if type(backend) is not dict or set(backend) != {
             "requests", "invalid_lines", "statuses", "d2_probe_coverage"}:
@@ -427,6 +500,17 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False,
         # decode gate identifiers. It never interpolates log/GUI free text.
         "first_next_action_ru": NEXT_ACTION_RU[gate],
     }
+    if "mode_evidence" in window["connect"]:
+        evidence = window["connect"]["mode_evidence"]
+        result["j2534_connect_mode_evidence"] = {
+            "connect_modes": evidence["connect_modes"],
+            "invalid_connect_events": evidence["invalid_connect_events"],
+            "set_config_events": evidence["set_config_events"],
+            "invalid_set_config_events": evidence["invalid_set_config_events"],
+            "set_config_parameters": evidence["set_config_parameters"],
+            "origin": "virtualcar_local_bounded_metadata_only",
+            "sectorv_connection_or_ecu_verified": False,
+        }
     if "native_d2_delivery_tags" in window["discovery"]:
         emitter = window["discovery"]["native_d2_delivery_tags"]
         result["native_d2_generation_evidence"] = {

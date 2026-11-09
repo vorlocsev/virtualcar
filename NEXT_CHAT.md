@@ -1,5 +1,39 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: bounded J2534 Connect / SET_CONFIG mode evidence (2026-11-09)
+
+- Starting verified `development`: `891b5b8f6cdb206fa51bfc1a3a68dbcc00917e2e`;
+  automatic owner-only VMware [#42630511290](https://github.com/vorlocsev/virtualcar/actions/runs/42630511290)
+  **SUCCESS**, 565 Python tests (564 passed, one optional skipped),
+  30/30 CI steps. Earlier #42630169613 failed a test that guessed the
+  CI runner's provider state; #263 corrected the test expectation.
+- Source finding: `audit_j2534_connect.py` already classifies native
+  BE `Connect result` by protocol, named flags, baud and return status,
+  and `SET_CONFIG` by named parameter/applied-or-no-effect. The actual
+  operator `Begin/Finish` summary previously kept only connect attempts
+  and statuses, hiding the route information needed to diagnose
+  missing SectorV B9FB requests.
+- Change: include categorical `connect.mode_evidence` in the *already
+  bounded* source report. Strict GUI triage validates every allowlisted
+  mode/parameter/handling/count; rejects duplicates, cross-status
+  conflicts, impossible line accounting and injected identifiers.
+  Expose checked `j2534_connect_mode_evidence` in redacted triage.
+  Historical window JSON without mode evidence remains readable.
+- Eight offline synthetic regressions: standard CAN 500k, vendor
+  modes/Volvo flags, SET_CONFIG applied/no-op, old report compatibility,
+  private field injection, bad Connect counts/statuses, SET_CONFIG
+  contradictions and exclusion of historical pre-Begin lines.
+- **Integration gate:** focused PR must merge to `development`;
+  verify a *new* automatic owner-only VMware CI run on the exact merged
+  SHA. No device C DLL, CAN RX/TX, fixture or ECU programming changed.
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still requires real, isolated read-only GUI SectorV evidence of
+  virtual PE32 adapter selection, request/response B9FB, displayed
+  VIN and ECU list. A Connect status is never OEM VIN/ECU proof.
+  Keep `main` unchanged and do not publish builds or releases.
+
+---
+
 ## P0: Windows CI environment-specific provider expectation (2026-11-09)
 
 - [PR #262](https://github.com/vorlocsev/virtualcar/pull/262) merged to
