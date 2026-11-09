@@ -1,6 +1,40 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: P0 native J2534 + B9FB transport boundary (2026-11-09)
+## ACTIVE: P0 genuine SectorV GUI J2534 binding gate (2026-11-09)
+
+- **Latest feature `development` commit:**
+  `b3d85ad4c5c665ddaa0aa737d805baa220591c87` (merged
+  [PR #230](https://github.com/vorlocsev/virtualcar/pull/230)).
+  Its owner-only, exact-SHA
+  [VMware CI #42572280068](https://github.com/vorlocsev/virtualcar/actions/runs/42572280068)
+  **SUCCESS**: **423/423 Python tests**, **29/29 workflow steps**,
+  PowerShell **9/9 existing + 8/8 new** synthetic process-binding /
+  local DLL-comparison tests, native C J2534 and x86/x64/.NET/Host checks.
+- **New real operator tool, not a GUI test:** run
+  `emulator/tools/audit_vmware_sectorv_process.ps1 -OperatorSession`
+  **inside the target guest while genuine SectorV is running**.
+  It passively lists name-matched process modules and optionally compares
+  the registered Registry32 J2534 DLL with an operator-provided **reference**
+  using `-ReferenceDll`; never assumes that reference was CI-built.
+  Optional `-OutputFile` exclusively creates a new redacted JSON outside
+  source tree. Exact byte equivalence is point-in-time only and does not
+  prove genuine SectorV identity, a loaded DLL's actual calls, or VIN/ECU
+  acceptance. See
+  [VM guest instructions](emulator/README_SECTORV_FRESH_WINDOW_RU.md).
+- **P0 blocker remains open [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):**
+  CI-runner's Registry32 provider is x86 and has all required named exports,
+  but again reported `binary_comparison=different_bytes`,
+  `executable_sections=different_bytes` and
+  `client_not_observed_in_runner_context` in #42572280068. This is
+  **not evidence of a faulty DLL nor the user's GUI guest state**.
+  Next concrete step: one permitted, isolated genuine SectorV GUI run
+  on the Windows guest, snapshot its loaded registered DLL while open,
+  then collect bounded redacted J2534 + backend and operator GUI categories.
+  No physical J2534, VIN/coding/PIN/security, made-up CEM fixtures or release.
+
+---
+
+## PRIOR VERIFIED: P0 native J2534 + B9FB transport boundary (2026-11-09)
 
 - **Latest code commit on `development`:**
   `f59fd7a4b5edd40af2fab856a485382882787c22`,
