@@ -4,12 +4,14 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import sys
 import tempfile
 import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / "tools"
+sys.path.insert(0, str(TOOLS))
 
 
 def import_tool(name):
