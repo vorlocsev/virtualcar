@@ -40,6 +40,24 @@ FILES = {
 }
 SYNTHETIC_VIN = "YV1CZ0002A0000001"
 
+# These two *source* profiles are copied verbatim into the downloadable LAB.
+# Counts of zero do not remove hidden Frame0/DID payloads or donor comments.
+# Pin the complete reviewed bytes, including comments; any change requires
+# explicit re-review of the source profile before regenerating these hashes.
+APPROVED_INI_SHA256 = {
+    "virtualcar-p2.ini":
+        "38a959cfeda3c22333930ad34d50d8c5636e97cba2d86b01d2b7efbb2d631d90",
+    "virtualcar-default.ini":
+        "5e7d6963696f0d44ae268951f3f1dc09b7444605c9a341ece04f161cb4a8b3f7",
+}
+
+
+def verify_reviewed_ini(name, data):
+    """Refuse unreviewed INI text, even if the active fixture count is zero."""
+    trusted = APPROVED_INI_SHA256.get(name)
+    if trusted is None or hashlib.sha256(data).hexdigest() != trusted:
+        raise ValueError("unreviewed_lab_profile_source")
+
 
 def check_pe32(data):
     """Reject PE32+ and foreign targets without loading executable code."""
@@ -97,6 +115,8 @@ def create_package(root, output_dir, source_sha, version):
         if not path.is_file() or path.is_symlink():
             raise ValueError("missing_or_linked_input: " + rel)
         files[target] = path.read_bytes()
+        if target in APPROVED_INI_SHA256:
+            verify_reviewed_ini(target, files[target])
     for name in ("VirtualCarJ2534.dll", "VirtualCarControl.exe"):
         check_pe32(files[name])
     files["virtualcar.ini"] = diagnostic_profile(files["virtualcar-p2.ini"])

@@ -12,7 +12,9 @@ import re
 import sys
 import zipfile
 
-from package_vmware_lab import FILES, PREFIX, check_pe32, diagnostic_profile
+from package_vmware_lab import (
+    APPROVED_INI_SHA256, FILES, PREFIX, check_pe32, diagnostic_profile,
+)
 
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_ENTRY_BYTES = 64 * 1024 * 1024
@@ -105,6 +107,9 @@ def verify_local_lab(archive_path, source_root, source_sha):
                 actual = _digest_stream(reader)
             if actual != checksums[name]:
                 raise ValueError("LAB member checksum mismatch")
+            if name in APPROVED_INI_SHA256 and (
+                    actual != APPROVED_INI_SHA256[name]):
+                raise ValueError("LAB contains unreviewed INI bytes")
             if name in FILES:
                 source_file = source_root / FILES[name]
                 if not source_file.is_file() or source_file.is_symlink():
