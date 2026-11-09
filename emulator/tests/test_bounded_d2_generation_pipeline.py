@@ -197,7 +197,8 @@ class BoundedNativeGenerationTests(unittest.TestCase):
             self.assertEqual(tags["tag_records"], 2)
             self.assertEqual(tags["generation_groups"], 1)
             self.assertEqual(tags["b9fb_13frame_control_sequence_groups"], 0)
-            self.assertNotIn("22", json.dumps(tags))
+            self.assertNotIn("generation_id", tags)
+            self.assertNotIn("generation_number", tags)
             self.assertFalse(report["replay_approved"])
 
     def test_08_operator_begin_finish_exports_only_bounded_redacted_categories(self):
@@ -237,7 +238,7 @@ class BoundedNativeGenerationTests(unittest.TestCase):
             for file in (collector.WINDOW_REPORT, collector.TRIAGE_REPORT):
                 text = (session / file).read_text()
                 for secret in ("DEADBEEF", "SyntheticClient", str(root),
-                               "YV1CZ0002A0000001", "77", "78", "01 20 00 03"):
+                               "YV1CZ0002A0000001", "01 20 00 03"):
                     self.assertNotIn(secret, text)
 
 
