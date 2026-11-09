@@ -1,5 +1,31 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## VERIFIED: J2534 filter CAN IDs bounded to 29 bits (2026-11-09)
+
+- **Newest native code:** [PR #239](https://github.com/vorlocsev/virtualcar/pull/239) merged into `development`, exact SHA
+  `6d0189747853b152b5116d085444bac3bc40661f`.
+  [Owner-only VMware CI #42579904134](https://github.com/vorlocsev/virtualcar/actions/runs/42579904134)
+  **SUCCESS**, 449/449 Python tests, 29/29 workflow steps,
+  native C `PASS J2534 filters: physical CAN ID bounds, full-width masks and ISO FC`.
+- **Defect corrected:** `emulator/src/virtualcar.c`
+  `PassThruStartMsgFilter` accepted 30/32-bit physical CAN IDs in
+  filter `pattern` and supplied `flow` despite earlier TX/periodic
+  checks enforcing the 29-bit wire maximum. These values are now
+  rejected before allocating a filter or writing filter evidence,
+  without restricting the legitimate `0xFFFFFFFF` bit **mask**.
+  Eight native regression groups cover strict/relaxed CAN, ISO15765 FC,
+  29-bit limits, valid UDS F190, filter-slot/id isolation.
+- **Still P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):**
+  read-only SectorV GUI acceptance on the user's **actual** VMware
+  guest remains unverified. The automatic CI runner is not the user's
+  interactive client session. Run the existing
+  [two-phase operator guide](emulator/README_SECTORV_FRESH_WINDOW_RU.md)
+  to collect bounded J2534/backend + module snapshot and actual six
+  GUI categories. Do not invent real MY2009 XC90 V8 CEM B9FB, VIN or
+  ECU identity, merge to `main` or publish releases.
+
+---
+
 ## VERIFIED: P0 operator log-path identity across begin/finish (2026-11-09)
 
 - **Latest code commit `development`:** `43138d2ecf408fc32ebd214f37586697bdcea450`,
