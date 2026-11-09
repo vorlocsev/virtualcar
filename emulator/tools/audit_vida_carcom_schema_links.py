@@ -20,6 +20,15 @@ EXPORT_SCHEMA = "virtualcar-vida-offline-sqlite-v1"
 MAX_TABLES = 1000
 MAX_COLUMNS = 30000
 
+# Only exporter-owned catalog tables; never inspect proprietary source tables.
+# Checking the actual cursor schema avoids SQLite's double-quoted-string
+# fallback silently returning a missing identifier as a string literal.
+METADATA_COLUMNS = {
+    "_vida_meta": ("key", "value"),
+    "_vida_tables": ("schema_name", "table_name", "rows_exported"),
+    "_vida_columns": ("schema_name", "table_name", "column_name", "system_type_id"),
+}
+
 # Original PR #200's research catalog schema, not yet confirmed on this owner's
 # SQLite exporter. Unknown original columns are counted but never printed.
 TABLES = {
@@ -82,6 +91,17 @@ def _read_catalog(path: Path, expected: str) -> tuple[dict, dict]:
     uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
     with closing(sqlite3.connect(uri, uri=True, timeout=5)) as db:
         db.execute("PRAGMA query_only=ON")
+        # SQLite permits SELECT "missing_name" to return a string literal on
+        # some builds. Verify the real columns first, without reading any rows.
+        for table, required in METADATA_COLUMNS.items():
+            try:
+                cursor = db.execute(f'SELECT * FROM "{table}" LIMIT 0')
+                actual = tuple(field[0].casefold() for field in cursor.description)
+            except sqlite3.DatabaseError:
+                raise PreflightError("invalid exporter metadata schema") from None
+            if len(actual) != len(set(actual)) or not all(
+                    col.casefold() in actual for col in required):
+                raise PreflightError("invalid exporter metadata schema")
         meta_rows = db.execute('SELECT "key", "value" FROM "_vida_meta"').fetchall()
         if len(meta_rows) != len({k for k, _ in meta_rows}):
             raise PreflightError("ambiguous export identity")
