@@ -1403,6 +1403,13 @@ static void pump_periodic(CHANNEL *c){
         PERIODIC *p=&c->periodic[i];
         if(!p->used || now<p->next_us || c->count>=MAX_QUEUE)continue;
         p->next_us=now+(U64)p->interval_ms*1000ull;
+        /* Give text-log triage an exact channel/protocol/timing scope for
+           scheduled TX without disguising the tick as PassThruWriteMsgs.
+           The context contains no VIN, CAN payload or ECU identity. */
+        {U8 meta[20];u32_be(meta,c->id);u32_be(meta+4,c->protocol);
+         u32_be(meta+8,p->msg.TxFlags);u32_be(meta+12,c->baud);
+         u32_be(meta+16,(U32)now);
+         logline("Periodic TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 periodic TX (read-only simulator)",p->msg.Data,p->msg.DataSize);
         /* Periodic D2 reads previously replayed frames with RID=0, so no
            tx_received/probe/terminal evidence could be attributed to them.
