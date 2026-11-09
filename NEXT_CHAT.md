@@ -3,14 +3,17 @@
 ## ACTIVE: P0 native J2534 + B9FB transport boundary (2026-11-09)
 
 - **Latest code commit on `development`:**
-  `747261169c443c1e69928ffc2ad0baa34d3319c5`,
-  [PR #226](https://github.com/vorlocsev/virtualcar/pull/226) **MERGED**.
-  Its exact-sha owner-only
-  [VMware CI #42569321824](https://github.com/vorlocsev/virtualcar/actions/runs/42569321824)
+  `f59fd7a4b5edd40af2fab856a485382882787c22`,
+  [PR #228](https://github.com/vorlocsev/virtualcar/pull/228) **MERGED**.
+  Exact-SHA [VMware CI #42570483619](https://github.com/vorlocsev/virtualcar/actions/runs/42570483619)
   **SUCCESS**, 29/29 workflow steps, **423/423 Python tests**,
-  native C B9FB final-marker validation and other offline x86/x64, .NET
-  and synthetic Host/IPC checks. This is NOT a SectorV GUI VIN result.
-- **Real code change:** the native `validate_d2_fixture` and Python
+  new native C eight-group D2 retry/supersession checks, x86/x64,
+  .NET and synthetic IPC/Host checks. When a recognized CB xx B9
+  F0/FB/FC read arrives, the same-channel old staged/queued D2 response
+  is cancelled **before** fixture lookup, even if the next target/opcode
+  has no recorded reply. Other CAN RX and channels remain unaffected.
+  No fabricated positive CEM response or real GUI identity validation.
+- **Earlier B9FB validation:** the native `validate_d2_fixture` and Python
   `import_p2_trace.validate_response` now require the terminal `4F`
   for the *published 13-frame, 08-series D2 example*, matching the
   existing Go `p2audit` check. Earlier permissive `48..4E` endings
@@ -18,6 +21,10 @@
   10-series subforms retain generic validation; this rule is NOT a
   general OEM B9FB schema. New synthetic tests reject corrupted import
   before writing INI and never export VIN or private capture content.
+  This change is [PR #226](https://github.com/vorlocsev/virtualcar/pull/226),
+  merged as `747261169c443c1e69928ffc2ad0baa34d3319c5`, verified by
+  [VMware CI #42569321824](https://github.com/vorlocsev/virtualcar/actions/runs/42569321824)
+  **SUCCESS** (423 Python tests, 29/29 workflow steps).
 - **Preceding native transport changes, already verified:**
   [PR #225](https://github.com/vorlocsev/virtualcar/pull/225)
   `3cf3a69e200d977ce8b3603f7ed8037e4bd50ba5`
