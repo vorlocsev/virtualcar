@@ -1443,6 +1443,13 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
            (c->protocol==PROTO_CAN && msgs[i].DataSize>12u)){
             *count=i;unlock_state();return error(ERR_INVALID_MSG);
         }
+        /* The J2534 data header contains a physical 11/29-bit CAN ID.
+           Reject identifiers outside the 29-bit wire range *before*
+           forwarding, logging or collecting ECU/discovery evidence.
+           Keep legitimate high 29-bit P2 D2 IDs and normal ISO15765. */
+        if((msgs[i].Data[0]&0xE0u)!=0u){
+            *count=i;unlock_state();return error(ERR_INVALID_MSG);
+        }
         /* Extended ISO15765 addressing needs a real fifth-byte transport
            mapping, not a silent normal-addressing UDS interpretation. */
         if(g_strict_j2534_filters && c->protocol==PROTO_ISO15765 &&
