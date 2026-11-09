@@ -51,7 +51,11 @@ def window(*, run=True, provider="same_at_endpoints_only"):
         },
         "backend": {
             "requests": 0, "invalid_lines": 0,
-            "statuses": {}, "d2_probe_coverage": {},
+            "statuses": {},
+            "d2_probe_coverage": {
+                f"D2_{target}_{service}": {"requests": 0, "statuses": {}}
+                for target in ("40", "50") for service in SERVICES
+            },
         },
         "next_gate": "review_b9fb_d2_transport_and_client_ui_independently",
         "note": "No common event clock, no VIN accepted.",
@@ -278,6 +282,79 @@ class SectorVUiWindowTriageTests(unittest.TestCase):
         result = triage.triage(report, ui(), operator_pair_confirmed=True)
         self.assertEqual(result["first_next_gate"],
                          "obtain_bounded_j2534_window_evidence")
+
+
+    def test_21_reject_free_text_connect_status_even_if_count_matches(self):
+        report = window()
+        report["connect"] = {"attempts": 1, "statuses": {"untrusted_private_text": 1}}
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+
+    def test_22_reject_missing_connect_status_accounting(self):
+        report = window()
+        report["connect"] = {"attempts": 1, "statuses": {}}
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+
+    def test_23_reject_wrong_discovery_status_total_and_vocabulary(self):
+        report = window()
+        report["discovery"]["transactions"] = 2
+        report["discovery"]["statuses"] = {"unverified": 1}
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+        report["discovery"]["statuses"] = {"untrusted_private_text": 2}
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+
+    def test_24_reject_d2_count_larger_than_discovery_total(self):
+        report = set_b9(window())
+        report["discovery"]["transactions"] = 0
+        report["discovery"]["statuses"] = {}
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+
+    def test_25_reject_unknown_backend_probe_or_forged_status(self):
+        report = window()
+        report["backend"]["d2_probe_coverage"]["unexpected_key"] = {
+            "requests": 0, "statuses": {}
+        }
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+        report = window()
+        report["backend"]["statuses"] = {"untrusted_private_text": 1}
+        report["backend"]["requests"] = 1
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+
+    def test_26_reject_backend_probe_exceeding_request_summary(self):
+        report = window()
+        report["backend"]["d2_probe_coverage"]["D2_50_B9FB"] = {
+            "requests": 1, "statuses": {"delivered": 1}
+        }
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+
+    def test_27_reject_counted_events_without_fresh_log_lines(self):
+        report = set_b9(window())
+        report["windows"]["j2534"]["complete_lines"] = 0
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+        report = window()
+        report["backend"]["requests"] = 1
+        report["backend"]["statuses"] = {"unverified": 1}
+        report["windows"]["backend"]["complete_lines"] = 0
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
+
+    def test_28_valid_synthetic_delivery_remains_unverified_identity(self):
+        report = set_b9(window(), rx=True)
+        output = triage.triage(report, ui(), operator_pair_confirmed=True)
+        self.assertEqual(output["b9fb_request_count_in_window"], 1)
+        self.assertEqual(output["first_next_gate"],
+                         "review_client_vin_failure_after_unlinked_rx")
+        self.assertEqual(output["client_vehicle_identity_accepted"], "not_verified")
+        self.assertFalse(output["oem_vin_and_ecu_verified"])
+
 
 
 if __name__ == "__main__":

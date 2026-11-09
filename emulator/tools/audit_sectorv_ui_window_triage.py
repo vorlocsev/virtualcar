@@ -10,7 +10,8 @@ import json
 from pathlib import Path
 import sys
 
-from audit_sectorv_fresh_window import REPORT_SCHEMA as WINDOW_SCHEMA, SERVICES
+from audit_sectorv_fresh_window import REPORT_SCHEMA as WINDOW_SCHEMA, SERVICES, STATUSES
+from audit_j2534_connect import STATUS as CONNECT_STATUS
 from audit_sectorv_ui_observation import audit as audit_gui
 
 SCHEMA = "virtualcar-sectorv-ui-window-triage-v1"
@@ -47,6 +48,14 @@ def _uint(value, ceiling=1_000_000):
     if type(value) is not int or not 0 <= value <= ceiling:
         raise ValueError("invalid bounded count")
     return value
+
+
+def _check_status_counts(values, allowed, expected):
+    """Only bounded, allowlisted status counts may support a triage decision."""
+    if type(values) is not dict or not set(values).issubset(allowed):
+        raise ValueError("invalid status vocabulary")
+    if sum(_uint(value) for value in values.values()) != expected:
+        raise ValueError("status counts do not match summary")
 
 
 def _check_window(report):
@@ -108,11 +117,14 @@ def _check_window(report):
     if type(discovery) is not dict or set(discovery) != {
             "transactions", "statuses", "d2", "p3_count"}:
         raise ValueError("unexpected discovery shape")
-    _uint(discovery["transactions"])
-    _uint(discovery["p3_count"])
+    transactions = _uint(discovery["transactions"])
+    if _uint(discovery["p3_count"]) > transactions:
+        raise ValueError("P3 count exceeds transactions")
+    _check_status_counts(discovery["statuses"], STATUSES, transactions)
     d2 = discovery["d2"]
     if type(d2) is not dict or set(d2) != {"0x40", "0x50"}:
         raise ValueError("unknown CEM target")
+    d2_requests = 0
     for target in ("0x40", "0x50"):
         group = d2[target]
         if type(group) is not dict or set(group) != set(SERVICES):
@@ -124,40 +136,52 @@ def _check_window(report):
                     "known_can_500k", "unknown_protocol_or_baud"}:
                 raise ValueError("unexpected D2 group fields")
             count = _uint(item["requests"])
+            d2_requests += count
             _uint(item["known_can_500k"])
             _uint(item["unknown_protocol_or_baud"])
             if (item["known_can_500k"] > count
                     or item["unknown_protocol_or_baud"] > count):
                 raise ValueError("invalid route accounting")
-            statuses = item["statuses"]
-            if type(statuses) is not dict:
-                raise ValueError("invalid D2 statuses")
-            from audit_sectorv_fresh_window import STATUSES
-            if not set(statuses) <= set(STATUSES):
-                raise ValueError("unknown D2 status")
-            if sum(_uint(v) for v in statuses.values()) != count:
-                raise ValueError("invalid D2 status total")
+            _check_status_counts(item["statuses"], STATUSES, count)
             buckets = item["rx_frame_buckets"]
             if type(buckets) is not dict or set(buckets) != set(B9_BUCKETS):
                 raise ValueError("invalid RX bucket schema")
             if sum(_uint(v) for v in buckets.values()) != count:
                 raise ValueError("invalid RX bucket total")
+    if d2_requests > transactions:
+        raise ValueError("D2 count exceeds discovery transaction total")
     connect = report["connect"]
     if type(connect) is not dict or set(connect) != {"attempts", "statuses"}:
         raise ValueError("invalid connect summary")
-    _uint(connect["attempts"])
-    if type(connect["statuses"]) is not dict:
-        raise ValueError("invalid connect statuses")
-    if sum(_uint(x) for x in connect["statuses"].values()) > connect["attempts"]:
-        raise ValueError("invalid connect status total")
+    attempts = _uint(connect["attempts"])
+    _check_status_counts(connect["statuses"],
+                         frozenset(CONNECT_STATUS.values()) | {"other_error"},
+                         attempts)
     backend = report["backend"]
     if type(backend) is not dict or set(backend) != {
             "requests", "invalid_lines", "statuses", "d2_probe_coverage"}:
         raise ValueError("invalid backend summary")
-    _uint(backend["requests"])
-    _uint(backend["invalid_lines"])
-    if type(backend["statuses"]) is not dict or type(backend["d2_probe_coverage"]) is not dict:
-        raise ValueError("invalid backend categories")
+    backend_requests = _uint(backend["requests"])
+    invalid_lines = _uint(backend["invalid_lines"])
+    _check_status_counts(backend["statuses"], STATUSES, backend_requests)
+    probes = backend["d2_probe_coverage"]
+    expected = {f"D2_{target}_{service}" for target in ("40", "50")
+                for service in SERVICES}
+    if type(probes) is not dict or set(probes) != expected:
+        raise ValueError("invalid backend probe keys")
+    for probe in probes.values():
+        if type(probe) is not dict or set(probe) != {"requests", "statuses"}:
+            raise ValueError("invalid backend probe shape")
+        count = _uint(probe["requests"])
+        if count > backend_requests:
+            raise ValueError("backend probe exceeds total")
+        _check_status_counts(probe["statuses"], STATUSES, count)
+    if ((attempts or transactions) and
+            report["windows"]["j2534"]["complete_lines"] == 0):
+        raise ValueError("J2534 counts without appended log lines")
+    if ((backend_requests or invalid_lines) and
+            report["windows"]["backend"]["complete_lines"] == 0):
+        raise ValueError("backend counts without appended log lines")
 
 
 def triage(window, gui_observation, *, operator_pair_confirmed=False):
