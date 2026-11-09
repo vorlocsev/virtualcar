@@ -274,8 +274,15 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         self.assertIn("WARNING: not an x86 PE32 header", module.stdout)
         report = json.loads((self.session / "p0-module.redacted.json").read_text())
         self.assertEqual(report["reference_dll_pe32"], "other_pe")
-        self.assertEqual(report["next_safe_gate"],
-                         "verify_reference_pe32_before_gui")
+        # The CI guest may have a real registered provider: when its bytes
+        # differ from this synthetic x64 reference, the existing comparison
+        # mismatch gate has precedence. With no comparable local provider,
+        # the independent PE32 architecture gate is selected instead.
+        expected = ("resolve_reference_vs_registered_dll_difference"
+                    if report["installed_vs_reference_dll"]
+                    == "different_bytes_at_snapshot"
+                    else "verify_reference_pe32_before_gui")
+        self.assertEqual(report["next_safe_gate"], expected)
         finish = self.run_helper("Finish", "-NonInteractive", *STATES)
         self.assertEqual(finish.returncode, 0, finish.stderr)
         self.assertIn("WARNING: not an x86 PE32 header", finish.stdout)
