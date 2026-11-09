@@ -736,6 +736,115 @@ static void test_zero_baud_guard(U32 dev){
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
 }
 
+/* P0: an ISO-TP raw-CAN First Frame must be admitted before any CF state
+   can be staged. These are eight host-only synthetic read-only scenarios. */
+static void test_raw_can_orphan_cf_admission(U32 dev){
+ const U8 vin_sf[8]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 fc[8]={0x30u,0,0,0,0,0,0,0};
+ U32 saved_strict=g_strict_j2534_filters;
+ U32 ch=0,peer=0,filter=0,n=0;
+ CHANNEL *c,*other;PASSTHRU_MSG request,cts,rx;
+ PASSTHRU_MSG mask,pat;
+ const char *start;U64 rid;
+ request=frame(PROTO_CAN,0x7E0u,vin_sf,8u);
+ cts=frame(PROTO_CAN,0x7E0u,fc,8u);
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_CAN,0x7E8u,0,0);
+
+ /* 1: strict CAN without a PASS filter drops FF and stages no CF. */
+ g_strict_j2534_filters=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ REQUIRE(rid && c->count==0u&&c->pending_len==0u);
+ REQUIRE(c->pending_cf_active==0u && c->pending_trace==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+
+ /* 2: an explicit matching BLOCK cannot create an orphan CF either. */
+ REQUIRE(PassThruStartMsgFilter(ch,2,&mask,&pat,0,&filter)==ERR_OK);
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ REQUIRE(rid && c->count==0u&&c->pending_len==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ REQUIRE(PassThruStopMsgFilter(ch,filter)==ERR_OK);
+
+ /* 3: entirely full FIFO drops FF, without staging any pending CF. */
+ g_strict_j2534_filters=0u;
+ fill_untraced_rx(c,MAX_QUEUE);REQUIRE(c->count==MAX_QUEUE);
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ REQUIRE(rid && c->count==MAX_QUEUE&&c->pending_len==0u);
+ REQUIRE(terminal_for(start,rid,"queue_full","dropped")==1u);
+
+ /* 4: draining after a rejected FF and sending a matching CTS does
+    not cause orphan Consecutive Frames. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ send(ch,&cts);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(c->pending_len==0u);
+
+ /* 5: exactly one available slot admits FF and leaves CF pending until
+    that FF is delivered and a matching Flow Control grants CTS. */
+ fill_untraced_rx(c,MAX_QUEUE-1u);
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ REQUIRE(rid && c->count==MAX_QUEUE && c->pending_len==20u);
+ {PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(MAX_QUEUE,sizeof(PASSTHRU_MSG));
+  REQUIRE(batch!=0);
+  n=MAX_QUEUE;REQUIRE(PassThruReadMsgs(ch,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(batch[MAX_QUEUE-1u].Data[4]==0x10u && batch[MAX_QUEUE-1u].Data[5]==20u);
+  free(batch);
+ }
+ send(ch,&cts);rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(c->pending_len==0u && c->count==0u);
+ REQUIRE(terminal_for(start,rid,"none","responded")==1u);
+
+ /* 6: strict PASS on response ID admits FF and both matched CFs. */
+ g_strict_j2534_filters=1u;
+ REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&filter)==ERR_OK);
+ send(ch,&request);REQUIRE(c->count==1u&&c->pending_len==20u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(c->pending_len==0u&&c->count==0u);
+ REQUIRE(PassThruStopMsgFilter(ch,filter)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+
+ /* 7: full FIFO on one channel must not prevent an unrelated channel
+    from staging its own FF and delivering its own CFs. */
+ g_strict_j2534_filters=0u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ c=channel(ch);other=channel(peer);
+ fill_untraced_rx(c,MAX_QUEUE);
+ send(ch,&request);REQUIRE(c->pending_len==0u&&c->count==MAX_QUEUE);
+ send(peer,&request);REQUIRE(other->count==1u&&other->pending_len==20u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x10u);
+ send(peer,&cts);rx=readmsg(peer);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(other->pending_len==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+
+ /* 8: previously filtered FF remains dropped, but adding a PASS
+    filter permits a NEW request without any residue of the old one. */
+ g_strict_j2534_filters=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ REQUIRE(rid&&c->count==0u&&c->pending_len==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&filter)==ERR_OK);
+ send(ch,&request);REQUIRE(c->count==1u&&c->pending_len==20u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(c->pending_len==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_strict_j2534_filters=saved_strict;
+ puts("PASS P0 raw CAN ISO-TP: 8 First Frame admission / orphan-CF checks");
+}
+
 /* P0 write isolation: mismatched J2534 ProtocolID and invalid classic
    CAN payloads cannot enter the read-only vehicle observer or RX FIFO. */
 static void test_write_transport_boundaries(U32 dev){
@@ -1786,6 +1895,7 @@ int main(){
  test_zero_baud_guard(dev);
  test_d2_replay_isolation_on_set_config(dev);
  test_passive_can_replay_retune_isolation(dev);
+ test_raw_can_orphan_cf_admission(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
