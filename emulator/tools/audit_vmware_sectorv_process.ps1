@@ -107,15 +107,18 @@ function Get-OperatorNextGate {
     if ($Comparison -eq 'different_bytes_at_snapshot') {
         return 'resolve_reference_vs_registered_dll_difference'
     }
-    if ($Comparison -ne 'exact_bytes_at_snapshot') {
-        return 'verify_reference_and_registered_dll_equivalence'
-    }
     if ($Observation -eq 'client_not_observed_in_local_snapshot' -or
         $Observation -eq 'client_process_listing_unavailable') {
         return 'observe_client_with_gui_open'
     }
     if ($Observation -ne 'registered_library_loaded_in_name_matched_client') {
         return 'verify_registered_dll_in_client_module_list'
+    }
+    if ($Comparison -eq 'not_compared') {
+        return 'collect_gui_evidence_without_reference_attestation'
+    }
+    if ($Comparison -ne 'exact_bytes_at_snapshot') {
+        return 'verify_reference_and_registered_dll_equivalence'
     }
     return 'collect_same_run_redacted_j2534_and_gui_evidence'
 }
@@ -244,7 +247,9 @@ function Invoke-LocalSelfTests {
             (Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'different_bytes_at_snapshot') -cne
                 'resolve_reference_vs_registered_dll_difference' -or
             (Get-OperatorNextGate 'client_not_observed_in_local_snapshot' 'exact_bytes_at_snapshot') -cne
-                'observe_client_with_gui_open') {
+                'observe_client_with_gui_open' -or
+            (Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'not_compared') -cne
+                'collect_gui_evidence_without_reference_attestation') {
             throw 'operator test 8: conservative next gate'
         }; $operatorChecks++
     } finally {
