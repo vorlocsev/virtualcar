@@ -329,6 +329,9 @@ class VMwarePackageTests(unittest.TestCase):
             path.write_bytes(original)
 
     def test_19_reviewed_p2_and_default_profiles_match_approved_sha256(self):
+        attributes = (SOURCE_ROOT.parent / ".gitattributes").read_text(encoding="utf-8")
+        for name in tool.APPROVED_INI_SHA256:
+            self.assertIn("emulator/" + name + " text eol=lf", attributes)
         for name, expected in tool.APPROVED_INI_SHA256.items():
             with self.subTest(name=name):
                 data = (self.root / name).read_bytes()
