@@ -68,8 +68,17 @@ def audit_xml_bytes(xml_data):
             raise ValueError("excessive XML structure")
         stack.extend((child, depth + 1) for child in node)
 
-    nodes = root.findall("./nodes/node")
-    handlers = root.findall("./handlers/eventhandler")
+    # The exported VIDA XML nests the graph under content. Older input
+    # places it directly under script. Do not join sections across layouts.
+    graph_parents = [parent for parent in (root, *root.findall("./content"))
+                     if parent.find("./nodes") is not None or parent.find("./handlers") is not None]
+    if len(graph_parents) > 1:
+        raise ValueError("ambiguous graph layout")
+    graph = graph_parents[0] if graph_parents else root
+    if len(graph.findall("./nodes")) > 1 or len(graph.findall("./handlers")) > 1:
+        raise ValueError("duplicate graph containers")
+    nodes = graph.findall("./nodes/node")
+    handlers = graph.findall("./handlers/eventhandler")
     node_by_id = {}
     for node in nodes:
         node_id = node.attrib.get("nodeid", "")
