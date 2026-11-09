@@ -545,6 +545,53 @@ class SectorVUiWindowTriageTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 triage.triage(window(), ui(), module_snapshot=bad)
 
+    def test_45_reference_pe32_preflight_has_eight_bounded_evidence_cases(self):
+        cases = (
+            ("x86_pe32_header", "exact_bytes_at_snapshot",
+             "collect_same_run_redacted_j2534_and_gui_evidence"),
+            ("other_pe", "exact_bytes_at_snapshot",
+             "verify_reference_pe32_before_gui"),
+            ("invalid_pe", "exact_bytes_at_snapshot",
+             "verify_reference_pe32_before_gui"),
+            ("unverifiable", "exact_bytes_at_snapshot",
+             "verify_reference_pe32_before_gui"),
+            ("not_compared", "not_compared",
+             "collect_gui_evidence_without_reference_attestation"),
+            ("not_assessed_by_this_tool", "exact_bytes_at_snapshot",
+             "collect_same_run_redacted_j2534_and_gui_evidence"),
+            ("x86_pe32_header", "different_bytes_at_snapshot",
+             "resolve_reference_vs_registered_dll_difference"),
+            ("x86_pe32_header", "comparison_unverifiable",
+             "verify_reference_and_registered_dll_equivalence"),
+        )
+        for status, comparison, gate in cases:
+            with self.subTest(status=status, comparison=comparison):
+                snapshot = module_snapshot(comparison=comparison)
+                snapshot["reference_dll_pe32"] = status
+                snapshot["next_safe_gate"] = triage._module_next_gate(
+                    snapshot["observation"], comparison, status)
+                report = triage.triage(window(), ui(), module_snapshot=snapshot)
+                observed = report["operator_module_snapshot"]
+                self.assertEqual(observed["reference_pe32_header"], status)
+                self.assertEqual(observed["next_safe_gate"], gate)
+                self.assertFalse(observed["same_guest_or_run_attested"])
+                self.assertEqual(report["j2534_binary_loaded_in_gui_client"],
+                                 "not_verified")
+                self.assertFalse(report["oem_vin_and_ecu_verified"])
+
+    def test_46_reference_pe32_preflight_rejects_unknown_and_spoofed_gate(self):
+        for status in ("x86 PE32 verified", "C:/private/j2534.dll",
+                       "sha256:aabb", "x64_driver_accepted"):
+            snapshot = module_snapshot()
+            snapshot["reference_dll_pe32"] = status
+            with self.subTest(status=status), self.assertRaises(ValueError):
+                triage.triage(window(), ui(), module_snapshot=snapshot)
+        snapshot = module_snapshot()
+        snapshot["reference_dll_pe32"] = "other_pe"
+        # A forged old "all clear" recommendation must not pass strict parsing.
+        with self.assertRaises(ValueError):
+            triage.triage(window(), ui(), module_snapshot=snapshot)
+
     def test_43_cli_accepts_third_redacted_snapshot_without_exporting_private_data(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
