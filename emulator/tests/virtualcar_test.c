@@ -1192,6 +1192,124 @@ static void test_periodic_tx_transport_parity(U32 dev){
  puts("PASS J2534 periodic TX: shared protocol, CAN DLC/ID, ISO and valid repeat");
 }
 
+/* Periodic J2534 TX must produce one per-tick backend RID, just like a
+   direct WriteMsgs request. Raw CAN Flow Control is NOT a new transaction.
+   These are synthetic read-only requests; no actual SectorV GUI observed. */
+static void test_periodic_d2_backend_evidence(U32 dev){
+ D2_PROFILE saved=g_d2[2];
+ p2_j2534_bridge saved_bridge=g_vehicle_bridge;
+ U32 strict=g_p2_strict_routing,telemetry=g_backend_enabled,can=0,period=0,n;
+ PASSTHRU_MSG m,rx;const char *start;U64 rid;
+ const U8 fb[]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
+ const U8 a3[]={0xCFu,0x50u,0xA3u,0x02u,0x03u,0xA5u,0xA5u,0};
+ const U8 a6[]={0xCFu,0x50u,0xA6u,0x1Au,0x04u,0x01u,0,0};
+ const U8 tester[]={0x02u,0x3Eu,0x00u,0,0,0,0,0};
+ const U8 vin_sf[]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 fc[]={0x30u,0,0,0,0,0,0,0};
+ g_backend_enabled=1;g_p2_strict_routing=1;
+ bytes_zero(&g_d2[2],sizeof(g_d2[2]));
+ g_d2[2].target=0x50u;g_d2[2].subcommand=0xFBu;
+ g_d2[2].response_id=0x01200003u;g_d2[2].baud=500000u;
+ g_d2[2].frame_count=3u;
+ g_d2[2].frame[0][0]=0x8Fu;g_d2[2].frame[0][1]=0x50u;
+ g_d2[2].frame[0][2]=0xF9u;g_d2[2].frame[0][3]=0xFBu;
+ g_d2[2].frame[1][0]=0x09u;g_d2[2].frame[2][0]=0x4Cu;
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&can)==ERR_OK);
+
+ /* 1: periodic B9FB gets a real backend RID and P0 probe category. */
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,100u)==ERR_OK);
+ start=backend_lines+backend_len;
+ tick+=101;rx=readmsg(can);REQUIRE(rx.Data[4]==0x8Fu);
+ rid=last_tx_request(start);REQUIRE(rid!=0);
+ REQUIRE(event_count_since(start,"\"kind\":\"tx_received\"")==1u);
+ REQUIRE(strstr(start,"\"probe\":\"D2_50_B9FB\"")!=0);
+ REQUIRE(terminal_count_for(start,rid)==0u);
+ tick+=20;rx=readmsg(can);REQUIRE(rx.Data[4]==0x09u);
+ tick+=20;rx=readmsg(can);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(start,rid,"none","responded")==1u);
+ REQUIRE(terminal_count_for(start,rid)==1u);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+
+ /* 2: unconfigured periodic B9FB is counted but remains silent. */
+ g_d2[2].frame_count=0u;
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,50u)==ERR_OK);
+ start=backend_lines+backend_len;tick+=51;n=1;
+ REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ rid=last_tx_request(start);REQUIRE(rid!=0);
+ REQUIRE(terminal_for(start,rid,"missing_profile","no_response")==1u);
+ REQUIRE(event_count_since(start,"\"kind\":\"rx_queued\"")==0u);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+
+ /* 3: an unsupported periodic A3 is classified, never answered. */
+ m=frame(PROTO_CAN,0x000FFFFEu,a3,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,50u)==ERR_OK);
+ start=backend_lines+backend_len;tick+=51;n=1;
+ REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ rid=last_tx_request(start);REQUIRE(rid!=0);
+ REQUIRE(strstr(start,"\"probe\":\"D2_50_A3\"")!=0);
+ REQUIRE(terminal_for(start,rid,"unimplemented_probe","no_response")==1u);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+
+ /* 4: an unsupported periodic A6 has its own trace, no positive E6. */
+ m=frame(PROTO_CAN,0x000FFFFEu,a6,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,50u)==ERR_OK);
+ start=backend_lines+backend_len;tick+=51;n=1;
+ REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ rid=last_tx_request(start);REQUIRE(rid!=0);
+ REQUIRE(strstr(start,"\"probe\":\"D2_50_A6\"")!=0);
+ REQUIRE(terminal_for(start,rid,"unimplemented_probe","no_response")==1u);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+
+ /* 5: normal periodic tester-present receives one matching RX terminal. */
+ m=frame(PROTO_CAN,0x7E0u,tester,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,50u)==ERR_OK);
+ start=backend_lines+backend_len;tick+=51;
+ rx=readmsg(can);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ rid=last_tx_request(start);REQUIRE(rid!=0);
+ REQUIRE(terminal_for(start,rid,"none","responded")==1u);
+ REQUIRE(terminal_count_for(start,rid)==1u);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+
+ /* 6: periodic raw CAN FC can release pending CF, but never creates
+    a separate tx_received/probe or terminal request record. */
+ m=frame(PROTO_CAN,0x7E0u,vin_sf,8);send(can,&m);
+ rx=readmsg(can);REQUIRE(rx.Data[4]==0x10u);
+ m=frame(PROTO_CAN,0x7E0u,fc,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,100u)==ERR_OK);
+ start=backend_lines+backend_len;tick+=101;
+ rx=readmsg(can);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(can);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(event_count_since(start,"\"kind\":\"tx_received\"")==0u);
+ REQUIRE(event_count_since(start,"\"kind\":\"probe_classified\"")==0u);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+
+ /* 7: stopped periodic requests cannot create telemetry after interval. */
+ m=frame(PROTO_CAN,0x000FFFFEu,a3,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,50u)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+ start=backend_lines+backend_len;tick+=51;n=1;
+ REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(event_count_since(start,"\"kind\":\"tx_received\"")==0u);
+
+ /* 8: explicit opt-out keeps ordinary periodic tester RX functional
+    with no new backend JSONL request/terminal event whatsoever. */
+ g_backend_enabled=0u;
+ m=frame(PROTO_CAN,0x7E0u,tester,8);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,50u)==ERR_OK);
+ {U32 prior=backend_len;tick+=51;
+  rx=readmsg(can);
+  REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+  REQUIRE(backend_len==prior);}
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ g_d2[2]=saved;g_p2_strict_routing=strict;
+ g_backend_enabled=telemetry;g_vehicle_bridge=saved_bridge;
+ puts("PASS P0 periodic J2534 D2 backend attribution and FC isolation");
+}
+
 /* Filter IDs have the same 29-bit physical CAN bound as TX frames.
    The 32-bit all-ones mask remains valid (it is a bit mask, not an ID).
    Every request in these checks is synthetic and read-only. */
@@ -1272,6 +1390,7 @@ int main(){
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
+ test_periodic_d2_backend_evidence(dev);
  test_filter_can_id_boundaries(dev);
  test_known_b9fb_13frame_final_marker();
  test_d2_unknown_target_supersession(dev);
