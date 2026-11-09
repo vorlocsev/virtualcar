@@ -389,5 +389,108 @@ class PeriodicTextOriginTests(unittest.TestCase):
 
 
 
+
+def _d2_series_13(first=FIRST, final=0x4F, ch=1):
+    """Synthetic 13-frame D2 0x08 or 0x10 series; no donor/vehicle bytes."""
+    base = 0x10 if first[0] == 0x97 else 0x08
+    seq = [(base | i) for i in (1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3)]
+    payloads = [first] + [bytes([h]) + b"\0" * 7 for h in seq]
+    payloads.append(bytes([final]) + b"\0" * 7)
+    return [line for i, payload in enumerate(payloads)
+            for line in rx(0x01200003, payload, ch=ch, time_us=102000+i*1000)]
+
+
+class D2ThirteenFrameTerminalEvidenceTests(unittest.TestCase):
+    """Narrow parser parity with the native C D2 fixture validator."""
+
+    def test_25_exact_08_series_13_frame_4f_is_delivered(self):
+        result = tool.audit(tx(0xFFFFE, D2FB, ch=1) + _d2_series_13())
+        one = result["transactions"][0]
+        self.assertEqual((one["status"], one["rx_frames"]),
+                         ("delivered", 13))
+        self.assertEqual(one["reason"], "complete_d2_transport_only")
+        self.assertFalse(result["replay_approved"])
+
+    def test_26_08_series_13_frame_short_terminal_markers_rejected(self):
+        for marker in (0x48, 0x49, 0x4A, 0x4C, 0x4E):
+            with self.subTest(marker=marker):
+                report = tool.audit(tx(0xFFFFE, D2FB, ch=1)
+                                    + _d2_series_13(final=marker))
+                one = report["transactions"][0]
+                self.assertEqual((one["rx_frames"], one["status"]),
+                                 (13, "partial_rx"))
+                self.assertEqual(one["reason"],
+                                 "d2_13frame_final_marker_mismatch")
+                self.assertEqual(report["counts"], {"partial_rx": 1})
+                self.assertFalse(report["replay_approved"])
+
+    def test_27_d2_terminal_guard_does_not_infer_target_or_opcode_identity(self):
+        first = bytes.fromhex("8F 40 F9 F0 00 00 00 00")
+        request = bytes.fromhex("CB 40 B9 F0 00 00 00 00")
+        one = tool.audit(tx(0xFFFFE, request, ch=4, baud=125000)
+                         + _d2_series_13(first=first, final=0x4E, ch=4)
+                         )["transactions"][0]
+        self.assertEqual((one["target"], one["service"]), ("0x40", "B9F0"))
+        self.assertEqual((one["rx_frames"], one["status"]),
+                         (13, "partial_rx"))
+        self.assertEqual(one["reason"], "d2_13frame_final_marker_mismatch")
+        self.assertNotEqual(one["status"], "delivered")
+
+    def test_28_periodic_08_series_13_frame_rejected_without_gui_claim(self):
+        report = tool.audit(periodic(0xFFFFE, D2FB, ch=2)
+                            + _d2_series_13(final=0x4B, ch=2))
+        one = report["transactions"][0]
+        self.assertEqual(one["request_origin"], "periodic_scheduler")
+        self.assertEqual(one["status"], "partial_rx")
+        self.assertEqual(one["reason"], "d2_13frame_final_marker_mismatch")
+        self.assertIn("not proof", report["notes"][-2])
+
+    def test_29_10_series_13_frame_terminal_is_not_overrestricted(self):
+        first = bytes.fromhex("97 50 F9 FB 00 00 00 00")
+        report = tool.audit(tx(0xFFFFE, D2FB, ch=3)
+                            + _d2_series_13(first=first, final=0x4E, ch=3))
+        one = report["transactions"][0]
+        self.assertEqual((one["status"], one["rx_frames"]), ("delivered", 13))
+        self.assertEqual(one["reason"], "complete_d2_transport_only")
+
+    def test_30_shorter_08_series_remains_valid_without_13_frame_assumption(self):
+        for terminal in (0x48, 0x4C, 0x4F):
+            with self.subTest(terminal=terminal):
+                short = tx(0xFFFFE, D2FB, ch=1)
+                short += rx(0x01200003, FIRST, ch=1)
+                short += rx(0x01200003, bytes.fromhex(
+                    "09 00 00 00 00 00 00 00"), ch=1)
+                short += rx(0x01200003, bytes([terminal]) + b"\0" * 7, ch=1)
+                one = tool.audit(short)["transactions"][0]
+                self.assertEqual((one["status"], one["rx_frames"]),
+                                 ("delivered", 3))
+
+    def test_31_missing_final_stays_partial_without_fabricated_terminal(self):
+        lines = tx(0xFFFFE, D2FB, ch=1)
+        lines += _d2_series_13()[:-2]
+        one = tool.audit(lines)["transactions"][0]
+        self.assertEqual((one["status"], one["rx_frames"]), ("partial_rx", 12))
+        self.assertEqual(one["reason"], "incomplete_or_unverified_transport")
+
+    def test_32_rejected_terminal_and_independent_valid_channel_stay_separate(self):
+        lines = tx(0xFFFFE, D2FB, ch=1)
+        lines += tx(0xFFFFE, D2FB, ch=2)
+        lines += _d2_series_13(final=0x49, ch=1)
+        lines += _d2_series_13(final=0x4F, ch=2)
+        report = tool.audit(lines)
+        states = {t["channel"]: t for t in report["transactions"]}
+        self.assertEqual((states[1]["status"], states[2]["status"]),
+                         ("partial_rx", "delivered"))
+        self.assertEqual(states[1]["reason"],
+                         "d2_13frame_final_marker_mismatch")
+        serial = json.dumps(report)
+        for secret in ("DEADBEEF", "DiagnosticClient",
+                       "00 0F FF FE", "YV1LAB"):
+            self.assertNotIn(secret, serial)
+        self.assertFalse(report["contains_payload_data"])
+
+
+
+
 if __name__ == "__main__":
     unittest.main()
