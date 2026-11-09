@@ -1126,6 +1126,36 @@ static U32 drop_superseded_raw_iso_rx(CHANNEL *c,U64 generation,U64 rid){
     c->w=(c->r+keep)%MAX_QUEUE;
     return removed;
 }
+/* FC OVERFLOW must stop CF emission already staged into the virtual RX FIFO.
+   Keep an earlier FF: it models a frame already transmitted before the FC.
+   Do not discard unrelated FIFO frames or touch a different channel. */
+static U32 drop_overflow_raw_iso_cf_rx(CHANNEL *c,U64 generation,U64 rid){
+    U32 read,keep=0,removed=0,original=c->count;
+    if(!generation)return 0;
+    for(read=0;read<original;read++){
+        U32 from=(c->r+read)%MAX_QUEUE,to=(c->r+keep)%MAX_QUEUE;
+        if(c->queue_raw_exchange[from]==generation &&
+           c->queue[from].DataSize>=5u &&
+           (c->queue[from].Data[4]&0xF0u)==0x20u){
+            if(rid)backend_event(c,rid,"rx_dropped","UNKNOWN","flow_overflow","unknown");
+            removed++;
+            continue;
+        }
+        if(to!=from){
+            bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
+            c->queue_d2_gen[to]=c->queue_d2_gen[from];
+            c->queue_d2_frame[to]=c->queue_d2_frame[from];
+            c->queue_ready_us[to]=c->queue_ready_us[from];
+            c->queue_trace[to]=c->queue_trace[from];
+            c->queue_passive_baud[to]=c->queue_passive_baud[from];
+            c->queue_raw_response_baud[to]=c->queue_raw_response_baud[from];
+            c->queue_raw_exchange[to]=c->queue_raw_exchange[from];
+        }
+        keep++;
+    }
+    c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
+    return removed;
+}
 static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 *payload,U32 len) {
     U8 f[8];U32 i;
     backend_event(c,c->active_trace,"response_generated","UNKNOWN","none","unknown");
@@ -1513,10 +1543,20 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                     logline("ISO-TP FC WAIT received",msg->Data,msg->DataSize);return;
                 }
                 if((data[0]&15)==2){
-                    U64 previous=c->pending_trace;
+                    U64 previous=c->pending_trace,old_exchange=c->pending_raw_exchange;
+                    U32 dropped;
                     logline("ISO-TP FC OVERFLOW received; pending response discarded",msg->Data,msg->DataSize);
-                    c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
+                    /* A prior BS grant may have staged CF into RX already.
+                       Retract its unread CF, but preserve the previously sent
+                       FF and unrelated FIFO frames. Never resume old credits. */
+                    dropped=drop_overflow_raw_iso_cf_rx(c,old_exchange,previous);
+                    c->pending_len=0;c->pending_pos=0;c->pending_id=0;
+                    c->pending_request_id=0;c->pending_sn=0;c->pending_trace=0;
+                    c->pending_next_us=0;c->pending_stmin_us=0;
                     c->pending_cf_active=0;c->pending_cf_credit=0;
+                    c->pending_raw_exchange=0;
+                    if(dropped){U8 count_be[4];u32_be(count_be,dropped);
+                        logline("Raw CAN ISO-TP FC OVERFLOW queued CF dropped (BE)",count_be,4);}
                     backend_abort_pending(c,previous,BACKEND_ABORT_FC_OVERFLOW);
                     return;
                 }
