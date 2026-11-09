@@ -1,5 +1,38 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: isolate raw CAN ISO-TP responses across DATA_RATE retune (2026-11-09)
+
+- Exact verified baseline `development`:
+  `bb18752cb6ccf6e23d6eb0fe4ea0cdd6b627680e`,
+  automatic [VMware CI #42640173812](https://github.com/vorlocsev/virtualcar/actions/runs/42640173812)
+  **SUCCESS**, Python 573 tests (572 passed, one optional skipped),
+  30/30 steps, native 8-case FF admission guard passed.
+- Source defect: `PassThruIoctl(IO_SET_CONFIG)` already superseded
+  D2/B9FB and dropped old passive CAN replay on an effective baud
+  change, but retained raw CAN ISO-TP **UDS** responses staged/queued
+  on the previous bus, including FF and CF after a CTS grant.
+- Narrow source change: tag each successfully enqueued emulator-generated
+  raw CAN ISO-TP SF/FF/CF with private `queue_raw_response_baud`.
+  On effective DATA_RATE change, preserve unrelated FIFO order while
+  removing old-baud tagged frames; cancel any staged CF and granted CTS.
+  Track removed request IDs and emit dropped/aborted terminal backend
+  evidence. Do not infer OEM VIN/ECU or change any transmitted bytes.
+  Transfer the tag through D2/passive RX FIFO compactors and clear
+  it on enqueue/dequeue. No real hardware, bus TX, ECU writes or PIN.
+- Eight deterministic native host scenarios: queued FF + staged CF,
+  fully queued FF/CF under CTS, already delivered FF + pending CF,
+  unrelated untagged FIFO, queued single-frame UDS, peer channel
+  independent, same-baud config no-op, and fresh recorded response
+  after switching away and back. All synthetic read-only fixtures.
+- **Gate:** PR into `development` only, followed by automatic
+  owner-only VMware CI on the exact new merged SHA. Previous
+  baseline green CI does not validate this source change.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains pending true isolated read-only SectorV GUI adapter,
+  B9FB/VIN and ECU display evidence; no `main` merge or release.
+
+---
+
 ## P0: guard raw CAN ISO-TP CF staging on actual FF admission (2026-11-09)
 
 - Verified starting `development`: `7bcdf8514113b6f094028dcf48f1bb1a5a1b75a5`,

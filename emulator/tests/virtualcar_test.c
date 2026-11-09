@@ -845,6 +845,118 @@ static void test_raw_can_orphan_cf_admission(U32 dev){
  puts("PASS P0 raw CAN ISO-TP: 8 First Frame admission / orphan-CF checks");
 }
 
+/* P0: source-bus lifetime of emulator-generated ISO-TP on raw CAN.
+   Eight native host scenarios, synthetic CAN only; no physical ECU. */
+static void test_raw_isotp_retune_cancels_old_bus(U32 dev){
+ const U8 vin_sf[8]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 tester_sf[8]={0x02u,0x3Eu,0x00u,0,0,0,0,0};
+ const U8 fc[8]={0x30u,0,0,0,0,0,0,0};
+ const U8 plain[8]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0u};
+ U32 saved_strict=g_strict_j2534_filters,ch=0,peer=0,n=1u;
+ CHANNEL *c,*other;U64 rid,other_serial;const char *start;
+ PASSTHRU_MSG request,cts,tester,rx;
+ SCONFIG rate={1u,500000u};SCONFIG_LIST list={1u,&rate};
+ g_strict_j2534_filters=0u;
+ request=frame(PROTO_CAN,0x7E0u,vin_sf,8u);
+ tester=frame(PROTO_CAN,0x7E0u,tester_sf,8u);
+ cts=frame(PROTO_CAN,0x7E0u,fc,8u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c);
+
+ /* 1. Queued FF and staged CF tail must be removed on 500 -> 125. */
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ REQUIRE(rid&&c->count==1u&&c->pending_len==20u);
+ REQUIRE(c->queue_raw_response_baud[c->r]==500000u);
+ rate.Value=125000u;
+ REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(c->baud==125000u&&c->count==0u&&c->pending_len==0u);
+ REQUIRE(terminal_for(start,rid,"superseded","aborted")==1u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 2. Even FF and both CFs already queued under CTS are removed. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ send(ch,&cts);
+ REQUIRE(c->count==3u&&c->pending_len==0u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(c->count==0u);
+ REQUIRE(terminal_for(start,rid,"superseded","aborted")==1u);
+
+ /* 3. Delivered FF cannot be retracted. Its staged CF must be cancelled,
+    and a later CTS on the newly configured bus cannot resurrect it. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u&&c->pending_len==20u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(c->pending_len==0u&&c->count==0u);
+ send(ch,&cts);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(start,rid,"superseded","aborted")==1u);
+
+ /* 4. Plain untagged RX, before and after queued FF, stays FIFO-ordered. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ enqueue(c,0x555u,plain,8u);
+ send(ch,&request);
+ enqueue(c,0x556u,plain,8u);
+ REQUIRE(c->count==3u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(c->count==2u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x56u);
+
+ /* 5. Raw CAN single-frame UDS responses are bus-bound as well. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ start=backend_lines+backend_len;send(ch,&tester);rid=last_tx_request(start);
+ REQUIRE(rid&&c->count==1u&&c->queue_raw_response_baud[c->r]==500000u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(c->count==0u&&terminal_for(start,rid,"superseded","aborted")==1u);
+
+ /* 6. Retuning channel A must not alter queued FF/staged CF on B. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other);
+ other_serial=other->session_serial;
+ send(peer,&request);REQUIRE(other->count==1u&&other->pending_len==20u);
+ send(ch,&request);REQUIRE(c->count==1u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(c->count==0u&&other->count==1u&&other->pending_len==20u);
+ REQUIRE(other->session_serial==other_serial);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x10u);
+ send(peer,&cts);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(other->pending_len==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+
+ /* 7. Reapplying the current baud is a no-op for FF/CF. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ send(ch,&request);REQUIRE(c->count==1u&&c->pending_len==20u);
+ REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(c->count==1u&&c->pending_len==20u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+
+ /* 8. Fresh request after 500 -> 125 -> 500 emits a complete NEW
+    recorded synthetic response, with no frames from old generation. */
+ start=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(start);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(terminal_for(start,rid,"superseded","aborted")==1u);
+ rate.Value=500000u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&list,0)==ERR_OK);
+ start=backend_lines+backend_len;send(ch,&request);
+ REQUIRE(last_tx_request(start)!=rid);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(c->count==0u&&c->pending_len==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_strict_j2534_filters=saved_strict;
+ puts("PASS P0 raw ISO-TP baud lifetime: 8 FIFO/CTS/trace cases");
+}
+
 /* P0 write isolation: mismatched J2534 ProtocolID and invalid classic
    CAN payloads cannot enter the read-only vehicle observer or RX FIFO. */
 static void test_write_transport_boundaries(U32 dev){
@@ -1896,6 +2008,7 @@ int main(){
  test_d2_replay_isolation_on_set_config(dev);
  test_passive_can_replay_retune_isolation(dev);
  test_raw_can_orphan_cf_admission(dev);
+ test_raw_isotp_retune_cancels_old_bus(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
