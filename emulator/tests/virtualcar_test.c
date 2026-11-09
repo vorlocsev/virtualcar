@@ -1484,6 +1484,129 @@ static void test_raw_isotp_fully_staged_retry(U32 dev){
  puts("PASS P0 ISO-TP fully staged retry 8: delivered reply remains complete");
 }
 
+/* P0: FC OVERFLOW retracts granted but unread CF, not the earlier FF.
+   Eight offline synthetic read-only native CAN scenarios, no GUI assertion. */
+static void test_raw_isotp_overflow_queued_cf(U32 dev){
+ const U8 vin[]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 fc1[]={0x30u,1u,0,0,0,0,0,0};
+ const U8 fc0[]={0x30u,0,0,0,0,0,0,0};
+ const U8 over[]={0x32u,0,0,0,0,0,0,0};
+ const U8 tester[]={0x02u,0x3Eu,0,0,0,0,0,0};
+ const U8 plain[]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0};
+ U32 saved_filter=g_strict_j2534_filters,saved_backend=g_backend_enabled;
+ U32 ch=0,peer=0,n,journal;
+ CHANNEL *c,*other;
+ PASSTHRU_MSG req=frame(PROTO_CAN,0x7E0u,vin,8);
+ PASSTHRU_MSG one=frame(PROTO_CAN,0x7E0u,fc1,8);
+ PASSTHRU_MSG cts=frame(PROTO_CAN,0x7E0u,fc0,8);
+ PASSTHRU_MSG overflow=frame(PROTO_CAN,0x7E0u,over,8);
+ PASSTHRU_MSG shortreq=frame(PROTO_CAN,0x7E0u,tester,8),rx;
+ const char *begin;U64 rid,peer_rid;
+ g_strict_j2534_filters=0u;g_backend_enabled=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c!=0);
+
+ /* 1: FF only is already queued and stays readable after overflow. */
+ begin=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(begin);
+ REQUIRE(rid&&c->pending_len==20u&&c->count==1u);
+ send(ch,&overflow);
+ REQUIRE(c->pending_len==0u&&c->pending_raw_exchange==0u&&c->count==1u);
+ REQUIRE(terminal_count_for(begin,rid)==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ REQUIRE(terminal_for(begin,rid,"flow_overflow","aborted")==1u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ puts("PASS P0 FC OVERFLOW 1: previously queued FF retained");
+
+ /* 2: a previously delivered FF results in immediate terminal abort. */
+ begin=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(begin);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&overflow);
+ REQUIRE(c->count==0u&&c->pending_len==0u);
+ REQUIRE(terminal_for(begin,rid,"flow_overflow","aborted")==1u);
+ REQUIRE(terminal_count_for(begin,rid)==1u);
+ puts("PASS P0 FC OVERFLOW 2: delivered FF terminates once");
+
+ /* 3: BS=1 staged one unread CF; remove CF, leave FF. */
+ begin=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(begin);
+ send(ch,&one);
+ REQUIRE(c->count==2u&&c->pending_pos==13u&&c->pending_len==20u);
+ send(ch,&overflow);
+ REQUIRE(c->count==1u&&c->pending_len==0u&&c->pending_cf_active==0u);
+ REQUIRE(c->pending_raw_exchange==0u&&c->queue[c->r].Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(begin,rid,"flow_overflow","aborted")==1u);
+ REQUIRE(terminal_count_for(begin,rid)==1u);
+ puts("PASS P0 FC OVERFLOW 3: queued CF1 removed, queued FF retained");
+
+ /* 4: FF already read; a granted CF1 is not exposed after OVERFLOW. */
+ begin=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(begin);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&one);REQUIRE(c->count==1u);
+ send(ch,&overflow);
+ REQUIRE(c->count==0u&&c->pending_len==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(begin,rid,"flow_overflow","aborted")==1u);
+ puts("PASS P0 FC OVERFLOW 4: delivered FF, queued CF removed");
+
+ /* 5: unrelated FIFO entries before/after exchange keep exact order. */
+ enqueue(c,0x555u,plain,8u);
+ begin=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(begin);
+ send(ch,&one);enqueue(c,0x556u,plain,8u);
+ REQUIRE(c->count==4u);
+ send(ch,&overflow);REQUIRE(c->count==3u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x55u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x56u);
+ REQUIRE(terminal_for(begin,rid,"flow_overflow","aborted")==1u);
+ puts("PASS P0 FC OVERFLOW 5: unrelated FIFO remains ordered");
+
+ /* 6: wrapped FIFO slot compaction removes only CF1. */
+ REQUIRE(c->count==0u);
+ c->r=c->w=MAX_QUEUE-2u;
+ enqueue(c,0x555u,plain,8u);
+ begin=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(begin);
+ send(ch,&one);enqueue(c,0x556u,plain,8u);
+ REQUIRE(c->count==4u&&c->w==2u&&c->queue_raw_exchange[0]!=0u);
+ send(ch,&overflow);
+ REQUIRE(c->count==3u&&c->w==1u&&c->r==MAX_QUEUE-2u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x55u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x56u);
+ REQUIRE(terminal_for(begin,rid,"flow_overflow","aborted")==1u);
+ puts("PASS P0 FC OVERFLOW 6: ring wrap preserves other frames");
+
+ /* 7: private generation is sufficient with telemetry explicitly off. */
+ g_backend_enabled=0u;journal=backend_len;
+ send(ch,&req);send(ch,&one);
+ REQUIRE(c->count==2u&&c->queue_trace[c->r]==0u);
+ send(ch,&overflow);REQUIRE(c->count==1u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(backend_len==journal);
+ g_backend_enabled=1u;
+ puts("PASS P0 FC OVERFLOW 7: no telemetry required");
+
+ /* 8: peer remains independent; new request after overflow works. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other!=0);
+ begin=backend_lines+backend_len;send(peer,&req);peer_rid=last_tx_request(begin);
+ send(peer,&one);REQUIRE(other->count==2u&&other->pending_len==20u);
+ send(ch,&req);send(ch,&one);send(ch,&overflow);
+ REQUIRE(c->count==1u&&other->count==2u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&shortreq);rx=readmsg(ch);
+ REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x21u);
+ send(peer,&cts);rx=readmsg(peer);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(terminal_for(begin,peer_rid,"none","responded")==1u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_strict_j2534_filters=saved_filter;g_backend_enabled=saved_backend;
+ puts("PASS P0 FC OVERFLOW 8: peer isolated and fresh SF recovers");
+}
+
 /* P0 write isolation: mismatched J2534 ProtocolID and invalid classic
    CAN payloads cannot enter the read-only vehicle observer or RX FIFO. */
 static void test_write_transport_boundaries(U32 dev){
@@ -2660,6 +2783,7 @@ int main(){
  test_raw_isotp_supersession_queued_rx(dev);
  test_raw_isotp_fully_staged_retry(dev);
  test_clear_rx_raw_iso_lifetime(dev);
+ test_raw_isotp_overflow_queued_cf(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
