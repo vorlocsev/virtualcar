@@ -993,12 +993,85 @@ static void test_d2_unknown_target_supersession(U32 dev){
  puts("PASS P0 D2 retry isolation: unconfigured target, B9FC and channel FIFO");
 }
 
+/* Periodic TX previously bypassed the immediate WriteMsgs transport guards.
+   Reject malformed schedules before installing a repeating transmitter, and
+   keep the ordinary read-only periodic lab request working on both transports. */
+static void test_periodic_tx_transport_parity(U32 dev){
+ const U8 can_tester[]={0x02u,0x3Eu,0x00u,0,0,0,0,0};
+ const U8 can_nine[]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0,0};
+ const U8 iso_long[]={0x3Eu,0u,0u,0u,0u,0u,0u,0u,0u};
+ U32 can=0,iso=0,id=0xA5A5A5A5u,serial=g_periodic_counter;
+ U32 i,prior_events,prior_observer,saved_strict=g_strict_j2534_filters;
+ PASSTHRU_MSG m,rx;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000u,&iso)==ERR_OK);
+ prior_events=backend_len;prior_observer=g_vehicle_bridge.inspected_tx;
+ /* 1: ISO15765 cannot be scheduled on a raw CAN channel. */
+ m=frame(PROTO_ISO15765,0x7E0u,iso_long,9u);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&id,15)==ERR_MSG_PROTOCOL_ID);
+ REQUIRE(id==0xA5A5A5A5u&&g_periodic_counter==serial);
+ /* 2: raw CAN cannot be scheduled on a reassembled ISO15765 channel. */
+ m=frame(PROTO_CAN,0x7E0u,can_tester,8u);
+ REQUIRE(PassThruStartPeriodicMsg(iso,&m,&id,15)==ERR_MSG_PROTOCOL_ID);
+ REQUIRE(id==0xA5A5A5A5u&&g_periodic_counter==serial);
+ /* 3: malformed nine-byte classic CAN must not be scheduled. */
+ m=frame(PROTO_CAN,0x7E0u,can_nine,9u);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&id,15)==ERR_INVALID_MSG);
+ /* 4: 30-bit and all-one CAN identifiers are never periodic routes. */
+ m=frame(PROTO_CAN,0x20000000u,can_tester,8u);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&id,15)==ERR_INVALID_MSG);
+ m=frame(PROTO_CAN,0xFFFFFFFFu,can_tester,8u);m.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&id,15)==ERR_INVALID_MSG);
+ /* 5: physical 29-bit ID also bounds periodic ISO15765 requests. */
+ m=frame(PROTO_ISO15765,0x20000000u,iso_long,9u);
+ REQUIRE(PassThruStartPeriodicMsg(iso,&m,&id,15)==ERR_INVALID_MSG);
+ /* 6: strict ISO extended-addressing remains unsupported via either API. */
+ g_strict_j2534_filters=1u;
+ m=frame(PROTO_ISO15765,0x7E0u,iso_long,9u);
+ m.TxFlags=ISO15765_ADDR_TYPE;
+ REQUIRE(PassThruStartPeriodicMsg(iso,&m,&id,15)==ERR_NOT_SUPPORTED);
+ g_strict_j2534_filters=saved_strict;
+ for(i=0;i<MAX_PERIODIC;i++){
+  REQUIRE(!channel(can)->periodic[i].used);
+  REQUIRE(!channel(iso)->periodic[i].used);
+ }
+ REQUIRE(id==0xA5A5A5A5u&&g_periodic_counter==serial);
+ /* Invalid schedules never reach the backend or virtual CEM observer. */
+ REQUIRE(backend_len==prior_events);
+ REQUIRE(g_vehicle_bridge.inspected_tx==prior_observer);
+ tick+=50;
+ {U32 n=1;REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);}
+ /* 7: exact maximum 29-bit CAN ID remains scheduleable. */
+ m=frame(PROTO_CAN,0x1FFFFFFFu,can_tester,8u);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&id,15)==ERR_OK&&id==serial);
+ REQUIRE(PassThruStopPeriodicMsg(can,id)==ERR_OK);
+ /* 8: long reassembled ISO15765 payload remains scheduleable. */
+ m=frame(PROTO_ISO15765,0x1FFFFFFFu,iso_long,9u);
+ REQUIRE(PassThruStartPeriodicMsg(iso,&m,&id,15)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(iso,id)==ERR_OK);
+ /* 9: ordinary 11-bit CAN tester-present periodic request still produces
+    a bounded read-only response after the scheduled interval. */
+ m=frame(PROTO_CAN,0x7E0u,can_tester,8u);
+ REQUIRE(PassThruStartPeriodicMsg(can,&m,&id,15)==ERR_OK);
+ tick+=16;rx=readmsg(can);
+ REQUIRE(rx.ProtocolID==PROTO_CAN&&rx.Data[2]==0x07u&&rx.Data[3]==0xE8u);
+ REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu&&rx.Data[6]==0x00u);
+ REQUIRE(PassThruStopPeriodicMsg(can,id)==ERR_OK);
+ /* 10: STOP really prevents further periodic ECU responses. */
+ tick+=50;
+ {U32 n=1;REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);}
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ puts("PASS J2534 periodic TX: shared protocol, CAN DLC/ID, ISO and valid repeat");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
+ test_periodic_tx_transport_parity(dev);
  test_known_b9fb_13frame_final_marker();
  test_d2_unknown_target_supersession(dev);
  test_vmware_route_evidence(dev);
