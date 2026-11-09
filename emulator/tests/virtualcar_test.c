@@ -970,6 +970,132 @@ static void p0_add_can_pci_pass(U32 channel_id,U32 response_id,U32 pci){
  REQUIRE(filter_id!=0u);
 }
 
+/* A recorded B9FB D2 stream must stop on the FIRST rejected frame.
+   These eight C tests use a local 3-frame synthetic fixture, not OEM data. */
+static void test_d2_strict_filter_no_frame_gaps(U32 dev){
+ D2_PROFILE saved=g_d2[2];
+ p2_j2534_bridge saved_bridge=g_vehicle_bridge;
+ U32 old_strict=g_strict_j2534_filters,old_routing=g_p2_strict_routing;
+ U32 old_spacing=g_d2_spacing_ms,old_backend=g_backend_enabled;
+ U32 ch=0,peer=0,n=1,log_before;
+ PASSTHRU_MSG request,rx;
+ CHANNEL *c,*other;
+ U64 rid,other_rid;
+ const char *begin,*peer_begin;
+ const U8 fb[8]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
+ bytes_zero(&g_d2[2],sizeof(g_d2[2]));
+ g_d2[2].target=0x50u;g_d2[2].subcommand=0xFBu;
+ g_d2[2].baud=500000u;g_d2[2].response_id=0x01200003u;
+ g_d2[2].frame_count=3u;
+ g_d2[2].frame[0][0]=0x8Fu;g_d2[2].frame[0][1]=0x50u;
+ g_d2[2].frame[0][2]=0xF9u;g_d2[2].frame[0][3]=0xFBu;
+ g_d2[2].frame[1][0]=0x09u;g_d2[2].frame[2][0]=0x4Cu;
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ g_d2_spacing_ms=0u;g_p2_strict_routing=1u;g_strict_j2534_filters=1u;
+ request=frame(PROTO_CAN,0x000FFFFEu,fb,8u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c);
+
+ /* 1. No PASS filter: the first frame is rejected and nothing is staged. */
+ begin=backend_lines+backend_len;
+ send(ch,&request);rid=last_tx_request(begin);
+ REQUIRE(rid&&c->count==0u&&c->d2_count==0u&&c->d2_trace==0u);
+ REQUIRE(terminal_for(begin,rid,"filter_reject","dropped")==1u);
+
+ /* 2. Explicit permission for frame 2 alone cannot manufacture
+    an orphan frame after the filtered first frame. */
+ p0_add_can_pci_pass(ch,0x01200003u,0x09u);
+ begin=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(begin);
+ REQUIRE(rid&&c->count==0u&&c->d2_count==0u);
+ pump_d2(c);pump_d2(c);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(begin,rid,"filter_reject","dropped")==1u);
+
+ /* 3. First frame allowed, second rejected: third frame must not appear.
+    The accepted first frame stays readable and completes as dropped. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x01200003u,0x8Fu);
+ begin=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(begin);
+ REQUIRE(rid&&c->count==1u&&c->d2_count==3u);
+ pump_d2(c);REQUIRE(c->d2_count==0u&&c->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x8Fu);
+ pump_d2(c);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(begin,rid,"filter_reject","dropped")==1u);
+
+ /* 4. First two frames allowed but terminal frame rejected. The
+    previously queued two are delivered in order; no positive terminal. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x01200003u,0x8Fu);
+ p0_add_can_pci_pass(ch,0x01200003u,0x09u);
+ begin=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(begin);
+ pump_d2(c);REQUIRE(c->count==2u&&c->d2_count==3u);
+ pump_d2(c);REQUIRE(c->count==2u&&c->d2_count==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x8Fu);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x09u);
+ REQUIRE(terminal_for(begin,rid,"filter_reject","dropped")==1u);
+
+ /* 5. Broad matching PASS still delivers all three recorded frames. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x01200003u,0xFFFFFFFFu);
+ begin=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(begin);
+ pump_d2(c);pump_d2(c);
+ REQUIRE(c->count==3u&&c->d2_count==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x8Fu);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x09u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(begin,rid,"none","responded")==1u);
+
+ /* 6. Rejection on one channel cannot cancel a peer B9FB replay. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other);
+ p0_add_can_pci_pass(peer,0x01200003u,0xFFFFFFFFu);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x01200003u,0x8Fu);
+ send(ch,&request);pump_d2(c);
+ peer_begin=backend_lines+backend_len;send(peer,&request);
+ other_rid=last_tx_request(peer_begin);
+ pump_d2(other);pump_d2(other);
+ REQUIRE(c->count==1u&&c->d2_count==0u);
+ REQUIRE(other->count==3u&&other->d2_count==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x8Fu);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x8Fu);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x09u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(peer_begin,other_rid,"none","responded")==1u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+
+ /* 7. After widening the filter, a NEW B9FB can succeed.
+    The rejected predecessor has no surviving frame in the FIFO. */
+ REQUIRE(c->count==0u&&c->d2_count==0u);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x01200003u,0xFFFFFFFFu);
+ begin=backend_lines+backend_len;send(ch,&request);rid=last_tx_request(begin);
+ pump_d2(c);pump_d2(c);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x8Fu);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x09u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(begin,rid,"none","responded")==1u);
+ REQUIRE(c->count==0u&&c->d2_count==0u);
+
+ /* 8. Filter rejection stops a D2 stream without backend telemetry.
+    Transport correctness must not depend on diagnostic request IDs. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x01200003u,0x8Fu);
+ g_backend_enabled=0u;log_before=backend_len;
+ send(ch,&request);REQUIRE(c->count==1u&&c->d2_count==3u);
+ pump_d2(c);REQUIRE(c->d2_count==0u&&c->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x8Fu);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(backend_len==log_before);
+ g_backend_enabled=old_backend;
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_d2[2]=saved;g_vehicle_bridge=saved_bridge;
+ g_strict_j2534_filters=old_strict;g_p2_strict_routing=old_routing;
+ g_d2_spacing_ms=old_spacing;g_backend_enabled=old_backend;
+ puts("PASS P0 D2 strict filtering: 8 no-gap/read-only host cases");
+}
+
 /* P0: missing CF1 must never allow CF2/CF3 to pass through a strict
    data-byte filter. All eight cases run in the native host test only. */
 static void test_raw_can_cf_filter_gap_isolation(U32 dev){
@@ -2292,6 +2418,7 @@ int main(){
  test_raw_can_orphan_cf_admission(dev);
  test_raw_isotp_retune_cancels_old_bus(dev);
  test_raw_can_cf_filter_gap_isolation(dev);
+ test_d2_strict_filter_no_frame_gaps(dev);
  test_raw_isotp_supersession_queued_rx(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
