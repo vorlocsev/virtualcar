@@ -1383,6 +1383,18 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     }
 }
 
+/* Every actual read-only request needs one transaction ID, including
+   requests emitted by the periodic scheduler. A CAN ISO-TP Flow Control
+   grants a prior response and must NOT create another diagnostic request. */
+static void begin_tx_evidence(CHANNEL *c,const PASSTHRU_MSG *msg){
+    if(c->protocol==PROTO_CAN && msg->DataSize>=5u &&
+       (msg->Data[4]&0xF0u)==0x30u){
+        c->active_trace=0;return;
+    }
+    c->active_trace=next_backend_request();
+    backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
+    backend_probe_event(c,c->active_trace,msg);
+}
 /* No physical bus: periodic requests are replayed only while the client
    polls ReadMsgs. Never spawn a background vehicle writer. */
 static void pump_periodic(CHANNEL *c){
@@ -1467,18 +1479,6 @@ static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
     if(g_strict_j2534_filters && c->protocol==PROTO_ISO15765 &&
        (m->TxFlags&ISO15765_ADDR_TYPE))return ERR_NOT_SUPPORTED;
     return ERR_OK;
-}
-/* Every actual read-only request needs one transaction ID, including
-   requests emitted by the periodic scheduler. A CAN ISO-TP Flow Control
-   grants a prior response and must NOT create another diagnostic request. */
-static void begin_tx_evidence(CHANNEL *c,const PASSTHRU_MSG *msg){
-    if(c->protocol==PROTO_CAN && msg->DataSize>=5u &&
-       (msg->Data[4]&0xF0u)==0x30u){
-        c->active_trace=0;return;
-    }
-    c->active_trace=next_backend_request();
-    backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
-    backend_probe_event(c,c->active_trace,msg);
 }
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
     U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
