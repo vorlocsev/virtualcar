@@ -138,6 +138,18 @@ try {
         Write-Host 'Private baseline saved. Run SectorV manually in the isolated VM; no client was launched.'
     } else {
         Write-Host 'Redacted window and GUI triage saved. No OEM VIN or ECU acceptance was inferred.'
+        # Read ONLY the strict, redacted report that the trusted Python
+        # collector has just written. Never print private logs or exception
+        # details. The action text comes from a fixed Python allowlist.
+        $reportPath = Join-Path $SessionDir 'p0-triage.redacted.json'
+        $safeReport = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]::IsNullOrWhiteSpace([string]$safeReport.first_next_action_ru) -or
+            [string]$safeReport.first_next_action_ru -match '[\r\n]' -or
+            [string]$safeReport.first_next_action_ru -match '[\\/]' -or
+            [string]$safeReport.first_next_action_ru -match '[<>]') {
+            throw 'Unsafe or missing next diagnostic action'
+        }
+        Write-Host ('Следующий безопасный шаг: ' + [string]$safeReport.first_next_action_ru)
     }
     exit 0
 } catch {
