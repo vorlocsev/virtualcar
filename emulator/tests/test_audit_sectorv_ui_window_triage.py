@@ -357,5 +357,99 @@ class SectorVUiWindowTriageTests(unittest.TestCase):
 
 
 
+    def test_29_discarded_first_j2534_line_cannot_prove_absent_b9fb(self):
+        case = window()
+        case["windows"]["j2534"]["dropped_first"] = True
+        result = triage.triage(case, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["first_next_gate"],
+                         "review_discarded_j2534_line_boundaries")
+        self.assertTrue(result["j2534_discarded_partial_boundary_lines"])
+        self.assertEqual(result["b9fb_request_count_in_window"], 0)
+        self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
+
+    def test_30_discarded_last_j2534_line_cannot_prove_absent_b9fb(self):
+        case = window()
+        case["windows"]["j2534"]["dropped_last"] = True
+        result = triage.triage(case, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["first_next_gate"],
+                         "review_discarded_j2534_line_boundaries")
+
+    def test_31_observed_b9fb_still_available_when_other_lines_dropped(self):
+        case = set_b9(window(), rx=True)
+        case["windows"]["j2534"].update({
+            "dropped_first": True, "dropped_last": True
+        })
+        result = triage.triage(case, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["b9fb_request_count_in_window"], 1)
+        self.assertEqual(result["first_next_gate"],
+                         "review_client_vin_failure_after_unlinked_rx")
+        self.assertTrue(result["j2534_discarded_partial_boundary_lines"])
+        self.assertFalse(result["oem_vin_and_ecu_verified"])
+
+    def test_32_missing_log_priority_is_unchanged(self):
+        case = window()
+        case["windows"]["j2534"] = {
+            "new_bytes": 0, "complete_lines": 0,
+            "dropped_first": False, "dropped_last": False,
+            "source_present": False, "prefix_verified": False,
+        }
+        result = triage.triage(case, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["first_next_gate"],
+                         "obtain_bounded_j2534_window_evidence")
+        self.assertFalse(result["j2534_discarded_partial_boundary_lines"])
+
+    def test_33_reject_absent_log_claiming_discarded_lines(self):
+        case = window()
+        case["windows"]["j2534"] = {
+            "new_bytes": 0, "complete_lines": 0,
+            "dropped_first": False, "dropped_last": True,
+            "source_present": False, "prefix_verified": False,
+        }
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_34_reject_first_boundary_drop_without_old_prefix(self):
+        case = window()
+        case["windows"]["j2534"].update({
+            "dropped_first": True, "prefix_verified": False
+        })
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_35_reject_last_boundary_drop_without_appended_bytes(self):
+        case = window()
+        case["windows"]["j2534"].update({
+            "dropped_last": True, "new_bytes": 0, "complete_lines": 0
+        })
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_36_cli_partial_line_gate_is_redacted_and_exclusive(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            private = root / "private-window.json"
+            gui = root / "private-gui.json"
+            output = root / "redacted-triage.json"
+            case = window()
+            case["windows"]["j2534"]["dropped_first"] = True
+            private.write_text(json.dumps(case), encoding="utf-8")
+            gui.write_text(json.dumps(ui()), encoding="utf-8")
+            args = ["--window-report", str(private), "--ui-observation",
+                    str(gui), "--output", str(output),
+                    "--operator-same-run-confirmed"]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(triage.main(args), 0)
+            saved = output.read_text(encoding="utf-8")
+            parsed = json.loads(saved)
+            self.assertEqual(parsed["first_next_gate"],
+                             "review_discarded_j2534_line_boundaries")
+            self.assertTrue(parsed["j2534_discarded_partial_boundary_lines"])
+            for forbidden in (str(root), "private-window", "PassThruReadMsgs",
+                              "sha256", "YV1", "0x50"):
+                self.assertNotIn(forbidden, saved)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(triage.main(args), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
