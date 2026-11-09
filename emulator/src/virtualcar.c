@@ -1198,14 +1198,27 @@ static void pump_d2(CHANNEL *c){
     }
     else c->d2_next_us+=(U64)c->d2_spacing_ms*1000ull;
 }
+/* A recognized D2 discovery request supersedes the previous D2 exchange
+   on this J2534 channel, regardless of whether its own response is recorded.
+   Keep unrelated queued RX in FIFO order, and do not synthesize A3/A6 data. */
+static void supersede_d2_exchange(CHANNEL *c){
+    U32 discarded;
+    backend_cancel_channel(c,"d2_superseded",1);
+    c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
+    discarded=drop_queued_d2(c);
+    if(discarded){U8 count_be[4];u32_be(count_be,discarded);
+        logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
+}
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
-    U32 i,discarded;D2_PROFILE *d;const char *route;
+    U32 i;D2_PROFILE *d;const char *route;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
     /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
        responses. Keep them silent, but distinguish the known missing emulator
        implementation from an arbitrary CAN ID or an absent B9 fixture.
        Never synthesize E3/E6, an ignition state, or a module identity. */
     if(cem_d2_probe_shape(data,len)){
+        /* A3/A6 must not inherit old B9FB frames as a false probe reply. */
+        supersede_d2_exchange(c);
         backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
         /* The strict D2 bus policy already gates recorded B9 replies.
            Apply the same *read-only classification* to A3/A6 request
@@ -1232,16 +1245,9 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
      u32_be(detail,data[1]);u32_be(detail+4,data[3]);
      u32_be(detail+8,c->baud);u32_be(detail+12,c->flags);
      logline("P2 D2 request target/opcode/baud/flags (BE)",detail,16);}
-    /* A recognized read command begins a new D2 exchange on this channel
-       even if the new target/opcode has no recorded fixture. Cancel staged
-       and queued D2 bytes before lookup; otherwise an unanswered target
-       can accidentally receive the previous B9FB/B9F0 response. Keep
-       unrelated CAN RX and D2 traffic on other channels untouched. */
-    backend_cancel_channel(c,"d2_superseded",1);
-    c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
-    discarded=drop_queued_d2(c);
-    if(discarded){U8 count_be[4];u32_be(count_be,discarded);
-        logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
+    /* B9 reads and known A3/A6 probes use the same old-D2 cancellation.
+       Do it before fixture lookup, even if the new target is unconfigured. */
+    supersede_d2_exchange(c);
     for(i=0;i<MAX_D2_FIXTURES;i++){
         U32 j;
         d=&g_d2[i];if(data[1]!=d->target||data[3]!=d->subcommand)continue;
