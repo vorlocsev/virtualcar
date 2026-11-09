@@ -37,7 +37,7 @@ SAMPLE = {
          (72, None, 999, 90), (73, None, None, 999)),
     ),
     "T122_Protocol": (("id", "identifier"), ((80, "PRIVATE_D2"), (81, "PRIVATE_GGD"))),
-    "T123_Bus": (("id", "identifier"), ((90, "PRIVATE_CAN"))),
+    "T123_Bus": (("id", "identifier"), ((90, "PRIVATE_CAN"),)),
 }
 
 
@@ -55,6 +55,8 @@ class VidaInitHwAggregateTests(unittest.TestCase):
                 ("schema_version", mod.EXPORT_SCHEMA), ("source_database", "CarCom"),
                 ("scope", "all_user_tables")))
             for table, (cols, rows) in SAMPLE.items():
+                if not all(isinstance(row, tuple) and len(row) == len(cols) for row in rows):
+                    raise AssertionError("synthetic fixture has non-row parameters")
                 physical = "dbo__" + table
                 decl = ", ".join('"' + col + '" TEXT' for col in cols)
                 db.execute('CREATE TABLE "' + physical + '" (' + decl + ')')
