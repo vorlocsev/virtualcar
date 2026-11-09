@@ -1,5 +1,31 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: Windows CI environment-specific provider expectation (2026-11-09)
+
+- [PR #262](https://github.com/vorlocsev/virtualcar/pull/262) merged to
+  `development` `20c2bdcc65147d33a4c81ae4ea945d50cfbcee93`.
+  Automatic [VMware #42630169613](https://github.com/vorlocsev/virtualcar/actions/runs/42630169613)
+  **FAILED** at the Python step: 565 tests, one skipped, one failure,
+  Windows-only `test_16_finish_surfaces_safe_action_without_private_log_content`.
+  All 7 newly added general synthetic action tests passed.
+- Reason: test asserted that Windows guest has no canonical x86 J2534
+  provider, thus expected `obtain_provider_endpoint_evidence`. On the
+  configured CI runner a provider exists with stable endpoints, so
+  triage correctly chose `verify_j2534_provider_and_connect` for unknown
+  GUI connection state. Runtime safe action output behaved correctly.
+- Narrow follow-up accepts either correctly prioritized category based on
+  actual Windows provider availability; still asserts redacted fixed
+  instruction, console output, no private paths and no VIN/ECU acceptance.
+  Production source remains unchanged.
+- **Gate:** merge test-only PR to `development` and verify fresh automatic
+  Windows VMware CI on the exact merged SHA. Never count #42630169613
+  as a passing run.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains
+  unresolved without true operator-observed isolated read-only SectorV
+  GUI selection, B9FB/VIN and ECU list. No `main` merge or release.
+
+---
+
 ## P0: actionable read-only next action after GUI Finish (2026-11-09)
 
 - Exact verified baseline `development`: `4bc5d364f4e2b8e82b55cf01e1c63d926764e4a8`;

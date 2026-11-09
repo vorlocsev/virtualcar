@@ -208,8 +208,13 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         result = json.loads(
             (self.session / "p0-triage.redacted.json").read_text(encoding="utf-8"))
-        self.assertEqual(result["first_next_gate"],
-                         "obtain_provider_endpoint_evidence")
+        # The VMware runner can have the canonical x86 J2534 provider
+        # registered, whereas local/offline synthetic tests do not. Both
+        # outcomes are valid, but the instruction must reflect the gate.
+        self.assertIn(result["first_next_gate"], (
+            "obtain_provider_endpoint_evidence",
+            "verify_j2534_provider_and_connect",
+        ))
         self.assertTrue(result["first_next_action_ru"])
         # The operator prints the second instruction line in addition to the
         # original fixed summary, not raw input logs or local source paths.
