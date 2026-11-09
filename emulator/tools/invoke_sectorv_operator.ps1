@@ -40,6 +40,34 @@ function Select-Observation {
     return $Value
 }
 
+
+# Text comes exclusively from this fixed allowlist, never from client paths,
+# binary metadata, VIN or user-provided diagnostic logs. Keep ASCII for PS5.1.
+function Get-SafeReferenceAdvice {
+    param([string]$Status)
+    switch -CaseSensitive ($Status) {
+        'x86_pe32_header' {
+            return 'J2534 reference: x86 PE32 header observed; exports, binding and VIN/ECU are NOT verified.'
+        }
+        'other_pe' {
+            return 'J2534 reference WARNING: not an x86 PE32 header. Choose an x86 reference before relying on byte comparison.'
+        }
+        'invalid_pe' {
+            return 'J2534 reference WARNING: invalid PE header. Replace the reference before relying on byte comparison.'
+        }
+        'unverifiable' {
+            return 'J2534 reference WARNING: file architecture could not be inspected. Check the local reference DLL.'
+        }
+        'not_compared' {
+            return 'J2534 reference: none supplied; installed DLL byte equivalence and architecture are not checked.'
+        }
+        'not_assessed_by_this_tool' {
+            return 'J2534 reference: legacy observation did not assess PE32 architecture.'
+        }
+        default { throw 'Unsupported J2534 reference status' }
+    }
+}
+
 try {
     if (-not $IsolatedReadOnlyVm -or -not $PhysicalAdapterDisconnected) {
         throw 'Required isolated offline lab confirmations are absent'
@@ -90,6 +118,16 @@ try {
         }
         & $winps @moduleArgs | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Module snapshot failed' }
+        # This JSON was just created by the local read-only module inspector.
+        # Re-check the fixed schema and render ONLY category-based advice.
+        $moduleState = Get-Content -LiteralPath $moduleReport -Raw -Encoding UTF8 |
+                       ConvertFrom-Json -ErrorAction Stop
+        if ($moduleState.schema_version -cne 'virtualcar-sectorv-process-binding-operator-v1' -or
+            $moduleState.scope -cne 'operator_requested_current_host_snapshot_only' -or
+            $moduleState.accepted_vin_or_ecu -cne 'not_verified') {
+            throw 'Invalid operator module evidence'
+        }
+        Write-Host (Get-SafeReferenceAdvice -Status ([string]$moduleState.reference_dll_pe32))
         Write-Host 'Redacted module snapshot captured; client and VIN identity remain unverified.'
         exit 0
     } else {
@@ -147,6 +185,12 @@ try {
             [string]$safeReport.first_next_action_ru -match '[\r\n]' -or
             [string]$safeReport.first_next_action_ru -match '[<>]') {
             throw 'Unsafe or missing next diagnostic action'
+        }
+        if ($null -ne $safeReport.operator_module_snapshot) {
+            # Python strictly validated this optional categorical snapshot.
+            # Never echo raw module properties or arbitrary GUI text.
+            Write-Host (Get-SafeReferenceAdvice -Status (
+                [string]$safeReport.operator_module_snapshot.reference_pe32_header))
         }
         Write-Host ('Следующий безопасный шаг: ' + [string]$safeReport.first_next_action_ru)
     }

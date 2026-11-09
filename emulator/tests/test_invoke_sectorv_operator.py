@@ -6,6 +6,7 @@ Tests run on the trusted Windows CI runner, not the user's guest GUI.
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,19 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         proc = self.run_helper("Begin")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue((self.session / "p0-before.private.json").is_file())
+
+    def synthetic_reference(self, machine=0x14C, magic=0x10B, valid=True):
+        path = self.dir / "PRIVATE reference J2534.dll"
+        data = bytearray(512)
+        if valid:
+            data[:2] = b"MZ"
+            struct.pack_into("<I", data, 0x3C, 0x80)
+            data[0x80:0x84] = b"PE\x00\x00"
+            struct.pack_into("<H", data, 0x84, machine)
+            struct.pack_into("<H", data, 0x98, magic)
+        path.write_bytes(data)
+        return path
+
 
     def test_01_real_collector_begin_and_finish_keep_acceptance_unverified(self):
         self.begin()
@@ -224,6 +238,94 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         self.assertEqual(result["client_vehicle_identity_accepted"],
                          "not_verified")
         self.assertFalse(result["oem_vin_and_ecu_verified"])
+
+
+
+    def test_17_module_without_reference_surfaces_not_compared(self):
+        self.begin()
+        module = self.run_helper("Module")
+        self.assertEqual(module.returncode, 0, module.stderr)
+        self.assertIn("none supplied", module.stdout)
+        self.assertNotIn(str(self.dir), module.stdout)
+        record = json.loads((self.session / "p0-module.redacted.json").read_text())
+        self.assertEqual(record["reference_dll_pe32"], "not_compared")
+        finish = self.run_helper("Finish", "-NonInteractive", *STATES)
+        self.assertEqual(finish.returncode, 0, finish.stderr)
+        self.assertIn("none supplied", finish.stdout)
+        self.assertNotIn(str(self.dir), finish.stdout)
+
+    def test_18_module_x86_header_reported_as_header_only(self):
+        self.begin()
+        reference = self.synthetic_reference()
+        module = self.run_helper("Module", "-ReferenceDll", str(reference))
+        self.assertEqual(module.returncode, 0, module.stderr)
+        self.assertIn("x86 PE32 header observed", module.stdout)
+        self.assertIn("NOT verified", module.stdout)
+        self.assertNotIn(str(reference), module.stdout + module.stderr)
+        report = json.loads((self.session / "p0-module.redacted.json").read_text())
+        self.assertEqual(report["reference_dll_pe32"], "x86_pe32_header")
+        self.assertEqual(report["accepted_vin_or_ecu"], "not_verified")
+
+    def test_19_module_x64_warns_and_finish_keeps_gui_unverified(self):
+        self.begin()
+        reference = self.synthetic_reference(machine=0x8664, magic=0x20B)
+        module = self.run_helper("Module", "-ReferenceDll", str(reference))
+        self.assertEqual(module.returncode, 0, module.stderr)
+        self.assertIn("WARNING: not an x86 PE32 header", module.stdout)
+        report = json.loads((self.session / "p0-module.redacted.json").read_text())
+        self.assertEqual(report["reference_dll_pe32"], "other_pe")
+        self.assertEqual(report["next_safe_gate"],
+                         "verify_reference_pe32_before_gui")
+        finish = self.run_helper("Finish", "-NonInteractive", *STATES)
+        self.assertEqual(finish.returncode, 0, finish.stderr)
+        self.assertIn("WARNING: not an x86 PE32 header", finish.stdout)
+        triage = json.loads((self.session / "p0-triage.redacted.json").read_text())
+        self.assertEqual(triage["operator_module_snapshot"]["reference_pe32_header"],
+                         "other_pe")
+        self.assertEqual(triage["client_vehicle_identity_accepted"], "not_verified")
+        self.assertFalse(triage["oem_vin_and_ecu_verified"])
+        self.assertNotIn(str(self.dir), module.stdout + finish.stdout)
+
+    def test_20_module_invalid_pe_warns_and_keeps_private_path(self):
+        self.begin()
+        reference = self.synthetic_reference(valid=False)
+        module = self.run_helper("Module", "-ReferenceDll", str(reference))
+        self.assertEqual(module.returncode, 0, module.stderr)
+        self.assertIn("WARNING: invalid PE header", module.stdout)
+        report = json.loads((self.session / "p0-module.redacted.json").read_text())
+        self.assertEqual(report["reference_dll_pe32"], "invalid_pe")
+        self.assertNotIn(str(reference), module.stdout + module.stderr)
+
+    def test_21_missing_reference_reports_unverifiable_without_filename(self):
+        self.begin()
+        reference = self.dir / "PRIVATE nonexistent x86 J2534.dll"
+        module = self.run_helper("Module", "-ReferenceDll", str(reference))
+        self.assertEqual(module.returncode, 0, module.stderr)
+        self.assertIn("WARNING: file architecture could not be inspected",
+                      module.stdout)
+        report = json.loads((self.session / "p0-module.redacted.json").read_text())
+        self.assertEqual(report["reference_dll_pe32"], "unverifiable")
+        self.assertNotIn(str(reference), module.stdout + module.stderr)
+
+    def test_22_finish_without_module_has_no_reference_claim(self):
+        self.begin()
+        finish = self.run_helper("Finish", "-NonInteractive", *STATES)
+        self.assertEqual(finish.returncode, 0, finish.stderr)
+        self.assertNotIn("J2534 reference:", finish.stdout)
+        self.assertNotIn("J2534 reference WARNING", finish.stdout)
+
+    def test_23_forged_module_status_fails_closed_before_finish(self):
+        self.begin()
+        module = self.run_helper("Module")
+        self.assertEqual(module.returncode, 0, module.stderr)
+        path = self.session / "p0-module.redacted.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["reference_dll_pe32"] = "C:/PRIVATE/driver.dll"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        finish = self.run_helper("Finish", "-NonInteractive", *STATES)
+        self.assertEqual(finish.returncode, 2)
+        self.assertFalse((self.session / "p0-triage.redacted.json").exists())
+        self.assertNotIn("C:/PRIVATE/driver.dll", finish.stdout + finish.stderr)
 
 
 
