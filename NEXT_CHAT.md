@@ -1,5 +1,36 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## VERIFIED: P0 operator log-path identity across begin/finish (2026-11-09)
+
+- **Latest code commit `development`:** `43138d2ecf408fc32ebd214f37586697bdcea450`,
+  [PR #237](https://github.com/vorlocsev/virtualcar/pull/237) **MERGED**,
+  exact-SHA owner-only
+  [VMware CI #42578608256](https://github.com/vorlocsev/virtualcar/actions/runs/42578608256)
+  **SUCCESS**, **449/449 Python tests**, **29/29 workflow steps**.
+- **Real bug fixed:** the two-phase `audit_sectorv_operator_session.py`
+  previously checked historical log *content* but not the *source path*
+  across `begin` and `finish`. Alternate empty logs or identically
+  prefixed clones could create a valid-looking but misattributed session
+  report. The collector now stores private canonical-path SHA256 bindings
+  for both log sources inside its private manifest, verifies them before
+  reading windows, rejects forged/swapped source paths, and never exports
+  path tokens or raw paths to either redacted report. Existing canonical
+  path aliases remain valid. Eight additional synthetic regression
+  cases passed. Old pre-fix collector private manifests must not be
+  resumed; start a new `begin` for the actual GUI run.
+- **P0 still unresolved [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):**
+  perform one **real SectorV GUI read-only session** in the user's own
+  isolated Windows VMware guest using the
+  [operator guide](emulator/README_SECTORV_FRESH_WINDOW_RU.md),
+  a passive loaded-DLL snapshot while client GUI is open, then finish
+  with the six actually observed GUI categories. Current self-hosted
+  VMware CI tests code in a runner service context, not real GUI acceptance.
+  No true XC90 V8 MY2009 VIN, ECU list, OEM B9FB or physical adapter
+  validation evidenced. Do not fabricate missing A3/A6/B9F0 replies,
+  touch `main` or publish a release.
+
+---
+
 ## VERIFIED: one-run SectorV GUI operator collection (2026-11-09)
 
 - **Latest code commit:** `168dbe77ec472ecd3cae7d6310876c0548d46b28`,
