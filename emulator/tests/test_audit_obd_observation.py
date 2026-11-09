@@ -166,7 +166,13 @@ class ObdObservationTests(unittest.TestCase):
                 self.assertFalse(evidence["replay_approved"])
         fake = request()
         fake[1] = fake[1].replace("TX (app request)", "Client said TX (app request)")
-        self.assertNotEqual(records(fake + reply())[0]["status"], "delivered")
+        fake_report = report(fake + reply())
+        # A noncanonical native TX label interrupts the previous context;
+        # the orphaned request is deliberately NOT admitted as a transaction.
+        self.assertEqual(fake_report["transactions"], [])
+        self.assertEqual(fake_report["parse_errors"]["interrupted_native_tx_context"], 1)
+        self.assertEqual(fake_report["parse_errors"]["native_tx_without_fresh_context"], 1)
+        self.assertFalse(fake_report["replay_approved"])
         unrelated = request() + [event("P2 D2 read command: no validated response fixture")]
         self.assertNotEqual(records(unrelated)[0]["status"], "no_fixture")
 

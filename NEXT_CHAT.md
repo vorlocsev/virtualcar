@@ -1,5 +1,27 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: OBD test must accept noncanonical TX label rejection (2026-11-09)
+
+- Prior [PR #257](https://github.com/vorlocsev/virtualcar/pull/257)
+  merged as `0a487a23b2b4e00443c8a4892262a53bd58123fe`.
+  Automatic [VMware CI #42622499271](https://github.com/vorlocsev/virtualcar/actions/runs/42622499271)
+  **FAILED**, Python 533 tests, one error, at the *next* unconditional
+  `records(fake + reply())[0]` assertion of the same OBD regression.
+- Source finding: `Client said TX (app request)` is not a canonical native
+  TX record. It interrupts the adjacent TX metadata and is rejected with
+  `interrupted_native_tx_context` and `native_tx_without_fresh_context`.
+  The correct outcome is **zero** transactions, not a delivered/unverified
+  synthetic transaction.
+- Test-only follow-up asserts empty transactions and exact redacted parse
+  error counts, without modifying the C J2534 emulator, Python analyzer or
+  read-only policy. Verify the complete Python suite and downstream x86/x64,
+  Go and .NET gates on the **exact new merged development SHA**.
+- P0 Issue #4 still needs real isolated VMware SectorV GUI evidence to
+  verify DLL loading, B9FB, VIN and ECU list; no such claim is made here.
+  `main` and releases remain untouched.
+
+---
+
 ## P0: CI compatibility fix for strict native TX provenance (2026-11-09)
 
 - Previous P0 source fix merged via [PR #256](https://github.com/vorlocsev/virtualcar/pull/256)
