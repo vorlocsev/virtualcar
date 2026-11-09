@@ -571,11 +571,15 @@ class D2ClassicCanRxEvidenceTests(unittest.TestCase):
         lines += tx(0xFFFFE, D2FB, ch=2)
         lines += rx(0x01200003, FIRST, ch=1)
         lines += rx(0x01200003, b"\x4F", ch=1)
+        # A malformed but unrelated CAN ID on the other channel is
+        # off-route, not evidence that its valid B9 response is corrupt.
+        lines += rx(0x01200004, b"\x4F", ch=2)
         lines += frames13(ch=2)
         report = tool.audit(lines)
         states = {x["channel"]: x for x in report["transactions"]}
         self.assertEqual((states[1]["status"], states[2]["status"]),
                          ("partial_rx", "delivered"))
+        self.assertEqual(states[2]["off_route_rx"], 1)
         self.assertEqual(states[1]["reason"], "d2_classic_can_rx_size_invalid")
         result = json.dumps(report)
         for sensitive in ("DEADBEEF", "DiagnosticClient", "00 0F FF FE",
