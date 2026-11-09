@@ -390,14 +390,19 @@ class PeriodicTextOriginTests(unittest.TestCase):
 
 
 
-def _d2_series_13(first=FIRST, final=0x4F, ch=1):
-    """Synthetic 13-frame D2 0x08 or 0x10 series; no donor/vehicle bytes."""
+def _d2_series_13(first=FIRST, final=0x4F, ch=1, baud=500000):
+    """Synthetic 13-frame D2 0x08 or 0x10 series; no donor/vehicle bytes.
+
+    Preserve the same bus speed for TX and each RX. A CEM 0x40
+    route at 125 kbit/s must never borrow the 500 kbit/s default.
+    """
     base = 0x10 if first[0] == 0x97 else 0x08
     seq = [(base | i) for i in (1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3)]
     payloads = [first] + [bytes([h]) + b"\0" * 7 for h in seq]
     payloads.append(bytes([final]) + b"\0" * 7)
     return [line for i, payload in enumerate(payloads)
-            for line in rx(0x01200003, payload, ch=ch, time_us=102000+i*1000)]
+            for line in rx(0x01200003, payload, ch=ch, baud=baud,
+                           time_us=102000+i*1000)]
 
 
 class D2ThirteenFrameTerminalEvidenceTests(unittest.TestCase):
@@ -428,7 +433,8 @@ class D2ThirteenFrameTerminalEvidenceTests(unittest.TestCase):
         first = bytes.fromhex("8F 40 F9 F0 00 00 00 00")
         request = bytes.fromhex("CB 40 B9 F0 00 00 00 00")
         one = tool.audit(tx(0xFFFFE, request, ch=4, baud=125000)
-                         + _d2_series_13(first=first, final=0x4E, ch=4)
+                         + _d2_series_13(first=first, final=0x4E,
+                                         ch=4, baud=125000)
                          )["transactions"][0]
         self.assertEqual((one["target"], one["service"]), ("0x40", "B9F0"))
         self.assertEqual((one["rx_frames"], one["status"]),
