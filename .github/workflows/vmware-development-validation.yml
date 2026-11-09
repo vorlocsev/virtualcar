@@ -333,6 +333,13 @@ jobs:
           go vet ./...
           if ($LASTEXITCODE -ne 0) { throw 'Go vet failed' }
 
+      # Inspect real x86 outputs in a private temporary package only.
+      # The script does not run the GUI or upload/publish binaries.
+      - name: Verify locally built x86 VMware LAB package without publishing
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_local_vmware_lab_ci.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Local x86 LAB ZIP verification failed' }
       - name: Configure and build native C++ x86
         shell: powershell
         run: |
