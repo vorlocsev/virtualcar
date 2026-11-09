@@ -145,7 +145,6 @@ try {
         $safeReport = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]::IsNullOrWhiteSpace([string]$safeReport.first_next_action_ru) -or
             [string]$safeReport.first_next_action_ru -match '[\r\n]' -or
-            [string]$safeReport.first_next_action_ru -match '[\\/]' -or
             [string]$safeReport.first_next_action_ru -match '[<>]') {
             throw 'Unsafe or missing next diagnostic action'
         }
