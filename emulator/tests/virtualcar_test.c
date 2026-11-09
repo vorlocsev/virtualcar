@@ -640,9 +640,52 @@ static void test_stage43_iso_rx_boundaries(U32 dev){
  puts("PASS stage43 group 8: independent channel queue and cleanup");
 }
 
+/* Native J2534 baud guard: reject unconfigured transport without
+   reserving a channel or partially applying SET_CONFIG. Synthetic only. */
+static void test_zero_baud_guard(U32 dev){
+ U32 untouched=0xA5A5A5A5u,cid=0;
+ SCONFIG rates[2]={{1u,500000u},{1u,0u}};
+ SCONFIG_LIST list={2u,rates};
+ SCONFIG get={1u,0u};
+ SCONFIG_LIST one={1u,&get};
+ /* 1-2: both supported transport families reject a zero bit rate. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,0,&untouched)==ERR_INVALID_BAUDRATE);
+ REQUIRE(untouched==0xA5A5A5A5u);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,0,&untouched)==ERR_INVALID_BAUDRATE);
+ REQUIRE(untouched==0xA5A5A5A5u);
+ /* 3: null output pointer remains a parameter error. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,0,0)==ERR_NULL_PARAMETER);
+ /* 4: unknown protocols are not reclassified as invalid speed. */
+ REQUIRE(PassThruConnect(dev,0x8004u,0,0,&untouched)==ERR_INVALID_PROTOCOL_ID);
+ /* 5: invalid attempts must not occupy a native channel slot. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,125000,&cid)==ERR_OK);
+ REQUIRE(cid==1u && channel(cid)->baud==125000u);
+ /* 6: reading effective rate must still report the original speed. */
+ REQUIRE(PassThruIoctl(cid,IO_GET_CONFIG,&one,0)==ERR_OK);
+ REQUIRE(get.Value==125000u);
+ /* 7: refuse a zero rate without mutating channel or observer state. */
+ get.Value=0;
+ REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&one,0)==ERR_INVALID_BAUDRATE);
+ REQUIRE(channel(cid)->baud==125000u);
+ /* 8: reject a later zero rate atomically, not after applying 500 kbit/s. */
+ REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&list,0)==ERR_INVALID_BAUDRATE);
+ REQUIRE(channel(cid)->baud==125000u);
+ get.Value=0;
+ REQUIRE(PassThruIoctl(cid,IO_GET_CONFIG,&one,0)==ERR_OK);
+ REQUIRE(get.Value==125000u);
+ /* 9-10: a subsequent valid rate remains writable and observable. */
+ rates[0].Value=500000u;list.NumOfParams=1u;
+ REQUIRE(PassThruIoctl(cid,IO_SET_CONFIG,&list,0)==ERR_OK);
+ REQUIRE(channel(cid)->baud==500000u);
+ get.Value=0;
+ REQUIRE(PassThruIoctl(cid,IO_GET_CONFIG,&one,0)==ERR_OK&&get.Value==500000u);
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_zero_baud_guard(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
