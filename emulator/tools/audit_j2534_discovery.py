@@ -526,7 +526,114 @@ def _native_event(text):
     return None
 
 
+def _native_d2_delivery_tags(lines):
+    """Independent, categorical check of emitter-owned D2 RX generation tags.
+
+    These labels are written by our simulated DLL *after* ReadMsgs delivered
+    a queued frame. They are not client-authenticated ECU data, and grouping
+    them does not prove which request SectorV sent or whether VIN was parsed.
+    No PID, CAN ID, generation number, payload, clock or path leaves the tool.
+    """
+    scopes = {}
+    groups = {}
+    counters = Counter()
+    d2_label = "P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)"
+    rx_label = "RX context channel/protocol/status/baud/time-us (BE)"
+    delivery_label = "PassThruReadMsgs -> delivered"
+    for line in lines:
+        m = PREFIX.match(line)
+        if not m:
+            continue  # Native emitted records have a bounded PID prefix.
+        pid, text = m.group(1), m.group(2).rstrip("\r\n")
+        scope = scopes.setdefault(pid, {"session": 0, "ctx": None,
+                                        "pending": None})
+        if text.startswith(("PassThruOpen ->", "PassThruClose")):
+            scope["session"] += 1
+            scope["ctx"] = scope["pending"] = None
+            continue
+        if text.startswith("RX context "):
+            scope["ctx"] = _context(text, rx_label, True)
+            scope["pending"] = None
+            continue
+        if text.startswith(delivery_label):
+            suffix = text[len(delivery_label):].strip()
+            raw = None
+            if re.fullmatch(r"[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){11}", suffix):
+                raw = bytes.fromhex(suffix)
+            scope["pending"] = ((scope["ctx"], raw)
+                                if scope["ctx"] is not None and raw is not None
+                                else None)
+            scope["ctx"] = None
+            continue
+        if text.startswith("P2 D2 delivered "):
+            counters["tag_records"] += 1
+            words = _context(text, d2_label, True)
+            prior = scope["pending"]
+            scope["pending"] = scope["ctx"] = None
+            if words is None:
+                counters["malformed_tag_records"] += 1
+                continue
+            if prior is None:
+                counters["unpaired_tag_records"] += 1
+                continue
+            channel, generation, frame, rx_us, delivered_us = words
+            rxctx, raw = prior
+            if (channel == 0 or generation == 0 or not 1 <= frame <= 64
+                    or channel != rxctx[0] or rxctx[1] != 5
+                    or rxctx[3] == 0 or rxctx[2] & 0x0B
+                    or raw is None or len(raw) != 12):
+                counters["route_or_metadata_mismatch"] += 1
+                continue
+            key = (pid, scope["session"], channel, generation)
+            group = groups.setdefault(key, [])
+            group.append((frame, raw[4:]))
+            counters["paired_tag_records"] += 1
+            continue
+        # Anything between the native RX record and its generation tag
+        # breaks source adjacency. Other PIDs do not affect this one.
+        scope["ctx"] = scope["pending"] = None
+
+    coherent = gaps = b9fb_13 = 0
+    for frames in groups.values():
+        numbers = [index for index, _ in frames]
+        contiguous = numbers == list(range(1, len(frames) + 1))
+        if contiguous:
+            coherent += 1
+        else:
+            gaps += 1
+        if contiguous and len(frames) == 13:
+            first = frames[0][1]
+            target = first[1]
+            controls = tuple(payload[0] for _, payload in frames)
+            if (target in (0x40, 0x50)
+                    and first[:4] == bytes((0x8F, target, 0xF9, 0xFB))
+                    and controls == (0x8F, 0x09, 0x0A, 0x0B, 0x0C,
+                                     0x0D, 0x0E, 0x0F, 0x08, 0x09,
+                                     0x0A, 0x0B, 0x4F)):
+                b9fb_13 += 1
+    return {
+        "source": "local_emulator_native_d2_delivery_tags_only",
+        "observed": bool(counters["tag_records"]),
+        "tag_records": counters["tag_records"],
+        "paired_tag_records": counters["paired_tag_records"],
+        "unpaired_tag_records": counters["unpaired_tag_records"],
+        "malformed_tag_records": counters["malformed_tag_records"],
+        "route_or_metadata_mismatch": counters["route_or_metadata_mismatch"],
+        "generation_groups": len(groups),
+        "groups_with_frame_indices_1_to_n": coherent,
+        "groups_with_missing_duplicate_or_out_of_order_indices": gaps,
+        "b9fb_13frame_control_sequence_groups": b9fb_13,
+        "physical_can_or_ecu_provenance": "not_verified",
+        "client_vin_and_ecu_acceptance": "not_verified",
+        "replay_approved": False,
+    }
+
+
 def audit(lines, *, include_obd=False):
+    # The native-tag audit is a separate look at the same bounded text stream;
+    # materialize generators once without exposing source bytes in reports.
+    lines = list(lines)
+    native_d2_tags = _native_d2_delivery_tags(lines)
     sessions = {}
     epoch = 0
     results = []
@@ -1075,6 +1182,7 @@ def audit(lines, *, include_obd=False):
     report = {
         "format": "virtualcar-j2534-evidence-v1", "read_only": True,
         "contains_payload_data": False, "replay_approved": False,
+        "native_d2_delivery_tags": native_d2_tags,
         "notes": [
             "J2534 RX delivery does not prove diagnostic-client ECU acceptance.",
             "Legacy logs without channel, flags or timestamps leave route metadata unknown.",
