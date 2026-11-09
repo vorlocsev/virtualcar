@@ -542,6 +542,7 @@ def audit(lines, *, include_obd=False):
                              "txctx": None, "periodicctx": None,
                              "rxctx": None, "clearctx": None,
                              "native_rx_context_seen": False,
+                             "native_tx_context_seen": False,
                              "last_tx_channel": None, "disconnect_channel": None,
                              "obd_repeats": {}}
         return sessions[pid]
@@ -871,6 +872,15 @@ def audit(lines, *, include_obd=False):
                 observed_events[observed] += 1
         s = scope(pid)
         stamp = _stamp(line)
+        # Native PassThruWriteMsgs similarly emits one TX context immediately
+        # before each app-request record. An interrupted context cannot name
+        # the channel of a later orphaned native request.
+        if (s["txctx"] is not None
+                and not text.startswith((
+                    "TX context channel/protocol/flags/baud/time-us (BE)",
+                    "TX (app request)"))):
+            s["txctx"] = None
+            errors["interrupted_native_tx_context"] += 1
         # Native C places each RX context immediately before the delivered
         # frame in PassThruReadMsgs. Never carry its channel/protocol/RxStatus
         # across an unrelated line and later label an orphan as ECU RX.
@@ -893,11 +903,18 @@ def audit(lines, *, include_obd=False):
                 finish(s, ch, "new_connection")
             s["txctx"] = s["periodicctx"] = s["rxctx"] = s["clearctx"] = None
             s["native_rx_context_seen"] = False
+            s["native_tx_context_seen"] = False
             s["last_tx_channel"] = s["disconnect_channel"] = None
             s["obd_repeats"].clear()
-        txctx = _context(text, "TX context channel/protocol/flags/baud/time-us (BE)", include_obd)
+        txctx = _context(text, "TX context channel/protocol/flags/baud/time-us (BE)", True)
         if txctx is not None:
             s["txctx"] = txctx
+            s["native_tx_context_seen"] = True
+            continue
+        if text.startswith("TX context "):
+            s["txctx"] = None
+            s["native_tx_context_seen"] = True
+            errors["malformed_context"] += 1
             continue
         periodicctx = _context(
             text, "Periodic TX context channel/protocol/flags/baud/time-us (BE)",
@@ -909,7 +926,7 @@ def audit(lines, *, include_obd=False):
             s["periodicctx"] = None
             errors["malformed_periodic_context"] += 1
             continue
-        rxctx = _context(text, "RX context channel/protocol/status/baud/time-us (BE)", include_obd)
+        rxctx = _context(text, "RX context channel/protocol/status/baud/time-us (BE)", True)
         if rxctx is not None:
             s["rxctx"] = rxctx
             s["native_rx_context_seen"] = True
@@ -969,6 +986,13 @@ def audit(lines, *, include_obd=False):
                 finish(s, ctx[0], "superseded_by_other_periodic_tx")
             continue
         if "TX (app request)" in text or "PassThruWriteMsgs() msg" in text:
+            if ("TX (app request)" in text
+                    and s["native_tx_context_seen"] and s["txctx"] is None):
+                # After a native scoped TX is observed for this PID, unscoped
+                # native requests cannot be promoted to channel=None or
+                # borrow metadata from an earlier, unrelated request.
+                errors["native_tx_without_fresh_context"] += 1
+                continue
             marker = "TX (app request)" if "TX (app request)" in text else "Data = ["
             raw = _words(text.split(marker, 1)[1])
             plain_valid = marker != "TX (app request)" or (text.startswith(marker) and re.fullmatch(
