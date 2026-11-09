@@ -20,6 +20,19 @@ FILES = {
     "tools/audit_backend_evidence.py": "tools/audit_backend_evidence.py",
     "tools/audit_j2534_discovery.py": "tools/audit_j2534_discovery.py",
     "tools/audit_j2534_connect.py": "tools/audit_j2534_connect.py",
+    # Real GUI-guest P0 collection tools. Preserve the exact reviewed
+    # two-phase Python import closure inside the self-contained local LAB.
+    # None of these tools starts SectorV, sends CAN or authenticates a VIN.
+    "tools/audit_sectorv_operator_session.py": "tools/audit_sectorv_operator_session.py",
+    "tools/audit_sectorv_fresh_window.py": "tools/audit_sectorv_fresh_window.py",
+    "tools/audit_sectorv_ui_window_triage.py": "tools/audit_sectorv_ui_window_triage.py",
+    "tools/audit_sectorv_ui_observation.py": "tools/audit_sectorv_ui_observation.py",
+    "tools/audit_vmware_provider_provenance.py": "tools/audit_vmware_provider_provenance.py",
+    "tools/audit_vmware_sectorv_process.ps1": "tools/audit_vmware_sectorv_process.ps1",
+    # The provenance audit resolves this parser from the package-relative
+    # native-cpp/tests directory. Static PE inspection only, no DLL load.
+    "native-cpp/tests/verify_pe_exports.py": "native-cpp/tests/verify_pe_exports.py",
+    "README_SECTORV_FRESH_WINDOW_RU.md": "README_SECTORV_FRESH_WINDOW_RU.md",
     "README_VMWARE_LAB_RU.md": "README_VMWARE_LAB_RU.md",
     "README_BACKEND_JSONL_RU.md": "README_BACKEND_JSONL_RU.md",
     "README_P3TOOL_J2534_PREFLIGHT_RU.md": "README_P3TOOL_J2534_PREFLIGHT_RU.md",
@@ -96,6 +109,8 @@ def create_package(root, output_dir, source_sha, version):
         "vmware_e2e_verified": False,
         "ecu_identity_verified": False,
         "contains_private_vehicle_data": False,
+        "two_phase_operator_collector_included": True,
+        "operator_gui_acceptance_verified": False,
     }
     files["BUILDINFO.json"] = (json.dumps(buildinfo, indent=2, sort_keys=True) + "\n").encode()
     checksums = "".join(

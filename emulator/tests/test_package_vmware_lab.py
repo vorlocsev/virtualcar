@@ -3,7 +3,10 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -134,6 +137,194 @@ class VMwarePackageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build()
         self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_09_two_phase_collector_and_every_required_script_bundled(self):
+        names = (
+            "tools/audit_sectorv_operator_session.py",
+            "tools/audit_sectorv_fresh_window.py",
+            "tools/audit_sectorv_ui_window_triage.py",
+            "tools/audit_sectorv_ui_observation.py",
+            "tools/audit_vmware_provider_provenance.py",
+            "tools/audit_vmware_sectorv_process.ps1",
+            "native-cpp/tests/verify_pe_exports.py",
+            "README_SECTORV_FRESH_WINDOW_RU.md",
+        )
+        with zipfile.ZipFile(self.build()) as archive:
+            for name in names:
+                with self.subTest(name=name):
+                    self.assertIn(tool.PREFIX + "/" + name, archive.namelist())
+            self.assertEqual(len(archive.namelist()), len(set(archive.namelist())))
+
+    def test_10_operator_import_closure_uses_same_relative_paths_as_zip(self):
+        # Read the real checked-in scripts, not the fake fixture binaries.
+        source = MODULE.parents[1]
+        for relative in (
+            "tools/audit_sectorv_operator_session.py",
+            "tools/audit_sectorv_fresh_window.py",
+            "tools/audit_sectorv_ui_window_triage.py",
+            "tools/audit_vmware_provider_provenance.py",
+        ):
+            content = (source / relative).read_text(encoding="utf-8")
+            self.assertIn(relative, tool.FILES.values())
+            for required in (
+                "audit_sectorv_fresh_window",
+                "audit_sectorv_ui_window_triage",
+                "audit_sectorv_ui_observation",
+            ) if relative.endswith("operator_session.py") else ():
+                self.assertIn("tools/" + required + ".py", tool.FILES.values())
+                self.assertIn(required, content)
+        # Provenance's static export parser expects this exact relative tree.
+        self.assertIn("native-cpp/tests/verify_pe_exports.py", tool.FILES.values())
+        self.assertIn("from verify_pe_exports import EXPORTS",
+                      (source / "tools/audit_vmware_provider_provenance.py")
+                      .read_text(encoding="utf-8"))
+
+    def test_11_extracted_real_collector_imports_and_displays_help(self):
+        # Replace only safe tool stubs with source scripts; test against
+        # an extracted archive, never by importing the checkout's sys.path.
+        source = MODULE.parents[1]
+        for relative in tool.FILES.values():
+            if relative.endswith((".py", ".ps1")):
+                shutil.copyfile(source / relative, self.root / relative)
+        with zipfile.ZipFile(self.build()) as archive:
+            extracted = Path(self.temp.name) / "extracted"
+            archive.extractall(extracted)
+        executable = (extracted / tool.PREFIX / "tools" /
+                      "audit_sectorv_operator_session.py")
+        run = subprocess.run([sys.executable, str(executable), "--help"],
+                             capture_output=True, text=True, timeout=20)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("begin", run.stdout)
+        self.assertIn("finish", run.stdout)
+        self.assertIn("--module-snapshot", run.stdout)
+
+    def test_12_extracted_package_preserves_old_audit_cli_entrypoints(self):
+        source = MODULE.parents[1]
+        for relative in tool.FILES.values():
+            if relative.endswith(".py"):
+                shutil.copyfile(source / relative, self.root / relative)
+        with zipfile.ZipFile(self.build()) as archive:
+            extracted = Path(self.temp.name) / "extracted"
+            archive.extractall(extracted)
+        for script in ("audit_sectorv_fresh_window.py",
+                       "audit_sectorv_ui_window_triage.py",
+                       "audit_vmware_provider_provenance.py"):
+            with self.subTest(script=script):
+                path = extracted / tool.PREFIX / "tools" / script
+                result = subprocess.run([sys.executable, str(path), "--help"],
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_13_missing_collector_or_transitive_helper_rejects_package(self):
+        for name in ("tools/audit_sectorv_operator_session.py",
+                     "tools/audit_sectorv_fresh_window.py",
+                     "native-cpp/tests/verify_pe_exports.py",
+                     "tools/audit_vmware_sectorv_process.ps1"):
+            with self.subTest(name=name):
+                target = self.root / name
+                data = target.read_bytes()
+                target.unlink()
+                try:
+                    with self.assertRaises(ValueError):
+                        self.build()
+                    self.assertFalse(any(self.out.iterdir()))
+                finally:
+                    target.write_bytes(data)
+
+    def test_14_local_lab_manifest_never_claims_gui_acceptance(self):
+        with zipfile.ZipFile(self.build()) as archive:
+            metadata = json.loads(archive.read(
+                tool.PREFIX + "/BUILDINFO.json"))
+            self.assertEqual(metadata["source_commit"], COMMIT)
+            self.assertEqual(metadata["architecture"], "windows-x86-pe32")
+            self.assertTrue(metadata["two_phase_operator_collector_included"])
+            self.assertFalse(metadata["operator_gui_acceptance_verified"])
+            self.assertFalse(metadata["vmware_e2e_verified"])
+            self.assertFalse(metadata["ecu_identity_verified"])
+            for word in ("C:\\\\Users", "private-vin", "raw-log"):
+                self.assertNotIn(word, json.dumps(metadata).lower())
+
+
+    def _extracted_real_lab(self):
+        source = MODULE.parents[1]
+        for relative in tool.FILES.values():
+            if relative.endswith((".py", ".ps1")):
+                shutil.copyfile(source / relative, self.root / relative)
+        with zipfile.ZipFile(self.build()) as archive:
+            extracted = Path(self.temp.name) / "extracted"
+            archive.extractall(extracted)
+        return extracted / tool.PREFIX
+
+    def test_15_extracted_package_detects_its_own_root_not_parent_directory(self):
+        lab = self._extracted_real_lab()
+        tools_dir = lab / "tools"
+        command = ("import sys;sys.path.insert(0,sys.argv[1]);"
+                   "import audit_sectorv_fresh_window as fresh;"
+                   "print(fresh.ROOT)")
+        result = subprocess.run([sys.executable, "-c", command, str(tools_dir)],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), lab.resolve())
+
+    def test_16_extracted_collector_can_create_private_baseline_beside_lab(self):
+        lab = self._extracted_real_lab()
+        private = Path(self.temp.name) / "separate-private"
+        private.mkdir()
+        j = private / "empty-j2534.log"
+        b = private / "empty-backend.jsonl"
+        j.write_bytes(b"")
+        b.write_bytes(b"")
+        session = private / "session-1"
+        collector = lab / "tools" / "audit_sectorv_operator_session.py"
+        result = subprocess.run([
+            sys.executable, str(collector), "begin",
+            "--session-dir", str(session), "--j2534", str(j),
+            "--backend", str(b)],
+            capture_output=True, text=True, timeout=25)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((session / "p0-before.private.json").is_file())
+        self.assertFalse((session / "p0-triage.redacted.json").exists())
+        self.assertFalse((session / "p0-window.redacted.json").exists())
+
+    def test_17_extracted_collector_refuses_outputs_inside_package(self):
+        lab = self._extracted_real_lab()
+        private = Path(self.temp.name) / "outside"
+        private.mkdir()
+        j = private / "j2534.log"
+        b = private / "backend.jsonl"
+        j.write_bytes(b"")
+        b.write_bytes(b"")
+        forbidden = lab / "forbidden-session"
+        collector = lab / "tools" / "audit_sectorv_operator_session.py"
+        result = subprocess.run([
+            sys.executable, str(collector), "begin",
+            "--session-dir", str(forbidden), "--j2534", str(j),
+            "--backend", str(b)],
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(forbidden.exists())
+        self.assertNotIn(str(j), result.stderr)
+
+    def test_18_packaged_powershell_module_report_has_correct_sibling_boundary(self):
+        if sys.platform != "win32":
+            self.skipTest("requires Windows PowerShell 5.1")
+        powershell = shutil.which("powershell.exe")
+        if not powershell:
+            self.skipTest("PowerShell 5.1 not available")
+        lab = self._extracted_real_lab()
+        sibling = Path(self.temp.name) / "extracted" / "redacted-module.json"
+        script = lab / "tools" / "audit_vmware_sectorv_process.ps1"
+        result = subprocess.run([
+            powershell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(script), "-OperatorSession", "-OutputFile", str(sibling)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(sibling.read_text(encoding="utf-8-sig"))
+        self.assertEqual(report["schema_version"],
+                         "virtualcar-sectorv-process-binding-operator-v1")
+        self.assertEqual(report["accepted_vin_or_ecu"], "not_verified")
+        self.assertNotIn(str(self.temp.name), json.dumps(report))
+        self.assertFalse((lab / "redacted-module.json").exists())
 
 
 if __name__ == "__main__":
