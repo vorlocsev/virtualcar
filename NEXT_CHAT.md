@@ -1,5 +1,40 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: passive CAN replay RX belongs to its original bus rate (2026-11-09)
+
+- Exact verified baseline `development`: `008deebfbef563ef7adae41dd185ee536544f7ad`;
+  automatic owner-only [VMware CI #42636978059](https://github.com/vorlocsev/virtualcar/actions/runs/42636978059)
+  **SUCCESS**: Python 573 (572 passed, one optional skip), 30/30 steps,
+  native C blocked ReadMsgs reused channel regression passed.
+- Source-backed defect: `pump_recorded_trace` and
+  `maybe_passive_frame` only checked CAN baud at *enqueue* time.
+  Previously queued old-bus passive RX could still be read
+  **after SET_CONFIG(DATA_RATE) switched the channel**, even though
+  #267 already cancelled D2/B9FB replay across bus changes.
+- Narrow C fix: track private `queue_passive_baud[MAX_QUEUE]` for
+  successfully enqueued optional passive recorded fixture/tick frames,
+  never for ordinary RX. During *effective* baud retune, first
+  supersede D2, then compact FIFO to drop only passive RX tagged
+  for a different baud. Preserve ordinary RX FIFO, all other channel
+  queues, unchanged-speed behavior and CAN payload bytes. Copy the
+  new tag correctly through existing D2 compaction, and clear it on
+  successful dequeue. No physical CAN or ECU write paths.
+- Eight native source-backed regressions: stale recorded trace removed,
+  interleaved untagged RX retained, same baud no-op, peer channel
+  isolated, passive synthetic tick removed, ring-wrap compaction,
+  filtered-out record not tagging a prior slot, and new correct-bus
+  recorded replay after retune. All test fixture frames synthetic.
+- **Gate:** focused PR must merge only to `development`; then
+  check the new automatic owner-only full VMware CI on its exact
+  merged commit SHA before claiming success. Do not count the
+  previous baseline CI for this change.
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still requires an actual isolated read-only SectorV GUI operator
+  test proving virtual J2534 selection, B9FB delivery, VIN display
+  and ECU list; no main merge, public release, or OEM acceptance claim.
+
+---
+
 ## P0: prevent a blocking J2534 ReadMsgs crossing channel-ID reuse (2026-11-09)
 
 - Verified exact `development` baseline: `8675734d50aa884b3be0db2ff1215ec4b7f3bb46`,
