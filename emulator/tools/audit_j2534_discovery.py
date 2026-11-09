@@ -274,7 +274,8 @@ def _result(tx):
         status, reason = "partial_rx", tx["_a6_error"]
     elif tx["_invalid"]:
         status, reason = "partial_rx", (
-            "d2_13frame_final_marker_mismatch" if tx["_d2_final_marker_mismatch"]
+            "d2_classic_can_rx_size_invalid" if tx["_d2_rx_size_invalid"]
+            else "d2_13frame_final_marker_mismatch" if tx["_d2_final_marker_mismatch"]
             else "invalid_iso_tp_framing" if tx["route"] in ("P3", "OBD")
             else "invalid_d2_sequence")
     elif tx["_p3_transport_error"]:
@@ -589,7 +590,10 @@ def audit(lines, *, include_obd=False):
             "_rxid": None, "_seq": 1, "_base": 0x08, "_subblock": False,
             "_complete": False, "_invalid": False,
             "_d2_final_marker_mismatch": False,
-            "_source_error": None,
+            "_d2_rx_size_invalid": False,
+            "_source_error": ("d2_request_non_can_transport"
+                              if kind == "D2" and protocol is not None
+                              and protocol != 5 else None),
             "_a6_identifier": _a6_request_identifier(raw) if service == "A6" else None,
             "_a6_error": None,
             "_no_fixture": False, "_bad_route": False,
@@ -634,6 +638,36 @@ def audit(lines, *, include_obd=False):
         if can_id > 0x1FFFFFFF:
             errors["invalid_rx_can_id"] += 1
             return
+        if tx["route"] == "D2":
+            # A B9 response is a sequence of *classic CAN* 8-byte frames,
+            # not ISO15765 J2534 reassembly, TX echo or a byte-shortened
+            # fake final 0x4F. Keep unknown legacy protocol metadata
+            # unknown, but never silently accept contradictory metadata.
+            rx_protocol = (metadata["protocol"] if metadata is not None
+                           else ctx[1] if ctx else None)
+            rx_baud = (metadata["baud"] if metadata is not None
+                       else ctx[3] if ctx else None)
+            if rx_protocol is not None and rx_protocol != 5:
+                errors["d2_rx_protocol_mismatch"] += 1
+                tx["off_route_rx"] += 1
+                return
+            if (rx_baud is not None and tx["baud_bps"] is not None
+                    and rx_baud != tx["baud_bps"]):
+                errors["d2_rx_baud_mismatch"] += 1
+                tx["off_route_rx"] += 1
+                return
+            if ctx is not None and ctx[2] & 0x0B:
+                # START_OF_MESSAGE, TX_MSG_TYPE and TX_INDICATION are
+                # never an actual received eight-byte ECU CAN payload.
+                errors["d2_rx_indication_not_payload"] += 1
+                tx["off_route_rx"] += 1
+                return
+            if tx["service"].startswith("B9") and len(payload) != 8:
+                tx["_invalid"] = True
+                tx["_d2_rx_size_invalid"] = True
+                tx["rx_frames"] += 1
+                errors["d2_classic_can_rx_size_invalid"] += 1
+                return
         if tx["route"] == "OBD":
             if tx["service"] != "0902":
                 tx["off_route_rx"] += 1
@@ -979,6 +1013,7 @@ def audit(lines, *, include_obd=False):
             "Legacy logs without channel, flags or timestamps leave route metadata unknown.",
             "No A3/A6 or P3 positive ECU identity is inferred without a verified fixture.",
             "A 13-frame D2 0x08-series terminal must be 0x4F; this checks transport shape, never OEM payload authenticity.",
+            "B9 D2 replies need full 8-byte classic CAN RX; mismatched protocol, baud or J2534 indications cannot prove delivered ECU frames.",
             "negative_response identifies a final UDS rejection, not successful ECU discovery.",
             "UDS NRC 0x78 is nonterminal; pending-only probes stay unverified unless a read timeout is logged.",
             "A positive ReadDataByIdentifier header requires at least one data-record byte.",
