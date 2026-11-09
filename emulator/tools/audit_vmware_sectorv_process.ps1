@@ -15,8 +15,77 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+function Get-ClientModulePaths {
+    param([Diagnostics.Process]$Client)
+    if ($Client.HasExited) { return }
+    if (-not ('VirtualCarAudit.ModuleSnapshot' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace VirtualCarAudit {
+    public static class ModuleSnapshot {
+        const uint SnapModule = 0x08;
+        const uint SnapModule32 = 0x10;
+        const int ErrorBadLength = 24;
+        const int ErrorNoMoreFiles = 18;
+        const int MaxPath = 260;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct ModuleEntry {
+            public uint Size, ModuleId, ProcessId, GlobalUsage, ProcessUsage;
+            public IntPtr BaseAddress;
+            public uint BaseSize;
+            public IntPtr Module;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string Name;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = MaxPath)] public string Path;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern SafeFileHandle CreateToolhelp32Snapshot(uint flags, uint processId);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
+        static extern bool Module32FirstW(SafeFileHandle snapshot, ref ModuleEntry entry);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
+        static extern bool Module32NextW(SafeFileHandle snapshot, ref ModuleEntry entry);
+
+        public static string[] Read(uint processId) {
+            // A native 64-bit module list can omit every WOW64 client DLL.
+            uint flags = SnapModule;
+            if (Environment.Is64BitProcess) flags |= SnapModule32;
+
+            // The loader list can change while Windows is taking a snapshot.
+            for (int attempt = 0; attempt < 4; attempt++) {
+                using (SafeFileHandle snapshot = CreateToolhelp32Snapshot(flags, processId)) {
+                    if (snapshot.IsInvalid) {
+                        if (Marshal.GetLastWin32Error() == ErrorBadLength) continue;
+                        return null;
+                    }
+
+                    ModuleEntry entry = new ModuleEntry { Size = (uint)Marshal.SizeOf(typeof(ModuleEntry)) };
+                    if (!Module32FirstW(snapshot, ref entry)) return null;
+                    List<string> paths = new List<string>();
+                    do {
+                        // Toolhelp uses a fixed buffer. An incomplete path cannot prove absence.
+                        paths.Add(entry.Path != null && entry.Path.Length < MaxPath - 1 ? entry.Path : null);
+                    } while (Module32NextW(snapshot, ref entry));
+                    return Marshal.GetLastWin32Error() == ErrorNoMoreFiles ? paths.ToArray() : null;
+                }
+            }
+            return null;
+        }
+    }
+}
+'@
+    }
+    $paths = [VirtualCarAudit.ModuleSnapshot]::Read([uint32]$Client.Id)
+    if (-not $Client.HasExited) { $paths }
+}
+
 function Get-ClientBindingState {
-    param([object[]]$Clients, [string]$RegisteredPath)
+    param([object[]]$Clients, [string]$RegisteredPath,
+          [scriptblock]$ReadModulePaths = { param($client) Get-ClientModulePaths $client })
     if ($null -eq $Clients -or $Clients.Count -eq 0) {
         return 'client_not_observed_in_runner_context'
     }
@@ -36,23 +105,22 @@ function Get-ClientBindingState {
         return 'registered_library_path_unverifiable'
     }
     try {
-        $modules = @($Clients[0].Modules)
-        # PowerShell 5.1 can turn an inaccessible ScriptProperty/Modules
-        # getter into $null without raising a terminating exception. Empty
-        # enumeration is NOT proof that the registered DLL is absent.
-        if ($modules.Count -eq 0 -or
-            ($modules.Count -eq 1 -and $null -eq $modules[0])) {
+        $paths = @(& $ReadModulePaths $Clients[0])
+        if ($paths.Count -eq 0) {
             return 'client_module_list_unavailable'
         }
-        foreach ($module in $modules) {
-            if ($null -eq $module -or [string]::IsNullOrWhiteSpace($module.FileName)) {
+        $complete = $true
+        foreach ($path in $paths) {
+            if ([string]::IsNullOrWhiteSpace($path) -or -not [IO.Path]::IsPathRooted($path)) {
+                $complete = $false
                 continue
             }
-            $actual = [IO.Path]::GetFullPath([string]$module.FileName)
+            $actual = [IO.Path]::GetFullPath($path)
             if ([string]::Equals($actual, $expected, [StringComparison]::OrdinalIgnoreCase)) {
                 return 'registered_library_loaded_in_name_matched_client'
             }
         }
+        if (-not $complete) { return 'client_module_list_unavailable' }
         return 'registered_library_not_in_enumerated_modules'
     } catch {
         return 'client_module_list_unavailable'
@@ -233,8 +301,10 @@ function Invoke-LocalSelfTests {
         @{Clients=@([pscustomobject]@{Modules=@()});Path=$expected;Want='client_module_list_unavailable'}
     )
     $passed=0
+    $readTestModulePaths = { param($client) foreach ($module in $client.Modules) { $module.FileName } }
     foreach ($case in $cases) {
-        $actual = Get-ClientBindingState -Clients $case.Clients -RegisteredPath $case.Path
+        $actual = Get-ClientBindingState -Clients $case.Clients -RegisteredPath $case.Path `
+            -ReadModulePaths $readTestModulePaths
         if ($actual -cne $case.Want) {
             # Both expected and actual are from a closed set of public category
             # constants. Never emit a path, process object, hash or exception.
@@ -257,7 +327,8 @@ function Invoke-LocalSelfTests {
     $result = @{
         schema_version = 'virtualcar-sectorv-process-binding-v1'
         scope = 'current_ci_runner_process_snapshot_only'
-        observation = Get-ClientBindingState -Clients @($yes) -RegisteredPath $expected
+        observation = Get-ClientBindingState -Clients @($yes) -RegisteredPath $expected `
+            -ReadModulePaths $readTestModulePaths
         name_matched_executable_authenticity = 'not_verified'
         client_was_launched_by_audit = $false
         accepted_vin_or_ecu = 'not_verified'
@@ -267,6 +338,7 @@ function Invoke-LocalSelfTests {
         throw 'Redaction self-test failed'
     }
     Write-Host ("PASS: {0}/{0} redacted SectorV process-binding tests" -f $passed)
+    Invoke-ModuleSnapshotSelfTests
 
     # Eight additional no-client, no-registry, synthetic operator-mode tests.
     $operatorChecks=0
@@ -368,6 +440,60 @@ function Invoke-LocalSelfTests {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
     Write-Host ("PASS: {0}/{0} synthetic operator binding and byte-comparison tests" -f $operatorChecks)
+}
+
+function Invoke-ModuleSnapshotSelfTests {
+    $loaded = 'registered_library_loaded_in_name_matched_client'
+    $absent = 'registered_library_not_in_enumerated_modules'
+    $unknown = 'client_module_list_unavailable'
+    $current = [Diagnostics.Process]::GetCurrentProcess()
+    try {
+        $ownImage = $current.MainModule.FileName
+        $elsewhere = Join-Path 'C:\VirtualCarLab' ([IO.Path]::GetFileName($ownImage))
+        if ((Get-ClientBindingState @($current) $ownImage) -cne $loaded) {
+            throw 'module snapshot test 1: current process image'
+        }
+        if ((Get-ClientBindingState @($current) $elsewhere) -cne $absent) {
+            throw 'module snapshot test 2: exact path required'
+        }
+        if ((Get-ClientBindingState @($current) $elsewhere { @($ownImage, $null) }) -cne $unknown) {
+            throw 'module snapshot test 3: incomplete paths cannot prove absence'
+        }
+        if ((Get-ClientBindingState @($current) $ownImage { @($null, $ownImage) }) -cne $loaded) {
+            throw 'module snapshot test 4: an exact path still proves observation'
+        }
+    } finally { $current.Dispose() }
+
+    $windowsDir = 'System32'
+    if ([Environment]::Is64BitOperatingSystem) { $windowsDir = 'SysWOW64' }
+    $childExe = Join-Path $env:WINDIR "$windowsDir\WindowsPowerShell\v1.0\powershell.exe"
+    $child = Start-Process -FilePath $childExe -WindowStyle Hidden -PassThru `
+        -ArgumentList '-NoProfile -NonInteractive -Command "Start-Sleep -Seconds 30"'
+    try {
+        # Query an actual x86 DLL in a disposable system process from the
+        # same bitness of PowerShell that runs the operator snapshot.
+        $dllDir = 'System32'
+        if ([Environment]::Is64BitProcess) { $dllDir = 'SysWOW64' }
+        $kernel = Join-Path $env:WINDIR "$dllDir\kernel32.dll"
+        $binding = $unknown
+        for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            $binding = Get-ClientBindingState @($child) $kernel
+            if ($binding -eq $loaded -or $child.HasExited) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($binding -cne $loaded) { throw 'module snapshot test 5: x86 DLL in x86 child' }
+        if ((Get-ClientBindingState @($child) 'C:\VirtualCarLab\Unloaded.dll') -cne $absent) {
+            throw 'module snapshot test 6: complete child snapshot excludes unrelated DLL'
+        }
+        $child.Kill()
+        if (-not $child.WaitForExit(5000) -or (Get-ClientBindingState @($child) $kernel) -cne $unknown) {
+            throw 'module snapshot test 7: exited process cannot prove absence'
+        }
+    } finally {
+        if (-not $child.HasExited) { $child.Kill() }
+        $child.Dispose()
+    }
+    Write-Host 'PASS: 7/7 process module snapshot tests (including x86 DLL enumeration)'
 }
 
 if ($SelfTest) {
