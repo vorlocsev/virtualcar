@@ -1,5 +1,17 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: FC OVERFLOW retracts unread raw ISO-TP CF after prior grant (2026-11-09)
+
+- Last **verified** development baseline: `4718e169886dc7b487b0b2feb132d80097259e50`, automatic [VMware #42660872820](https://github.com/vorlocsev/virtualcar/actions/runs/42660872820) **SUCCESS** (30/30; 582 Python tests, one optional skip, operator x86 preflight).
+- Confirmed native implementation gap: after a CTS/BS=1 queues CF1 while FF remains queued or already delivered, a later matching FC `0x32 OVERFLOW` clears `pending_len` and records a response abort but does **not** remove that already staged unread CF1. The next `PassThruReadMsgs` can deliver a CF belonging to an aborted exchange. Existing legacy F08 explicitly preserves an already queued FF on OVERFLOW; that behavior is retained, not redefined.
+- Focused fix: compact only unread CF frames bearing the current private raw ISO-TP exchange generation; keep earlier FF, unrelated FIFO, exact ordering, and peers. Emit `rx_dropped/flow_overflow` evidence for every discarded CF when telemetry is on; clear FC credits, next-us and pending exchange to prevent resurrection. Do not use backend RID for transport decisions.
+- Eight deterministic read-only C host scenarios: queued FF, delivered FF, queued FF+CF1, delivered FF+queued CF1, unrelated FIFO order, circular wrap, backend-disabled path, peer-channel independence plus new SF recovery. No synthetic OEM CEM replies added.
+- **Gate:** merge focused PR to `development`, then confirm fresh automatic owner-only VMware **SUCCESS** on exact merged SHA. The earlier green run is not a result for this patch.
+- **Still unverified:** actual isolated read-only SectorV GUI client, x86 J2534 selection/loading, B9FB exchange and accepted VIN/ECU list for [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4). No `main` merge or release.
+
+---
+
+
 ## P0: read-only PE32/x86 reference preflight for operator GUI capture (2026-11-09)
 
 - Last **verified** baseline: `development` `753c7492502b21fed05a6eb8f61f13f0b6b47307`, automatic [owner-only VMware CI #42656561052](https://github.com/vorlocsev/virtualcar/actions/runs/42656561052) **SUCCESS** (30/30, native CLEAR_RX and Go F10 backups included). No newer GUI evidence.
