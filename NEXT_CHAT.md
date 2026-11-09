@@ -1,5 +1,42 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: harden B9 classic CAN receive evidence (2026-11-09)
+
+- **Verified starting baseline:** `development`
+  `7e30fdbee46c04a726e2e344aa880ccdca6f7fe5`,
+  exact-SHA [VMware CI #42587631278](https://github.com/vorlocsev/virtualcar/actions/runs/42587631278)
+  **SUCCESS**, 485 Python tests, 30/30 workflow steps.
+- **Source-level evidence gap:** `emulator/tools/audit_j2534_discovery.py`
+  could report B9 D2 `delivered` after a **one-byte 0x4F** terminal or
+  other truncated/oversized CAN RX, because it validated D2 sequence
+  headers without the C emulator's eight-byte frame requirement.
+  It could also credit contradictory RX protocol, baud or J2534
+  TX/START_OF_MESSAGE indication as ECU response evidence.
+- **Focused guard:** for D2 B9 on classic CAN, reject any RX payload
+  length other than exactly 8 as
+  `partial_rx/d2_classic_can_rx_size_invalid`; conflicting
+  protocol/baud and TX/START_OF_MESSAGE flags are counted as
+  off-route instead of contributing to B9 frames. Explicit D2
+  request metadata declaring non-CAN transport is unverified.
+  Legacy logs with unknown metadata remain unknown rather than
+  silently inventing bus settings. A prior correct sequence cannot
+  override an invalid-length frame.
+- Eight synthetic Python discovery tests and one bounded
+  `audit_sectorv_fresh_window` propagation test cover short and
+  oversized payloads, protocol/baud mismatches, J2534 indications,
+  wrong request transport, independent channels and privacy.
+  **This change still needs successful exact-merged-SHA owner-only
+  VMware CI before declaring it verified.**
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains blocked on a **genuine** isolated SectorV GUI run in the
+  user's guest Windows VMware: registered/loaded x86 J2534 DLL,
+  actual B9FB RX, VIN display and ECU list. Neither the synthetic
+  test nor read-only byte checks prove OEM XC90 V8 MY2009 acceptance.
+  No `main` merge, release, physical J2534, PIN, SecurityAccess,
+  ECU writes or fabricated CEM A3/A6/B9F0 responses.
+
+---
+
 ## P0: prevent false complete 13-frame D2 text-audit evidence (2026-11-09)
 
 - Verified starting `development`: `dc0a1f32b8270229860f6f39eb50187dd3b351a1`,
