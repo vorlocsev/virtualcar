@@ -1,5 +1,31 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## CURRENT P0: guided guest operator collection (2026-11-09)
+
+- **Starting verified baseline:** `development` `8816fff7ca2de24e6e0f819c8b6370fbeae8f656`,
+  [automatic VMware CI #42613201275](https://github.com/vorlocsev/virtualcar/actions/runs/42613201275) **SUCCESS**,
+  502 Python tests, 30/30 workflow steps. The run did **not** launch real SectorV GUI.
+- The existing read-only P0 operator collector required two long Python commands with six
+  GUI categories; this is an error-prone human gate before genuine evidence can be gathered.
+- New `emulator/tools/invoke_sectorv_operator.ps1` wraps `Begin`, optional passive `Module`,
+  and `Finish`. Default Windows log paths and explicit prompts minimize typing;
+  unknown is preserved when not observed. The switch `-SingleRunConfirmed` is optional
+  and never treated as independent proof. Python tools and private manifest remain
+  the source of truth; the wrapper cannot start SectorV, load J2534, send CAN, or
+  record VIN/payload. It is bundled in the closed-allowlist local VMware LAB ZIP.
+- Eight Windows-only synthetic integration regressions check complete begin/finish,
+  missing isolation flags, replay, incomplete choices, path replacement, invalid GUI
+  states, unknown/unpaired default and private error redaction. The Windows CI must
+  run these on the exact merged `development` SHA before claiming success.
+- **Next P0 gate:** one genuinely operator-observed, isolated, read-only SectorV GUI
+  session on the user's Windows VMware guest using the latest matching tested x86 DLL.
+  [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains OPEN;
+  J2534 delivered is not accepted VIN/ECUs. No invented CEM A3/A6/B9F0,
+  `main` merge or binary release.
+
+---
+
+
 ## P0: reject contradictory SectorV GUI triage counters (2026-11-09)
 
 - Starting verified `development`: `819a356eafcb1514c323b6f1a1a206b8f9d7a5eb`,
