@@ -178,7 +178,7 @@ class VidaProfileInitHwCoverageTests(unittest.TestCase):
             self.report()
 
     def test_12_case_only_overlap_is_rejected_conservatively(self):
-        self.general_path.write_text("private_vin_profile_a\\n", encoding="utf-8")
+        self.general_path.write_text("private_vin_profile_a" + chr(10), encoding="utf-8")
         with self.assertRaises(mod.CoverageError):
             self.report()
 
