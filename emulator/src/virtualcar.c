@@ -1436,35 +1436,27 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
     backend_cancel_channel(c,"channel_disconnect",0);
     p2_bridge_disconnect(&g_vehicle_bridge,id);bytes_zero(c,sizeof(*c));logline("PassThruDisconnect",0,0);unlock_state();return error(ERR_OK);
 }
+/* Shared transport validation for immediate and periodic J2534 TX.
+   Both APIs eventually dispatch through process_request; periodic messages
+   must not bypass protocol, classic CAN DLC, physical ID and addressing
+   guards by entering through a different scheduling API. */
+static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
+    if(m->ProtocolID!=c->protocol)return ERR_MSG_PROTOCOL_ID;
+    if(m->DataSize>MAX_DATA||m->DataSize<5u||
+       (c->protocol==PROTO_CAN && m->DataSize>12u))return ERR_INVALID_MSG;
+    if((m->Data[0]&0xE0u)!=0u)return ERR_INVALID_MSG;
+    if(g_strict_j2534_filters && c->protocol==PROTO_ISO15765 &&
+       (m->TxFlags&ISO15765_ADDR_TYPE))return ERR_NOT_SUPPORTED;
+    return ERR_OK;
+}
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
     U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
-        /* A channel's transport must agree with each J2534 message. Do not
-           silently reinterpret CAN as ISO15765 (or vice versa) and create
-           spurious CEM/ECU receive evidence on an unrelated route. */
-        if(msgs[i].ProtocolID!=c->protocol){
-            *count=i;unlock_state();return error(ERR_MSG_PROTOCOL_ID);
-        }
-        /* Classic CAN carries at most eight payload bytes after the 4-byte
-           identifier; ISO15765 may hold a longer reassembled UDS payload. */
-        if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5 ||
-           (c->protocol==PROTO_CAN && msgs[i].DataSize>12u)){
-            *count=i;unlock_state();return error(ERR_INVALID_MSG);
-        }
-        /* The J2534 data header contains a physical 11/29-bit CAN ID.
-           Reject identifiers outside the 29-bit wire range *before*
-           forwarding, logging or collecting ECU/discovery evidence.
-           Keep legitimate high 29-bit P2 D2 IDs and normal ISO15765. */
-        if((msgs[i].Data[0]&0xE0u)!=0u){
-            *count=i;unlock_state();return error(ERR_INVALID_MSG);
-        }
-        /* Extended ISO15765 addressing needs a real fifth-byte transport
-           mapping, not a silent normal-addressing UDS interpretation. */
-        if(g_strict_j2534_filters && c->protocol==PROTO_ISO15765 &&
-           (msgs[i].TxFlags&ISO15765_ADDR_TYPE)){
-            *count=i;unlock_state();return error(ERR_NOT_SUPPORTED);
+        U32 validity=validate_tx_message(c,&msgs[i]);
+        if(validity!=ERR_OK){
+            *count=i;unlock_state();return error(validity);
         }
         {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
          u32_be(meta+8,msgs[i].TxFlags);u32_be(meta+12,c->baud);
@@ -1637,6 +1629,9 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
     if(interval<5 || interval>60000)return error(ERR_INVALID_TIME_INTERVAL);
     if(msg->DataSize<5 || msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    /* Validate before reserving a slot or incrementing the periodic ID. */
+    {U32 validity=validate_tx_message(c,msg);
+     if(validity!=ERR_OK){unlock_state();return error(validity);}}
     for(i=0;i<MAX_PERIODIC;i++)if(!c->periodic[i].used)break;
     if(i==MAX_PERIODIC){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     PERIODIC *p=&c->periodic[i];bytes_zero(p,sizeof(*p));
