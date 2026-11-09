@@ -1,5 +1,41 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: stop D2 replay on first strict-filtered frame (2026-11-09)
+
+- Verified exact baseline `development`:
+  `e01fd33d1d328d34fc8931c366d3e13f699b810c`,
+  automatic owner-only [VMware CI #42649028073](https://github.com/vorlocsev/virtualcar/actions/runs/42649028073)
+  **SUCCESS**: 573 Python tests (572 pass, one optional skip),
+  all eight native raw ISO-TP retry tests, fixed F08 legacy test,
+  and 30/30 workflow steps.
+- Source-backed D2 defect: `pump_d2` previously incremented
+  `d2_pos` even when `enqueue` rejected a recorded B9FB frame
+  by a strict CAN data-byte filter. It could emit a later recorded
+  frame after an earlier missing one, creating a noncontiguous
+  D2 response in SectorV.
+- Narrow native fix: if `enqueue` leaves FIFO tail unchanged,
+  this is a filter rejection (full queues are already deferred).
+  Stop staging the remainder and call `backend_end_if_drained`.
+  The existing `filter_reject` drop cause determines terminal
+  `dropped` after already-admitted queued frames are dequeued.
+  No new positive OEM D2 or A3/A6/B9F0 response, no J2534 API
+  changes, no car writes.
+- Eight native C host regressions with synthetic three-frame
+  B9FB fixture: no PASS filter, later-only PASS cannot create
+  an orphan, FF-only PASS stops before frame 3, first two PASS
+  but final rejected, full-ID PASS delivers all, peer channel
+  unaffected, new B9FB succeeds after changing filters, and
+  the same stop rule works with telemetry disabled.
+- **Gate:** focused PR to `development`, then automatic
+  full owner-only Windows VMware CI must complete **SUCCESS**
+  on the exact resulting merged SHA before this is verified.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still requires an actual isolated read-only SectorV GUI
+  J2534 adapter/B9FB/VIN/ECU run. Keep `main` and releases
+  untouched.
+
+---
+
 ## P0: legacy F08 Group C gate after raw ISO-TP FIFO retraction (2026-11-09)
 
 - [PR #274](https://github.com/vorlocsev/virtualcar/pull/274)
