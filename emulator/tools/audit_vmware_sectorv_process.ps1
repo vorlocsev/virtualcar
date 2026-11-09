@@ -321,6 +321,49 @@ function Invoke-LocalSelfTests {
                 'collect_gui_evidence_without_reference_attestation') {
             throw 'operator test 8: conservative next gate'
         }; $operatorChecks++
+        # Eight synthetic read-only reference architecture checks. The test
+        # bytes are PE *header* fixtures, not usable code or a J2534 driver.
+        $peChecks=0
+        if ((Get-ReferencePe32State '') -cne 'not_compared') {
+            throw 'reference PE test 1: not supplied'
+        }; $peChecks++
+        if ((Get-ReferencePe32State 'relative.dll') -cne 'unverifiable') {
+            throw 'reference PE test 2: nonlocal reference'
+        }; $peChecks++
+        if ((Get-ReferencePe32State (Join-Path $tempRoot 'missing.dll')) -cne 'unverifiable') {
+            throw 'reference PE test 3: absent reference'
+        }; $peChecks++
+        if ((Get-ReferencePe32State $first) -cne 'invalid_pe') {
+            throw 'reference PE test 4: no DOS header'
+        }; $peChecks++
+        $pe=New-Object byte[] 512
+        $pe[0]=0x4D;$pe[1]=0x5A
+        [BitConverter]::GetBytes([uint32]0x80).CopyTo($pe,0x3C)
+        $pe[0x80]=0x50;$pe[0x81]=0x45
+        [BitConverter]::GetBytes([uint16]0x014C).CopyTo($pe,0x84)
+        [BitConverter]::GetBytes([uint16]0x010B).CopyTo($pe,0x98)
+        [IO.File]::WriteAllBytes($first,$pe)
+        if ((Get-ReferencePe32State $first) -cne 'x86_pe32_header') {
+            throw 'reference PE test 5: x86 header'
+        }; $peChecks++
+        [BitConverter]::GetBytes([uint16]0x8664).CopyTo($pe,0x84)
+        [BitConverter]::GetBytes([uint16]0x020B).CopyTo($pe,0x98)
+        [IO.File]::WriteAllBytes($first,$pe)
+        if ((Get-ReferencePe32State $first) -cne 'other_pe') {
+            throw 'reference PE test 6: x64 header'
+        }; $peChecks++
+        [BitConverter]::GetBytes([uint32]5000).CopyTo($pe,0x3C)
+        [IO.File]::WriteAllBytes($first,$pe)
+        if ((Get-ReferencePe32State $first) -cne 'invalid_pe') {
+            throw 'reference PE test 7: invalid PE offset'
+        }; $peChecks++
+        if ((Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot' 'other_pe') -cne
+                'verify_reference_pe32_before_gui' -or
+            (Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot' 'x86_pe32_header') -cne
+                'collect_same_run_redacted_j2534_and_gui_evidence') {
+            throw 'reference PE test 8: conservative next action'
+        }; $peChecks++
+        Write-Host ("PASS: {0}/{0} synthetic reference PE32 header tests" -f $peChecks)
     } finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
