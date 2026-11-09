@@ -5,6 +5,76 @@
 меняет конфигурацию CEM и не создаёт ответов ECU. Он предназначен
 для одного разрешённого лабораторного наблюдения без реальных адаптеров.
 
+## Короткий сбор P0: один операторский сеанс
+
+Вместо ручного создания JSON можно использовать новый Python-скрипт
+emulator/tools/audit_sectorv_operator_session.py. Он повторно использует
+проверенные анализаторы журналов, провайдера J2534 и GUI, но **не**
+запускает SectorV, не открывает CAN/J2534, не меняет реестр и не
+утверждает, что VIN принят клиентом.
+
+В гостевой Windows полностью закройте SectorV, отключите физические
+J2534 и выполните из каталога emulator:
+
+~~~powershell
+$j = Join-Path $env:TEMP "SectorVVirtualCar.log"
+$b = Join-Path $env:LOCALAPPDATA "VirtualCar\dev47-backend.jsonl"
+$private = Join-Path $env:USERPROFILE "VirtualCarLab"
+New-Item -ItemType Directory -Path $private -Force | Out-Null
+$session = Join-Path $private "p0-gui-001" # новое имя для каждого запуска
+$collector = ".\tools\audit_sectorv_operator_session.py"
+py -3 $collector begin --session-dir $session --j2534 $j --backend $b
+~~~
+
+Затем **вручную** откройте настоящий SectorV, выберите виртуальный
+адаптер и выполните один краткий **только читающий** сеанс.
+Пока клиент открыт, можно сохранить пассивный обезличенный снимок
+загруженных модулей:
+
+~~~powershell
+$module = Join-Path $session "p0-module.redacted.json"
+$ps = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+& $ps -NoProfile -ExecutionPolicy Bypass -File ".\tools\audit_vmware_sectorv_process.ps1" -OperatorSession -OutputFile $module
+~~~
+
+После **полного закрытия** SectorV задайте фактические шесть состояний
+интерфейса. Значение unknown означает отсутствие достоверного
+наблюдения, не успешное подключение:
+
+~~~powershell
+$listed = "unknown"      # yes / no / unknown
+$selected = "unknown"    # yes / no / unknown
+$connection = "unknown"  # connected / failed / not_attempted / unknown
+$ecus = "unknown"        # populated / empty / not_opened / unknown
+$identity = "unknown"    # displayed / not_displayed / unknown
+$errorKind = "unknown"   # none / adapter_missing / connect_error /
+                         # vin_read_failed / vehicle_unrecognized /
+                         # timeout / other / unknown
+$opts = @(
+ "finish", "--session-dir", $session, "--j2534", $j, "--backend", $b,
+ "--isolated-read-only-vm", "--physical-adapter-disconnected",
+ "--adapter-listed", $listed, "--adapter-selected", $selected,
+ "--connection", $connection, "--ecu-list", $ecus,
+ "--vehicle-identity", $identity, "--error-category", $errorKind,
+ "--module-snapshot", $module
+)
+py -3 $collector @opts
+~~~
+
+Если снимок модулей не делался, удалите из массива два последних
+элемента, --module-snapshot и $module. При несомненно едином сеансе
+можно дополнительно включить --single-run-confirmed. Это **утверждение
+оператора**, а не независимая аттестация совместного запуска.
+
+На первом этапе создаётся p0-before.private.json, на последнем
+p0-window.redacted.json и p0-triage.redacted.json. Приватный
+манифест содержит чувствительные хеши: **не отправляйте его в GitHub
+или чат**. Отчёты хранят только фиксированные категории и счётчики,
+не сырые VIN, CAN или пути. Скрипт отказывает при повторной попытке
+создать тот же файл и при неподтверждённой изоляции; GUI-успех и
+идентичность OEM остаются not_verified. Подробный ручной сценарий ниже
+по-прежнему поддерживается.
+
 ## До короткого запуска SectorV в изолированной VM
 
 Полностью закройте SectorV и другие программы, которые могут писать в
