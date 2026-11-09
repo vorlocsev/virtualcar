@@ -19,6 +19,8 @@ MAX_UI_FILE = 8192
 GATES = frozenset((
     "establish_isolated_same_run_evidence",
     "resolve_provider_endpoint_change",
+    "obtain_provider_endpoint_evidence",
+    "obtain_bounded_j2534_window_evidence",
     "verify_j2534_provider_and_connect",
     "review_absent_b9fb_in_bounded_j2534_window",
     "review_b9fb_without_observed_rx",
@@ -77,6 +79,10 @@ def _check_window(report):
                     "source_present", "prefix_verified"):
             if type(value[key]) is not bool:
                 raise ValueError("invalid append provenance")
+        if not value["source_present"] and (
+                value["new_bytes"] or value["complete_lines"]
+                or value["prefix_verified"]):
+            raise ValueError("missing log cannot contain appended evidence")
 
     provider = report["registered_provider"]
     if type(provider) is not dict or set(provider) != {
@@ -178,10 +184,15 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False):
                      for cem in (cem40, cem50) for bucket in B9_BUCKETS[1:])
     if not operator_pair_confirmed:
         gate = "establish_isolated_same_run_evidence"
-    elif provider != "same_at_endpoints_only":
+    elif provider in ("changed_between_endpoints", "provider_state_changed"):
         gate = "resolve_provider_endpoint_change"
+    elif provider != "same_at_endpoints_only":
+        gate = "obtain_provider_endpoint_evidence"
     elif observed["connection"] != "connected":
         gate = "verify_j2534_provider_and_connect"
+    elif (not window["windows"]["j2534"]["source_present"]
+          or window["windows"]["j2534"]["complete_lines"] == 0):
+        gate = "obtain_bounded_j2534_window_evidence"
     elif observed["vehicle_identity"] == "displayed":
         gate = ("review_ecu_identification_after_ui_identity"
                 if observed["ecu_list"] != "populated"
