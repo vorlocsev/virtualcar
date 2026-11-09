@@ -37,26 +37,44 @@ def message(line):
     return ('TX' if is_tx else 'RX', int.from_bytes(payload[:4], 'big'), payload[4:12])
 
 
-def sessions(lines, target, opcode):
-    sessions_found, active = [], None
+def sessions_with_origin(lines, target, opcode):
+    """Collect candidate responses and conservatively label *textual* origin.
+
+    Synthetic-emulator RX markers are affirmative evidence of an emulator
+    trace. Absence of those markers is NOT evidence of a physical ECU or OEM
+    capture: copied, translated, or replayed logs may look identical.
+    """
+    found, active, origins = [], None, set()
+
+    def finish():
+        if active:
+            found.append((active, "emulator_tagged_rx"
+                          if "emulator" in origins else "unverified_trace_origin"))
+
     for line in lines:
         item = message(line)
         if item:
             direction, can_id, data = item
             if direction == 'TX':
-                if active is not None:
-                    sessions_found.append(active)
-                active = None
+                finish()
+                active, origins = None, set()
                 if can_id == 0x000FFFFE and data[:4] == bytes([0xCB, target, 0xB9, opcode]):
                     active = []
             elif active is not None:
                 active.append((can_id, data))
+                origins.add("emulator" if ("RX (simulated)" in line
+                            or "PassThruReadMsgs -> delivered" in line)
+                            else "unknown")
         elif active is not None and ('PassThruDisconnect' in line or 'PassThruClose' in line):
-            sessions_found.append(active)
-            active = None
-    if active is not None:
-        sessions_found.append(active)
-    return [x for x in sessions_found if x]
+            finish()
+            active, origins = None, set()
+    finish()
+    return found
+
+
+def sessions(lines, target, opcode):
+    """Backwards-compatible frame-only discovery; does NOT prove provenance."""
+    return [frames for frames, _ in sessions_with_origin(lines, target, opcode)]
 
 
 def redact_vin(frames):
@@ -149,15 +167,27 @@ def main():
     a.add_argument('--profile',type=Path,default=Path(__file__).resolve().parent.parent/'virtualcar-p2.ini')
     a.add_argument('--output',type=Path,required=True,help='New local INI; existing files are never overwritten')
     a.add_argument('--keep-identifiers',action='store_true',help='Retain VIN/personal vehicle identifiers in PRIVATE local output (use only for your own captures)')
+    a.add_argument('--session-index',type=int,default=None,
+                   help='Zero-based response session; required if more than one matching session is present')
     a.add_argument('--lab-vin',help='Replace exactly one masked VIN with a synthetic 17-character test VIN; diagnostic lab only')
     args=a.parse_args()
     if args.output.resolve() in (args.log.resolve(), args.profile.resolve()):
         a.error('Output must be a new file, not the source log or profile')
     target,opcode=int(args.target,16),int(args.opcode,16)
-    groups=sessions(args.log.read_text(encoding='utf-8',errors='replace').splitlines(),target,opcode)
+    groups=sessions_with_origin(
+        args.log.read_text(encoding='utf-8',errors='replace').splitlines(),
+        target,opcode)
     if not groups:
         a.error('No matching D2 CEM request with recorded responses was found')
-    frames=max(groups,key=len)
+    if args.session_index is None:
+        if len(groups)!=1:
+            a.error('Multiple D2 responses: select --session-index explicitly; longest is not verified')
+        selected=0
+    else:
+        selected=args.session_index
+        if selected<0 or selected>=len(groups):
+            a.error('session-index is out of range')
+    frames,origin=groups[selected]
     try:
         validate_response(frames, target, opcode)
     except ValueError as exc:
@@ -196,9 +226,17 @@ def main():
     try:
         # Exclusive creation also protects existing hardlink/symlink aliases
         # and a destination created after the earlier source-path check.
-        with args.output.open('x',encoding='utf-8') as f: cfg.write(f)
+        with args.output.open('x',encoding='utf-8') as f:
+            # Local output remains UNVERIFIED regardless of framing, VIN shape
+            # or operator-selected index. Comment-only metadata is ignored by
+            # the emulator, never claim a donor ECU was independently observed.
+            f.write('; Virtual Car local read-only import, NOT an OEM-certified fixture.\\n'
+                    '; Source classification: '+origin+'; replay_approved=false.\\n'
+                    '; Selected session index: '+str(selected)+' of '+str(len(groups))+'.\\n')
+            cfg.write(f)
     except OSError:
         a.error('Unable to create new output; existing files are never overwritten')
+    print('Source classification: '+origin+'; this is NOT independent OEM evidence or replay approval.')
     print(f'Imported: CEM 0x{target:02X} B9{opcode:02X}, {len(frames)} frames, RX CAN ID 0x{can_id:08X}')
     print(f'Wrote local P2 profile to {args.output}')
 
