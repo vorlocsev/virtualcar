@@ -173,7 +173,10 @@ class P0ConnectModeEvidenceTests(unittest.TestCase):
             with source.open("a", encoding="utf-8") as stream:
                 stream.writelines(newer)
             lines, meta = fresh._append_lines(source, snapshot)
-            self.assertEqual(lines, newer)
+            # Windows text-mode append writes CRLF, while our synthetic
+            # fixtures use LF. Audit semantics concern complete records.
+            self.assertEqual([item.rstrip("\r\n") for item in lines],
+                             [item.rstrip("\r\n") for item in newer])
             self.assertTrue(meta["prefix_verified"])
             redacted = triaged(lines)
             modes = redacted["j2534_connect_mode_evidence"]
