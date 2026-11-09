@@ -599,9 +599,9 @@ static void backend_cancel_channel(CHANNEL *c,const char *reason,int d2_only) {
             backend_event(c,rid,"response_aborted","UNKNOWN",resolved,"unknown");
         backend_event(c,rid,"request_completed","UNKNOWN",resolved,"aborted");
         backend_forget_drop(c,rid);
-        /* A CLEAR_RX_BUFFER resets the actual queue, not ISO-TP state.
-           Keep its legacy transport behavior while detaching stale evidence:
-           later CFs after CLEAR must not claim a complete old response. */
+        /* The caller cancels cleared RX and any staged raw CAN CF transfer.
+           Detach old request attribution before the caller resets transport
+           state; a late CTS must never revive a terminally aborted request. */
         if(!d2_only && c->pending_trace==rid)c->pending_trace=0;
         if(c->d2_trace==rid)c->d2_trace=0;
         if(!d2_only)for(j=0;j<c->count;j++){
@@ -1942,14 +1942,28 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_READ_PROG_VOLTAGE){if(!output)return error(ERR_NULL_PARAMETER);*(U32*)output=0;return error(ERR_OK);}
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(ioctl==IO_CLEAR_RX_BUFFER){
+        /* Clear queued RX AND any staged raw-CAN ISO-TP continuation.
+           Without this, a later CTS or an already granted block can emit
+           orphan CFs after the FF was discarded. Cancel evidence first. */
         backend_cancel_channel(c,"clear_rx_buffer",0);
         c->r=c->w=c->count=0;c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
+        c->pending_len=0;c->pending_pos=0;c->pending_id=0;
+        c->pending_request_id=0;c->pending_sn=0;c->pending_trace=0;
+        c->pending_next_us=0;c->pending_stmin_us=0;
+        c->pending_cf_active=0;c->pending_cf_credit=0;
+        c->pending_raw_exchange=0;
         bytes_zero(c->queue_d2_gen,sizeof(c->queue_d2_gen));
+        bytes_zero(c->queue_d2_frame,sizeof(c->queue_d2_frame));
+        bytes_zero(c->queue_ready_us,sizeof(c->queue_ready_us));
+        bytes_zero(c->queue_passive_baud,sizeof(c->queue_passive_baud));
+        bytes_zero(c->queue_raw_response_baud,sizeof(c->queue_raw_response_baud));
+        bytes_zero(c->queue_raw_exchange,sizeof(c->queue_raw_exchange));
+        bytes_zero(c->queue_trace,sizeof(c->queue_trace));
         {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
          u32_be(meta+8,c->flags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now_us());
          logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
-        logline("J2534 CLEAR_RX_BUFFER: queued and staged D2 dropped",0,0);
+        logline("J2534 CLEAR_RX_BUFFER: queued D2/raw ISO-TP and staged CF dropped",0,0);
         unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_PERIODIC_MSGS){bytes_zero(c->periodic,sizeof(c->periodic));unlock_state();return error(ERR_OK);}
