@@ -1,5 +1,41 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: old B9FB replay must not cross SET_CONFIG DATA_RATE (2026-11-09)
+
+- Verified starting `development` `fac2f4254d60bbe97b9219d63e01be234fa49cfd`,
+  automatic owner-only [VMware CI #42634157315](https://github.com/vorlocsev/virtualcar/actions/runs/42634157315)
+  **SUCCESS**, Python 573 (572 passed, one optional skipped), 30/30 steps;
+  native C harness confirmed lifecycle locking.
+- Found real transport-state risk in `emulator/src/virtualcar.c`:
+  `PassThruIoctl(IO_SET_CONFIG)` changes `c->baud`, updates the
+  passive CEM bridge, but previously retained queued and staged D2
+  B9FB frames from the old bus. This could deliver an HS 500k
+  response after retuning the same channel to LS 125k.
+- Narrow read-only fix: on **effective final** DATA_RATE change,
+  call existing same-channel `supersede_d2_exchange` before
+  bridge speed synchronization. It cancels queued/staged old D2
+  and logs trace terminal status; keeps non-D2 RX FIFO and parallel
+  channels intact. No response bytes, J2534 API signatures,
+  unvalidated CEM A3/A6/B9F0 replies or physical ECU operations added.
+- Also correct `speed_changed` semantics for multi-entry SET_CONFIG:
+  if final baud equals original, do not cancel D2 or generate a
+  redundant bridge generation. Zero-rate entries remain
+  all-or-nothing rejected before mutation.
+- Eight deterministic native C regression cases cover staged D2,
+  fully queued D2 plus unrelated FIFO, channel isolation, non-rate
+  config, same baud, late invalid zero baud, reversible multi-entry
+  rate list and fresh recorded B9FB after retuning away/back.
+- **Gate:** focused PR must merge to `development`, followed by
+  **new automatic VMware CI on the exact merged SHA**. The prior
+  successful run does not validate this patch.
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still requires an actual read-only SectorV Windows VMware GUI
+  session proving adapter selection, delivered B9FB, client VIN
+  display and ECU list. Do not merge `main` or publish binaries
+  before real GUI proof.
+
+---
+
 ## P0: serialize J2534 device lifecycle checks (2026-11-09)
 
 - Exact verified starting `development`: `27ad427c7f6ebcdb07f49196b3eb06882771306a`;
