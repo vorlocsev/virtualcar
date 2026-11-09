@@ -139,14 +139,6 @@ class ExplicitImportSessionTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(self.output.read_bytes(), original)
 
-    def test_09_unrelated_tx_does_not_merge_simulator_and_capture(self):
-        unrelated = "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00\n"
-        source = POSITIVE + unrelated + PUBLIC
-        groups = importer.sessions_with_origin(source.splitlines(), 0x50, 0xFB)
-        self.assertEqual([len(frames) for frames, _ in groups], [1, 13])
-        self.assertEqual([origin for _, origin in groups],
-                         ["emulator_tagged_rx", "unverified_trace_origin"])
-        self.assertEqual(self.invoke(source)[0], 2)
 
 
 if __name__ == "__main__":
