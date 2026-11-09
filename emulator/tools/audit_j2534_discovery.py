@@ -547,9 +547,12 @@ def audit(lines, *, include_obd=False):
             tx["_end_reason"] = why
             results.append(_result(tx))
 
-    def start(s, request, stamp, raw, metadata=None, origin="direct_write"):
+    def start(s, request, stamp, raw, metadata=None, origin="direct_write",
+              context_override=None):
         kind, service, target, can_id = request
-        ctx = s["periodicctx"] if origin == "periodic_scheduler" else s["txctx"]
+        # The scheduler context is single-use and was consumed by the
+        # parser before this call; pass the validated snapshot explicitly.
+        ctx = context_override if context_override is not None else s["txctx"]
         channel = metadata["channel"] if metadata is not None else ctx[0] if ctx else None
         previous = s["active"].get(channel)
         flags = metadata["flags"] if metadata is not None else ctx[2] if ctx else None
@@ -870,7 +873,8 @@ def audit(lines, *, include_obd=False):
                 errors["invalid_periodic_transport"] += 1
                 continue
             if req:
-                start(s, req, stamp, raw, origin="periodic_scheduler")
+                start(s, req, stamp, raw, origin="periodic_scheduler",
+                      context_override=ctx)
             elif ctx[1] == 5 and _flow_control(raw, include_obd):
                 pass  # Flow Control continues an existing ISO-TP response.
             else:
