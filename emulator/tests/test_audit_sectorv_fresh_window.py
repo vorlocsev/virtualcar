@@ -1,4 +1,4 @@
-"""Eight synthetic privacy and append-boundary tests. No client, J2534 or CAN writes."""
+"""Synthetic read-only append-window and complete GUI-triage CLI regressions."""
 import contextlib
 import hashlib
 import io
@@ -11,6 +11,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import audit_sectorv_fresh_window as gate
+import audit_sectorv_ui_window_triage as triage
+from audit_sectorv_ui_observation import SCHEMA as GUI_SCHEMA
 
 
 def be(*words):
@@ -293,6 +295,193 @@ class FreshWindowTests(unittest.TestCase):
             self.assertEqual(result["registered_provider"]["binary_endpoint_consistency"],
                              "changed_between_endpoints")
             self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
+
+
+
+class FreshToGuiPipelineTests(unittest.TestCase):
+    """CLI-to-CLI synthetic checks: raw private text -> redacted window -> GUI triage.
+
+    No real client was observed. The human-ui provenance fixture below is
+    simulated solely to test the shape gate; it is not evidence of a VM session.
+    """
+
+    @staticmethod
+    def _provider(byte="b"):
+        return {
+            "state": "installed_library_x86", "path_sha256": "a" * 64,
+            "file_sha256": byte * 64, "bytes": 512,
+        }
+
+    @staticmethod
+    def _gui():
+        return {
+            "schema_version": GUI_SCHEMA, "client": "SectorV",
+            "scenario": "P2_MY2009_lab", "source": "human_ui_observation",
+            "run_scope": "single_vm_client_run",
+            "read_only": True, "physical_adapter_disconnected": True,
+            "observations": {
+                "adapter_listed": "yes", "adapter_selected": "yes",
+                "connection": "connected", "ecu_list": "empty",
+                "vehicle_identity": "not_displayed",
+                "error_category": "vin_read_failed",
+            },
+        }
+
+    @staticmethod
+    def _backend_no_fixture():
+        return "".join([
+            backend_evt("tx_received"),
+            backend_evt("probe_classified", probe="D2_50_B9FB"),
+            backend_evt("request_completed", reason="missing_profile",
+                        outcome="no_response", tick=1001000),
+        ]).encode("utf-8")
+
+    def _run_pipeline(self, *, j_append=b"", b_append=b"",
+                      j_initial=b"historical text\n", changed_provider=False,
+                      pair=True, edit_gui=None):
+        """Exercise all three production CLIs with local, synthetic files."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            j = root / "private-j2534.log"
+            b = root / "private-backend.jsonl"
+            manifest = root / "private-manifest.json"
+            report = root / "redacted-window.json"
+            gui = root / "private-gui.json"
+            final = root / "redacted-gui-triage.json"
+            if j_initial is not None:
+                j.write_bytes(j_initial)
+            b.write_bytes(b"historical backend\n")
+
+            common = ["--j2534", str(j), "--backend", str(b),
+                      "--manifest", str(manifest)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                with mock.patch.object(gate, "_provider_snapshot",
+                                       return_value=self._provider()):
+                    self.assertEqual(gate.main(["baseline", *common]), 0)
+                if j_append:
+                    with j.open("ab") as out:
+                        out.write(j_append)
+                if b_append:
+                    with b.open("ab") as out:
+                        out.write(b_append)
+                with mock.patch.object(gate, "_provider_snapshot",
+                                       return_value=self._provider(
+                                           "c" if changed_provider else "b")):
+                    args = ["analyze", *common, "--output", str(report)]
+                    if pair:
+                        args.append("--operator-one-run-confirmed")
+                    self.assertEqual(gate.main(args), 0)
+
+            observation = self._gui()
+            if edit_gui is not None:
+                edit_gui(observation)
+            gui.write_text(json.dumps(observation), encoding="utf-8")
+            args = ["--window-report", str(report),
+                    "--ui-observation", str(gui), "--output", str(final)]
+            if pair:
+                args.append("--operator-same-run-confirmed")
+            with contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                code = triage.main(args)
+            window_text = report.read_text(encoding="utf-8")
+            final_text = final.read_text(encoding="utf-8") if final.exists() else ""
+            return (json.loads(window_text),
+                    json.loads(final_text) if final_text else None,
+                    window_text, final_text, code)
+
+    def _assert_unverified(self, result):
+        self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
+        self.assertFalse(result["oem_vin_and_ecu_verified"])
+        self.assertEqual(result["transaction_level_correlation"], "not_established")
+        self.assertFalse(result["replay_approved"])
+
+    def test_15_cli_pipeline_b9fb_no_fixture_not_vin_failure_proof(self):
+        w, r, raw_w, raw_r, code = self._run_pipeline(
+            j_append=b9fb_no_fixture().encode("utf-8"),
+            b_append=self._backend_no_fixture())
+        self.assertEqual(code, 0)
+        self.assertEqual(w["discovery"]["d2"]["0x50"]["B9FB"]["statuses"],
+                         {"no_fixture": 1})
+        self.assertEqual(w["backend"]["d2_probe_coverage"]["D2_50_B9FB"],
+                         {"requests": 1, "statuses": {"no_fixture": 1}})
+        self.assertEqual(r["b9fb_request_count_in_window"], 1)
+        self.assertEqual(r["b9fb_requests_with_nonzero_rx_in_window"], 0)
+        self.assertEqual(r["first_next_gate"], "review_b9fb_without_observed_rx")
+        self._assert_unverified(r)
+        for secret in ("0123456789abcdef", "DEADBEEF", "private-j2534",
+                       "PassThruReadMsgs", "00 0F FF FE", "a" * 64):
+            self.assertNotIn(secret, raw_w + raw_r)
+
+    def test_16_cli_complete_unrelated_log_only_b9fb_absence_is_bounded(self):
+        w, r, _, _, code = self._run_pipeline(
+            j_append=log_event("unrelated synthetic diagnostic marker").encode())
+        self.assertEqual(code, 0)
+        self.assertEqual(w["windows"]["j2534"]["complete_lines"], 1)
+        self.assertEqual(r["b9fb_request_count_in_window"], 0)
+        self.assertEqual(r["first_next_gate"],
+                         "review_absent_b9fb_in_bounded_j2534_window")
+        self._assert_unverified(r)
+
+    def test_17_cli_discarded_first_line_downgrades_absence(self):
+        _, r, _, _, code = self._run_pipeline(
+            j_initial=b"old incomplete",
+            j_append=b" continued\n" +
+                     log_event("unrelated synthetic marker").encode())
+        self.assertEqual(code, 0)
+        self.assertTrue(r["j2534_discarded_partial_boundary_lines"])
+        self.assertEqual(r["first_next_gate"],
+                         "review_discarded_j2534_line_boundaries")
+        self._assert_unverified(r)
+
+    def test_18_cli_discarded_last_line_downgrades_absence(self):
+        _, r, _, _, code = self._run_pipeline(
+            j_append=log_event("unrelated synthetic marker").encode()
+                     + b"final incomplete")
+        self.assertEqual(code, 0)
+        self.assertTrue(r["j2534_discarded_partial_boundary_lines"])
+        self.assertEqual(r["first_next_gate"],
+                         "review_discarded_j2534_line_boundaries")
+        self._assert_unverified(r)
+
+    def test_19_cli_no_new_lines_is_missing_window_evidence(self):
+        _, r, _, _, code = self._run_pipeline()
+        self.assertEqual(code, 0)
+        self.assertEqual(r["first_next_gate"],
+                         "obtain_bounded_j2534_window_evidence")
+        self._assert_unverified(r)
+
+    def test_20_cli_provider_changed_before_vin_classification(self):
+        _, r, _, _, code = self._run_pipeline(
+            changed_provider=True,
+            j_append=b9fb_no_fixture().encode("utf-8"))
+        self.assertEqual(code, 0)
+        self.assertEqual(r["provider_endpoint_consistency"],
+                         "changed_between_endpoints")
+        self.assertEqual(r["first_next_gate"],
+                         "resolve_provider_endpoint_change")
+        self._assert_unverified(r)
+
+    def test_21_cli_without_operator_pairing_stays_unpaired(self):
+        _, r, _, _, code = self._run_pipeline(
+            pair=False, j_append=b9fb_no_fixture().encode("utf-8"))
+        self.assertEqual(code, 0)
+        self.assertEqual(r["run_pairing"], "unpaired")
+        self.assertEqual(r["first_next_gate"],
+                         "establish_isolated_same_run_evidence")
+        self._assert_unverified(r)
+
+    def test_22_cli_rejects_private_gui_free_text_without_final_report(self):
+        def inject_private_text(gui):
+            gui["observations"]["raw_vin"] = "YV1SYNTHETIC01234"
+
+        w, r, window_text, final_text, code = self._run_pipeline(
+            j_append=b9fb_no_fixture().encode("utf-8"),
+            edit_gui=inject_private_text)
+        self.assertEqual(code, 2)
+        self.assertIsNone(r)
+        self.assertEqual(final_text, "")
+        self.assertEqual(w["client_vehicle_identity_accepted"], "not_verified")
+        self.assertNotIn("YV1SYNTHETIC01234", window_text)
 
 
 if __name__ == "__main__":
