@@ -1356,11 +1356,20 @@ static void pump_d2(CHANNEL *c){
     {U64 previous=c->active_trace;c->active_trace=c->d2_trace;
      enqueue(c,c->d2_response_id,c->d2_frame[c->d2_pos],8);
      c->active_trace=previous;}
-    /* Filters can discard a frame; never mark an older queue slot as new. */
-    if(c->w!=slot){
-        c->queue_d2_gen[slot]=c->d2_generation;
-        c->queue_d2_frame[slot]=c->d2_pos+1;
+    /* A strict CAN data-byte filter may admit frame N but reject N+1.
+       A recorded D2 exchange must never skip N+1 and deliver later
+       frames as if they were consecutive. enqueue() already recorded
+       filter_reject against the originating request; drain accepted
+       earlier frames with the eventual terminal outcome 'dropped'. */
+    if(c->w==slot){
+        U64 rejected=c->d2_trace;
+        c->d2_count=0;c->d2_pos=0;c->d2_trace=0;
+        logline("P2 D2 frame filtered; remaining recorded frames cancelled",0,0);
+        backend_end_if_drained(c,rejected);
+        return;
     }
+    c->queue_d2_gen[slot]=c->d2_generation;
+    c->queue_d2_frame[slot]=c->d2_pos+1;
     c->d2_pos++;
     if(c->d2_pos>=c->d2_count){
         U64 finished=c->d2_trace;
