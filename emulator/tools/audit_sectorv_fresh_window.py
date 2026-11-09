@@ -305,7 +305,11 @@ def summarize(j2534_lines, backend_lines, *, operator_one_run=False):
         "discovery": {"transactions": len(tx),
                       "statuses": dict(sorted(discovery["counts"].items())),
                       "d2": targets,
-                      "p3_count": sum(x["route"] == "P3" for x in tx)},
+                      "p3_count": sum(x["route"] == "P3" for x in tx),
+                      # The same already-bounded J2534 source was checked by
+                      # the independent generation-tag analyzer. Never infer
+                      # a cross-log TX, actual GUI acceptance, or OEM VIN.
+                      "native_d2_delivery_tags": discovery["native_d2_delivery_tags"]},
         "backend": {"requests": backend["summary"]["requests"],
                     "invalid_lines": backend["summary"]["invalid_lines"],
                     "statuses": dict(sorted(backend["summary"]["statuses"].items())),
