@@ -56,7 +56,7 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         if valid:
             data[:2] = b"MZ"
             struct.pack_into("<I", data, 0x3C, 0x80)
-            data[0x80:0x84] = b"PE\\x00\\x00"
+            data[0x80:0x84] = b"PE\x00\x00"
             struct.pack_into("<H", data, 0x84, machine)
             struct.pack_into("<H", data, 0x98, magic)
         path.write_bytes(data)
