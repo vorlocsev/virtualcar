@@ -78,7 +78,9 @@ def _check_module_snapshot(value):
         raise ValueError("unexpected operator module snapshot fields")
     if (value["schema_version"] != MODULE_SCHEMA
             or value["scope"] != "operator_requested_current_host_snapshot_only"
+            or type(value["observation"]) is not str
             or value["observation"] not in MODULE_OBSERVATIONS
+            or type(value["installed_vs_reference_dll"]) is not str
             or value["installed_vs_reference_dll"] not in MODULE_COMPARISONS
             or value["name_matched_executable_authenticity"] != "not_verified"
             or value["operator_same_run_pairing"] != "not_independently_attested"
