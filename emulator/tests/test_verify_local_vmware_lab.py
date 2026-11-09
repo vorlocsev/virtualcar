@@ -24,20 +24,7 @@ def import_tool(name):
 package = import_tool("package_vmware_lab")
 verify = import_tool("verify_local_vmware_lab")
 SHA = "9" * 40
-PROFILE = """[Vehicle]
-VIN=YV1CZ0002A0000001
-ECUCount=1
-[P2]
-StrictRouting=1
-[D2_40]
-B9FBFrameCount=0
-[D2_50]
-B9FBFrameCount=0
-[PassiveCAN]
-Enabled=0
-[PassiveTrace]
-Enabled=0
-"""
+PROFILE = (ROOT / "virtualcar-p2.ini").read_text(encoding="utf-8")
 
 
 def fake_pe(machine=0x014C, magic=0x010B):
@@ -61,9 +48,11 @@ class LocalRealLabVerifierTests(unittest.TestCase):
         for rel in package.FILES.values():
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(fake_pe() if path.suffix in (".dll", ".exe")
-                             else b"synthetic local-only fixture\n")
-        (self.root / "virtualcar-p2.ini").write_text(PROFILE, encoding="utf-8")
+            if rel in package.APPROVED_INI_SHA256:
+                path.write_bytes((ROOT / rel).read_bytes())
+            else:
+                path.write_bytes(fake_pe() if path.suffix in (".dll", ".exe")
+                                 else b"synthetic local-only fixture\n")
         self.zip = package.create_package(self.root, self.out, SHA, "test-bundle")
 
     def _rewrite_zip(self, change, *, resums=True, resha=True):
@@ -150,6 +139,27 @@ class LocalRealLabVerifierTests(unittest.TestCase):
             members["VirtualCarControl.exe"] = new_exe
         self._rewrite_zip(modify)
         with self.assertRaisesRegex(ValueError, "not_windows_x86_pe32"):
+            verify.verify_local_lab(self.zip, self.root, SHA)
+
+
+    def test_09_reject_rehashed_injected_default_ini_even_if_source_modified(self):
+        # Both the ZIP and the source could be changed and checksums
+        # regenerated. A normal source-fidelity comparison alone misses it.
+        altered = (self.root / "virtualcar-default.ini").read_bytes() + (
+            b"; UNREVIEWED_PRIVATE_COMMENT\n")
+        (self.root / "virtualcar-default.ini").write_bytes(altered)
+        self._rewrite_zip(lambda members: members.__setitem__(
+            "virtualcar-default.ini", altered))
+        with self.assertRaisesRegex(ValueError, "unreviewed INI"):
+            verify.verify_local_lab(self.zip, self.root, SHA)
+
+    def test_10_reject_rehashed_injected_p2_ini_even_if_source_modified(self):
+        altered = (self.root / "virtualcar-p2.ini").read_bytes() + (
+            b"; UNREVIEWED_PRIVATE_COMMENT\n")
+        (self.root / "virtualcar-p2.ini").write_bytes(altered)
+        self._rewrite_zip(lambda members: members.__setitem__(
+            "virtualcar-p2.ini", altered))
+        with self.assertRaisesRegex(ValueError, "unreviewed INI"):
             verify.verify_local_lab(self.zip, self.root, SHA)
 
 
