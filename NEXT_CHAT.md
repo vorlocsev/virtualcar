@@ -1,5 +1,37 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: legacy F08 Group C gate after raw ISO-TP FIFO retraction (2026-11-09)
+
+- [PR #274](https://github.com/vorlocsev/virtualcar/pull/274)
+  merged `development` `e126bf2f01393b5fc56cf21e3e78f617285a3d87`.
+  A manual owner-only [VMware CI #42648412376](https://github.com/vorlocsev/virtualcar/actions/runs/42648412376)
+  from `main` with trusted `source_ref=development` ran eight **new**
+  `P0 ISO-TP retry` native cases successfully but **FAILED** the
+  older F08 native test on `virtualcar_test.c` Group C, line 3131.
+  Earlier automatic push CI for `e126bf2f` did not materialize.
+- Group C asserted no `request_completed` event and expected to
+  dequeue a stale FF before the next SF, which is the **old bug**.
+  The new PR #274 transport removes the old queued FF and finishes
+  the old request as `superseded/aborted` immediately, then leaves
+  the new tester-present SF in FIFO to be read.
+- Narrow **test-only** update: before reading, assert one aborted
+  terminal and exactly one queued SF; then assert SF is delivered,
+  total two terminal events, exactly one aborted and one responded.
+  New eight synthetic tests remain unchanged. No J2534 runtime,
+  CAN, D2, OEM replies or physical hardware changes.
+- **Gate:** merge PR into `development` only, verify a new full
+  owner-only VMware CI **SUCCESS** on the exact merged SHA or explicit
+  trusted development checkout. Never call #42648412376 successful.
+  If automatic push CI fails to materialize, owner may use
+  `gh workflow run vmware-development-validation.yml -R vorlocsev/virtualcar --ref main -f source_ref=development`
+  and verify the checked-out source SHA from job logs.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still requires real, isolated read-only SectorV GUI selecting the
+  virtual J2534, B9FB, VIN and ECU list. No `main` merge or
+  published release.
+
+---
+
 ## P0: queued raw FF/CF after an unfinished UDS exchange is superseded (2026-11-09)
 
 - Verified exact baseline `development`:
