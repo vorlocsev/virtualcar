@@ -42,6 +42,16 @@ def log_for(frames, simulated=False):
     return rows
 
 
+def native_log(generated, received):
+    def records(label, frames):
+        return [f"[PID=00000001 Synthetic.exe] {label} "
+                + (can_id.to_bytes(4, "big") + data).hex(" ")
+                for can_id, data in frames]
+
+    return ([REQUEST] + records("RX (simulated)", generated)
+            + records("PassThruReadMsgs -> delivered", received))
+
+
 class B9FBLocalCandidateTests(unittest.TestCase):
     def test_01_single_valid_candidate_still_not_oem_or_approved(self):
         report = variants.audit_local_logs([log_for(response())])
@@ -154,6 +164,53 @@ class B9FBLocalCandidateTests(unittest.TestCase):
                                    str(directory / "new.json")])
             self.assertEqual(output.read_bytes(), old)
             self.assertFalse((directory / "new.json").exists())
+
+    def test_09_generation_and_delivery_are_one_observed_response(self):
+        frames = response()
+        report = variants.audit_local_logs([native_log(frames, frames)])
+        row, = report["candidates"]
+        self.assertEqual((row["rx_frames"], row["transport"], row["origin_marker"]),
+                         (13, "complete", "emulator_tagged_rx"))
+
+    def test_10_queued_tail_does_not_complete_partial_delivery(self):
+        frames = response()
+        report = variants.audit_local_logs([native_log(frames, frames[:-1])])
+        row, = report["candidates"]
+        self.assertEqual((row["rx_frames"], row["transport"]), (12, "invalid"))
+        self.assertEqual(report["comparison_groups"], [])
+
+    def test_11_duplicate_reads_are_not_removed_as_queue_markers(self):
+        frames = response()
+        report = variants.audit_local_logs([native_log(frames, frames + frames)])
+        row, = report["candidates"]
+        self.assertEqual((row["rx_frames"], row["transport"]), (26, "invalid"))
+
+    def test_12_generated_only_stays_an_emulator_candidate(self):
+        report = variants.audit_local_logs([native_log(response(), [])])
+        row, = report["candidates"]
+        self.assertEqual((row["rx_frames"], row["transport"], row["origin_marker"]),
+                         (13, "complete", "emulator_tagged_rx"))
+
+    def test_13_delivery_only_stays_an_emulator_candidate(self):
+        report = variants.audit_local_logs([native_log([], response())])
+        row, = report["candidates"]
+        self.assertEqual((row["rx_frames"], row["transport"], row["origin_marker"]),
+                         (13, "complete", "emulator_tagged_rx"))
+
+    def test_14_legacy_reads_do_not_borrow_generated_frames(self):
+        frames = response()
+        rows = native_log(frames, []) + log_for(frames, simulated=False)[1:]
+        report = variants.audit_local_logs([rows])
+        row, = report["candidates"]
+        self.assertEqual((row["rx_frames"], row["transport"], row["origin_marker"]),
+                         (13, "complete", "emulator_tagged_rx"))
+
+    def test_15_read_stream_resets_at_session_boundary(self):
+        first, second = response(), response(SYNTHETIC_B)
+        rows = native_log(first, first) + ["PassThruClose"] + native_log(second, [])
+        report = variants.audit_local_logs([rows])
+        self.assertEqual(report["transport_categories"], {"complete": 2})
+        self.assertEqual(report["comparison_groups"][0]["distinct_observed_17byte_field_values"], 2)
 
 
 if __name__ == "__main__":
