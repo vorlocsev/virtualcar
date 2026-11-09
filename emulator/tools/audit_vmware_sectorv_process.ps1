@@ -102,10 +102,67 @@ function Get-ByteEquivalence {
     }
 }
 
+# Read only bounded PE header bytes; this checks architecture, not export
+# contracts, binary provenance or executable authenticity. Never load the DLL.
+function Get-ReferencePe32State {
+    param([string]$ReferencePath)
+    if ([string]::IsNullOrWhiteSpace($ReferencePath)) {
+        return 'not_compared'
+    }
+    try {
+        $expanded = [Environment]::ExpandEnvironmentVariables($ReferencePath.Trim().Trim('"'))
+        if (-not [IO.Path]::IsPathRooted($expanded) -or $expanded.StartsWith('\\')) {
+            return 'unverifiable'
+        }
+        $full = [IO.Path]::GetFullPath($expanded)
+        $file = [IO.FileInfo]::new($full)
+        if (-not $file.Exists) { return 'unverifiable' }
+        if ($file.Length -lt 96 -or $file.Length -gt 67108864) {
+            return 'invalid_pe'
+        }
+        $stream = [IO.File]::Open($full, [IO.FileMode]::Open,
+            [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $dos = New-Object byte[] 64
+            if ($stream.Read($dos, 0, 64) -ne 64 -or
+                $dos[0] -ne 0x4D -or $dos[1] -ne 0x5A) {
+                return 'invalid_pe'
+            }
+            [uint32]$offset = [BitConverter]::ToUInt32($dos, 0x3C)
+            if ($offset -lt 64 -or $offset -gt 4096 -or
+                ([long]$offset + 26) -gt $stream.Length) {
+                return 'invalid_pe'
+            }
+            [void]$stream.Seek([long]$offset, [IO.SeekOrigin]::Begin)
+            $coff = New-Object byte[] 26
+            if ($stream.Read($coff, 0, 26) -ne 26 -or
+                $coff[0] -ne 0x50 -or $coff[1] -ne 0x45 -or
+                $coff[2] -ne 0 -or $coff[3] -ne 0) {
+                return 'invalid_pe'
+            }
+            [uint16]$machine = [BitConverter]::ToUInt16($coff, 4)
+            [uint16]$magic = [BitConverter]::ToUInt16($coff, 24)
+            if ($machine -eq 0x014C -and $magic -eq 0x010B) {
+                return 'x86_pe32_header'
+            }
+            return 'other_pe'
+        } finally {
+            $stream.Dispose()
+        }
+    } catch {
+        # No caller-controlled values, binary paths or exceptions leave this tool.
+        return 'unverifiable'
+    }
+}
+
 function Get-OperatorNextGate {
-    param([string]$Observation, [string]$Comparison)
+    param([string]$Observation, [string]$Comparison,
+          [string]$ReferencePe32 = 'not_assessed_by_this_tool')
     if ($Comparison -eq 'different_bytes_at_snapshot') {
         return 'resolve_reference_vs_registered_dll_difference'
+    }
+    if ($ReferencePe32 -eq 'invalid_pe' -or $ReferencePe32 -eq 'other_pe') {
+        return 'verify_reference_pe32_before_gui'
     }
     if ($Observation -eq 'client_not_observed_in_local_snapshot' -or
         $Observation -eq 'client_process_listing_unavailable') {
@@ -119,6 +176,9 @@ function Get-OperatorNextGate {
     }
     if ($Comparison -ne 'exact_bytes_at_snapshot') {
         return 'verify_reference_and_registered_dll_equivalence'
+    }
+    if ($ReferencePe32 -eq 'unverifiable') {
+        return 'verify_reference_pe32_before_gui'
     }
     return 'collect_same_run_redacted_j2534_and_gui_evidence'
 }
@@ -323,16 +383,17 @@ if ($OperatorSession) {
         $processObservation = 'client_not_observed_in_local_snapshot'
     }
     $comparison = Get-ByteEquivalence -RegisteredPath $library -ReferencePath $ReferenceDll
+    $referencePe32 = Get-ReferencePe32State -ReferencePath $ReferenceDll
     $result = [ordered]@{
         schema_version = 'virtualcar-sectorv-process-binding-operator-v1'
         scope = 'operator_requested_current_host_snapshot_only'
         observation = $processObservation
         installed_vs_reference_dll = $comparison
-        next_safe_gate = Get-OperatorNextGate $processObservation $comparison
+        next_safe_gate = Get-OperatorNextGate $processObservation $comparison $referencePe32
         name_matched_executable_authenticity = 'not_verified'
         operator_same_run_pairing = 'not_independently_attested'
         registered_provider_unchanged_during_run = 'not_verified'
-        reference_dll_pe32 = 'not_assessed_by_this_tool'
+        reference_dll_pe32 = $referencePe32
         client_was_launched_by_audit = $false
         accepted_vin_or_ecu = 'not_verified'
     }
