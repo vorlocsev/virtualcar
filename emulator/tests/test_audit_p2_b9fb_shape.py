@@ -84,6 +84,26 @@ class B9FBShapeEvidenceTests(unittest.TestCase):
         short = frames()[:-1]
         self.assertEqual(audit.audit_frames(short)["transport"], "invalid")
 
+    def test_09_alternative_last_markers_are_invalid_transport_not_identity(self):
+        # The 13-frame synthetic 0x08-series sample ends with seven bytes:
+        # marker 4F. A shorter 48..4E header is not a 4F equivalent.
+        good = frames()
+        self.assertEqual(audit.audit_frames(good)["transport"], "complete")
+        for last in range(0x48, 0x4F):
+            with self.subTest(last=f"{last:02X}"):
+                mutated = list(good)
+                mutated[-1] = (mutated[-1][0],
+                               bytes([last]) + mutated[-1][1][1:])
+                out = audit.audit_frames(mutated)
+                self.assertEqual(out["transport"], "invalid")
+                self.assertEqual(out["transport_reason"],
+                                 "d2_frame_sequence_or_response_route_invalid")
+                self.assertIsNone(out["payload_byte_count"])
+                self.assertFalse(out["vin_shaped_field"])
+                self.assertFalse(out["vehicle_identity_verified"])
+                self.assertFalse(out["replay_approved"])
+                self.assertNotIn(LAB_VIN.decode(), json.dumps(out))
+
     def test_05_negative_reply_not_taken_as_positive_b9fb(self):
         negative = [(0x01200003, bytes.fromhex("CB 50 7F B9 11 00 00 00"))]
         out = audit.audit_frames(negative)
