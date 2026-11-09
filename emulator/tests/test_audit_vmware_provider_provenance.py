@@ -11,6 +11,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import audit_vmware_provider_provenance as audit
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "native-cpp" / "tests"))
 
 
 def fake_pe(path, *, x86=True, tail=b"synthetic"):
@@ -21,6 +22,41 @@ def fake_pe(path, *, x86=True, tail=b"synthetic"):
     struct.pack_into("<H", buf, 68, 0x14C if x86 else 0x8664)
     struct.pack_into("<H", buf, 88, 0x10B if x86 else 0x20B)
     path.write_bytes(bytes(buf) + tail)
+    return path
+
+
+def named_export_pe(path, names):
+    """Synthetic x86 PE32 export table with bounded EAT/name/ordinal arrays."""
+    if len(names) > 28:
+        raise ValueError("test fixture cannot fit")
+    data = bytearray(4096)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x80)
+    data[0x80:0x84] = b"PE\x00\x00"
+    struct.pack_into("<HH", data, 0x84, 0x14C, 1)
+    struct.pack_into("<H", data, 0x94, 0xE0)
+    struct.pack_into("<H", data, 0x96, 0x2000)
+    struct.pack_into("<H", data, 0x98, 0x10B)
+    section = 0x80 + 24 + 0xE0
+    data[section:section + 8] = b".edata\x00\x00"
+    struct.pack_into("<IIII", data, section + 8, 0x800, 0x2000, 0x800, 0x200)
+    struct.pack_into("<I", data, section + 36, 0x40000040)
+    rva = lambda offset: 0x2000 + offset - 0x200
+    export = 0x280
+    struct.pack_into("<II", data, 0x98 + 96, rva(export), 0x700)
+    struct.pack_into("<IIIII", data, export + 20,
+                     len(names), len(names), rva(0x300), rva(0x380), rva(0x400))
+    next_name = 0x500
+    for i, name in enumerate(names):
+        name_bytes = name.encode("ascii") + b"\x00"
+        if next_name + len(name_bytes) > 0xA00:
+            raise ValueError("test fixture name overflow")
+        data[next_name:next_name + len(name_bytes)] = name_bytes
+        struct.pack_into("<I", data, 0x300 + i * 4, 0x1000 + i * 16)
+        struct.pack_into("<I", data, 0x380 + i * 4, rva(next_name))
+        struct.pack_into("<H", data, 0x400 + i * 2, i)
+        next_name += len(name_bytes)
+    path.write_bytes(data)
     return path
 
 
@@ -189,6 +225,74 @@ class ProviderProvenanceTests(unittest.TestCase):
             self.assertEqual(result["sectorv_client_execution"], "not_performed")
             self.assertEqual(result["vin_or_ecu_accepted"], "not_verified")
             self.assertNotIn(str(root), json.dumps(result))
+
+
+    def test_17_exact_required_export_set_is_present(self):
+        from verify_pe_exports import EXPORTS
+        with tempfile.TemporaryDirectory() as td:
+            dll = named_export_pe(Path(td) / "installed.dll", sorted(EXPORTS))
+            self.assertEqual(audit._required_named_exports(dll), "all_required_named")
+            result = audit.assess(True, str(dll), dll)
+            self.assertEqual(result["required_export_subset"], "all_required_named")
+            self.assertEqual(result["vin_or_ecu_accepted"], "not_verified")
+
+    def test_18_vendor_extra_export_is_allowed_for_required_subset(self):
+        from verify_pe_exports import EXPORTS
+        with tempfile.TemporaryDirectory() as td:
+            dll = named_export_pe(Path(td) / "installed.dll",
+                                  sorted(EXPORTS) + ["VendorSpecificService"])
+            result = audit.assess(True, str(dll), dll)
+            self.assertEqual(result["required_export_subset"], "all_required_named")
+            self.assertEqual(result["installed_export_contract"],
+                             "not_exact_or_unverifiable")
+
+    def test_19_missing_required_name_is_distinguished(self):
+        from verify_pe_exports import EXPORTS
+        with tempfile.TemporaryDirectory() as td:
+            dll = named_export_pe(Path(td) / "installed.dll",
+                                  sorted(EXPORTS - {"PassThruOpen"}))
+            self.assertEqual(audit._required_named_exports(dll),
+                             "required_names_missing")
+
+    def test_20_invalid_export_ordinal_cannot_be_trusted(self):
+        from verify_pe_exports import EXPORTS
+        with tempfile.TemporaryDirectory() as td:
+            dll = named_export_pe(Path(td) / "installed.dll", sorted(EXPORTS))
+            data = bytearray(dll.read_bytes())
+            struct.pack_into("<H", data, 0x400, 0xFFFF)
+            dll.write_bytes(data)
+            self.assertEqual(audit._required_named_exports(dll), "unverifiable")
+
+    def test_21_out_of_range_name_rva_is_unverifiable(self):
+        from verify_pe_exports import EXPORTS
+        with tempfile.TemporaryDirectory() as td:
+            dll = named_export_pe(Path(td) / "installed.dll", sorted(EXPORTS))
+            data = bytearray(dll.read_bytes())
+            struct.pack_into("<I", data, 0x380, 0x7FFFFFFF)
+            dll.write_bytes(data)
+            self.assertEqual(audit._required_named_exports(dll), "unverifiable")
+
+    def test_22_duplicate_export_names_are_not_accepted(self):
+        from verify_pe_exports import EXPORTS
+        with tempfile.TemporaryDirectory() as td:
+            names = sorted(EXPORTS)
+            dll = named_export_pe(Path(td) / "installed.dll",
+                                  names + [names[0]])
+            self.assertEqual(audit._required_named_exports(dll), "unverifiable")
+
+    def test_23_no_export_name_or_private_path_in_summary(self):
+        from verify_pe_exports import EXPORTS
+        with tempfile.TemporaryDirectory() as td:
+            dll = named_export_pe(Path(td) / "PRIVATE-J2534-VIN.dll",
+                                  sorted(EXPORTS))
+            result = audit.assess(True, str(dll), dll)
+            output = json.dumps(result)
+            self.assertNotIn(str(td), output)
+            self.assertNotIn("PassThruOpen", output)
+            self.assertNotIn("PRIVATE-J2534", output)
+            self.assertEqual(result["required_export_subset"], "all_required_named")
+            self.assertEqual(result["sectorv_client_execution"], "not_performed")
+
 
 
 if __name__ == "__main__":
