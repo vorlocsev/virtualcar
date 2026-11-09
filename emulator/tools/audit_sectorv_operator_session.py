@@ -7,7 +7,10 @@ its six fixed UI categories; an optional module snapshot remains uncorrelated.
 All VIN, raw CAN, paths and digests remain in preexisting private sources.
 """
 import argparse
+import hashlib
+import hmac
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -19,6 +22,53 @@ PRIVATE_MANIFEST = "p0-before.private.json"
 WINDOW_REPORT = "p0-window.redacted.json"
 TRIAGE_REPORT = "p0-triage.redacted.json"
 MAX_MANIFEST = 4096
+PRIVATE_SCHEMA = "virtualcar-sectorv-operator-private-source-bindings-v1"
+BINDING_KEYS = ("j2534", "backend")
+
+
+def _source_token(path):
+    """Private-only canonical source pathname binding; never report this token.
+
+    The normal log-prefix audit detects rewritten historical bytes, while the
+    path binding also prevents swapping an empty or identically prefixed log
+    for another file between begin and finish. Neither proves a common GUI
+    process/session or that a path was never redirected between calls.
+    """
+    canonical = os.path.normcase(str(path.resolve()))
+    return hashlib.sha256(os.fsencode(canonical)).hexdigest()
+
+
+def _private_baseline(j2534, backend):
+    return {
+        "schema_version": PRIVATE_SCHEMA,
+        "private_do_not_share": True,
+        "source_path_tokens": {
+            "j2534": _source_token(j2534),
+            "backend": _source_token(backend),
+        },
+        "bounded_window": fresh._baseline(j2534, backend),
+    }
+
+
+def _verified_private_baseline(raw, j2534, backend):
+    if (type(raw) is not dict or set(raw) != {
+            "schema_version", "private_do_not_share",
+            "source_path_tokens", "bounded_window"}
+            or raw["schema_version"] != PRIVATE_SCHEMA
+            or raw["private_do_not_share"] is not True):
+        raise ValueError("private source binding manifest invalid")
+    tokens = raw["source_path_tokens"]
+    if type(tokens) is not dict or set(tokens) != set(BINDING_KEYS):
+        raise ValueError("private source binding fields invalid")
+    for key, path in (("j2534", j2534), ("backend", backend)):
+        token = tokens[key]
+        if (type(token) is not str or len(token) != 64 or
+                any(ch not in "0123456789abcdef" for ch in token) or
+                not hmac.compare_digest(token, _source_token(path))):
+            raise ValueError("operator source pathname changed")
+    bounded = raw["bounded_window"]
+    fresh._validate_baseline(bounded)
+    return bounded
 
 
 def _session_folder(path):
@@ -83,7 +133,7 @@ def begin(args):
     manifest = folder / PRIVATE_MANIFEST
     try:
         fresh._external_output(manifest, (args.j2534, args.backend))
-        baseline = fresh._baseline(args.j2534, args.backend)
+        baseline = _private_baseline(args.j2534, args.backend)
         with manifest.open("x", encoding="utf-8") as stream:
             json.dump(baseline, stream, indent=2)
             stream.write("\n")
@@ -122,8 +172,8 @@ def finish(args):
     gui = _gui_observation(args)
     module = _module_categories(args.module_snapshot,
                                 (*sources, window_path, triage_path))
-    baseline = json.loads(manifest.read_text(encoding="utf-8"))
-    fresh._validate_baseline(baseline)
+    private = json.loads(manifest.read_text(encoding="utf-8"))
+    baseline = _verified_private_baseline(private, args.j2534, args.backend)
 
     # The shared analyzer verifies historical prefixes, bounds and line
     # boundaries. Never materialize raw CAN, VIN or private text in the bundle.

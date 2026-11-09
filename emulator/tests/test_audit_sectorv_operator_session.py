@@ -182,5 +182,109 @@ class OperatorOneSessionTests(unittest.TestCase):
         self.assertNotIn(str(self.root), err)
 
 
+    def test_11_private_manifest_binds_paths_without_storing_plaintext(self):
+        self.begin()
+        raw = (self.session / collector.PRIVATE_MANIFEST).read_text(encoding="utf-8")
+        data = json.loads(raw)
+        self.assertEqual(data["schema_version"], collector.PRIVATE_SCHEMA)
+        self.assertEqual(set(data["source_path_tokens"]), {"j2534", "backend"})
+        self.assertEqual(data["bounded_window"]["schema_version"],
+                         collector.fresh.BASELINE_SCHEMA)
+        self.assertNotIn(str(self.root), raw)
+        self.assertNotIn("private-j2534.log", raw)
+        self.assertNotIn("private-backend.jsonl", raw)
+        self.assertEqual(len(data["source_path_tokens"]["j2534"]), 64)
+
+    def test_12_swapped_empty_j2534_path_fails_even_when_prefix_matches(self):
+        self.begin()
+        replacement = self.root / "alternate-empty-j2534.log"
+        replacement.write_bytes(b"")
+        changed = list(self.base)
+        changed[1] = str(replacement)
+        status, _, err = cli(["finish", *changed, *self.ui])
+        self.assertEqual(status, 2)
+        self.assertNotIn(str(replacement), err)
+        self.assertFalse((self.session / collector.WINDOW_REPORT).exists())
+
+    def test_13_swapped_empty_backend_path_fails_even_when_prefix_matches(self):
+        self.begin()
+        replacement = self.root / "alternate-empty-backend.jsonl"
+        replacement.write_bytes(b"")
+        changed = list(self.base)
+        changed[3] = str(replacement)
+        status, _, err = cli(["finish", *changed, *self.ui])
+        self.assertEqual(status, 2)
+        self.assertNotIn(str(replacement), err)
+        self.assertFalse((self.session / collector.TRIAGE_REPORT).exists())
+
+    def test_14_two_source_names_swapped_rejected_without_payload_changes(self):
+        self.begin()
+        changed = list(self.base)
+        changed[1], changed[3] = changed[3], changed[1]
+        status, _, _ = cli(["finish", *changed, *self.ui])
+        self.assertEqual(status, 2)
+        self.assertFalse((self.session / collector.WINDOW_REPORT).exists())
+
+    def test_15_cloned_historical_log_prefix_cannot_substitute_source(self):
+        self.j.write_bytes(b"historical\n")
+        self.begin()
+        clone = self.root / "cloned-j2534.log"
+        clone.write_bytes(self.j.read_bytes())
+        changed = list(self.base)
+        changed[1] = str(clone)
+        status, _, err = cli(["finish", *changed, *self.ui])
+        self.assertEqual(status, 2)
+        self.assertNotIn("historical", err)
+        self.assertFalse((self.session / collector.TRIAGE_REPORT).exists())
+
+    def test_16_forged_or_incomplete_path_binding_fails_closed(self):
+        self.begin()
+        path = self.session / collector.PRIVATE_MANIFEST
+        original = json.loads(path.read_text(encoding="utf-8"))
+        for mutation in ("missing", "extra", "uppercase", "different"):
+            with self.subTest(mutation=mutation):
+                forged = json.loads(json.dumps(original))
+                if mutation == "missing":
+                    del forged["source_path_tokens"]["backend"]
+                elif mutation == "extra":
+                    forged["source_path_tokens"]["local_vin"] = "private VIN"
+                elif mutation == "uppercase":
+                    forged["source_path_tokens"]["j2534"] = (
+                        forged["source_path_tokens"]["j2534"].upper())
+                else:
+                    forged["source_path_tokens"]["backend"] = "0" * 64
+                path.write_text(json.dumps(forged), encoding="utf-8")
+                status, _, err = self.finish()
+                self.assertEqual(status, 2)
+                self.assertNotIn("private VIN", err)
+                self.assertFalse((self.session / collector.WINDOW_REPORT).exists())
+        path.write_text(json.dumps(original), encoding="utf-8")
+        self.assertEqual(self.finish()[0], 0)
+
+    def test_17_same_canonical_file_with_dot_path_remains_accepted(self):
+        self.begin()
+        intermediate = self.root / "existing-dir"
+        intermediate.mkdir()
+        alternate = intermediate / ".." / self.j.name
+        self.assertEqual(alternate.resolve(), self.j.resolve())
+        changed = list(self.base)
+        changed[1] = str(alternate)
+        status, _, err = cli(["finish", *changed, *self.ui])
+        self.assertEqual(status, 0, err)
+        self.assertTrue((self.session / collector.TRIAGE_REPORT).exists())
+
+    def test_18_redacted_outputs_never_export_private_source_binding_tokens(self):
+        self.begin()
+        self.assertEqual(self.finish()[0], 0)
+        private = json.loads(
+            (self.session / collector.PRIVATE_MANIFEST).read_text(encoding="utf-8"))
+        tokens = private["source_path_tokens"]
+        for filename in (collector.WINDOW_REPORT, collector.TRIAGE_REPORT):
+            output = (self.session / filename).read_text(encoding="utf-8")
+            self.assertNotIn(str(self.root), output)
+            for token in tokens.values():
+                self.assertNotIn(token, output)
+
+
 if __name__ == "__main__":
     unittest.main()
