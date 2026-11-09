@@ -1,5 +1,34 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: native emitted D2 frame-generation evidence (2026-11-09)
+
+- Starting exact verified baseline: `development`
+  `789fe871e9150e1e3874c70a5e4248244681c8db`, automatic owner-only
+  [VMware CI #42622822763](https://github.com/vorlocsev/virtualcar/actions/runs/42622822763)
+  **SUCCESS**, Python 533 (532 passed, one optional skipped), 30/30 steps.
+- Native C `PassThruReadMsgs` already emits `P2 D2 delivered
+  channel/generation/frame/rx-us/delivery-us (BE)` for queued, delivered
+  emulator D2 frames. Existing transaction reports classified transport
+  without exposing these generation/frame provenance checks.
+- Focused `audit_j2534_discovery.py` enhancement appends a categorical
+  `native_d2_delivery_tags` section: exact fresh preceding J2534 RX context
+  and delivery, same channel and CAN, valid generation/frame number,
+  group sequence 1..N, and known 13-frame B9FB `8F…4F` **control bytes only**.
+  No raw PID, VIN, generation, CAN ID, payload, timestamps or input path
+  is exported. No C emulator TX/RX/fixture alteration.
+- Eight synthetic checks cover valid 13-frame group, missing/duplicate or
+  reordered frames, malformed/orphan tags, mismatched routes/statuses,
+  PID isolation, generation/channel/reconnect boundaries and redaction.
+- **Integration gate:** PR must merge to `development`; verify the new
+  automatic exact-merged-SHA VMware CI before claiming the tests passed.
+  Native queue metadata does NOT independently verify SectorV GUI parsing,
+  physical ECU, genuine XC90 V8 MY2009 identity or cross-log timing.
+  [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) stays open
+  for an actual read-only operator-observed isolated Windows guest run.
+  No `main` merge, published binaries or real J2534 tests.
+
+---
+
 ## P0: OBD test must accept noncanonical TX label rejection (2026-11-09)
 
 - Prior [PR #257](https://github.com/vorlocsev/virtualcar/pull/257)
