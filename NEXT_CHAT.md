@@ -1,5 +1,40 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## VERIFIED: VMware LAB contains complete SectorV operator evidence tools (2026-11-09)
+
+- **Most recent code PR:** [#241](https://github.com/vorlocsev/virtualcar/pull/241) **MERGED** to `development` at exact SHA
+  `d9705104191f40609db2b01e822da7d23fb9e2cf`.
+  Owner-only [VMware CI #42581817204](https://github.com/vorlocsev/virtualcar/actions/runs/42581817204)
+  **SUCCESS**, **459/459 Python tests**, **29/29 workflow steps**,
+  including 10 new packaging/import/root-boundary regressions and
+  Windows PowerShell redacted report execution from an extracted ZIP.
+- **Concrete P0 operator blocker removed:** `emulator/tools/package_vmware_lab.py`
+  had omitted the actual two-phase `SectorV` GUI evidence collector,
+  triage, passive module snapshot and its Python/static-PE dependencies.
+  All are now in the **closed, local** VMware LAB ZIP allowlist with
+  `README_SECTORV_FRESH_WINDOW_RU.md`. Static `BUILDINFO.json` flags
+  `two_phase_operator_collector_included=true`, but
+  `operator_gui_acceptance_verified=false` and
+  `vmware_e2e_verified=false`; the synthetic P2 no-CEM-fixture profile
+  is unchanged.
+- **Package path fix:** `audit_sectorv_fresh_window.py` recognizes
+  both checkout `repo/emulator/tools` and extracted `LAB/tools` layouts.
+  Its Python collector and `audit_vmware_sectorv_process.ps1` forbid
+  output inside the actual source/LAB subtree but allow independent private
+  folders elsewhere, rather than accidentally blocking an entire Windows
+  parent drive. Tested from a real *synthetically populated* unpacked ZIP,
+  not by launching the genuine SectorV client.
+- **Remaining P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):**
+  the user/operator must run one **actual** isolated, read-only SectorV
+  GUI session on the Windows VMware guest and capture registered DLL
+  loaded-module category, bounded B9FB TX/RX, VIN display and ECU list
+  using the bundled two-phase tools. The CI runner does not establish
+  real GUI client acceptance, OEM XC90 V8 MY2009 identity or physical
+  J2534 behavior. Do not fabricate A3/A6/B9F0 responses, publish a
+  release, or merge `main`.
+
+---
+
 ## VERIFIED: J2534 filter CAN IDs bounded to 29 bits (2026-11-09)
 
 - **Newest native code:** [PR #239](https://github.com/vorlocsev/virtualcar/pull/239) merged into `development`, exact SHA
