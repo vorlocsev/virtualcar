@@ -875,7 +875,7 @@ static void test_d2_unknown_target_supersession(U32 dev){
  U64 first,second;
  CHANNEL *ch;
  PASSTHRU_MSG rx,msg;
- const char *start,*terminal;
+ const char *start;
  const U8 fb[]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
  const U8 unknown[]={0xCBu,0x61u,0xB9u,0xFBu,0,0,0,0};
  const U8 missing_fc[]={0xCBu,0x50u,0xB9u,0xFCu,0,0,0,0};
