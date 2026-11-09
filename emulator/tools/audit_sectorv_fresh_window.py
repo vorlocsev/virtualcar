@@ -9,11 +9,12 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 
-BASELINE_SCHEMA = "virtualcar-private-log-baseline-v1"
-REPORT_SCHEMA = "virtualcar-sectorv-append-window-report-v1"
+BASELINE_SCHEMA = "virtualcar-private-log-baseline-v2"
+REPORT_SCHEMA = "virtualcar-sectorv-append-window-report-v2"
 MAX_PREFIX = 2 * 1024 * 1024 * 1024
 MAX_APPEND = 16 * 1024 * 1024
 SERVICES = ("A3", "A6", "B9F0", "B9FB", "B9FC")
@@ -61,10 +62,112 @@ def _snapshot(path):
             "sha256": digest, "ended_newline": ended}
 
 
+
+# This audit runs on the same Windows guest as the private log-baseline command,
+# not in CI where an unrelated J2534 provider may be installed. Read only.
+PROVIDER_STATES = frozenset((
+    "installed_library_x86", "canonical_provider_absent",
+    "library_value_missing", "installed_library_missing",
+    "installed_library_not_x86", "installed_library_unverifiable",
+    "registry_read_unavailable", "runner_not_windows",
+    "nonlocal_or_relative_path", "comparison_unverifiable"
+))
+
+
+def _provider_snapshot():
+    """Private endpoint fingerprint of one canonical Registry32 J2534 provider.
+
+    The private baseline holds hashed path and file bytes, NOT the source path.
+    A stable pair of snapshots does NOT prove the DLL stayed loaded throughout
+    an intervening GUI session or was selected by SectorV.
+    """
+    from audit_vmware_provider_provenance import (
+        read_registry32, _file_digest, _pe_machine,
+    )
+    present, library, error = read_registry32()
+    result = {"state": "comparison_unverifiable",
+              "path_sha256": None, "file_sha256": None, "bytes": None}
+    if error:
+        result["state"] = error if error in PROVIDER_STATES else "comparison_unverifiable"
+    elif present is False:
+        result["state"] = "canonical_provider_absent"
+    elif not isinstance(library, str) or not library.strip():
+        result["state"] = "library_value_missing"
+    else:
+        value = os.path.expandvars(library.strip().strip('"'))
+        if not value or value.startswith("\\\\") or not Path(value).is_absolute():
+            result["state"] = "nonlocal_or_relative_path"
+        else:
+            candidate = Path(value)
+            kind = _pe_machine(candidate)
+            if kind == "missing":
+                result["state"] = "installed_library_missing"
+            elif kind == "other_pe":
+                result["state"] = "installed_library_not_x86"
+            elif kind != "x86":
+                result["state"] = "installed_library_unverifiable"
+            else:
+                try:
+                    digest, length = _file_digest(candidate)
+                    result = {
+                        "state": "installed_library_x86",
+                        "path_sha256": hashlib.sha256(
+                            os.path.normpath(value).casefold().encode("utf-8")
+                        ).hexdigest(),
+                        "file_sha256": digest.hex(),
+                        "bytes": length,
+                    }
+                except (OSError, ValueError):
+                    result["state"] = "comparison_unverifiable"
+    return result
+
+
+def _validate_provider(state):
+    if type(state) is not dict or set(state) != {
+            "state", "path_sha256", "file_sha256", "bytes"}:
+        raise ValueError("invalid private provider snapshot shape")
+    if state["state"] not in PROVIDER_STATES:
+        raise ValueError("invalid private provider state")
+    found = state["state"] == "installed_library_x86"
+    if found:
+        for key in ("path_sha256", "file_sha256"):
+            value = state[key]
+            if type(value) is not str or len(value) != 64 or any(
+                    c not in "0123456789abcdef" for c in value):
+                raise ValueError("invalid private provider fingerprint")
+        if type(state["bytes"]) is not int or not 96 <= state["bytes"] <= 64 * 1024 * 1024:
+            raise ValueError("invalid private provider length")
+    elif any(state[key] is not None for key in ("path_sha256", "file_sha256", "bytes")):
+        raise ValueError("unavailable provider must not carry fingerprints")
+
+
+def _provider_endpoints(before, after):
+    _validate_provider(before)
+    _validate_provider(after)
+    if before["state"] == after["state"] == "installed_library_x86":
+        state = ("same_at_endpoints_only" if all(
+            before[key] == after[key] for key in
+            ("path_sha256", "file_sha256", "bytes")
+        ) else "changed_between_endpoints")
+    elif before["state"] != after["state"]:
+        state = "provider_state_changed"
+    else:
+        state = "not_verified"
+    return {
+        "baseline_category": before["state"],
+        "postrun_category": after["state"],
+        "binary_endpoint_consistency": state,
+        "loaded_in_sectorv_client": "not_observed",
+        "during_run_immutability": "not_verified",
+        "same_guest_independently_attested": False,
+    }
+
+
 def _baseline(j2534, backend):
     return {
         "schema_version": BASELINE_SCHEMA,
         "private_do_not_share": True,
+        "provider": _provider_snapshot(),
         "j2534": _snapshot(j2534),
         "backend": _snapshot(backend),
     }
@@ -72,10 +175,11 @@ def _baseline(j2534, backend):
 
 def _validate_baseline(base):
     if type(base) is not dict or set(base) != {
-            "schema_version", "private_do_not_share", "j2534", "backend"}:
+            "schema_version", "private_do_not_share", "provider", "j2534", "backend"}:
         raise ValueError("baseline schema invalid")
     if base["schema_version"] != BASELINE_SCHEMA or base["private_do_not_share"] is not True:
         raise ValueError("baseline provenance invalid")
+    _validate_provider(base["provider"])
     for key in ("j2534", "backend"):
         state = base[key]
         if type(state) is not dict or set(state) != {
@@ -233,7 +337,7 @@ def main(argv=None):
         if args.output is None:
             raise ValueError("summary output required")
         _external_output(args.output, (*sources, args.manifest))
-        if args.manifest.stat().st_size > 2048:
+        if args.manifest.stat().st_size > 4096:
             raise ValueError("private manifest too large")
         baseline = json.loads(args.manifest.read_text(encoding="utf-8"))
         _validate_baseline(baseline)
@@ -242,6 +346,8 @@ def main(argv=None):
         report = summarize(j_lines, b_lines,
                            operator_one_run=args.operator_one_run_confirmed)
         report["windows"] = {"j2534": j_window, "backend": b_window}
+        report["registered_provider"] = _provider_endpoints(
+            baseline["provider"], _provider_snapshot())
         with args.output.open("x", encoding="utf-8") as out:
             json.dump(report, out, indent=2, ensure_ascii=False)
             out.write("\n")
