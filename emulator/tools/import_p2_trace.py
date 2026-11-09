@@ -44,12 +44,15 @@ def sessions_with_origin(lines, target, opcode):
     trace. Absence of those markers is NOT evidence of a physical ECU or OEM
     capture: copied, translated, or replayed logs may look identical.
     """
-    found, active, origins = [], None, set()
+    found, received, generated, emulator_tagged = [], None, [], False
 
     def finish():
-        if active:
-            found.append((active, "emulator_tagged_rx"
-                          if "emulator" in origins else "unverified_trace_origin"))
+        # The native log records both queueing and delivery of a frame.
+        # Prefer the read stream when present, even if it is incomplete.
+        frames = received or generated
+        if frames:
+            found.append((frames, "emulator_tagged_rx"
+                          if emulator_tagged else "unverified_trace_origin"))
 
     for line in lines:
         item = message(line)
@@ -57,17 +60,19 @@ def sessions_with_origin(lines, target, opcode):
             direction, can_id, data = item
             if direction == 'TX':
                 finish()
-                active, origins = None, set()
+                received, generated, emulator_tagged = None, [], False
                 if can_id == 0x000FFFFE and data[:4] == bytes([0xCB, target, 0xB9, opcode]):
-                    active = []
-            elif active is not None:
-                active.append((can_id, data))
-                origins.add("emulator" if ("RX (simulated)" in line
-                            or "PassThruReadMsgs -> delivered" in line)
-                            else "unknown")
-        elif active is not None and ('PassThruDisconnect' in line or 'PassThruClose' in line):
+                    received = []
+            elif received is not None:
+                if "RX (simulated)" in line:
+                    generated.append((can_id, data))
+                    emulator_tagged = True
+                else:
+                    received.append((can_id, data))
+                    emulator_tagged |= "PassThruReadMsgs -> delivered" in line
+        elif received is not None and ('PassThruDisconnect' in line or 'PassThruClose' in line):
             finish()
-            active, origins = None, set()
+            received, generated, emulator_tagged = None, [], False
     finish()
     return found
 
