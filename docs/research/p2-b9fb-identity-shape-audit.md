@@ -36,6 +36,26 @@ pick the longest. The JSON output is exclusively created and never overwrites.
 No raw payload, VIN, six-digit field, private path, PID, host or identity hashes
 are serialized. The input trace must not be committed to GitHub.
 
+## Terminal marker parity for the published 13-frame example
+
+The 13-frame, `0x8F` / `0x08`-series D2 example has a final
+`0x4F` control byte, indicating seven bytes of last-frame data.
+Previously the Python importer and native DLL validator accepted any
+`0x48..0x4F` as the last frame of the same 13-frame shape, while
+`p2audit` already required `0x4F`. That could mark a truncated
+last-frame length as valid transport and copy its padded bytes into a
+lab profile.
+
+The importer, native DLL and Go fixture audit now agree that for this
+**observed 13-frame, 0x08-series form**, the terminal must be `0x4F`.
+For other sequence lengths and the separate `0x10`-series form, the
+existing generic terminal rules remain unchanged. This is not a
+universal B9FB byte-length specification, does not verify the application
+checksum (unknown), and does not show SectorV accepted or parsed a VIN.
+Native-C, Python importer and privacy-safe shape-audit synthetic
+regressions cover the boundary. The source fixture remains read-only,
+and no raw vehicle identifiers are introduced.
+
 ## SectorV normal-mode gate still unresolved
 
 Research of a separate MY2005 PR #30 session shows a 13/13 B9FB client matcher,
