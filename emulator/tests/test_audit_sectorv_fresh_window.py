@@ -298,6 +298,64 @@ class FreshWindowTests(unittest.TestCase):
 
 
 
+    def test_15_bounded_window_counts_scheduled_and_direct_b9fb_separately(self):
+        # Two real request origins; neither counts as accepted vehicle identity.
+        periodic = "".join((
+            log_event("Periodic TX context channel/protocol/flags/baud/time-us (BE) "
+                      + be(1, 5, 0, 500000, 103000)),
+            log_event("J2534 periodic TX (read-only simulator) "
+                      "00 0F FF FE CB 50 B9 FB 00 00 00 00"),
+            log_event("P2 D2 read command: no validated response fixture"),
+        ))
+        history = b9fb_no_fixture() + periodic
+        backend = "".join((
+            backend_evt("tx_received", rid=1, tick=1000000),
+            backend_evt("probe_classified", rid=1, probe="D2_50_B9FB",
+                        tick=1001000),
+            backend_evt("request_completed", rid=1, reason="missing_profile",
+                        outcome="no_response", tick=1002000),
+            backend_evt("tx_received", rid=2, tick=1003000),
+            backend_evt("probe_classified", rid=2, probe="D2_50_B9FB",
+                        tick=1004000),
+            backend_evt("request_completed", rid=2, reason="missing_profile",
+                        outcome="no_response", tick=1005000),
+        ))
+        result = gate.summarize(history.splitlines(True), backend.splitlines(True),
+                                operator_one_run=True)
+        d2 = result["discovery"]["d2"]["0x50"]["B9FB"]
+        self.assertEqual(d2["requests"], 2)
+        self.assertEqual(d2["statuses"], {"no_fixture": 2})
+        self.assertEqual(result["backend"]["d2_probe_coverage"]
+                         ["D2_50_B9FB"]["requests"], 2)
+        self.assertEqual(result["cross_log_transaction_attribution"],
+                         "not_established")
+        self.assertEqual(result["client_vehicle_identity_accepted"],
+                         "not_verified")
+        raw = json.dumps(result)
+        self.assertNotIn("YV1LAB", raw)
+        self.assertNotIn("DEADBEEF", raw)
+
+    def test_16_bounded_window_refuses_unscoped_periodic_as_gui_request(self):
+        marker = log_event("J2534 periodic TX (read-only simulator) "
+                           "00 0F FF FE CB 50 B9 FB 00 00 00 00")
+        backend = "".join((
+            backend_evt("tx_received", rid=3, tick=1100000),
+            backend_evt("probe_classified", rid=3, probe="D2_50_B9FB",
+                        tick=1101000),
+            backend_evt("request_completed", rid=3, reason="missing_profile",
+                        outcome="no_response", tick=1102000),
+        ))
+        result = gate.summarize(marker.splitlines(True), backend.splitlines(True))
+        self.assertEqual(result["discovery"]["d2"]["0x50"]["B9FB"]["requests"], 0)
+        self.assertEqual(result["backend"]["d2_probe_coverage"]
+                         ["D2_50_B9FB"]["requests"], 1)
+        self.assertEqual(result["client_vehicle_identity_accepted"],
+                         "not_verified")
+        self.assertEqual(result["cross_log_transaction_attribution"],
+                         "not_established")
+
+
+
 class FreshToGuiPipelineTests(unittest.TestCase):
     """CLI-to-CLI synthetic checks: raw private text -> redacted window -> GUI triage.
 

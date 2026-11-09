@@ -1199,6 +1199,7 @@ static void test_periodic_d2_backend_evidence(U32 dev){
  D2_PROFILE saved=g_d2[2];
  p2_j2534_bridge saved_bridge=g_vehicle_bridge;
  U32 strict=g_p2_strict_routing,telemetry=g_backend_enabled,can=0,period=0,n;
+ U32 saved_capture=capture_connect_log,log_offset=0;
  PASSTHRU_MSG m,rx;const char *start;U64 rid;
  const U8 fb[]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
  const U8 a3[]={0xCFu,0x50u,0xA3u,0x02u,0x03u,0xA5u,0xA5u,0};
@@ -1221,7 +1222,16 @@ static void test_periodic_d2_backend_evidence(U32 dev){
  m=frame(PROTO_CAN,0x000FFFFEu,fb,8);
  REQUIRE(PassThruStartPeriodicMsg(can,&m,&period,100u)==ERR_OK);
  start=backend_lines+backend_len;
+ log_offset=connect_log_len;capture_connect_log=1;
  tick+=101;rx=readmsg(can);REQUIRE(rx.Data[4]==0x8Fu);
+ capture_connect_log=saved_capture;
+ /* A periodic tick has its own 20-byte context, not a fabricated
+    PassThruWriteMsgs event. The exact marker is consumed by Python audit. */
+ REQUIRE(strstr(connect_log_lines+log_offset,
+                "Periodic TX context channel/protocol/flags/baud/time-us (BE)")!=0);
+ REQUIRE(strstr(connect_log_lines+log_offset,
+                "J2534 periodic TX (read-only simulator)")!=0);
+ REQUIRE(strstr(connect_log_lines+log_offset,"TX (app request)")==0);
  rid=last_tx_request(start);REQUIRE(rid!=0);
  REQUIRE(event_count_since(start,"\"kind\":\"tx_received\"")==1u);
  REQUIRE(strstr(start,"\"probe\":\"D2_50_B9FB\"")!=0);

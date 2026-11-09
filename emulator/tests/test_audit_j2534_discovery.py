@@ -267,5 +267,127 @@ class PrefixedD2ProbeTests(unittest.TestCase):
             self.assertFalse(report["replay_approved"])
 
 
+
+def periodic(can, payload, ch=1, proto=5, flags=0, baud=500000, time_us=100000):
+    """Native scheduler-origin records, not direct client WriteMsgs."""
+    return [
+        event("Periodic TX context channel/protocol/flags/baud/time-us (BE)",
+              be(ch, proto, flags, baud, time_us)),
+        event("J2534 periodic TX (read-only simulator)",
+              can.to_bytes(4, "big") + payload),
+    ]
+
+
+class PeriodicTextOriginTests(unittest.TestCase):
+    """Eight synthetic groups. Delivered RX never asserts OEM ECU identity."""
+
+    def test_17_scheduled_b9fb_thirteen_frames_are_counted_not_gui_attributed(self):
+        lines = periodic(0xFFFFE, D2FB, ch=2, flags=0x100)
+        lines += frames13(ch=2)
+        data = tool.audit(lines)
+        self.assertEqual(len(data["transactions"]), 1)
+        item = data["transactions"][0]
+        self.assertEqual((item["service"], item["channel"], item["request_origin"]),
+                         ("B9FB", 2, "periodic_scheduler"))
+        self.assertEqual((item["status"], item["rx_frames"]), ("delivered", 13))
+        self.assertEqual(item["reason"], "complete_d2_transport_only")
+        self.assertFalse(data["replay_approved"])
+
+    def test_18_periodic_request_does_not_steal_other_direct_channel(self):
+        lines = tx(0xFFFFE, D2FB, ch=1, time_us=100000)
+        lines += periodic(0xFFFFE, D2F0, ch=2, time_us=100500)
+        lines += [event("P2 D2 read command: no validated response fixture")]
+        lines += frames13(ch=1)
+        results = {r["channel"]: r for r in tool.audit(lines)["transactions"]}
+        self.assertEqual(results[1]["request_origin"], "direct_write")
+        self.assertEqual((results[1]["status"], results[1]["rx_frames"]),
+                         ("delivered", 13))
+        self.assertEqual(results[2]["request_origin"], "periodic_scheduler")
+        self.assertEqual((results[2]["status"], results[2]["reason"]),
+                         ("no_fixture", "explicit_missing_fixture"))
+
+    def test_19_scheduled_a3_a6_stay_opaque_and_do_not_prove_ecu(self):
+        for sid in (0xA3, 0xA6):
+            data = bytes((0xCF, 0x50, sid, 0x02, 0x03, 0xA5, 0xA5, 0x00))
+            lines = periodic(0xFFFFE, data, ch=3)
+            item = tool.audit(lines)["transactions"][0]
+            self.assertEqual((item["service"], item["target"], item["rx_frames"]),
+                             (f"{sid:02X}", "0x50", 0))
+            self.assertEqual(item["request_origin"], "periodic_scheduler")
+            self.assertEqual(item["status"], "unverified")
+
+    def test_20_scheduled_flow_control_never_supersedes_existing_request(self):
+        lines = tx(0x726, P3, ch=1)
+        lines += periodic(0x726, bytes.fromhex("30 00 00 00 00 00 00 00"),
+                          ch=1, time_us=101000)
+        lines += rx(0x72E, bytes.fromhex("04 62 F1 14 01 00 00 00"),
+                    ch=1, time_us=103000)
+        result = tool.audit(lines)["transactions"]
+        self.assertEqual(len(result), 1)
+        self.assertEqual((result[0]["status"], result[0]["request_origin"]),
+                         ("delivered", "direct_write"))
+
+    def test_21_missing_and_malformed_periodic_contexts_never_infer_route(self):
+        raw = event("J2534 periodic TX (read-only simulator)",
+                    (0xFFFFE).to_bytes(4, "big") + D2FB)
+        invalid = event("Periodic TX context channel/protocol/flags/baud/time-us (BE)",
+                        be(1, 5, 0, 500000))  # four words, never five
+        report = tool.audit([raw, invalid, raw])
+        self.assertEqual(report["transactions"], [])
+        self.assertEqual(report["parse_errors"].get("unattributed_periodic_tx"), 2)
+        self.assertEqual(report["parse_errors"].get("malformed_periodic_context"), 1)
+
+    def test_22_invalid_transport_and_payloads_do_not_create_evidence(self):
+        raw = (0xFFFFE).to_bytes(4, "big") + D2FB
+        cases = (
+            # A D2 raw-CAN request cannot be attributed to ISO15765.
+            periodic(0xFFFFE, D2FB, proto=6),
+            # Nine-byte classic CAN payload is invalid.
+            periodic(0xFFFFE, D2FB + b"\0", proto=5),
+            # Unexpected trailing text must not be parsed into a request.
+            [periodic(0xFFFFE, D2FB)[0],
+             event("J2534 periodic TX (read-only simulator) " +
+                   raw.hex(" ").upper() + " PRIVATE VIN")],
+            # A zero channel cannot be attributed to a J2534 session.
+            periodic(0xFFFFE, D2FB, ch=0),
+        )
+        for lines in cases:
+            with self.subTest(lines=lines[0][:50]):
+                report = tool.audit(lines)
+                self.assertEqual(report["transactions"], [])
+                self.assertTrue(report["parse_errors"])
+
+    def test_23_periodic_context_does_not_leak_into_later_direct_write(self):
+        context = periodic(0xFFFFE, D2FB, ch=5)[0]
+        raw = periodic(0xFFFFE, D2FB, ch=5)[1]
+        lines = [context, event("some unrelated native diagnostic event"), raw]
+        lines += tx(0xFFFFE, D2FB, ch=1)
+        lines += frames13(ch=1)
+        data = tool.audit(lines)
+        self.assertEqual(len(data["transactions"]), 1)
+        self.assertEqual(data["transactions"][0]["channel"], 1)
+        self.assertEqual(data["transactions"][0]["request_origin"], "direct_write")
+        self.assertEqual(data["parse_errors"].get("unattributed_periodic_tx"), 1)
+
+    def test_24_redacted_periodic_source_ignores_private_payload_and_pid(self):
+        vin = b"YV1LAB00000000001"  # synthetic, never a donor
+        lines = periodic(0xFFFFE, D2FB, ch=6)
+        lines += rx(0x01200003, FIRST, ch=6)
+        lines += rx(0x01200003, b"\x09" + vin[:7], ch=6)
+        report = tool.audit(lines, include_obd=True)
+        data = json.dumps(report)
+        self.assertEqual(report["transactions"][0]["request_origin"],
+                         "periodic_scheduler")
+        self.assertEqual(report["transactions"][0]["status"], "partial_rx")
+        self.assertEqual(report["observed_event_markers"]
+                         ["periodic_scheduler_tx_record"], 1)
+        for secret in ("DEADBEEF", "DiagnosticClient", "YV1LAB", "59 56 31",
+                       "PRIVATE"):
+            self.assertNotIn(secret, data)
+        self.assertFalse(report["contains_payload_data"])
+        self.assertFalse(report["replay_approved"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
