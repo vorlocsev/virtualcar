@@ -130,8 +130,17 @@ function Write-ExclusiveOperatorReport {
             -not [IO.Path]::IsPathRooted($Destination) -or
             $Destination.StartsWith('\\')) { throw 'invalid path' }
         $full = [IO.Path]::GetFullPath($Destination)
-        $root = [IO.Path]::GetFullPath(
-            (Join-Path $PSScriptRoot '..\..')).TrimEnd('\') + '\'
+        # In source: repo/emulator/tools -> protect repo root.
+        # In standalone LAB: LAB/tools -> protect only the LAB subtree.
+        # Guard the real distribution root, never the parent drive.
+        $distRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+        if ((Test-Path -LiteralPath (Join-Path $distRoot 'BUILDINFO.json') -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $distRoot 'VirtualCarJ2534.dll') -PathType Leaf)) {
+            $root = $distRoot.TrimEnd('\') + '\'
+        } else {
+            $root = [IO.Path]::GetFullPath(
+                (Join-Path $PSScriptRoot '..\..')).TrimEnd('\') + '\'
+        }
         if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
             throw 'output inside source tree'
         }
