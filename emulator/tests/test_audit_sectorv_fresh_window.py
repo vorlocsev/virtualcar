@@ -1,4 +1,4 @@
-"""Eight synthetic privacy and append-boundary tests. No client, J2534 or CAN writes."""
+"""Synthetic read-only append-window and complete GUI-triage CLI regressions."""
 import contextlib
 import hashlib
 import io
@@ -389,12 +389,11 @@ class FreshToGuiPipelineTests(unittest.TestCase):
                     json.loads(final_text) if final_text else None,
                     window_text, final_text, code)
 
-    @staticmethod
-    def _assert_unverified(result):
-        assert result["client_vehicle_identity_accepted"] == "not_verified"
-        assert result["oem_vin_and_ecu_verified"] is False
-        assert result["transaction_level_correlation"] == "not_established"
-        assert result["replay_approved"] is False
+    def _assert_unverified(self, result):
+        self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
+        self.assertFalse(result["oem_vin_and_ecu_verified"])
+        self.assertEqual(result["transaction_level_correlation"], "not_established")
+        self.assertFalse(result["replay_approved"])
 
     def test_15_cli_pipeline_b9fb_no_fixture_not_vin_failure_proof(self):
         w, r, raw_w, raw_r, code = self._run_pipeline(
