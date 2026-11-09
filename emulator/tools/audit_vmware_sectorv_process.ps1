@@ -9,7 +9,7 @@ A process-name match is not proof of the genuine SectorV binary.
 param(
     [switch]$SelfTest,
     [switch]$OperatorSession,
-    [string]$TestedDll,
+    [string]$ReferenceDll,
     [string]$OutputFile
 )
 $ErrorActionPreference = 'Stop'
@@ -104,10 +104,10 @@ function Get-ByteEquivalence {
 function Get-OperatorNextGate {
     param([string]$Observation, [string]$Comparison)
     if ($Comparison -eq 'different_bytes_at_snapshot') {
-        return 'resolve_tested_vs_registered_dll_difference'
+        return 'resolve_reference_vs_registered_dll_difference'
     }
     if ($Comparison -ne 'exact_bytes_at_snapshot') {
-        return 'verify_tested_and_registered_dll_equivalence'
+        return 'verify_reference_and_registered_dll_equivalence'
     }
     if ($Observation -eq 'client_not_observed_in_local_snapshot' -or
         $Observation -eq 'client_process_listing_unavailable') {
@@ -241,7 +241,7 @@ function Invoke-LocalSelfTests {
         if ((Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot') -cne
                 'collect_same_run_redacted_j2534_and_gui_evidence' -or
             (Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'different_bytes_at_snapshot') -cne
-                'resolve_tested_vs_registered_dll_difference' -or
+                'resolve_reference_vs_registered_dll_difference' -or
             (Get-OperatorNextGate 'client_not_observed_in_local_snapshot' 'exact_bytes_at_snapshot') -cne
                 'observe_client_with_gui_open') {
             throw 'operator test 8: conservative next gate'
@@ -253,13 +253,13 @@ function Invoke-LocalSelfTests {
 }
 
 if ($SelfTest) {
-    if ($OperatorSession -or $TestedDll -or $OutputFile) {
+    if ($OperatorSession -or $ReferenceDll -or $OutputFile) {
         throw 'Self-test cannot combine with operator collection'
     }
     Invoke-LocalSelfTests
     exit 0
 }
-if (-not $OperatorSession -and ($TestedDll -or $OutputFile)) {
+if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile)) {
     throw 'Operator-only parameters require -OperatorSession'
 }
 
@@ -307,17 +307,17 @@ if ($OperatorSession) {
     if ($processObservation -eq 'client_not_observed_in_runner_context') {
         $processObservation = 'client_not_observed_in_local_snapshot'
     }
-    $comparison = Get-ByteEquivalence -RegisteredPath $library -ReferencePath $TestedDll
+    $comparison = Get-ByteEquivalence -RegisteredPath $library -ReferencePath $ReferenceDll
     $result = [ordered]@{
         schema_version = 'virtualcar-sectorv-process-binding-operator-v1'
         scope = 'operator_requested_current_host_snapshot_only'
         observation = $processObservation
-        installed_vs_tested_dll = $comparison
+        installed_vs_reference_dll = $comparison
         next_safe_gate = Get-OperatorNextGate $processObservation $comparison
         name_matched_executable_authenticity = 'not_verified'
         operator_same_run_pairing = 'not_independently_attested'
         registered_provider_unchanged_during_run = 'not_verified'
-        tested_build_is_valid_pe32 = 'not_assessed_by_this_tool'
+        reference_dll_pe32 = 'not_assessed_by_this_tool'
         client_was_launched_by_audit = $false
         accepted_vin_or_ecu = 'not_verified'
     }
