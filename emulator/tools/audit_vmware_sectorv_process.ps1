@@ -31,6 +31,13 @@ function Get-ClientBindingState {
     }
     try {
         $modules = @($Clients[0].Modules)
+        # PowerShell 5.1 can turn an inaccessible ScriptProperty/Modules
+        # getter into $null without raising a terminating exception. Empty
+        # enumeration is NOT proof that the registered DLL is absent.
+        if ($modules.Count -eq 0 -or
+            ($modules.Count -eq 1 -and $null -eq $modules[0])) {
+            return 'client_module_list_unavailable'
+        }
         foreach ($module in $modules) {
             if ($null -eq $module -or [string]::IsNullOrWhiteSpace($module.FileName)) {
                 continue
@@ -61,7 +68,8 @@ function Invoke-LocalSelfTests {
         @{Clients=@($yes);Path=$expected;Want='registered_library_loaded_in_name_matched_client'},
         @{Clients=@($yes);Path='c:\VIRTUALCARLAB\VIRTUALCARJ2534.DLL';Want='registered_library_loaded_in_name_matched_client'},
         @{Clients=@($no);Path=$expected;Want='registered_library_not_in_enumerated_modules'},
-        @{Clients=@($inaccessible);Path=$expected;Want='client_module_list_unavailable'}
+        @{Clients=@($inaccessible);Path=$expected;Want='client_module_list_unavailable'},
+        @{Clients=@([pscustomobject]@{Modules=@()});Path=$expected;Want='client_module_list_unavailable'}
     )
     $passed=0
     foreach ($case in $cases) {
