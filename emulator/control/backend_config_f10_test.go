@@ -175,6 +175,51 @@ func TestBackendTelemetryF10ToggleBackups(t *testing.T) {
 	}
 }
 
+// Windows time resolution is not a safe uniqueness source for backups.
+// These toggles must retain ALL prior bytes even within one clock tick.
+func TestBackendTelemetryF10RapidUniqueBackups(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virtualcar.ini")
+	original := "[Diagnostics]\nBackendTelemetryEnabled=0\n; synthetic\n"
+	enabled := strings.Replace(original, "Enabled=0", "Enabled=1", 1)
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		on, err := toggleBackendTelemetry(path)
+		if err != nil || on != (i%2 == 0) {
+			t.Fatalf("rapid toggle %d: on=%v err=%v", i, on, err)
+		}
+	}
+	backups, err := filepath.Glob(path + ".dev49-*.bak")
+	if err != nil || len(backups) != 8 {
+		t.Fatalf("rapid backups: count=%d err=%v", len(backups), err)
+	}
+	contents := map[string]int{}
+	seen := map[string]bool{}
+	for _, backup := range backups {
+		if seen[backup] {
+			t.Fatal("duplicate backup filename")
+		}
+		seen[backup] = true
+		got, err := os.ReadFile(backup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[string(got)]++
+	}
+	if contents[original] != 4 || contents[enabled] != 4 || len(contents) != 2 {
+		t.Fatalf("missing or overwritten backup versions: %v", contents)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil || string(current) != original {
+		t.Fatalf("current profile mutated: err=%v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 9 {
+		t.Fatalf("temporary or missing files: count=%d err=%v", len(entries), err)
+	}
+}
+
 func TestBackendTelemetryF10RejectedToggleIsUnchanged(t *testing.T) {
 	for _, input := range []string{
 		"\ufeff[Diagnostics]\r\nOther=synthetic\r\n[ diagnostics ]\r\n",
