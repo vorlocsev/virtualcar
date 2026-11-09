@@ -663,6 +663,23 @@ def audit(lines, *, include_obd=False):
                 tx["off_route_rx"] += 1
                 return
             if tx["service"].startswith("B9") and len(payload) != 8:
+                # A short/long frame is evidence of malformed B9
+                # transport only when it belongs to this response route.
+                # A different CAN ID, or an unrelated first-frame opcode,
+                # must remain off-route rather than poisoning a legitimate
+                # independent reply in the same J2534 channel.
+                if tx["_rxid"] is not None:
+                    matching = can_id == tx["_rxid"]
+                else:
+                    matching = (len(payload) >= 4
+                                and (payload[0] in (0x8F, 0x97)
+                                     or (payload[0] & 0xF8) == 0xC8)
+                                and payload[1:4] == bytes((
+                                    int(tx["target"], 16), 0xF9,
+                                    int(tx["service"][-2:], 16))))
+                if not matching:
+                    tx["off_route_rx"] += 1
+                    return
                 tx["_invalid"] = True
                 tx["_d2_rx_size_invalid"] = True
                 tx["rx_frames"] += 1
