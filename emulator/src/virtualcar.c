@@ -190,6 +190,9 @@ typedef struct {
     /* Source baud of emulator-generated raw CAN UDS SF/FF/CF only.
        A J2534 channel DATA_RATE change cannot carry these old replies. */
     U32 queue_raw_response_baud[MAX_QUEUE];
+    /* Private exchange generation independent of optional backend telemetry.
+       Only unfinished raw CAN FF/CF exchanges may supersede queued frames. */
+    U64 queue_raw_exchange[MAX_QUEUE],next_raw_exchange,pending_raw_exchange;
     /* Diagnostic correlation metadata. Never sent to the J2534 client. */
     U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace;
     BACKEND_ABORT aborted[MAX_QUEUE];
@@ -1007,6 +1010,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
     c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;c->queue_ready_us[c->w]=0;
     c->queue_passive_baud[c->w]=0;
     c->queue_raw_response_baud[c->w]=0;
+    c->queue_raw_exchange[c->w]=0;
     c->queue_trace[c->w]=c->active_trace;
     c->w=(c->w+1)%MAX_QUEUE;c->count++;
     backend_event(c,c->active_trace,"filter_pass","UNKNOWN","none","unknown");
@@ -1060,6 +1064,7 @@ static void pump_can_cf(CHANNEL *c) {
          if(c->count>before){
              c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;
              c->queue_raw_response_baud[slot]=c->baud;
+             c->queue_raw_exchange[slot]=c->pending_raw_exchange;
          }else{
              /* A strict raw-CAN data filter can admit FF while rejecting
                 one or more CFs by PCI sequence byte. Never advance past a
@@ -1092,16 +1097,54 @@ static void send_can_cf(CHANNEL *c,U32 block_size) {
     c->pending_cf_credit=block_size; /* BS=0: unlimited until final CF. */
     pump_can_cf(c);
 }
+/* Superseding a *pending* raw CAN ISO-TP reply must also retract its
+   not-yet-read FF/CF. Tracking via the actual exchange generation works
+   with backend telemetry disabled, unlike a diagnostic request ID. */
+static U32 drop_superseded_raw_iso_rx(CHANNEL *c,U64 generation,U64 rid){
+    U32 read,keep=0,removed=0,original=c->count;
+    if(!generation)return 0;
+    for(read=0;read<original;read++){
+        U32 from=(c->r+read)%MAX_QUEUE,to=(c->r+keep)%MAX_QUEUE;
+        if(c->queue_raw_exchange[from]==generation){
+            if(rid)backend_event(c,rid,"rx_dropped","UNKNOWN","superseded","unknown");
+            removed++;
+            continue;
+        }
+        if(to!=from){
+            bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
+            c->queue_d2_gen[to]=c->queue_d2_gen[from];
+            c->queue_d2_frame[to]=c->queue_d2_frame[from];
+            c->queue_ready_us[to]=c->queue_ready_us[from];
+            c->queue_trace[to]=c->queue_trace[from];
+            c->queue_passive_baud[to]=c->queue_passive_baud[from];
+            c->queue_raw_response_baud[to]=c->queue_raw_response_baud[from];
+            c->queue_raw_exchange[to]=c->queue_raw_exchange[from];
+        }
+        keep++;
+    }
+    c->count=keep;
+    c->w=(c->r+keep)%MAX_QUEUE;
+    return removed;
+}
 static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 *payload,U32 len) {
     U8 f[8];U32 i;
     backend_event(c,c->active_trace,"response_generated","UNKNOWN","none","unknown");
     /* This compact simulator has only one outstanding segmented response per
        channel. Never release stale CFs from an earlier ECU request. */
     if(c->pending_len){
-        U64 previous=c->pending_trace;
+        U64 previous=c->pending_trace,old_exchange=c->pending_raw_exchange;
+        U32 dropped;
         logline("ISO-TP pending transfer superseded by a new ECU response",0,0);
-        c->pending_len=0;c->pending_pos=0;c->pending_request_id=0;c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
+        c->pending_len=0;c->pending_pos=0;c->pending_id=0;
+        c->pending_request_id=0;c->pending_sn=0;c->pending_trace=0;
+        c->pending_next_us=0;c->pending_stmin_us=0;
         c->pending_cf_active=0;c->pending_cf_credit=0;
+        c->pending_raw_exchange=0;
+        /* A previous FF or granted CF may already be in the RX FIFO.
+           Remove only this unfinished raw exchange, not unrelated traffic. */
+        dropped=drop_superseded_raw_iso_rx(c,old_exchange,previous);
+        if(dropped){U8 count_be[4];u32_be(count_be,dropped);
+            logline("Raw CAN ISO-TP stale queued frames dropped (BE)",count_be,4);}
         backend_abort_pending(c,previous,BACKEND_ABORT_SUPERSEDED);
     }
     if(c->protocol==PROTO_ISO15765){
@@ -1156,6 +1199,10 @@ static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 
          return;
      }
      c->queue_raw_response_baud[slot]=c->baud;
+     ++c->next_raw_exchange;
+     if(!c->next_raw_exchange)++c->next_raw_exchange;
+     c->pending_raw_exchange=c->next_raw_exchange;
+     c->queue_raw_exchange[slot]=c->pending_raw_exchange;
     }
     bytes_copy(c->pending,payload,len);c->pending_len=len;c->pending_pos=6;
     c->pending_id=response_id;c->pending_sn=1;c->pending_trace=c->active_trace;c->pending_next_us=0;c->pending_stmin_us=0;
@@ -1224,7 +1271,8 @@ static U32 drop_queued_d2(CHANNEL *c){
             c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;
             c->queue_trace[to]=c->queue_trace[from];c->queue_ready_us[to]=c->queue_ready_us[from];
             c->queue_passive_baud[to]=c->queue_passive_baud[from];
-            c->queue_raw_response_baud[to]=c->queue_raw_response_baud[from];}
+            c->queue_raw_response_baud[to]=c->queue_raw_response_baud[from];
+            c->queue_raw_exchange[to]=c->queue_raw_exchange[from];}
         keep++;
     }
     c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
@@ -1247,6 +1295,7 @@ static U32 drop_old_bus_passive_rx(CHANNEL *c){
             c->queue_ready_us[to]=c->queue_ready_us[from];
             c->queue_passive_baud[to]=origin;
             c->queue_raw_response_baud[to]=c->queue_raw_response_baud[from];
+            c->queue_raw_exchange[to]=c->queue_raw_exchange[from];
         }
         keep++;
     }
@@ -1279,6 +1328,7 @@ static U32 cancel_old_bus_raw_iso_rx(CHANNEL *c){
             c->queue_ready_us[to]=c->queue_ready_us[from];
             c->queue_passive_baud[to]=c->queue_passive_baud[from];
             c->queue_raw_response_baud[to]=origin;
+            c->queue_raw_exchange[to]=c->queue_raw_exchange[from];
         }
         keep++;
     }
@@ -1698,6 +1748,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
              c->queue_trace[c->r]=0;c->queue_ready_us[c->r]=0;
              c->queue_passive_baud[c->r]=0;
              c->queue_raw_response_baud[c->r]=0;
+             c->queue_raw_exchange[c->r]=0;
              c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
              /* Resume only previously granted CFs after this slot is freed. */
              pump_can_cf(c);
