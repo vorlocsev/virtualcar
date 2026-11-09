@@ -1430,14 +1430,20 @@ static void pump_periodic(CHANNEL *c){
 /* Standard 04.04 API. Undecorated export names are defined in virtualcar.def. */
 EXPORT U32 WINCALL PassThruOpen(PTR name,U32 *device) {
     (void)name;if(!device)return error(ERR_NULL_PARAMETER);
-    lock_state();if(g_open){unlock_state();return error(ERR_DEVICE_IN_USE);}
+    /* Open must test the device under the same lock that resets channels.
+       A concurrent first Open may finish after an earlier unlocked check. */
+    lock_state();
+    if(g_open){unlock_state();return error(ERR_DEVICE_IN_USE);}
     g_open=1;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);load_config();*device=1;
     logline("PassThruOpen -> device 1",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruClose(U32 device) {
     U32 i;
-    if(device!=1||!g_open)return error(ERR_INVALID_DEVICE_ID);
+    if(device!=1)return error(ERR_INVALID_DEVICE_ID);
+    /* Do not close state that another thread already closed after an
+       unlocked g_open check. The close operation owns the state lock. */
     lock_state();
+    if(!g_open){unlock_state();return error(ERR_INVALID_DEVICE_ID);}
     for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used)
         backend_cancel_channel(&g_ch[i],"device_close",0);
     g_open=0;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);
@@ -1446,15 +1452,19 @@ EXPORT U32 WINCALL PassThruClose(U32 device) {
 EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U32 *channel_id){
     U32 i;
     if(!channel_id)return connect_result(protocol,flags,baud,ERR_NULL_PARAMETER);
-    if(!g_open||device!=1)return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);
-    /* P3Tool also contains driver-specific 0x8004/0x8005/0x10000001 modes.
-       Do not silently reinterpret them as standard CAN/ISO15765. */
-    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765)
-        return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
-    /* Zero cannot represent a configured CAN bit rate. Reject before
-       allocating a channel or notifying the passive vehicle observer. */
-    if(baud==0u)return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);
-    lock_state();for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
+    if(device!=1)return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);
+    /* Check open state and allocate a channel in one critical section.
+       Otherwise a simultaneous Close can clear g_open between the unlocked
+       check and this allocation, creating a live channel on a closed device. */
+    lock_state();
+    if(!g_open){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);}
+    /* P3Tool driver-specific protocol IDs remain rejected, not aliased. */
+    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765){
+        unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
+    }
+    /* Zero cannot represent a configured CAN bit rate. */
+    if(baud==0u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);}
+    for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
     g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;

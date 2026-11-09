@@ -1,5 +1,39 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: serialize J2534 device lifecycle checks (2026-11-09)
+
+- Exact verified starting `development`: `27ad427c7f6ebcdb07f49196b3eb06882771306a`;
+  automatic [VMware CI #42632265161](https://github.com/vorlocsev/virtualcar/actions/runs/42632265161)
+  **SUCCESS**, 573 Python tests (572 passed, one optional skip),
+  30/30 workflow steps.
+- Source defect in `emulator/src/virtualcar.c`:
+  `PassThruOpen` checked `g_open` before acquiring `g_lock`,
+  `PassThruClose` checked open state before lock, and
+  `PassThruConnect` checked open state before locking then allocated
+  a channel afterwards. Concurrent calls could reset another user's
+  channel or leave an allocated channel on a closed device.
+- Fix moves all `g_open` lifecycle guards into one critical section
+  with Open/reset, Close/cancel and Connect/channel allocation,
+  preserving null-argument and invalid device error categories.
+  All existing read-only and unsupported protocol semantics remain.
+- Eight deterministic host C regressions in
+  `emulator/tests/virtualcar_test.c`:
+  null Open, repeated Open preserving a channel, invalid-device Close,
+  stale Connect after Close, another Open at lock-entry, Close before
+  Connect's lock, Close before Close's lock, and recovery through
+  Open/Connect/Disconnect/Close. This intercepts the host lock shim;
+  it does NOT represent a real multithreaded Windows SectorV session.
+- **Integration gate:** focused PR to `development`, followed by
+  automatic VMware C/Python/C++/.NET CI on the exact resulting merged
+  SHA. Do not call the change verified until those steps pass.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains blocked on genuine isolated read-only SectorV GUI run
+  with x86 DLL binding, CEM B9FB, VIN and ECU observations. No
+  fabricated A3/A6/B9F0 positives, physical J2534, `main` merge
+  or published release.
+
+---
+
 ## P0: Connect mode append test must tolerate native Windows CRLF (2026-11-09)
 
 - [PR #264](https://github.com/vorlocsev/virtualcar/pull/264) merged into
