@@ -1146,6 +1146,28 @@ static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 
         if(dropped){U8 count_be[4];u32_be(count_be,dropped);
             logline("Raw CAN ISO-TP stale queued frames dropped (BE)",count_be,4);}
         backend_abort_pending(c,previous,BACKEND_ABORT_SUPERSEDED);
+    }else if(c->protocol==PROTO_CAN && c->pending_raw_exchange){
+        /* A CTS/BS=0 can stage EVERY CF before the app reads even the FF.
+           pending_len is then zero, but the last multi-frame exchange still
+           owns unread raw RX. A new reply must not follow those stale FF/CF.
+           An exchange with no queued frames was already delivered: never
+           rewrite its successful terminal as a supersession. */
+        U32 j,found=0;
+        U64 previous=0,old_exchange=c->pending_raw_exchange;
+        for(j=0;j<c->count;j++){
+            U32 slot=(c->r+j)%MAX_QUEUE;
+            if(c->queue_raw_exchange[slot]!=old_exchange)continue;
+            previous=c->queue_trace[slot];found=1;break;
+        }
+        if(found){
+            U32 dropped=drop_superseded_raw_iso_rx(c,old_exchange,previous);
+            c->pending_raw_exchange=0;
+            if(dropped){
+                U8 count_be[4];u32_be(count_be,dropped);
+                logline("Raw CAN ISO-TP fully queued old exchange dropped (BE)",count_be,4);
+            }
+            backend_abort_pending(c,previous,BACKEND_ABORT_SUPERSEDED);
+        }
     }
     if(c->protocol==PROTO_ISO15765){
         /* Gate the optional START_OF_MESSAGE and the complete response

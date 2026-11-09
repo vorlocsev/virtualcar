@@ -1,5 +1,42 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: cancel last raw CAN ISO-TP exchange even after all CFs were queued (2026-11-09)
+
+- Exact verified `development` baseline:
+  `5c7c34b8f204199a431ca94e8a71e84f30f47454`,
+  automatic owner-only [VMware CI #42650716877](https://github.com/vorlocsev/virtualcar/actions/runs/42650716877)
+  **SUCCESS**: 573 Python tests (572 pass, one optional skip),
+  eight new native strict D2 filtering cases and 30/30 steps.
+- Actual source defect: raw CAN `pump_can_cf` with CTS/BS=0 can enqueue
+  FF,CF1,CF2 and set `pending_len=0` immediately, **before any of
+  the frames are read**. Then `emit_response` for a newer UDS request
+  skips its existing `if(c->pending_len)` supersession branch and
+  leaves those fully staged but unread frames mixed with the new
+  reply. Prior #274 covered only cases where CF staging was still pending.
+- Focused native fix: when `pending_len=0` on raw CAN, check for
+  queued slots tagged with the last `pending_raw_exchange` generation,
+  which remains available even after CF staging is complete. If any
+  remain, drop only those old exchange's unread FF/CF, preserve all
+  unrelated FIFO and peer channels, and mark the original RID
+  `superseded/aborted`. If all frames have already been **delivered**,
+  do not retroactively abort the prior successful response.
+  This private generation does not depend on backend telemetry.
+  No change to ECU payloads, J2534 ABI, SecurityAccess, CAN TX or P0
+  GUI evidence classification.
+- Eight deterministic C host cases: all FF/CF staged, FF already
+  delivered, FF+CF1 delivered, unrelated FIFO ordering, ring-wrap,
+  disabled backend logs, peer-channel independence, and prior
+  fully delivered exchange remaining `responded`.
+- **Gate:** focused PR merge into `development`, then new full
+  owner-only VMware CI on its exact merged SHA. Prior baseline CI
+  cannot validate this patch.
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still requires genuine isolated read-only SectorV GUI,
+  x86 J2534 adapter selection, B9FB, VIN display and ECU list.
+  No `main` merge or published release before that evidence.
+
+---
+
 ## P0: stop D2 replay on first strict-filtered frame (2026-11-09)
 
 - Verified exact baseline `development`:

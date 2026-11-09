@@ -1365,6 +1365,125 @@ static void test_raw_isotp_supersession_queued_rx(U32 dev){
  puts("PASS P0 ISO-TP retry 8: completed SF remains in FIFO");
 }
 
+/* P0: after CTS/BS=0, every CF can be queued while pending_len==0.
+   A later UDS reply must retract those unread multi-frame RX slots.
+   Eight deterministic host cases, synthetic read-only CAN only. */
+static void test_raw_isotp_fully_staged_retry(U32 dev){
+ const U8 vin[8]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 tester[8]={0x02u,0x3Eu,0x00u,0,0,0,0,0};
+ const U8 fc[8]={0x30u,0,0,0,0,0,0,0};
+ const U8 plain[8]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0u};
+ U32 old_strict=g_strict_j2534_filters,old_backend=g_backend_enabled;
+ U32 ch=0,peer=0,n;
+ CHANNEL *c,*other;PASSTHRU_MSG req,ctsm,short_req,rx;
+ const char *begin,*peer_begin;U64 old_rid,peer_rid,old_generation;
+ g_strict_j2534_filters=0u;
+ req=frame(PROTO_CAN,0x7E0u,vin,8);
+ ctsm=frame(PROTO_CAN,0x7E0u,fc,8);
+ short_req=frame(PROTO_CAN,0x7E0u,tester,8);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c);
+
+ /* 1. BS=0 stages FF+both CFs: later tester-present retracts all three. */
+ begin=backend_lines+backend_len;send(ch,&req);old_rid=last_tx_request(begin);
+ send(ch,&ctsm);
+ REQUIRE(old_rid&&c->count==3u&&c->pending_len==0u);
+ old_generation=c->pending_raw_exchange;REQUIRE(old_generation!=0);
+ REQUIRE(c->queue_raw_exchange[c->r]==old_generation);
+ send(ch,&short_req);
+ REQUIRE(c->count==1u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ REQUIRE(terminal_for(begin,old_rid,"superseded","aborted")==1u);
+ REQUIRE(terminal_count_for(begin,old_rid)==1u);
+ puts("PASS P0 ISO-TP fully staged retry 1: queued FF/CF1/CF2 retracted");
+
+ /* 2. FF delivered, both CFs staged: the newer SF removes both CFs. */
+ begin=backend_lines+backend_len;send(ch,&req);old_rid=last_tx_request(begin);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&ctsm);REQUIRE(c->count==2u&&c->pending_len==0u);
+ send(ch,&short_req);REQUIRE(c->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ REQUIRE(terminal_for(begin,old_rid,"superseded","aborted")==1u);
+ puts("PASS P0 ISO-TP fully staged retry 2: delivered FF, queued CFs removed");
+
+ /* 3. FF and CF1 delivered, CF2 still queued when the reply changes. */
+ begin=backend_lines+backend_len;send(ch,&req);old_rid=last_tx_request(begin);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&ctsm);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ REQUIRE(c->count==1u && c->pending_len==0u);
+ send(ch,&short_req);REQUIRE(c->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ REQUIRE(terminal_for(begin,old_rid,"superseded","aborted")==1u);
+ puts("PASS P0 ISO-TP fully staged retry 3: queued final CF removed");
+
+ /* 4. Non-ISO RX before/after fully queued exchange is preserved FIFO. */
+ enqueue(c,0x555u,plain,8u);
+ send(ch,&req);send(ch,&ctsm);
+ enqueue(c,0x556u,plain,8u);
+ REQUIRE(c->count==5u);
+ send(ch,&short_req);REQUIRE(c->count==3u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x56u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ puts("PASS P0 ISO-TP fully staged retry 4: unrelated RX remains ordered");
+
+ /* 5. Compaction is safe when FF/CF cross the circular FIFO boundary. */
+ REQUIRE(c->count==0u);
+ c->r=c->w=MAX_QUEUE-2u;
+ enqueue(c,0x555u,plain,8u);send(ch,&req);send(ch,&ctsm);
+ enqueue(c,0x556u,plain,8u);
+ REQUIRE(c->count==5u&&c->r==MAX_QUEUE-2u&&c->w==3u);
+ send(ch,&short_req);REQUIRE(c->count==3u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x55u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x56u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ puts("PASS P0 ISO-TP fully staged retry 5: circular FIFO compacts");
+
+ /* 6. Private exchange generation works without backend request IDs. */
+ g_backend_enabled=0u;send(ch,&req);send(ch,&ctsm);
+ REQUIRE(c->count==3u&&c->pending_len==0u&&c->pending_raw_exchange!=0u);
+ REQUIRE(c->queue_trace[c->r]==0u);
+ send(ch,&short_req);REQUIRE(c->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ g_backend_enabled=old_backend;
+ puts("PASS P0 ISO-TP fully staged retry 6: telemetry not required");
+
+ /* 7. Channel B's fully queued FF/CF is independent of superseding A. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other);
+ peer_begin=backend_lines+backend_len;
+ send(peer,&req);peer_rid=last_tx_request(peer_begin);send(peer,&ctsm);
+ send(ch,&req);send(ch,&ctsm);
+ REQUIRE(other->count==3u&&other->pending_len==0u&&c->count==3u);
+ send(ch,&short_req);
+ REQUIRE(c->count==1u&&other->count==3u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(terminal_for(peer_begin,peer_rid,"none","responded")==1u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS P0 ISO-TP fully staged retry 7: peer channel isolated");
+
+ /* 8. If all FF/CF frames were ACTUALLY delivered, a later request
+    cannot turn the previous successful exchange into an abort. */
+ begin=backend_lines+backend_len;send(ch,&req);old_rid=last_tx_request(begin);
+ send(ch,&ctsm);REQUIRE(c->count==3u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(terminal_for(begin,old_rid,"none","responded")==1u);
+ send(ch,&short_req);rx=readmsg(ch);
+ REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ REQUIRE(terminal_for(begin,old_rid,"superseded","aborted")==0u);
+ REQUIRE(terminal_count_for(begin,old_rid)==1u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_strict_j2534_filters=old_strict;g_backend_enabled=old_backend;
+ puts("PASS P0 ISO-TP fully staged retry 8: delivered reply remains complete");
+}
+
 /* P0 write isolation: mismatched J2534 ProtocolID and invalid classic
    CAN payloads cannot enter the read-only vehicle observer or RX FIFO. */
 static void test_write_transport_boundaries(U32 dev){
@@ -2420,6 +2539,7 @@ int main(){
  test_raw_can_cf_filter_gap_isolation(dev);
  test_d2_strict_filter_no_frame_gaps(dev);
  test_raw_isotp_supersession_queued_rx(dev);
+ test_raw_isotp_fully_staged_retry(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
