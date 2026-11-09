@@ -138,7 +138,25 @@ int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){
  return 1;
 }
 int CloseHandle(HANDLE file){(void)file;return 1;}
-long InterlockedCompareExchange(volatile long*dst,long exchange,long compare){long v=*dst;if(v==compare)*dst=exchange;return v;}
+/* Deterministic lifecycle contention at the precise lock-entry boundary.
+   The host test never uses actual threads or simulates physical hardware. */
+static U32 lifecycle_race_on_next_lock=0;
+long InterlockedCompareExchange(volatile long*dst,long exchange,long compare){
+ if(dst==&g_lock && compare==0 && lifecycle_race_on_next_lock){
+  U32 transition=lifecycle_race_on_next_lock;
+  lifecycle_race_on_next_lock=0;
+  if(transition==1u){
+   /* Another thread completed Close just before this lock was obtained. */
+   g_open=0;bytes_zero(g_ch,sizeof(g_ch));
+  }else if(transition==2u){
+   /* Another thread completed its first Open and allocated channel 1. */
+   g_open=1;bytes_zero(g_ch,sizeof(g_ch));
+   g_ch[0].used=1;g_ch[0].id=1;
+   g_ch[0].protocol=PROTO_CAN;g_ch[0].baud=500000u;
+  }
+ }
+ {long v=*dst;if(v==compare)*dst=exchange;return v;}
+}
 long InterlockedExchange(volatile long*dst,long val){long v=*dst;*dst=val;return v;}
 #define REQUIRE(expr) do{if(!(expr)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#expr);exit(1);}}while(0)
 static void fill_untraced_rx(CHANNEL *ch,U32 target){
@@ -1393,8 +1411,59 @@ static void test_filter_can_id_boundaries(U32 dev){
  puts("PASS J2534 filters: physical CAN ID bounds, full-width masks and ISO FC");
 }
 
+/* Eight source-backed host regressions for J2534 lifecycle linearization.
+   The lock hook models an interleaving exactly between the former unlocked
+   g_open precheck and acquisition of g_lock. No OEM or GUI claims. */
+static void test_j2534_lifecycle_lock_races(void){
+ U32 dev=0,ch=0,untouched=0xC0DEu;
+ REQUIRE(g_open==0u && g_lock==0);
+ /* 1: null Open never changes global device state. */
+ REQUIRE(PassThruOpen(0,0)==ERR_NULL_PARAMETER);
+ REQUIRE(g_open==0u && channel(1)==0);
+ /* 2: re-opening an already opened device cannot drop a live channel. */
+ REQUIRE(PassThruOpen(0,&dev)==ERR_OK && dev==1u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ REQUIRE(channel(ch)!=0);
+ REQUIRE(PassThruOpen(0,&untouched)==ERR_DEVICE_IN_USE);
+ REQUIRE(channel(ch)!=0 && g_open==1u);
+ /* 3: wrong Close handle never tears down the active channel. */
+ REQUIRE(PassThruClose(dev+1u)==ERR_INVALID_DEVICE_ID);
+ REQUIRE(channel(ch)!=0 && g_open==1u);
+ /* 4: Close makes stale Connect handles invalid and leaves its output alone. */
+ REQUIRE(PassThruClose(dev)==ERR_OK);
+ ch=0xC0DEu;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_INVALID_DEVICE_ID);
+ REQUIRE(ch==0xC0DEu && g_open==0u && channel(1)==0);
+ /* 5: concurrent first Open wins just before our own Open takes the lock. */
+ lifecycle_race_on_next_lock=2u;
+ REQUIRE(PassThruOpen(0,&untouched)==ERR_DEVICE_IN_USE);
+ REQUIRE(lifecycle_race_on_next_lock==0u && g_open==1u);
+ REQUIRE(channel(1)!=0 && channel(1)->baud==500000u);
+ REQUIRE(PassThruClose(dev)==ERR_OK);
+ /* 6: another thread closing before our Connect takes the lock prevents
+    creation of a channel on an already-closed J2534 device. */
+ REQUIRE(PassThruOpen(0,&dev)==ERR_OK);
+ lifecycle_race_on_next_lock=1u;ch=0xC0DEu;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_INVALID_DEVICE_ID);
+ REQUIRE(lifecycle_race_on_next_lock==0u && g_open==0u);
+ REQUIRE(channel(1)==0 && ch==0xC0DEu);
+ /* 7: another Close ahead of our Close must not be reported as success. */
+ REQUIRE(PassThruOpen(0,&dev)==ERR_OK);
+ lifecycle_race_on_next_lock=1u;
+ REQUIRE(PassThruClose(dev)==ERR_INVALID_DEVICE_ID);
+ REQUIRE(lifecycle_race_on_next_lock==0u && g_open==0u);
+ /* 8: normal Open/Connect/Disconnect/Close survives all interrupted races. */
+ REQUIRE(PassThruOpen(0,&dev)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ REQUIRE(channel(ch)!=0);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruClose(dev)==ERR_OK && g_open==0u);
+ puts("PASS P0 J2534 lifecycle: atomic Open/Close/Connect and lock-entry races");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
+ test_j2534_lifecycle_lock_races();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_write_transport_boundaries(dev);
