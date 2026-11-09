@@ -1,5 +1,34 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: actionable read-only next action after GUI Finish (2026-11-09)
+
+- Exact verified baseline `development`: `4bc5d364f4e2b8e82b55cf01e1c63d926764e4a8`;
+  owner-only automatic [VMware #42628637308](https://github.com/vorlocsev/virtualcar/actions/runs/42628637308)
+  **SUCCESS**, 557 Python (556 passed, one optional skip), 30/30 CI steps.
+- Real bottleneck: `audit_sectorv_ui_window_triage.py` already selects
+  `first_next_gate`, but the operator `Finish` PowerShell helper only
+  printed a generic success-to-save message. The real next evidence check
+  remained buried behind a machine code in `p0-triage.redacted.json`.
+- Focused improvement: map each of the **12** known gate codes to a
+  hard-coded Russian, read-only `first_next_action_ru` in the triage
+  output. The PowerShell wrapper reads only the just-written **redacted**
+  JSON and displays the safe next action after `Finish`. No
+  raw source files, VIN, paths, hashes, channel, PID, or logs are
+  interpolated. Suggestions never claim OEM ECU/VIN acceptance.
+- Eight groups: 7 synthetic gate-action/priority/privacy checks and one
+  Windows-only PowerShell `Finish` integration check. Existing GUI
+  provenance, next-gate logic, output exclusivity, optional module
+  evidence and C/J2534 behavior remain unchanged.
+- **Integration gate:** focused PR to `development`; automatic VMware
+  validation must pass on the exact new merged commit SHA. The previous
+  green CI does not attest this change.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains
+  open until real isolated read-only SectorV GUI observation in the
+  operator's Windows guest confirms DLL binding, B9FB/VIN and ECU
+  display. No `main` merge, physical adapter use or release.
+
+---
+
 ## P0: prevent D2 generation merging across channel reuse (2026-11-09)
 
 - Starting exact verified `development` `12b408737dfcf2a8c485e03e248efeed4d1fd01a`,
