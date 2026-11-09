@@ -1403,6 +1403,9 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
        Do not silently reinterpret them as standard CAN/ISO15765. */
     if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765)
         return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
+    /* Zero cannot represent a configured CAN bit rate. Reject before
+       allocating a channel or notifying the passive vehicle observer. */
+    if(baud==0u)return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);
     lock_state();for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
@@ -1662,6 +1665,16 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         U32 speed_changed=0;
         if(!list||(!list->ConfigPtr&&list->NumOfParams)){unlock_state();return error(ERR_NULL_PARAMETER);}
         if(list->NumOfParams>64){unlock_state();return error(ERR_INVALID_IOCTL_VALUE);}
+        /* Validate every DATA_RATE before mutating any parameter. A zero
+           speed is invalid, including when it appears after a valid rate
+           in the same list; leave baud and observer state unchanged. */
+        if(ioctl==IO_SET_CONFIG){
+            for(i=0;i<list->NumOfParams;i++)
+                if(list->ConfigPtr[i].Parameter==1u &&
+                   list->ConfigPtr[i].Value==0u){
+                    unlock_state();return error(ERR_INVALID_BAUDRATE);
+                }
+        }
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
