@@ -88,12 +88,18 @@ MODULE_COMPARISONS = frozenset((
     "exact_bytes_at_snapshot", "different_bytes_at_snapshot",
     "comparison_unverifiable", "not_compared",
 ))
+MODULE_PE32_HEADERS = frozenset((
+    "not_assessed_by_this_tool", "not_compared", "x86_pe32_header",
+    "other_pe", "invalid_pe", "unverifiable",
+))
 
 
-def _module_next_gate(observation, comparison):
-    """Mirror the fixed-category PS5.1 operator script, not a process attestation."""
+def _module_next_gate(observation, comparison, reference_pe32="not_assessed_by_this_tool"):
+    """Mirror the PS5.1 preflight; a PE header never proves client identity."""
     if comparison == "different_bytes_at_snapshot":
         return "resolve_reference_vs_registered_dll_difference"
+    if reference_pe32 in ("invalid_pe", "other_pe"):
+        return "verify_reference_pe32_before_gui"
     if observation in (
             "client_not_observed_in_local_snapshot",
             "client_process_listing_unavailable"):
@@ -104,6 +110,8 @@ def _module_next_gate(observation, comparison):
         return "collect_gui_evidence_without_reference_attestation"
     if comparison != "exact_bytes_at_snapshot":
         return "verify_reference_and_registered_dll_equivalence"
+    if reference_pe32 == "unverifiable":
+        return "verify_reference_pe32_before_gui"
     return "collect_same_run_redacted_j2534_and_gui_evidence"
 
 
@@ -120,12 +128,14 @@ def _check_module_snapshot(value):
             or value["name_matched_executable_authenticity"] != "not_verified"
             or value["operator_same_run_pairing"] != "not_independently_attested"
             or value["registered_provider_unchanged_during_run"] != "not_verified"
-            or value["reference_dll_pe32"] != "not_assessed_by_this_tool"
+            or type(value["reference_dll_pe32"]) is not str
+            or value["reference_dll_pe32"] not in MODULE_PE32_HEADERS
             or value["client_was_launched_by_audit"] is not False
             or value["accepted_vin_or_ecu"] != "not_verified"):
         raise ValueError("operator snapshot has unsupported provenance")
     if value["next_safe_gate"] != _module_next_gate(
-            value["observation"], value["installed_vs_reference_dll"]):
+            value["observation"], value["installed_vs_reference_dll"],
+            value["reference_dll_pe32"]):
         raise ValueError("operator snapshot next gate contradicts observations")
 
 
@@ -531,6 +541,7 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False,
         result["operator_module_snapshot"] = {
             "observation": module_snapshot["observation"],
             "reference_byte_comparison": module_snapshot["installed_vs_reference_dll"],
+            "reference_pe32_header": module_snapshot["reference_dll_pe32"],
             "next_safe_gate": module_snapshot["next_safe_gate"],
             "same_guest_or_run_attested": False,
             "client_executable_authenticity": "not_verified",

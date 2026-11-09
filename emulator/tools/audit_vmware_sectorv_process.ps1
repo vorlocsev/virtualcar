@@ -102,10 +102,67 @@ function Get-ByteEquivalence {
     }
 }
 
+# Read only bounded PE header bytes; this checks architecture, not export
+# contracts, binary provenance or executable authenticity. Never load the DLL.
+function Get-ReferencePe32State {
+    param([string]$ReferencePath)
+    if ([string]::IsNullOrWhiteSpace($ReferencePath)) {
+        return 'not_compared'
+    }
+    try {
+        $expanded = [Environment]::ExpandEnvironmentVariables($ReferencePath.Trim().Trim('"'))
+        if (-not [IO.Path]::IsPathRooted($expanded) -or $expanded.StartsWith('\\')) {
+            return 'unverifiable'
+        }
+        $full = [IO.Path]::GetFullPath($expanded)
+        $file = [IO.FileInfo]::new($full)
+        if (-not $file.Exists) { return 'unverifiable' }
+        if ($file.Length -lt 96 -or $file.Length -gt 67108864) {
+            return 'invalid_pe'
+        }
+        $stream = [IO.File]::Open($full, [IO.FileMode]::Open,
+            [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $dos = New-Object byte[] 64
+            if ($stream.Read($dos, 0, 64) -ne 64 -or
+                $dos[0] -ne 0x4D -or $dos[1] -ne 0x5A) {
+                return 'invalid_pe'
+            }
+            [uint32]$offset = [BitConverter]::ToUInt32($dos, 0x3C)
+            if ($offset -lt 64 -or $offset -gt 4096 -or
+                ([long]$offset + 26) -gt $stream.Length) {
+                return 'invalid_pe'
+            }
+            [void]$stream.Seek([long]$offset, [IO.SeekOrigin]::Begin)
+            $coff = New-Object byte[] 26
+            if ($stream.Read($coff, 0, 26) -ne 26 -or
+                $coff[0] -ne 0x50 -or $coff[1] -ne 0x45 -or
+                $coff[2] -ne 0 -or $coff[3] -ne 0) {
+                return 'invalid_pe'
+            }
+            [uint16]$machine = [BitConverter]::ToUInt16($coff, 4)
+            [uint16]$magic = [BitConverter]::ToUInt16($coff, 24)
+            if ($machine -eq 0x014C -and $magic -eq 0x010B) {
+                return 'x86_pe32_header'
+            }
+            return 'other_pe'
+        } finally {
+            $stream.Dispose()
+        }
+    } catch {
+        # No caller-controlled values, binary paths or exceptions leave this tool.
+        return 'unverifiable'
+    }
+}
+
 function Get-OperatorNextGate {
-    param([string]$Observation, [string]$Comparison)
+    param([string]$Observation, [string]$Comparison,
+          [string]$ReferencePe32 = 'not_assessed_by_this_tool')
     if ($Comparison -eq 'different_bytes_at_snapshot') {
         return 'resolve_reference_vs_registered_dll_difference'
+    }
+    if ($ReferencePe32 -eq 'invalid_pe' -or $ReferencePe32 -eq 'other_pe') {
+        return 'verify_reference_pe32_before_gui'
     }
     if ($Observation -eq 'client_not_observed_in_local_snapshot' -or
         $Observation -eq 'client_process_listing_unavailable') {
@@ -119,6 +176,9 @@ function Get-OperatorNextGate {
     }
     if ($Comparison -ne 'exact_bytes_at_snapshot') {
         return 'verify_reference_and_registered_dll_equivalence'
+    }
+    if ($ReferencePe32 -eq 'unverifiable') {
+        return 'verify_reference_pe32_before_gui'
     }
     return 'collect_same_run_redacted_j2534_and_gui_evidence'
 }
@@ -261,6 +321,49 @@ function Invoke-LocalSelfTests {
                 'collect_gui_evidence_without_reference_attestation') {
             throw 'operator test 8: conservative next gate'
         }; $operatorChecks++
+        # Eight synthetic read-only reference architecture checks. The test
+        # bytes are PE *header* fixtures, not usable code or a J2534 driver.
+        $peChecks=0
+        if ((Get-ReferencePe32State '') -cne 'not_compared') {
+            throw 'reference PE test 1: not supplied'
+        }; $peChecks++
+        if ((Get-ReferencePe32State 'relative.dll') -cne 'unverifiable') {
+            throw 'reference PE test 2: nonlocal reference'
+        }; $peChecks++
+        if ((Get-ReferencePe32State (Join-Path $tempRoot 'missing.dll')) -cne 'unverifiable') {
+            throw 'reference PE test 3: absent reference'
+        }; $peChecks++
+        if ((Get-ReferencePe32State $first) -cne 'invalid_pe') {
+            throw 'reference PE test 4: no DOS header'
+        }; $peChecks++
+        $pe=New-Object byte[] 512
+        $pe[0]=0x4D;$pe[1]=0x5A
+        [BitConverter]::GetBytes([uint32]0x80).CopyTo($pe,0x3C)
+        $pe[0x80]=0x50;$pe[0x81]=0x45
+        [BitConverter]::GetBytes([uint16]0x014C).CopyTo($pe,0x84)
+        [BitConverter]::GetBytes([uint16]0x010B).CopyTo($pe,0x98)
+        [IO.File]::WriteAllBytes($first,$pe)
+        if ((Get-ReferencePe32State $first) -cne 'x86_pe32_header') {
+            throw 'reference PE test 5: x86 header'
+        }; $peChecks++
+        [BitConverter]::GetBytes([uint16]0x8664).CopyTo($pe,0x84)
+        [BitConverter]::GetBytes([uint16]0x020B).CopyTo($pe,0x98)
+        [IO.File]::WriteAllBytes($first,$pe)
+        if ((Get-ReferencePe32State $first) -cne 'other_pe') {
+            throw 'reference PE test 6: x64 header'
+        }; $peChecks++
+        [BitConverter]::GetBytes([uint32]5000).CopyTo($pe,0x3C)
+        [IO.File]::WriteAllBytes($first,$pe)
+        if ((Get-ReferencePe32State $first) -cne 'invalid_pe') {
+            throw 'reference PE test 7: invalid PE offset'
+        }; $peChecks++
+        if ((Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot' 'other_pe') -cne
+                'verify_reference_pe32_before_gui' -or
+            (Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot' 'x86_pe32_header') -cne
+                'collect_same_run_redacted_j2534_and_gui_evidence') {
+            throw 'reference PE test 8: conservative next action'
+        }; $peChecks++
+        Write-Host ("PASS: {0}/{0} synthetic reference PE32 header tests" -f $peChecks)
     } finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -323,16 +426,17 @@ if ($OperatorSession) {
         $processObservation = 'client_not_observed_in_local_snapshot'
     }
     $comparison = Get-ByteEquivalence -RegisteredPath $library -ReferencePath $ReferenceDll
+    $referencePe32 = Get-ReferencePe32State -ReferencePath $ReferenceDll
     $result = [ordered]@{
         schema_version = 'virtualcar-sectorv-process-binding-operator-v1'
         scope = 'operator_requested_current_host_snapshot_only'
         observation = $processObservation
         installed_vs_reference_dll = $comparison
-        next_safe_gate = Get-OperatorNextGate $processObservation $comparison
+        next_safe_gate = Get-OperatorNextGate $processObservation $comparison $referencePe32
         name_matched_executable_authenticity = 'not_verified'
         operator_same_run_pairing = 'not_independently_attested'
         registered_provider_unchanged_during_run = 'not_verified'
-        reference_dll_pe32 = 'not_assessed_by_this_tool'
+        reference_dll_pe32 = $referencePe32
         client_was_launched_by_audit = $false
         accepted_vin_or_ecu = 'not_verified'
     }
