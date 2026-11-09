@@ -1,5 +1,30 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## CURRENT P0 CHANGE: isolate A3/A6 from stale B9 discovery frames
+
+- This branch fixes the real `emulator/src/virtualcar.c` D2 branch gap:
+  recognized CEM A3/A6 probes now supersede any earlier staged/queued
+  B9FB/B9F0/B9FC response on the **same** CAN J2534 channel, exactly as
+  subsequent B9 reads already did. The shared `supersede_d2_exchange`
+  routine retains unrelated RX FIFO and cannot affect other channels.
+  It never fabricates positive A3/A6 responses.
+- Eight additional **synthetic native tests** cover staged and fully
+  queued B9FB, an already delivered first frame, other-channel and
+  wrong-CAN-ID isolation, unrelated FIFO, and later B9FB retry.
+- **Verify the exact `development` merge SHA and owner-only VMware CI**
+  before considering this stage completed. Prior checked baseline
+  `b9aad7a0538e0cad55fa989b45dcea19dab04059` had
+  [VMware SUCCESS #42582221352](https://github.com/vorlocsev/virtualcar/actions/runs/42582221352)
+  (459 Python tests, 29/29 workflow steps).
+- Remaining [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):
+  real SectorV GUI still has not been observed using the user's isolated
+  VMware guest. Use the reviewed LAB operator procedure and collect the
+  bounded CEM request/RX, DLL binding, VIN display and ECU-list categories.
+  Do not assert a vehicle accepted a VIN from offline synthetic checks,
+  publish releases or merge `main`.
+
+---
+
 ## VERIFIED: VMware LAB contains complete SectorV operator evidence tools (2026-11-09)
 
 - **Most recent code PR:** [#241](https://github.com/vorlocsev/virtualcar/pull/241) **MERGED** to `development` at exact SHA
