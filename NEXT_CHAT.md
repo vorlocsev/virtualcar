@@ -1,5 +1,30 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: CI compatibility fix for strict native TX provenance (2026-11-09)
+
+- Previous P0 source fix merged via [PR #256](https://github.com/vorlocsev/virtualcar/pull/256)
+  to `development` `358ccec3448515977ac7f0e4bc26c65ae43c150e`.
+  Its exact-SHA [automatic VMware #42622057648](https://github.com/vorlocsev/virtualcar/actions/runs/42622057648)
+  **FAILED** in the Python suite: 533 tests, 1 error in
+  `test_audit_obd_observation.py::test_06_event_markers_privacy_malformed_and_no_filter_guess`.
+  All 8 new scoped native TX regressions themselves passed.
+- Root cause: the old test accessed `records(damaged)[0]` for a malformed
+  `TX context`; the new fail-closed guard correctly rejects its orphaned
+  TX, yielding *zero* transactions and a parse error. This was a stale test
+  assertion, not an ECU transport failure.
+- Narrow follow-up adjusts the OBD test to verify no `delivered` events,
+  an empty transaction list for that malformed native context, and exact
+  `malformed_context` / `native_tx_without_fresh_context` counters.
+  No source behavior is weakened, and no profile or DLL is changed.
+- **Integration gate:** focused regression PR must merge into
+  `development`; automatic owner-only VMware must then complete
+  successfully on the **exact new merged SHA** before this stage is green.
+  Next functional blocker remains [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):
+  genuine read-only SectorV GUI/registered x86 DLL/VIN/ECU evidence from
+  isolated user-operated VMware. No `main` merge or releases.
+
+---
+
 ## P0: preserve native TX context adjacency and strict native RX metadata (2026-11-09)
 
 - Starting exact baseline: `development` `da88bbf110b2df447a8af9ca0b1e8e894c54090b`,
