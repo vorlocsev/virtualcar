@@ -65,7 +65,7 @@ try {
     }
     $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     $expectedSidecar = $digest + '  ' + $filename
-    $actualSidecar = (Get-Content -LiteralPath $sidecar -Raw).TrimEnd([char]13, [char]10)
+    $actualSidecar = (Get-Content -LiteralPath $sidecar -Raw).TrimEnd([char[]]@([char]13, [char]10))
     if ($actualSidecar -cne $expectedSidecar) {
         throw 'LAB outer checksum mismatch'
     }
