@@ -1,5 +1,17 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: raw CAN FC telemetry attribution requires an active matching exchange (2026-11-09)
+
+- **Last verified baseline:** `development` `26e1266bdf9c4f2fb9d42e675504c7f2b4e65259`, owner-only automatic [VMware CI #42662926844](https://github.com/vorlocsev/virtualcar/actions/runs/42662926844) **SUCCESS**, 30/30 steps, 582 Python tests (1 optional skip) and all 8 FC OVERFLOW queued-CF native checks passed.
+- Source-backed evidence gap: `begin_tx_evidence` previously suppressed any CAN TX whose first data byte had FC PCI high nibble `0x3`, **even with no pending FF or on an unrelated CAN ID**. Such late/stray frames could disappear from the diagnostic `tx_received` / terminal timeline. A matching FC that belongs to a pending exchange must still be a control continuation, never a new request.
+- Minimal fix: classify as FC continuation only with `pending_len>0` and exact `pending_request_id`. Make a wrong-address FC fall through once to the existing `UNHANDLED/unhandled_request/no_response` evidence, without touching the old pending transfer. Short matching, WAIT and CTS remain control frames; no ECU/ISO-TP payload changes.
+- Eight synthetic native C regressions: no-pending CTS, no-pending short FC, matching CTS, matching WAIT, wrong FC from second configured ECU, wrong FC from unknown ECU, short matching FC, and late FC after CLEAR_RX with fresh SF recovery.
+- **Merge gate:** one focused PR to `development`, followed by fresh automatic owner-only VMware CI **SUCCESS on exact merged SHA**. No previous green run can verify this change.
+- **Still unverified:** real isolated read-only SectorV GUI guest, x86 J2534 adapter binding, CEM B9FB, VIN and ECU list in one operator session. P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains open. No `main` merge or release.
+
+---
+
+
 ## P0: FC OVERFLOW retracts unread raw ISO-TP CF after prior grant (2026-11-09)
 
 - Last **verified** development baseline: `4718e169886dc7b487b0b2feb132d80097259e50`, automatic [VMware #42660872820](https://github.com/vorlocsev/virtualcar/actions/runs/42660872820) **SUCCESS** (30/30; 582 Python tests, one optional skip, operator x86 preflight).
