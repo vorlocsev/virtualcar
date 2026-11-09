@@ -32,7 +32,10 @@
 
 #include "../src/virtualcar.c"
 static U32 tick=0;static I64 qpc_offset_us=0;
-static char backend_lines[800000];static U32 backend_len=0;
+/* Full host suite holds synthetic evidence from every native stage.
+   Silent truncation cannot masquerade as a J2534 terminal bug. */
+static char backend_lines[2000000];static U32 backend_len=0;
+static U32 backend_capture_overflows=0;
 static int capture_connect_log=0;
 static char connect_log_lines[32000];static U32 connect_log_len=0;
 static U32 event_count_since(const char *start,const char *pattern){
@@ -166,7 +169,10 @@ int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){
   memcpy(connect_log_lines+connect_log_len,b,n);connect_log_len+=n;
   connect_log_lines[connect_log_len]=0;
  }else if(f==(HANDLE)1){
-  if(n+backend_len>=sizeof(backend_lines))return 0;
+  /* Keep room for NUL, and detect loss of any synthetic evidence. */
+  if(n>=sizeof(backend_lines)-backend_len){
+   backend_capture_overflows++;return 0;
+  }
   memcpy(backend_lines+backend_len,b,n);backend_len+=n;
   backend_lines[backend_len]=0;
  }else return 0;
@@ -4279,6 +4285,8 @@ int main(){
  test_stage42_multiecu_fc(dev);
  test_stage43_iso_rx_boundaries(dev);
  REQUIRE(PassThruClose(dev)==ERR_OK);
+ /* Lost host evidence is a test failure, never silently ignored. */
+ REQUIRE(backend_capture_overflows==0);
  /* Existing B9FB 13-frame/READ128 and privacy tests are retained. */
  REQUIRE(strstr(backend_lines,"\"format\":\"virtualcar-backend-v1\"")!=NULL);
  REQUIRE(event_count("\"kind\":\"tx_received\"")>0);
