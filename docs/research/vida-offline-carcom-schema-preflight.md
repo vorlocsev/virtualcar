@@ -41,13 +41,16 @@ py -3 .\emulator\tools\audit_vida_carcom_schema_links.py `
 
 The script opens exactly three immutable local SQLite **copies** with
 `mode=ro&immutable=1` and `PRAGMA query_only=ON`. Its SQL statements are
-limited to `_vida_meta`, `_vida_tables`, and `_vida_columns`.
+limited to `_vida_meta`, `_vida_tables`, and `_vida_columns`, including
+zero-row `SELECT * ... LIMIT 0` checks of their real exporter column schemas.
+This rejects malformed exports where SQLite would otherwise interpret a missing
+double-quoted column identifier as a string constant.
 It cannot access the raw CarCom/Script user rows, original XML/ZIP, VIN,
 CAN payloads or original SQL definitions.
 
 The output contains **only fixed allowlisted** table/column names,
 source row counts already present in export metadata, column counts and
-six *candidate* edge-shape booleans. Unknown source table/column identifiers
+six service and six optional hardware *candidate* edge-shape booleans. Unknown source table/column identifiers
 are never emitted. An ambiguous fixed name in multiple SQL schemas,
 repeated column, invalid exporter identity, or missing database fails closed.
 Report output is exclusive and cannot be written into the Git checkout.
@@ -59,7 +62,8 @@ copies are an atomic cross-database SQL snapshot.
 
 ## Verification and next gate
 
-Eight fully synthetic regression groups verify expected links, absent tables,
+Fifteen fully synthetic regression cases verify exporter metadata structure,
+expected links, absent tables,
 missing columns, duplicate schema names, duplicate columns/export identity,
 missing/incorrect DB, private-name redaction and exclusive output/no source
 modification. Run `python -m unittest discover -s emulator/tests -p
