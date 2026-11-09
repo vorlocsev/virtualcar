@@ -153,7 +153,17 @@ class ObdObservationTests(unittest.TestCase):
             damaged = request() + reply()
             index = {"tx": 1, "rx": 3, "tx_context": 0, "rx_context": 2}[location]
             damaged[index] += " ZZ"
-            self.assertNotEqual(records(damaged)[0]["status"], "delivered")
+            observed = records(damaged)
+            # Strict native TX context rejection may produce NO transaction;
+            # indexing a nonexistent request is not a validation failure.
+            self.assertFalse(any(item["status"] == "delivered" for item in observed))
+            if location == "tx_context":
+                self.assertEqual(observed, [])
+                evidence = report(damaged)
+                self.assertEqual(evidence["parse_errors"]["malformed_context"], 1)
+                self.assertEqual(
+                    evidence["parse_errors"]["native_tx_without_fresh_context"], 1)
+                self.assertFalse(evidence["replay_approved"])
         fake = request()
         fake[1] = fake[1].replace("TX (app request)", "Client said TX (app request)")
         self.assertNotEqual(records(fake + reply())[0]["status"], "delivered")
