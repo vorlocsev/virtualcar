@@ -1,5 +1,17 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: CLEAR_RX_BUFFER must cancel staged raw CAN ISO-TP (2026-11-09)
+
+- Latest verified baseline before this patch: `development` `751f3053fdece867e166377d93ee8fef0450b171`, automatic owner-only [VMware #42652390551](https://github.com/vorlocsev/virtualcar/actions/runs/42652390551) **SUCCESS** (30/30).
+- Source-backed gap: `PassThruIoctl(IO_CLEAR_RX_BUFFER)` cleared RX FIFO and staged D2 but retained `pending_len`, the ISO-TP FC grant, and `pending_raw_exchange`. A later CTS could emit CF1/CF2 from the discarded FF, or a previously granted transfer could stage stale CFs after the queue was cleared. Old F11 Group 3 test explicitly expected this obsolete behavior.
+- Focused fix in `emulator/src/virtualcar.c`: call existing evidence cancellation before resetting all staged raw CAN FF/CF continuation and queued private metadata. Preserve peer channels, monotonically increasing exchange counter, recorded D2 behavior and unrelated J2534 APIs. Keep all ECU replies unchanged.
+- Eight native host scenarios: queued FF/late CTS, already-delivered FF, BS=1 suspended CF, BS=0 fully staged RX, wrapped RX FIFO metadata, telemetry disabled, parallel peer, fresh request recovery. Update F11 legacy expectation to require no orphan CF.
+- **Gate:** merge focused PR into `development`; require a fresh automatic complete owner-only VMware CI **SUCCESS** on that exact merged SHA. Previous green #42652390551 does not validate this change. No claims of real SectorV GUI or physical J2534 integration.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) still requires a real isolated read-only SectorV GUI run observing adapter selection, B9FB, VIN and ECU list in one session. No `main` merge or release before the GUI evidence.
+
+---
+
+
 ## P0: cancel last raw CAN ISO-TP exchange even after all CFs were queued (2026-11-09)
 
 - Exact verified `development` baseline:

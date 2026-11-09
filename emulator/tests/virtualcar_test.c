@@ -2526,6 +2526,125 @@ static void test_j2534_blocked_read_session_reuse(void){
  puts("PASS P0 J2534 ReadMsgs: 8 channel-session reuse/timeout cases");
 }
 
+
+/* P0: eight native read-only CLEAR_RX_BUFFER ISO-TP lifecycle scenarios.
+   Synthetic CAN only; no SectorV GUI or real car is exercised. */
+static void test_clear_rx_raw_iso_lifetime(U32 dev){
+ const U8 vin[]={3,0x22,0xF1,0x90,0,0,0,0};
+ const U8 tester[]={2,0x3E,0,0,0,0,0,0};
+ const U8 fc[]={0x30,0,0,0,0,0,0,0};
+ const U8 fc1[]={0x30,1,0,0,0,0,0,0};
+ U32 old_strict=g_strict_j2534_filters,old_backend=g_backend_enabled;
+ U32 ch=0,peer=0,n,k,journal;
+ CHANNEL *c,*other;
+ PASSTHRU_MSG req=frame(PROTO_CAN,0x7E0,vin,8);
+ PASSTHRU_MSG cts=frame(PROTO_CAN,0x7E0,fc,8);
+ PASSTHRU_MSG one=frame(PROTO_CAN,0x7E0,fc1,8);
+ PASSTHRU_MSG shortreq=frame(PROTO_CAN,0x7E0,tester,8),rx;
+ const char *log;U64 rid,peer_rid;
+ g_strict_j2534_filters=0;g_backend_enabled=1;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c!=0);
+
+ /* 1: queued FF, no CTS; aborted once, later CTS silent. */
+ log=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(log);
+ REQUIRE(rid&&c->pending_len==20&&c->count==1&&c->pending_raw_exchange);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ REQUIRE(c->count==0&&c->pending_len==0&&c->pending_raw_exchange==0);
+ REQUIRE(terminal_for(log,rid,"clear_rx_buffer","aborted")==1);
+ send(ch,&cts);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ puts("PASS P0 CLEAR_RX 1: pending FF and late CTS");
+
+ /* 2: FF already delivered, continuation not yet granted. */
+ log=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(log);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10&&c->pending_len==20);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ send(ch,&cts);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(terminal_for(log,rid,"clear_rx_buffer","aborted")==1);
+ puts("PASS P0 CLEAR_RX 2: delivered FF, orphan CF rejected");
+
+ /* 3: BS=1 queues CF1, suspends CF2. */
+ log=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(log);
+ send(ch,&one);REQUIRE(c->count==2&&c->pending_len==20);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ REQUIRE(c->pending_cf_active==0&&c->pending_cf_credit==0);
+ send(ch,&cts);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(terminal_for(log,rid,"clear_rx_buffer","aborted")==1);
+ puts("PASS P0 CLEAR_RX 3: suspended CF tail");
+
+ /* 4: BS=0 has staged FF,CF1,CF2 but none dequeued. */
+ log=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(log);
+ send(ch,&cts);REQUIRE(c->count==3&&c->pending_len==0);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ REQUIRE(c->count==0&&c->pending_raw_exchange==0);
+ REQUIRE(terminal_for(log,rid,"clear_rx_buffer","aborted")==1);
+ REQUIRE(terminal_count_for(log,rid)==1);
+ puts("PASS P0 CLEAR_RX 4: fully queued unlimited CTS");
+
+ /* 5: ring-wrap FF slot 63 / CF1 slot 0; all private tags reset. */
+ c->r=c->w=MAX_QUEUE-1;REQUIRE(c->count==0);
+ log=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(log);
+ send(ch,&one);REQUIRE(c->count==2&&c->r==MAX_QUEUE-1&&c->w==1);
+ REQUIRE(c->queue_raw_exchange[MAX_QUEUE-1]&&c->queue_raw_exchange[0]);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ REQUIRE(c->r==0&&c->w==0&&c->count==0);
+ REQUIRE(c->pending_pos==0&&c->pending_id==0&&c->pending_request_id==0);
+ REQUIRE(c->pending_sn==0&&c->pending_next_us==0&&c->pending_stmin_us==0);
+ for(k=0;k<MAX_QUEUE;k++){
+  REQUIRE(!c->queue_raw_exchange[k]&&!c->queue_raw_response_baud[k]);
+  REQUIRE(!c->queue_ready_us[k]&&!c->queue_trace[k]);
+  REQUIRE(!c->queue_d2_gen[k]&&!c->queue_d2_frame[k]);
+  REQUIRE(!c->queue_passive_baud[k]);
+ }
+ REQUIRE(terminal_for(log,rid,"clear_rx_buffer","aborted")==1);
+ puts("PASS P0 CLEAR_RX 5: FIFO wrap and slot metadata");
+
+ /* 6: no backend events, but transport still cancels all stale RX. */
+ g_backend_enabled=0;journal=backend_len;
+ send(ch,&req);send(ch,&cts);REQUIRE(c->count==3);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ send(ch,&cts);n=1;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(c->pending_len==0&&c->count==0&&backend_len==journal);
+ g_backend_enabled=1;
+ puts("PASS P0 CLEAR_RX 6: telemetry-independent transport");
+
+ /* 7: independent peer channel's FF,CF1,CF2 still deliver. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other!=0);
+ send(ch,&req);
+ log=backend_lines+backend_len;send(peer,&req);peer_rid=last_tx_request(log);
+ send(peer,&one);REQUIRE(other->count==2&&other->pending_len==20);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ REQUIRE(other->count==2&&other->pending_len==20);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x10);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x21);
+ send(peer,&cts);rx=readmsg(peer);REQUIRE(rx.Data[4]==0x22);
+ REQUIRE(terminal_for(log,peer_rid,"none","responded")==1);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS P0 CLEAR_RX 7: independent peer unaffected");
+
+ /* 8: fresh raw multi-frame read and tester-present recover. */
+ log=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(log);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ REQUIRE(terminal_for(log,rid,"clear_rx_buffer","aborted")==1);
+ log=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(log);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10);
+ send(ch,&cts);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22);
+ n=1;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(terminal_for(log,rid,"none","responded")==1);
+ send(ch,&shortreq);rx=readmsg(ch);
+ REQUIRE(rx.Data[4]==2&&rx.Data[5]==0x7E);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_strict_j2534_filters=old_strict;g_backend_enabled=old_backend;
+ puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -2540,6 +2659,7 @@ int main(){
  test_d2_strict_filter_no_frame_gaps(dev);
  test_raw_isotp_supersession_queued_rx(dev);
  test_raw_isotp_fully_staged_retry(dev);
+ test_clear_rx_raw_iso_lifetime(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
@@ -3571,17 +3691,16 @@ int main(){
   REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
   REQUIRE(ch->d2_trace==0 && ch->d2_count==0 && ch->count==0);
   tick+=100;n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
-  /* 3: clearing an already-queued FF invalidates its delivery evidence.
-     Historical pending ISO-TP transport behavior remains unchanged. */
+  /* 3: CLEAR_RX aborts queued FF AND staged ISO-TP continuation.
+     Late CTS must not release orphan CFs from an aborted exchange. */
   start=backend_lines+backend_len;
   tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
   first=ch->pending_trace;REQUIRE(first && ch->pending_len==20);
   REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
-  REQUIRE(ch->pending_len==20 && ch->pending_trace==0);
+  REQUIRE(ch->pending_len==0 && ch->pending_trace==0 && ch->pending_raw_exchange==0);
   REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
   tmp=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(lc,&tmp);
-  r=readmsg(lc);REQUIRE(r.Data[4]==0x21);
-  r=readmsg(lc);REQUIRE(r.Data[4]==0x22);
+  n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
   REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
   REQUIRE(terminal_for(start,first,"none","responded")==0);
   /* 4: new D2 attempt supersedes staged and queued old D2 bytes. */
