@@ -1,6 +1,57 @@
 # Virtual Car: продолжение разработки в новом чате
 
-## ACTIVE: VIDA GetScript any-schema catalog visibility (2026-11-07)
+## ACTIVE: P0 native J2534 + B9FB transport boundary (2026-11-09)
+
+- **Latest code commit on `development`:**
+  `747261169c443c1e69928ffc2ad0baa34d3319c5`,
+  [PR #226](https://github.com/vorlocsev/virtualcar/pull/226) **MERGED**.
+  Its exact-sha owner-only
+  [VMware CI #42569321824](https://github.com/vorlocsev/virtualcar/actions/runs/42569321824)
+  **SUCCESS**, 29/29 workflow steps, **423/423 Python tests**,
+  native C B9FB final-marker validation and other offline x86/x64, .NET
+  and synthetic Host/IPC checks. This is NOT a SectorV GUI VIN result.
+- **Real code change:** the native `validate_d2_fixture` and Python
+  `import_p2_trace.validate_response` now require the terminal `4F`
+  for the *published 13-frame, 08-series D2 example*, matching the
+  existing Go `p2audit` check. Earlier permissive `48..4E` endings
+  could be misclassified as complete transport. Other lengths and
+  10-series subforms retain generic validation; this rule is NOT a
+  general OEM B9FB schema. New synthetic tests reject corrupted import
+  before writing INI and never export VIN or private capture content.
+- **Preceding native transport changes, already verified:**
+  [PR #225](https://github.com/vorlocsev/virtualcar/pull/225)
+  `3cf3a69e200d977ce8b3603f7ed8037e4bd50ba5`
+  [VMware #42568202704](https://github.com/vorlocsev/virtualcar/actions/runs/42568202704)
+  **SUCCESS** (419 Python, 29/29 steps): J2534 TX CAN ID must fit 29 bits.
+  [PR #222](https://github.com/vorlocsev/virtualcar/pull/222)
+  added CAN/ISO15765 ProtocolID and classic CAN DLC write guards;
+  [PRs #223–224](https://github.com/vorlocsev/virtualcar/pull/224)
+  repaired old synthetic tests under the new guards; verified
+  [VMware #42567553908](https://github.com/vorlocsev/virtualcar/actions/runs/42567553908)
+  on `f50876de93757845bddd8d5be2c2ba13142bb249`, **SUCCESS**.
+  [PR #221](https://github.com/vorlocsev/virtualcar/pull/221)
+  rejects zero CAN speed on Connect/SET_CONFIG atomically.
+  [PR #220](https://github.com/vorlocsev/virtualcar/pull/220)
+  verifies synthetic baseline → bounded J2534 window → redacted GUI triage.
+- **Unresolved highest-priority [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):**
+  run **one truly isolated and authorized SectorV GUI session on the
+  user's Windows VMware guest**, with the selected virtual J2534
+  provider and no physical adapter. Use
+  [fresh-window operator guide](emulator/README_SECTORV_FRESH_WINDOW_RU.md)
+  to capture redacted connection, B9FB 0x40/0x50 transport and
+  the GUI's actual VIN and ECU-list categories. Runner's synthetic
+  Windows CI does not load SectorV GUI, verify original XC90 V8 MY2009
+  B9FB or establish client acceptance. Prioritize *actual observed*
+  driver loading/transaction and GUI evidence instead of speculative
+  fake A3/A6/B9F0/E3 replies.
+- Do not publish binaries, merge `main`, copy raw VIN/INI/log/DLL or
+  claim physical J2534/VIDA/SectorV identity acceptance.
+  The dated VIDA SQL GetScript work below is a historical,
+  independently still-unverified research track.
+
+---
+
+## HISTORICAL: VIDA GetScript any-schema catalog visibility (2026-11-07)
 
 - [PR #166](https://github.com/vorlocsev/virtualcar/pull/166)
   **MERGED** as `21d36b93e49dfb5254177b401b449a0c9493505f`.
