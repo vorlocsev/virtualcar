@@ -1,5 +1,31 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: CF filter-gap host FIFO setup avoids legacy PASS deadlock (2026-11-09)
+
+- [PR #272](https://github.com/vorlocsev/virtualcar/pull/272) merged to
+  `development` `719d2507f580be38089edd4f2ce75c1941b9b525`.
+  Automatic owner-only [VMware CI #42644267839](https://github.com/vorlocsev/virtualcar/actions/runs/42644267839)
+  reached native C host regression, but new case 5 can hang:
+  `fill_untraced_rx` loops until the FIFO is full, while the test
+  still has a strict FF-only PASS filter installed. Even with
+  `g_strict_j2534_filters=0`, the legacy filter path continues to
+  enforce an existing PASS filter, rejecting every synthetic 0x555
+  filler frame. This is a **test setup** bug, not evidence of a
+  production blocking J2534 deadlock.
+- Test-only correction: while the test populates its unrelated FIFO,
+  clear installed J2534 filters; after filling, reinstate strict
+  FF-only PASS filter *before* sending CTS. This models pressure on
+  the queue while keeping CF1 rejected. No native emulator
+  production source or proof rules changed.
+- **Gate:** squash-merge into `development`, require new automatic
+  VMware CI success for exact merged SHA, including 8 native
+  CF filter-gap cases and 30/30 steps. Do not count #42644267839
+  as successful if it times out/cancels.
+- P0 Issue #4 still requires genuine isolated read-only SectorV
+  GUI adapter/B9FB/VIN/ECU evidence. No `main` or release.
+
+---
+
 ## P0: abort strict-filtered ISO-TP CF before any later sequence number (2026-11-09)
 
 - Verified starting `development` is
