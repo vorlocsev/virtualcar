@@ -184,6 +184,9 @@ typedef struct {
     U32 d2_spacing_ms,d2_response_id,d2_count,d2_pos,d2_generation,d2_frame_number;
     U8 d2_frame[MAX_D2_FRAMES][8];
     PASSTHRU_MSG queue[MAX_QUEUE]; U32 queue_d2_gen[MAX_QUEUE],queue_d2_frame[MAX_QUEUE]; U64 queue_ready_us[MAX_QUEUE]; U32 r,w,count;
+    /* Nonzero only for optional passive CAN fixtures generated on a given
+       bitrate. Staged trace/tick RX must not cross a later bus retune. */
+    U32 queue_passive_baud[MAX_QUEUE];
     /* Diagnostic correlation metadata. Never sent to the J2534 client. */
     U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace;
     BACKEND_ABORT aborted[MAX_QUEUE];
@@ -999,6 +1002,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
     msg->Data[2]=(U8)(response_id>>8);msg->Data[3]=(U8)response_id;
     for(i=0;i<len;i++)msg->Data[4+i]=payload[i];
     c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;c->queue_ready_us[c->w]=0;
+    c->queue_passive_baud[c->w]=0;
     c->queue_trace[c->w]=c->active_trace;
     c->w=(c->w+1)%MAX_QUEUE;c->count++;
     backend_event(c,c->active_trace,"filter_pass","UNKNOWN","none","unknown");
@@ -1016,7 +1020,11 @@ static void pump_recorded_trace(CHANNEL *c){
         if(!t->enabled||t->baud!=c->baud||c->count>=MAX_QUEUE)continue;
         if((U32)(now-c->trace_next_tick[i])>=0x80000000u)continue;
         c->trace_next_tick[i]=now+t->period_ms;
-        enqueue(c,t->id,t->data,8);
+        {U32 slot=c->w, before=c->count;
+         enqueue(c,t->id,t->data,8);
+         /* A rejected/overflowed frame never owns the previous FIFO slot. */
+         if(c->count>before)c->queue_passive_baud[slot]=t->baud;
+        }
         logline("Passive CAN recorded fixture replay (not OEM-authenticated)",0,0);
     }
 }
@@ -1026,7 +1034,10 @@ static void maybe_passive_frame(CHANNEL *c){
     now=GetTickCount();
     if((U32)(now-c->passive_next_tick)>=0x80000000u)return;
     c->passive_next_tick=now+g_passive_period_ms;
-    enqueue(c,g_passive_id,g_passive_payload,8);
+    {U32 slot=c->w, before=c->count;
+     enqueue(c,g_passive_id,g_passive_payload,8);
+     if(c->count>before)c->queue_passive_baud[slot]=c->baud;
+    }
     logline("Passive CAN lab traffic tick (synthetic VCARLAB, not vehicle ignition)",0,0);
 }
 /* Only a matching ECU Flow Control CTS grants Consecutive Frames.
@@ -1173,11 +1184,34 @@ static U32 drop_queued_d2(CHANNEL *c){
         }
         if(to!=from){bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
             c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;
-            c->queue_trace[to]=c->queue_trace[from];c->queue_ready_us[to]=c->queue_ready_us[from];}
+            c->queue_trace[to]=c->queue_trace[from];c->queue_ready_us[to]=c->queue_ready_us[from];
+            c->queue_passive_baud[to]=c->queue_passive_baud[from];}
         keep++;
     }
     c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
     return dropped;
+}
+/* On effective DATA_RATE retune, passive/recorded CAN frames produced
+   for the old bus must not appear on the new bus. 0 means ordinary RX,
+   not passive-source metadata. This only compacts FIFO; no ECU writes. */
+static U32 drop_old_bus_passive_rx(CHANNEL *c){
+    U32 read,keep=0,removed=0,original=c->count;
+    for(read=0;read<original;read++){
+        U32 from=(c->r+read)%MAX_QUEUE,to=(c->r+keep)%MAX_QUEUE;
+        U32 origin=c->queue_passive_baud[from];
+        if(origin && origin!=c->baud){removed++;continue;}
+        if(to!=from){
+            bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
+            c->queue_d2_gen[to]=c->queue_d2_gen[from];
+            c->queue_d2_frame[to]=c->queue_d2_frame[from];
+            c->queue_trace[to]=c->queue_trace[from];
+            c->queue_ready_us[to]=c->queue_ready_us[from];
+            c->queue_passive_baud[to]=origin;
+        }
+        keep++;
+    }
+    c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
+    return removed;
 }
 /* Precise schedule: increment by the configured period from the planned time,
    not the last polling tick. Delivery remains bounded by client polling. */
@@ -1580,6 +1614,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
             {U64 rid=c->queue_trace[c->r];
              backend_event(c,rid,"rx_dequeued","UNKNOWN","none","unknown");
              c->queue_trace[c->r]=0;c->queue_ready_us[c->r]=0;
+             c->queue_passive_baud[c->r]=0;
              c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
              /* Resume only previously granted CFs after this slot is freed. */
              pump_can_cf(c);
@@ -1784,6 +1819,12 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
            rate must not invalidate the transfer or reset bridge state. */
         if(ioctl==IO_SET_CONFIG && c->baud!=initial_baud){
             supersede_d2_exchange(c);
+            /* Optional read-only CAN traces are bus-specific too. Preserve
+               unrelated FIFO and queued frames that have no passive origin. */
+            {U32 removed=drop_old_bus_passive_rx(c);
+             if(removed){U8 count_be[4];u32_be(count_be,removed);
+              logline("J2534 DATA_RATE stale passive RX dropped (BE)",count_be,4);}
+            }
             logline("J2534 DATA_RATE changed; old-bus D2 replay disallowed",0,0);
             /* Passive CEM observation must follow the effective transport
                speed; this never creates ECU RX or CAN TX. */

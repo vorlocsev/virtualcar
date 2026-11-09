@@ -1030,6 +1030,102 @@ static void test_d2_replay_isolation_on_set_config(U32 dev){
  puts("PASS P0 D2 DATA_RATE retune isolation: 8 read-only host cases");
 }
 
+/* Eight read-only C regressions for source-bus attribution of passive
+   recorded CAN and optional synthetic lab-tick frames. No real ECU data. */
+static void test_passive_can_replay_retune_isolation(U32 dev){
+ TRACE_FRAME saved[MAX_PASSIVE_TRACES];
+ p2_j2534_bridge saved_bridge=g_vehicle_bridge;
+ U32 saved_count=g_trace_count,saved_passive=g_passive_enabled;
+ U32 saved_strict=g_strict_j2534_filters,hs=0,peer=0,n;
+ CHANNEL *c,*other;PASSTHRU_MSG rx;
+ const U8 payload[8]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0u};
+ SCONFIG rate={1u,500000u};SCONFIG_LIST cfg={1u,&rate};
+ memcpy(saved,g_trace,sizeof(saved));
+ bytes_zero(g_trace,sizeof(g_trace));
+ g_trace_count=1;g_trace[0].enabled=1;
+ g_trace[0].id=0x555u;g_trace[0].baud=500000u;
+ g_trace[0].period_ms=50u;
+ bytes_copy(g_trace[0].data,payload,8);
+ g_passive_enabled=0u;g_strict_j2534_filters=0u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&hs)==ERR_OK);
+ c=channel(hs);REQUIRE(c);
+
+ /* 1. One queued recorded 500k frame is not released after 125k retune. */
+ c->trace_next_tick[0]=tick; pump_recorded_trace(c);
+ REQUIRE(c->count==1u && c->queue_passive_baud[c->r]==500000u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(c->count==0u && c->baud==125000u);
+ n=1u;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 2. An ordinary, untagged RX ahead of the recorded frame remains FIFO. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ enqueue(c,0x556u,payload,8);
+ c->trace_next_tick[0]=tick;pump_recorded_trace(c);
+ REQUIRE(c->count==2u && c->queue_passive_baud[c->r]==0u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(c->count==1u && c->queue_passive_baud[c->r]==0u);
+ rx=readmsg(hs);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x56u);
+
+ /* 3. Reapplying the same baud cannot remove a queued recorded fixture. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ c->trace_next_tick[0]=tick;pump_recorded_trace(c);
+ REQUIRE(c->count==1u);
+ REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(c->count==1u && c->queue_passive_baud[c->r]==500000u);
+ rx=readmsg(hs);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+
+ /* 4. A peer CAN channel's recorded FIFO survives retuning our channel. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other);
+ other->trace_next_tick[0]=tick;pump_recorded_trace(other);
+ REQUIRE(other->count==1u && other->queue_passive_baud[other->r]==500000u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(other->count==1u && other->queue_passive_baud[other->r]==500000u);
+ rx=readmsg(peer);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+
+ /* 5. A queued synthetic passive tick is bound to its source bus too. */
+ g_passive_enabled=1u;c->passive_next_tick=tick;
+ maybe_passive_frame(c);
+ REQUIRE(c->count==1u && c->queue_passive_baud[c->r]==125000u);
+ g_passive_enabled=0u;
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(c->count==0u);
+
+ /* 6. Wrapped FIFO head/tail preserves unrelated frames and their bytes. */
+ c->r=c->w=MAX_QUEUE-1u;REQUIRE(c->count==0u);
+ enqueue(c,0x556u,payload,8);
+ c->trace_next_tick[0]=tick;pump_recorded_trace(c);
+ REQUIRE(c->count==2u && c->r==MAX_QUEUE-1u && c->w==1u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(c->count==1u&&c->r==MAX_QUEUE-1u&&c->w==0u);
+ rx=readmsg(hs);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x56u);
+
+ /* 7. Strict-filter rejection cannot tag the previous queued slot. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ enqueue(c,0x556u,payload,8);
+ g_strict_j2534_filters=1u;c->trace_next_tick[0]=tick;
+ pump_recorded_trace(c);
+ REQUIRE(c->count==1u && c->queue_passive_baud[c->r]==0u);
+ g_strict_j2534_filters=0u;
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(c->count==1u);
+ rx=readmsg(hs);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x56u);
+
+ /* 8. After retuning back, a NEW 500k fixture may be replayed. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ c->trace_next_tick[0]=tick;pump_recorded_trace(c);
+ REQUIRE(c->count==1u && c->queue_passive_baud[c->r]==500000u);
+ rx=readmsg(hs);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ n=1u;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ memcpy(g_trace,saved,sizeof(saved));
+ g_trace_count=saved_count;g_passive_enabled=saved_passive;
+ g_strict_j2534_filters=saved_strict;g_vehicle_bridge=saved_bridge;
+ puts("PASS P0 passive CAN retune: 8 source-bus/FIFO isolation checks");
+}
+
 /* A follow-up D2 read-only request supersedes the old exchange on the
    same J2534 channel even if its target/opcode has no recorded fixture.
    No real CEM identity or positive A3/A6 response is synthesized. */
@@ -1689,6 +1785,7 @@ int main(){
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_d2_replay_isolation_on_set_config(dev);
+ test_passive_can_replay_retune_isolation(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
