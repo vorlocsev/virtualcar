@@ -183,9 +183,53 @@ def _check_window(report):
         raise ValueError("stable endpoints require verified x86 endpoints")
 
     discovery = report["discovery"]
-    if type(discovery) is not dict or set(discovery) != {
-            "transactions", "statuses", "d2", "p3_count"}:
+    original_fields = {"transactions", "statuses", "d2", "p3_count"}
+    tagged_fields = original_fields | {"native_d2_delivery_tags"}
+    if type(discovery) is not dict or set(discovery) not in (
+            original_fields, tagged_fields):
         raise ValueError("unexpected discovery shape")
+    # Accept pre-generation-tag window v2 reports for inspection, but a new
+    # Finish report always carries the schema-checked native emitter summary.
+    # This is queue provenance only; it is not a SectorV TX or VIN proof.
+    if "native_d2_delivery_tags" in discovery:
+        tags = discovery["native_d2_delivery_tags"]
+        tag_counts = {
+            "tag_records", "paired_tag_records", "unpaired_tag_records",
+            "malformed_tag_records", "route_or_metadata_mismatch",
+            "generation_groups", "groups_with_frame_indices_1_to_n",
+            "groups_with_missing_duplicate_or_out_of_order_indices",
+            "b9fb_13frame_control_sequence_groups",
+        }
+        tag_fields = tag_counts | {
+            "source", "observed", "physical_can_or_ecu_provenance",
+            "client_vin_and_ecu_acceptance", "replay_approved",
+        }
+        if type(tags) is not dict or set(tags) != tag_fields:
+            raise ValueError("unrecognized D2 generation tag fields")
+        if (tags["source"] != "local_emulator_native_d2_delivery_tags_only"
+                or type(tags["observed"]) is not bool
+                or tags["physical_can_or_ecu_provenance"] != "not_verified"
+                or tags["client_vin_and_ecu_acceptance"] != "not_verified"
+                or tags["replay_approved"] is not False):
+            raise ValueError("native tag provenance cannot assert GUI or ECU")
+        for key in tag_counts:
+            _uint(tags[key])
+        total = tags["tag_records"]
+        if (tags["observed"] != bool(total)
+                or total != sum(tags[k] for k in (
+                    "paired_tag_records", "unpaired_tag_records",
+                    "malformed_tag_records", "route_or_metadata_mismatch"))
+                or total > report["windows"]["j2534"]["complete_lines"]):
+            raise ValueError("D2 tag counts contradict bounded J2534 lines")
+        groups = tags["generation_groups"]
+        contiguous = tags["groups_with_frame_indices_1_to_n"]
+        incomplete = tags["groups_with_missing_duplicate_or_out_of_order_indices"]
+        thirteen = tags["b9fb_13frame_control_sequence_groups"]
+        if (groups > tags["paired_tag_records"]
+                or groups != contiguous + incomplete
+                or thirteen > contiguous
+                or thirteen * 13 > tags["paired_tag_records"]):
+            raise ValueError("D2 generation groups contradict emitted tags")
     transactions = _uint(discovery["transactions"])
     if _uint(discovery["p3_count"]) > transactions:
         raise ValueError("P3 count exceeds transactions")
@@ -349,6 +393,18 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False,
         "replay_approved": False,
         "first_next_gate": gate,
     }
+    if "native_d2_delivery_tags" in window["discovery"]:
+        emitter = window["discovery"]["native_d2_delivery_tags"]
+        result["native_d2_generation_evidence"] = {
+            "tag_records": emitter["tag_records"],
+            "paired_tag_records": emitter["paired_tag_records"],
+            "discontinuous_generation_groups": emitter[
+                "groups_with_missing_duplicate_or_out_of_order_indices"],
+            "b9fb_13frame_control_sequence_groups": emitter[
+                "b9fb_13frame_control_sequence_groups"],
+            "origin": "local_emulator_only_not_gui_or_oem",
+            "client_vehicle_identity_accepted": "not_verified",
+        }
     if module_snapshot is not None:
         # This was a snapshot of a *name-matched* process on the caller's
         # host. Neither the host/session nor genuine executable identity
