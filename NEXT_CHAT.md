@@ -1,5 +1,41 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: prevent a blocking J2534 ReadMsgs crossing channel-ID reuse (2026-11-09)
+
+- Verified exact `development` baseline: `8675734d50aa884b3be0db2ff1215ec4b7f3bb46`,
+  [automatic owner-only VMware CI #42635613595](https://github.com/vorlocsev/virtualcar/actions/runs/42635613595)
+  **SUCCESS**: 573 Python (572 passed, one skipped), 30/30 steps,
+  and all 8 native DATA_RATE retune tests passed.
+- Source-backed issue: `PassThruReadMsgs` releases the common J2534 lock
+  between polling iterations and resolves `channel(id)` afresh. A
+  `PassThruDisconnect` followed by `PassThruConnect` can reuse the same
+  numeric ID, so an *old blocked reader* could drain the replacement
+  channel's RX queue; an old timeout could also increment the replacement
+  channel's telemetry.
+- Narrow C fix: monotonic private `U64 session_serial` assigned on each
+  successful Connect under `g_lock`; never reset by device Open/Close.
+  `ReadMsgs` snapshots the initial serial, validates on every poll and
+  at the timeout boundary, returns `ERR_INVALID_CHANNEL_ID` and
+  `NumMsgs = 0` for a stale/inactive channel and does not touch a
+  replacement's timeout count. A successful original-session read still
+  returns its delivered frames; no cross-session counter reset.
+- Eight deterministic native host regressions using a one-shot
+  intervention during `Sleep(1)` outside the common lock: old
+  timeouts, nonblocking empty, disconnect+reconnect reused ID without
+  consuming new FIFO, disconnect only, Close/Open reconnect reused ID,
+  other-channel reconnect, same-channel DATA_RATE change and a new
+  RX on the original session. This is deterministic interleaving,
+  not actual multithreaded SectorV acceptance.
+- **Integration gate:** review PR, squash-merge only to `development`,
+  then inspect new full owner-only VMware CI at the exact merged SHA.
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still needs real isolated read-only Windows VMware SectorV GUI
+  adapter selection, B9FB read, accepted displayed VIN and ECU list.
+  No invented A3/A6/B9F0 positives, ECU writes, physical J2534,
+  `main` merge, published binaries or release.
+
+---
+
 ## P0: old B9FB replay must not cross SET_CONFIG DATA_RATE (2026-11-09)
 
 - Verified starting `development` `fac2f4254d60bbe97b9219d63e01be234fa49cfd`,
