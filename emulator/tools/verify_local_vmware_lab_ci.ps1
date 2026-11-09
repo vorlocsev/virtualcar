@@ -15,7 +15,7 @@ if ($LASTEXITCODE -ne 0 -or $sourceSha -cnotmatch '^[a-f0-9]{40}$') {
 if ($RetainValidatedLab -and (
     $env:GITHUB_EVENT_NAME -cne 'push' -or
     $env:GITHUB_REF -cne 'refs/heads/development' -or
-    $env:GITHUB_ACTOR -cne 'vorloc' -or
+    $env:GITHUB_ACTOR -cne 'vorlocsev' -or
     $env:GITHUB_SHA -cne $sourceSha)) {
     throw 'LAB retention requires owner-authored development push at exact SHA'
 }
