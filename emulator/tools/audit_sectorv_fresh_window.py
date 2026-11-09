@@ -20,7 +20,14 @@ MAX_APPEND = 16 * 1024 * 1024
 SERVICES = ("A3", "A6", "B9F0", "B9FB", "B9FC")
 STATUSES = ("delivered", "no_fixture", "unsupported", "timeout",
             "partial_rx", "negative_response", "unverified")
-ROOT = Path(__file__).resolve().parents[2]
+# The source tree uses repo/emulator/tools, while the standalone
+# VMware LAB uses LAB/tools. Refuse outputs inside the *actual* script
+# distribution, not the package's entire parent drive or user directory.
+_TOOLS_DIR = Path(__file__).resolve().parent
+_LAB_ROOT = _TOOLS_DIR.parent
+ROOT = (_LAB_ROOT if (_LAB_ROOT / "BUILDINFO.json").is_file()
+        and (_LAB_ROOT / "VirtualCarJ2534.dll").is_file()
+        else _TOOLS_DIR.parent.parent)
 
 
 def _external_output(path, sources):
