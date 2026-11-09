@@ -1763,7 +1763,7 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
            rate must not invalidate the transfer or reset bridge state. */
         if(ioctl==IO_SET_CONFIG && c->baud!=initial_baud){
             supersede_d2_exchange(c);
-            logline("P2 D2 old-baud replay invalidated by DATA_RATE change",0,0);
+            logline("J2534 DATA_RATE changed; old-bus D2 replay disallowed",0,0);
             /* Passive CEM observation must follow the effective transport
                speed; this never creates ECU RX or CAN TX. */
             p2_bridge_connect(&g_vehicle_bridge,id,c->protocol,c->baud);
