@@ -1,5 +1,44 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: queued raw FF/CF after an unfinished UDS exchange is superseded (2026-11-09)
+
+- Verified exact baseline `development`:
+  `a8f72f192a34d519abf5f6e7bd699a6e8e959b4a`,
+  owner-only [VMware CI #42644997776](https://github.com/vorlocsev/virtualcar/actions/runs/42644997776)
+  **SUCCESS**: 573 Python tests (572 passed, 1 optional skip),
+  native eight CF-filter-gap regressions and 30/30 CI steps.
+  Previous [#42644267839](https://github.com/vorlocsev/virtualcar/actions/runs/42644267839)
+  is **cancelled** due to a synthetic test's legacy PASS filter loop.
+- Source issue: `emit_response` for raw CAN clears `pending_len` and
+  marks a prior response superseded, but **leaves FF/CF frames of that
+  still-pending exchange already queued** in the J2534 RX FIFO.
+  A following response can be read alongside those stale old frames,
+  even on unchanged CAN baud. Existing #271 only covered a
+  `DATA_RATE` change; this is same-bus retry.
+- New transport-private, nonzero `pending_raw_exchange` and per-slot
+  `queue_raw_exchange` tags are independent of optional backend
+  request IDs. On supersession of an unfinished raw CAN ISO-TP
+  response, remove exactly that exchange's queued FF/CF before the
+  next answer is added. Preserve unrelated FIFO, completed SF,
+  peer channels, ring-wrap semantics and existing trace abort event.
+  Transfer/clear the private tag through all FIFO compaction/dequeue
+  paths (D2, passive, DATA_RATE). No ECU writes or positive OEM
+  response changes.
+- Eight native C host regressions: old queued FF discarded,
+  previously delivered FF with pending CF cancelled, staged FF+CF1
+  cancelled, unrelated FIFO order, wraparound queue, backend
+  telemetry disabled, independent peer channel, and previously
+  completed SF remaining intact.
+- **Gate:** review PR, merge only into `development`; require
+  a fresh full owner-only VMware Windows CI **SUCCESS** for exact
+  resulting commit SHA before claiming tested.
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains open pending real operator-observed isolated read-only
+  SectorV x86 J2534 adapter/B9FB/VIN/ECU evidence.
+  Do not change `main` or publish release.
+
+---
+
 ## P0: CF filter-gap host FIFO setup avoids legacy PASS deadlock (2026-11-09)
 
 - [PR #272](https://github.com/vorlocsev/virtualcar/pull/272) merged to
