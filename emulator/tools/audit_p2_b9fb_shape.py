@@ -15,9 +15,12 @@ from import_p2_trace import sessions, validate_response
 
 VIN_SHAPE = re.compile(rb"^[A-HJ-NPR-Z0-9]{17}$")
 FIELD_WIDTHS = (3, 17, 9, 3, 6, 2, 6, 20)
+# NHTSA 49 CFR Part 565 model-year coding for the relevant late-P2 interval.
+# Comparison is conditional: a VIN-shaped string is NOT a proven OEM VIN.
+VIN_MODEL_YEAR_CODES = dict(zip(range(2005, 2015), "56789ABCDE"))
 
 
-def _base_result(frames, target):
+def _base_result(frames, target, expected_model_year=None):
     return {
         "schema_version": "virtualcar-p2-b9fb-shape-v1",
         "target": f"0x{target:02X}",
@@ -31,6 +34,9 @@ def _base_result(frames, target):
         "published_88_byte_shape": "unknown",
         "vin_shaped_field": False,
         "vin_field_offset": None,
+        "expected_model_year": expected_model_year,
+        "vin_year_code_comparison": (
+            "not_requested" if expected_model_year is None else "not_assessable"),
         "six_digit_field_compared_with_vin_suffix": "unknown",
         "checksum_status": "unknown",
         "vehicle_identity_verified": False,
@@ -41,13 +47,19 @@ def _base_result(frames, target):
             "B9FB transport delivery does not prove identity or normal-mode acceptance.",
             "The 88-byte CRLF field layout is only one published example; field meanings are not generalized.",
             "No payload, VIN, vehicle numbers, raw CAN frames, input path, or identity hash is exported.",
+            "Year-code comparison follows VIN position 10 only when the published example shape matches.",
+            "A matching VIN year code does not validate a VIN, CEM checksum, MY2009 vehicle or client parsing.",
         ],
     }
 
 
-def audit_frames(frames, target=0x50):
+def audit_frames(frames, target=0x50, expected_model_year=None):
     """Analyze preselected 8-byte D2 RX frames; never return raw bytes."""
-    out = _base_result(frames, target)
+    if expected_model_year is not None and (
+            type(expected_model_year) is not int
+            or expected_model_year not in VIN_MODEL_YEAR_CODES):
+        raise ValueError("Unsupported explicit VIN model year")
+    out = _base_result(frames, target, expected_model_year)
     try:
         validate_response(frames, target, 0xFB)
     except ValueError:
@@ -101,6 +113,11 @@ def audit_frames(frames, target=0x50):
 
     out["vin_shaped_field"] = True
     out["vin_field_offset"] = 6 + len(fields[0]) + 2
+    if expected_model_year is not None:
+        # Do not export even the single VIN year-code character.
+        out["vin_year_code_comparison"] = (
+            "matches_expected_code" if candidate[9] == ord(VIN_MODEL_YEAR_CODES[expected_model_year])
+            else "differs_from_expected_code")
     # The field at this position is six ASCII digits in the observed example.
     # Compare literal bytes, without calling it an OEM chassis field.
     if re.fullmatch(rb"[0-9]{6}", fields[4]) and re.fullmatch(rb"[0-9]{6}", candidate[-6:]):
@@ -116,6 +133,9 @@ def main(argv=None):
     )
     parser.add_argument("log", type=Path, help="Local J2534 text log, never uploaded")
     parser.add_argument("--target", choices=("40", "50"), default="50")
+    parser.add_argument("--expected-model-year", type=int,
+                        choices=sorted(VIN_MODEL_YEAR_CODES), default=None,
+                        help="Optional VIN position-10 comparison; NOT vehicle identification")
     parser.add_argument("--session-index", type=int, default=None,
                         help="Zero-based response session if multiple sessions exist")
     parser.add_argument("--output", type=Path, required=True,
@@ -139,7 +159,8 @@ def main(argv=None):
         selected = args.session_index
         if selected < 0 or selected >= len(groups):
             parser.error("session-index is out of range")
-    result = audit_frames(groups[selected], target=target)
+    result = audit_frames(groups[selected], target=target,
+                          expected_model_year=args.expected_model_year)
     result["sessions_found"] = len(groups)
     result["selected_session_index"] = selected
     result["channel_and_baud_verified"] = False  # Importer has no reliable channel tuple.
