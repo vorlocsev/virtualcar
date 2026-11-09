@@ -997,6 +997,10 @@ static void test_d2_unknown_target_supersession(U32 dev){
    They must also close the previous same-channel B9 exchange, otherwise a
    stale 8F/09/4C fragment could look like an A3/A6 discovery response. */
 static void test_d2_a3_a6_supersession(U32 dev){
+ /* The passive P2 observer is global: this synthetic replay intentionally
+    sends additional A3/A6 requests. Restore the complete pre-test bridge
+    after disconnect so later observer tests keep their original baselines. */
+ p2_j2534_bridge saved_bridge=g_vehicle_bridge;
  D2_PROFILE saved=g_d2[2];U32 strict=g_p2_strict_routing;
  U32 ch1=0,ch2=0,n,i;U64 old,newrid;
  CHANNEL *ch;PASSTHRU_MSG m,rx;const char *start;
@@ -1109,6 +1113,10 @@ static void test_d2_a3_a6_supersession(U32 dev){
  REQUIRE(PassThruDisconnect(ch2)==ERR_OK);
  REQUIRE(PassThruDisconnect(ch1)==ERR_OK);
  g_d2[2]=saved;g_p2_strict_routing=strict;
+ g_vehicle_bridge=saved_bridge;
+ REQUIRE(g_vehicle_bridge.vehicle.a3_shape_seen==
+         saved_bridge.vehicle.a3_shape_seen);
+ REQUIRE(g_vehicle_bridge.inspected_tx==saved_bridge.inspected_tx);
  puts("PASS P0 D2 CEM A3/A6 supersede stale B9 without invented replies");
 }
 
