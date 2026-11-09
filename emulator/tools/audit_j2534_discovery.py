@@ -273,7 +273,10 @@ def _result(tx):
     elif tx["_a6_error"]:
         status, reason = "partial_rx", tx["_a6_error"]
     elif tx["_invalid"]:
-        status, reason = "partial_rx", ("invalid_iso_tp_framing" if tx["route"] in ("P3", "OBD") else "invalid_d2_sequence")
+        status, reason = "partial_rx", (
+            "d2_13frame_final_marker_mismatch" if tx["_d2_final_marker_mismatch"]
+            else "invalid_iso_tp_framing" if tx["route"] in ("P3", "OBD")
+            else "invalid_d2_sequence")
     elif tx["_p3_transport_error"]:
         status, reason = "unverified", tx["_p3_transport_error"]
     elif tx["_p3_negative"]:
@@ -585,6 +588,7 @@ def audit(lines, *, include_obd=False):
             "_start": start_at, "_last": None, "_time_mod": mod,
             "_rxid": None, "_seq": 1, "_base": 0x08, "_subblock": False,
             "_complete": False, "_invalid": False,
+            "_d2_final_marker_mismatch": False,
             "_source_error": None,
             "_a6_identifier": _a6_request_identifier(raw) if service == "A6" else None,
             "_a6_error": None,
@@ -730,7 +734,21 @@ def audit(lines, *, include_obd=False):
             else:
                 tx["rx_frames"] += 1
                 if 0x48 <= head <= 0x4F:
-                    tx["_complete"] = True
+                    # The source C fixture verifier already rejects a 13-
+                    # frame D2 0x08-series sequence unless its last frame is
+                    # 0x4F (seven useful bytes). The text audit must not
+                    # report the same 13-frame wire trace as delivered when
+                    # the terminal announces fewer valid bytes. Preserve
+                    # other lengths and the independent 0x10-series rules.
+                    if (tx["route"] == "D2"
+                            and tx["service"].startswith("B9")
+                            and tx["_base"] == 0x08
+                            and tx["rx_frames"] == 13
+                            and head != 0x4F):
+                        tx["_invalid"] = True
+                        tx["_d2_final_marker_mismatch"] = True
+                    else:
+                        tx["_complete"] = True
                 elif head & 0xF8 == 0x50:
                     tx["_subblock"] = True
                 elif tx["_subblock"] and head == 0x8F and len(payload) >= 4 and payload[1:4] == bytes((int(tx["target"], 16), 0xF9, int(tx["service"][-2:], 16))):
@@ -960,6 +978,7 @@ def audit(lines, *, include_obd=False):
             "J2534 RX delivery does not prove diagnostic-client ECU acceptance.",
             "Legacy logs without channel, flags or timestamps leave route metadata unknown.",
             "No A3/A6 or P3 positive ECU identity is inferred without a verified fixture.",
+            "A 13-frame D2 0x08-series terminal must be 0x4F; this checks transport shape, never OEM payload authenticity.",
             "negative_response identifies a final UDS rejection, not successful ECU discovery.",
             "UDS NRC 0x78 is nonterminal; pending-only probes stay unverified unless a read timeout is logged.",
             "A positive ReadDataByIdentifier header requires at least one data-record byte.",

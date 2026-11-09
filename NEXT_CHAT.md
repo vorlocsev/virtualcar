@@ -1,5 +1,35 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: prevent false complete 13-frame D2 text-audit evidence (2026-11-09)
+
+- Verified starting `development`: `dc0a1f32b8270229860f6f39eb50187dd3b351a1`,
+  owner-only [VMware CI #42586353215](https://github.com/vorlocsev/virtualcar/actions/runs/42586353215)
+  **SUCCESS**: 477 Python tests, 30/30 workflow steps.
+- The standalone `audit_j2534_discovery.py` accepted **any**
+  `0x48`–`0x4F` terminal as delivered even on a 13-frame
+  `0x08`-series D2 trace. Native C's `validate_d2_fixture`
+  already rejects the published 13-frame example unless its final
+  marker is `0x4F`. The audit now makes the same conservative
+  check for the **13th frame**; a shortened final marker is
+  `partial_rx/d2_13frame_final_marker_mismatch`, never
+  `delivered`. Shorter exchanges and `0x10`-series exchanges
+  remain compatible. No RX bytes are changed and no OEM content is
+  inferred.
+- Eight new synthetic Python test groups cover valid vs wrong
+  final byte, several invalid terminals, target/opcode provenance,
+  periodic-origin D2, unaffected `0x10` series, shorter replies,
+  missing terminal and independent channels/redaction. The
+  operator guide documents that a correct `0x4F` checks
+  transport framing only, not XC90 V8 MY2009 identity.
+- **Check exact squash-merged SHA and automatic owner-only VMware
+  CI before claiming this PR verified.** Remains [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):
+  real GUI on the user's isolated VMware Windows guest has
+  **not** confirmed loaded J2534 DLL, actual B9FB, VIN or ECU list.
+  Do not fabricate missing CEM A3/A6/B9F0, publish releases or
+  merge `main`.
+
+---
+
 ## CURRENT P0: periodic text-log provenance and SectorV report parity (2026-11-09)
 
 - **Verified baseline** before this change: `development`
