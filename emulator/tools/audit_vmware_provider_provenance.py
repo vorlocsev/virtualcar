@@ -131,6 +131,98 @@ def _export_contract(path):
         return "not_exact_or_unverifiable"
 
 
+
+def _required_named_exports(path):
+    """Check required J2534 names as a *subset*, never load the library.
+
+    Extra vendor exports are allowed. A present name proves only a static
+    PE export-table entry, not a callable implementation or client acceptance.
+    Parse bounded tables and image sections; report no names, bytes or paths.
+    """
+    try:
+        before = path.stat()
+        if not 256 <= before.st_size <= MAX_DLL:
+            return "unverifiable"
+        data = path.read_bytes()
+        if len(data) != before.st_size or data[:2] != b"MZ":
+            return "unverifiable"
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if not 64 <= pe <= min(4096, len(data) - 24):
+            return "unverifiable"
+        if data[pe:pe + 4] != b"PE\x00\x00":
+            return "unverifiable"
+        machine, count = struct.unpack_from("<HH", data, pe + 4)
+        optional_size = struct.unpack_from("<H", data, pe + 20)[0]
+        optional = pe + 24
+        table = optional + optional_size
+        if (machine != 0x14C or not 1 <= count <= 96
+                or optional_size < 104
+                or table + count * 40 > len(data)
+                or struct.unpack_from("<H", data, optional)[0] != 0x10B):
+            return "unverifiable"
+
+        def rva_at(rva, size):
+            if rva == 0 or size <= 0:
+                raise ValueError("null RVA or length")
+            for i in range(count):
+                section = table + i * 40
+                virtual_address = struct.unpack_from("<I", data, section + 12)[0]
+                raw_size, raw_start = struct.unpack_from(
+                    "<II", data, section + 16)
+                if (rva >= virtual_address and
+                        rva - virtual_address + size <= raw_size):
+                    off = raw_start + (rva - virtual_address)
+                    if (raw_start >= table + count * 40
+                            and off + size <= len(data)):
+                        return off
+            raise ValueError("unmapped RVA")
+
+        export_rva, export_size = struct.unpack_from(
+            "<II", data, optional + 96)
+        if export_size < 40:
+            return "unverifiable"
+        export = rva_at(export_rva, 40)
+        func_count, name_count, eat_rva, names_rva, ordinals_rva = (
+            struct.unpack_from("<IIIII", data, export + 20))
+        if not 1 <= func_count <= 4096 or not 0 <= name_count <= 4096:
+            return "unverifiable"
+        if not name_count:
+            return "required_names_missing"
+        eat = rva_at(eat_rva, func_count * 4)
+        names = rva_at(names_rva, name_count * 4)
+        ordinals = rva_at(ordinals_rva, name_count * 2)
+        found = set()
+        for i in range(name_count):
+            ordinal = struct.unpack_from("<H", data, ordinals + i * 2)[0]
+            if ordinal >= func_count:
+                return "unverifiable"
+            function_rva = struct.unpack_from("<I", data, eat + ordinal * 4)[0]
+            if function_rva == 0:
+                return "unverifiable"
+            name_rva = struct.unpack_from("<I", data, names + i * 4)[0]
+            pos = rva_at(name_rva, 1)
+            end = data.find(b"\x00", pos, min(pos + 96, len(data)))
+            if end <= pos:
+                return "unverifiable"
+            rva_at(name_rva, end - pos + 1)
+            name = data[pos:end].decode("ascii")
+            if name in found:
+                return "unverifiable"
+            found.add(name)
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] /
+                               "native-cpp" / "tests"))
+        from verify_pe_exports import EXPORTS
+        after = path.stat()
+        if (before.st_size, before.st_mtime_ns) != (
+                after.st_size, after.st_mtime_ns):
+            return "unverifiable"
+        return ("all_required_named" if EXPORTS <= found
+                else "required_names_missing")
+    except (OSError, ValueError, OverflowError, IndexError, UnicodeError,
+            ImportError, struct.error):
+        return "unverifiable"
+
+
 def assess(provider_present, function_library, built_path):
     """Return fixed-category, redacted evidence; never serialize input paths."""
     report = {
@@ -140,6 +232,7 @@ def assess(provider_present, function_library, built_path):
         "binary_comparison": "not_assessed",
         "executable_sections": "not_assessed",
         "installed_export_contract": "not_assessed",
+        "required_export_subset": "not_assessed",
         "sectorv_client_execution": "not_performed",
         "vin_or_ecu_accepted": "not_verified",
         "physical_adapter_presence": "not_inspected",
@@ -167,6 +260,7 @@ def assess(provider_present, function_library, built_path):
         return report
     report["provider_status"] = "installed_library_x86"
     report["installed_export_contract"] = _export_contract(candidate)
+    report["required_export_subset"] = _required_named_exports(candidate)
     tested = Path(built_path)
     if _pe_machine(tested) != "x86":
         report["binary_comparison"] = "tested_build_unverifiable"
