@@ -67,7 +67,20 @@ function Invoke-LocalSelfTests {
     foreach ($case in $cases) {
         $actual = Get-ClientBindingState -Clients $case.Clients -RegisteredPath $case.Path
         if ($actual -cne $case.Want) {
-            throw 'Redacted SectorV binding self-test failed'
+            # Both expected and actual are from a closed set of public category
+            # constants. Never emit a path, process object, hash or exception.
+            $allowed = @(
+                'client_not_observed_in_runner_context',
+                'multiple_client_name_matches',
+                'registered_library_unknown',
+                'registered_library_path_unverifiable',
+                'registered_library_loaded_in_name_matched_client',
+                'registered_library_not_in_enumerated_modules',
+                'client_module_list_unavailable'
+            )
+            $safeActual = if ($allowed -ccontains $actual) { $actual } else { 'unexpected_category' }
+            throw ('SectorV binding synthetic test #{0}: expected={1}; actual={2}' -f
+                   ($passed+1), $case.Want, $safeActual)
         }
         $passed++
     }
