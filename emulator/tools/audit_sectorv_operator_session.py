@@ -26,7 +26,7 @@ def _session_folder(path):
         raise ValueError("require absolute local session folder")
     # All outputs must remain outside the checkout, never in the repo.
     resolved = path.resolve()
-    if resolved.is_relative_to(fresh.ROOT):
+    if resolved.is_relative_to(fresh.ROOT.parent):
         raise ValueError("session folder inside source checkout")
     if path.is_symlink():
         raise ValueError("symlink session folder")
