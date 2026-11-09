@@ -1065,6 +1065,79 @@ static void test_periodic_tx_transport_parity(U32 dev){
  puts("PASS J2534 periodic TX: shared protocol, CAN DLC/ID, ISO and valid repeat");
 }
 
+/* Filter IDs have the same 29-bit physical CAN bound as TX frames.
+   The 32-bit all-ones mask remains valid (it is a bit mask, not an ID).
+   Every request in these checks is synthetic and read-only. */
+static void test_filter_can_id_boundaries(U32 dev){
+ U32 can=0,iso=0,id=0xABCDEF01u,first_id,prior=0;
+ U32 saved_strict=g_strict_j2534_filters;
+ PASSTHRU_MSG mask,pat,flow,m,rx;
+ const U8 vin[]={0x22u,0xF1u,0x90u};
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000u,&iso)==ERR_OK);
+ prior=g_filter_counter;
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_CAN,0x20000000u,0,0);
+ /* 1: impossible 30-bit CAN pattern, even with a full 32-bit mask. */
+ g_strict_j2534_filters=1u;
+ REQUIRE(PassThruStartMsgFilter(can,1,&mask,&pat,0,&id)==ERR_INVALID_MSG);
+ REQUIRE(id==0xABCDEF01u&&g_filter_counter==prior);
+ REQUIRE(channel(can)->filters_count==0u);
+ /* 2: same invalid CAN pattern is rejected in legacy relaxed mode. */
+ g_strict_j2534_filters=0u;
+ REQUIRE(PassThruStartMsgFilter(can,1,&mask,&pat,0,&id)==ERR_INVALID_MSG);
+ REQUIRE(id==0xABCDEF01u&&g_filter_counter==prior);
+ /* 3: ISO15765 cannot install an FC filter with 30-bit response ID. */
+ g_strict_j2534_filters=1u;
+ mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_ISO15765,0x20000000u,0,0);
+ flow=frame(PROTO_ISO15765,0x7E0u,0,0);
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_INVALID_MSG);
+ REQUIRE(id==0xABCDEF01u&&g_filter_counter==prior);
+ REQUIRE(channel(iso)->filters_count==0u);
+ /* 4: a valid response pattern cannot hide an invalid FC request ID. */
+ pat=frame(PROTO_ISO15765,0x7E8u,0,0);
+ flow=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_INVALID_MSG);
+ REQUIRE(id==0xABCDEF01u&&g_filter_counter==prior);
+ /* 5: exact maximum 29-bit ID remains valid for ordinary CAN filters. */
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_CAN,0x1FFFFFFFu,0,0);
+ REQUIRE(PassThruStartMsgFilter(can,1,&mask,&pat,0,&id)==ERR_OK);
+ REQUIRE(id==prior&&channel(can)->filters_count==1u);
+ REQUIRE(PassThruStopMsgFilter(can,id)==ERR_OK);
+ /* 6: ISO15765 allows both response and flow-control IDs at 29-bit max
+    (distinct values avoid intentional duplicate/overlap rejection). */
+ mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+ pat=frame(PROTO_ISO15765,0x1FFFFFFEu,0,0);
+ flow=frame(PROTO_ISO15765,0x1FFFFFFFu,0,0);
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_OK);
+ REQUIRE(channel(iso)->filters_count==1u);
+ REQUIRE(PassThruStopMsgFilter(iso,id)==ERR_OK);
+ /* 7: normal 11-bit ISO15765 filter still passes a UDS VIN request. */
+ pat=frame(PROTO_ISO15765,0x7E8u,0,0);
+ flow=frame(PROTO_ISO15765,0x7E0u,0,0);
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_OK);
+ first_id=id;
+ m=frame(PROTO_ISO15765,0x7E0u,vin,3u);
+ send(iso,&m);
+ rx=readmsg(iso);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765);
+ REQUIRE(rx.Data[4]==0x62u&&rx.Data[5]==0xF1u&&rx.Data[6]==0x90u);
+ /* 8: an invalid pattern after successful installation cannot
+    allocate a second filter or disrupt the first. */
+ pat=frame(PROTO_ISO15765,0xE0000000u,0,0);
+ REQUIRE(PassThruStartMsgFilter(iso,3,&mask,&pat,&flow,&id)==ERR_INVALID_MSG);
+ REQUIRE(id==first_id&&channel(iso)->filters_count==1u);
+ REQUIRE(PassThruStopMsgFilter(iso,first_id)==ERR_OK);
+ REQUIRE(channel(iso)->filters_count==0u);
+ REQUIRE(channel(can)->filters_count==0u);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ g_strict_j2534_filters=saved_strict;
+ puts("PASS J2534 filters: physical CAN ID bounds, full-width masks and ISO FC");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
@@ -1072,6 +1145,7 @@ int main(){
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
+ test_filter_can_id_boundaries(dev);
  test_known_b9fb_13frame_final_marker();
  test_d2_unknown_target_supersession(dev);
  test_vmware_route_evidence(dev);
