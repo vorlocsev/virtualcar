@@ -307,6 +307,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Read-only J2534 provider metadata audit failed' }
           Write-Host 'Provider status describes this CI runner only; no SectorV client was launched.'
 
+      # Evidence only: see whether a name-matched SectorV process is running
+      # in the CI runner's visible process context and whether it lists the
+      # canonical registered J2534 DLL among loaded modules. This NEVER
+      # starts the client, opens CAN, modifies HKLM, or proves GUI acceptance.
+      - name: Snapshot SectorV process and registered J2534 DLL binding read-only
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = 'emulator/tools/audit_vmware_sectorv_process.ps1'
+          $ps = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+          & $ps -NoProfile -ExecutionPolicy Bypass -File $probe -SelfTest
+          if ($LASTEXITCODE -ne 0) { throw 'SectorV process binding self-tests failed' }
+          & $ps -NoProfile -ExecutionPolicy Bypass -File $probe
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only SectorV process snapshot failed' }
+          Write-Host 'Snapshot is scoped to CI runner only, never equate with prior GUI session.'
+
       - name: Run Go control tests and vet
         shell: powershell
         working-directory: emulator/control
