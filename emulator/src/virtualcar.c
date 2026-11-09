@@ -1383,6 +1383,18 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     }
 }
 
+/* Every actual read-only request needs one transaction ID, including
+   requests emitted by the periodic scheduler. A CAN ISO-TP Flow Control
+   grants a prior response and must NOT create another diagnostic request. */
+static void begin_tx_evidence(CHANNEL *c,const PASSTHRU_MSG *msg){
+    if(c->protocol==PROTO_CAN && msg->DataSize>=5u &&
+       (msg->Data[4]&0xF0u)==0x30u){
+        c->active_trace=0;return;
+    }
+    c->active_trace=next_backend_request();
+    backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
+    backend_probe_event(c,c->active_trace,msg);
+}
 /* No physical bus: periodic requests are replayed only while the client
    polls ReadMsgs. Never spawn a background vehicle writer. */
 static void pump_periodic(CHANNEL *c){
@@ -1392,7 +1404,20 @@ static void pump_periodic(CHANNEL *c){
         if(!p->used || now<p->next_us || c->count>=MAX_QUEUE)continue;
         p->next_us=now+(U64)p->interval_ms*1000ull;
         logline("J2534 periodic TX (read-only simulator)",p->msg.Data,p->msg.DataSize);
+        /* Periodic D2 reads previously replayed frames with RID=0, so no
+           tx_received/probe/terminal evidence could be attributed to them.
+           Keep the distinct periodic log marker: this is a scheduler tick,
+           not a fresh direct PassThruWriteMsgs call from the GUI. */
+        {
+            p2_bridge_tx_result observed;
+            if(p2_bridge_inspect_tx(&g_vehicle_bridge,c->id,p->msg.TxFlags,
+                    p->msg.Data,p->msg.DataSize,&observed) &&
+               observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
+                logline(observed.label,0,0);
+        }
+        begin_tx_evidence(c,&p->msg);
         process_request(c,&p->msg);
+        c->active_trace=0;
     }
 }
 /* Standard 04.04 API. Undecorated export names are defined in virtualcar.def. */
@@ -1477,14 +1502,7 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
                 observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
                 logline(observed.label,0,0);
         }
-        /* Flow-control frames continue a previous response, not a new ECU
-           diagnostic request. They are intentionally not assigned a new ID. */
-        if(!(c->protocol==PROTO_CAN && msgs[i].DataSize>=5 &&
-             (msgs[i].Data[4]&0xF0u)==0x30u)){
-            c->active_trace=next_backend_request();
-            backend_event(c,c->active_trace,"tx_received","UNKNOWN","none","unknown");
-            backend_probe_event(c,c->active_trace,&msgs[i]);
-        } else c->active_trace=0;
+        begin_tx_evidence(c,&msgs[i]);
         process_request(c,&msgs[i]);
         c->active_trace=0;
     }

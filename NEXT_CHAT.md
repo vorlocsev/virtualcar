@@ -1,5 +1,37 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## CURRENT P0 CHANGE: periodic D2 request evidence needs exact-SHA CI (2026-11-09)
+
+- Source finding: `emulator/src/virtualcar.c` `pump_periodic`
+  called `process_request` without assigning a backend request ID,
+  while ordinary `PassThruWriteMsgs` did assign one. Periodic read-only
+  B9FB/A3/A6 could therefore create unattributed responses and no
+  `tx_received`/`probe_classified`/`request_completed` evidence.
+- The focused change shares a `begin_tx_evidence` helper across
+  immediate and periodic sends, preserves periodic log provenance as
+  scheduler-generated (not a fresh user `PassThruWriteMsgs` call),
+  and allows the passive P2 observer to see each valid periodic tick.
+  Raw CAN ISO-TP Flow Control 0x30 remains an extension of a prior
+  response with **no new** diagnostic request ID. Explicit opt-out
+  preserves read-only transport behavior without backend JSONL.
+- Eight synthetic native C test groups cover recorded B9FB RX,
+  unconfigured B9FB silence, unsupported A3 and A6 with no invented
+  positives, tester-present, flow-control trace isolation,
+  stopped schedule and telemetry-disabled behavior.
+- Confirm new merged `development` SHA and owner-only
+  `vmware-development-validation.yml` conclusion before declaring
+  this change verified. Prior checkpoint
+  `4434d175c4b196fb4c7391fa6741438ef62075d0`,
+  [VMware #42583626791](https://github.com/vorlocsev/virtualcar/actions/runs/42583626791)
+  was SUCCESS with 459/459 Python, 29/29 workflow steps.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  is still blocked on a **real** isolated SectorV GUI in the user's
+  VMware guest with actual DLL, B9FB, VIN and ECU-list observation.
+  Synthetic CI does not prove client acceptance. Do not change `main`,
+  publish binaries, program ECUs or invent CEM A3/A6/B9F0 responses.
+
+---
+
 ## CURRENT P0 CHANGE: isolate A3/A6 from stale B9 discovery frames
 
 - This branch fixes the real `emulator/src/virtualcar.c` D2 branch gap:
