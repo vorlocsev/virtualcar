@@ -1,5 +1,35 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: preserve native TX context adjacency and strict native RX metadata (2026-11-09)
+
+- Starting exact baseline: `development` `da88bbf110b2df447a8af9ca0b1e8e894c54090b`,
+  [VMware CI #42620401203](https://github.com/vorlocsev/virtualcar/actions/runs/42620401203)
+  **SUCCESS**, 525 Python tests, all 30 steps.
+- Source-level defect in `emulator/tools/audit_j2534_discovery.py`:
+  native `TX context channel/protocol/flags/baud/time-us (BE)` remained
+  available across unrelated lines. A later orphan `TX (app request)`
+  could be assigned a stale J2534 channel/baud and counted as a GUI-origin
+  D2 B9FB request. That does not establish actual client behavior.
+- Focused fix: expire TX context on interposed same-PID text, recognize
+  malformed native TX metadata as an attribution failure, require new TX
+  context after native scoped records have begun, and validate both TX/RX
+  20-byte native metadata format strictly. Preserve historical context-free
+  logs with unknown routing; keep periodic TX separate.
+- Eight synthetic regressions: valid scoped B9FB, interruption,
+  malformed TX context, orphaned request cannot supersede an active
+  request, fresh-context recovery, context-free compatibility,
+  concurrent-channel isolation, and strict source/PID privacy.
+- **CI gate:** verify focused PR merges to `development` and only then
+  inspect the newly triggered automatic VMware run on the exact resulting
+  merged SHA. A source edit/queued CI is never a passed test.
+- **Still blocked on real evidence:** one isolated, human-observed,
+  read-only SectorV Windows VMware GUI run with fresh J2534/backend
+  windows and UI observations. No A3/A6/B9F0 fabricated positives,
+  OEM VIN/ECU success claim, physical device test, `main` merge or release.
+  Continue [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4).
+
+---
+
 ## P0: native RX context must immediately precede delivered frame (2026-11-09)
 
 - Verified baseline: `development` `d3069b83e326db0b04f11068110afbad248d832d`,
