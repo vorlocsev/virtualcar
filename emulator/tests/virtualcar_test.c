@@ -957,6 +957,146 @@ static void test_raw_isotp_retune_cancels_old_bus(U32 dev){
  puts("PASS P0 raw ISO-TP baud lifetime: 8 FIFO/CTS/trace cases");
 }
 
+/* Strict raw-CAN PASS by physical response ID and optional ISO-TP PCI. */
+static void p0_add_can_pci_pass(U32 channel_id,U32 response_id,U32 pci){
+ PASSTHRU_MSG mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+ PASSTHRU_MSG pattern=frame(PROTO_CAN,response_id,0,0);
+ U32 filter_id=0;
+ if(pci<=0xFFu){
+  mask.DataSize=pattern.DataSize=5u;
+  mask.Data[4]=0xFFu;pattern.Data[4]=(U8)pci;
+ }
+ REQUIRE(PassThruStartMsgFilter(channel_id,1,&mask,&pattern,0,&filter_id)==ERR_OK);
+ REQUIRE(filter_id!=0u);
+}
+
+/* P0: missing CF1 must never allow CF2/CF3 to pass through a strict
+   data-byte filter. All eight cases run in the native host test only. */
+static void test_raw_can_cf_filter_gap_isolation(U32 dev){
+ const U8 vin_sf[8]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 f106_sf[8]={0x03u,0x22u,0xF1u,0x06u,0,0,0,0};
+ const U8 fc[8]={0x30u,0,0,0,0,0,0,0};
+ U32 saved_strict=g_strict_j2534_filters,ch=0,peer=0,n=0;
+ CHANNEL *c,*other;PASSTHRU_MSG req,req_long,cts,rx;
+ U64 rid;const char *start;
+ g_strict_j2534_filters=1u;
+ req=frame(PROTO_CAN,0x7E0u,vin_sf,8u);
+ req_long=frame(PROTO_CAN,0x726u,f106_sf,8u);
+ cts=frame(PROTO_CAN,0x7E0u,fc,8u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c);
+
+ /* 1. FF is allowed, CF1 is not: transfer ends as dropped, not replied. */
+ p0_add_can_pci_pass(ch,0x7E8u,0x10u);
+ start=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(start);
+ REQUIRE(rid && c->count==1u && c->pending_len==20u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);
+ REQUIRE(c->pending_len==0u && !c->pending_cf_active && c->count==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ REQUIRE(terminal_count_for(start,rid)==1u);
+ puts("PASS P0 CF filter gap 1: FF accepted but CF1 rejected");
+
+ /* 2. Late second CTS cannot revive a cancelled transfer. */
+ send(ch,&cts);n=1u;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(c->pending_len==0u&&terminal_count_for(start,rid)==1u);
+ puts("PASS P0 CF filter gap 2: late CTS remains silent");
+
+ /* 3. Explicitly allow CF2, but not CF1: never emit a skipped CF2. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x7E8u,0x10u);
+ p0_add_can_pci_pass(ch,0x7E8u,0x22u);
+ start=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(start);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);
+ REQUIRE(c->count==0u&&c->pending_len==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ puts("PASS P0 CF filter gap 3: CF2 cannot skip rejected CF1");
+
+ /* 4. CF1 accepted, CF2 denied: return CF1 but stop sequence after it. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x7E8u,0x10u);
+ p0_add_can_pci_pass(ch,0x7E8u,0x21u);
+ start=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(start);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);REQUIRE(c->count==1u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ puts("PASS P0 CF filter gap 4: CF2 rejection ends the burst");
+
+ /* 5. CTS grant blocked by a full FIFO must still stop on later CF
+    filtering after a read frees space, not skip to CF2. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x7E8u,0x10u);
+ start=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(start);
+ REQUIRE(c->count==1u);
+ g_strict_j2534_filters=0u;fill_untraced_rx(c,MAX_QUEUE);
+ g_strict_j2534_filters=1u;
+ send(ch,&cts);
+ REQUIRE(c->pending_cf_active&&c->pending_len==20u&&c->count==MAX_QUEUE);
+ {PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(MAX_QUEUE,sizeof(*batch));
+  REQUIRE(batch!=0);n=MAX_QUEUE;
+  REQUIRE(PassThruReadMsgs(ch,batch,&n,0)==ERR_OK&&n==MAX_QUEUE);
+  REQUIRE(batch[0].Data[4]==0x10u);
+  for(U32 j=1;j<MAX_QUEUE;j++)
+   REQUIRE(batch[j].Data[2]==0x05u&&batch[j].Data[3]==0x55u);
+  free(batch);
+ }
+ REQUIRE(c->pending_len==0u&&c->count==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ puts("PASS P0 CF filter gap 5: full FIFO and delayed filter decision");
+
+ /* 6. A restrictive channel A never disrupts an independent B which
+    accepts full FF/CTS/CF by response CAN ID. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other);
+ p0_add_can_pci_pass(peer,0x7E8u,0xFFFFFFFFu);
+ send(ch,&req);send(peer,&req);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);send(peer,&cts);
+ REQUIRE(c->count==0u&&c->pending_len==0u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(other->pending_len==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS P0 CF filter gap 6: other J2534 channel unaffected");
+
+ /* 7. A newly permitted full-ID response performs FF, CF1 and CF2. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x7E8u,0xFFFFFFFFu);
+ start=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(start);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(c->pending_len==0u&&c->count==0u);
+ REQUIRE(terminal_for(start,rid,"none","responded")==1u);
+ puts("PASS P0 CF filter gap 7: fresh fully allowed request recovers");
+
+ /* 8. Longer 145-byte config response: permit CF1 and CF3 but filter
+    CF2; no later CF3 may escape after missing sequence number two. */
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ p0_add_can_pci_pass(ch,0x72Eu,0x10u);
+ p0_add_can_pci_pass(ch,0x72Eu,0x21u);
+ p0_add_can_pci_pass(ch,0x72Eu,0x23u);
+ cts=frame(PROTO_CAN,0x726u,fc,8u);
+ start=backend_lines+backend_len;send(ch,&req_long);rid=last_tx_request(start);
+ REQUIRE(c->pending_len==145u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ send(ch,&cts);
+ REQUIRE(c->count==1u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ REQUIRE(terminal_count_for(start,rid)==1u);
+ puts("PASS P0 CF filter gap 8: long F106 stops at CF2, not CF3");
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_strict_j2534_filters=saved_strict;
+}
+
 /* P0 write isolation: mismatched J2534 ProtocolID and invalid classic
    CAN payloads cannot enter the read-only vehicle observer or RX FIFO. */
 static void test_write_transport_boundaries(U32 dev){
@@ -2009,6 +2149,7 @@ int main(){
  test_passive_can_replay_retune_isolation(dev);
  test_raw_can_orphan_cf_admission(dev);
  test_raw_isotp_retune_cancels_old_bus(dev);
+ test_raw_can_cf_filter_gap_isolation(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
