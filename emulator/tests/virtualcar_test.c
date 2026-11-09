@@ -1103,6 +1103,142 @@ static void test_raw_can_cf_filter_gap_isolation(U32 dev){
  g_strict_j2534_filters=saved_strict;
 }
 
+/* Eight synthetic C cases: superseding an unfinished raw ISO-TP reply
+   must retract its queued FF/CF, even without optional backend telemetry. */
+static void test_raw_isotp_supersession_queued_rx(U32 dev){
+ const U8 vin[8]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 tester[8]={0x02u,0x3Eu,0x00u,0,0,0,0,0};
+ const U8 fc[8]={0x30u,0,0,0,0,0,0,0};
+ const U8 fc1[8]={0x30u,0x01u,0,0,0,0,0,0};
+ const U8 filler[8]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0};
+ U32 saved_strict=g_strict_j2534_filters,saved_backend=g_backend_enabled;
+ U32 ch=0,peer=0,n;U64 oldrid,serial,gen;const char *start;
+ PASSTHRU_MSG req,reqtester,cts,one_cf,rx;
+ CHANNEL *c,*other;
+ g_strict_j2534_filters=0u;
+ req=frame(PROTO_CAN,0x7E0u,vin,8u);
+ reqtester=frame(PROTO_CAN,0x7E0u,tester,8u);
+ cts=frame(PROTO_CAN,0x7E0u,fc,8u);
+ one_cf=frame(PROTO_CAN,0x7E0u,fc1,8u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c);
+
+ /* 1. A new single response discards previously queued FF of pending
+    response. Record aborted rather than responded for previous RID. */
+ start=backend_lines+backend_len;
+ send(ch,&req);oldrid=last_tx_request(start);
+ REQUIRE(oldrid&&c->count==1u&&c->pending_len==20u);
+ gen=c->pending_raw_exchange;
+ REQUIRE(gen&&c->queue_raw_exchange[c->r]==gen);
+ send(ch,&reqtester);
+ REQUIRE(c->pending_len==0u&&c->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ REQUIRE(terminal_for(start,oldrid,"superseded","aborted")==1u);
+ REQUIRE(terminal_count_for(start,oldrid)==1u);
+ puts("PASS P0 ISO-TP retry 1: queued FF removed, old request aborted");
+
+ /* 2. Delivered FF cannot be undone, but pending old CF is gone and
+    an unrelated subsequent CTS must not resurrect the old exchange. */
+ start=backend_lines+backend_len;
+ send(ch,&req);oldrid=last_tx_request(start);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ REQUIRE(c->pending_len==20u);
+ send(ch,&reqtester);REQUIRE(c->count==1u&&c->pending_len==0u);
+ send(ch,&cts);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(terminal_for(start,oldrid,"superseded","aborted")==1u);
+ puts("PASS P0 ISO-TP retry 2: delivered FF and old CF tail cancelled");
+
+ /* 3. Previously granted CF1 and an undelivered FF are both removed
+    when a newer answer arrives, not silently mixed with new SF. */
+ start=backend_lines+backend_len;
+ send(ch,&req);oldrid=last_tx_request(start);
+ send(ch,&one_cf);
+ REQUIRE(c->count==2u&&c->pending_len==20u&&c->pending_pos==13u);
+ gen=c->pending_raw_exchange;
+ REQUIRE(c->queue_raw_exchange[c->r]==gen);
+ REQUIRE(c->queue_raw_exchange[(c->r+1u)%MAX_QUEUE]==gen);
+ send(ch,&reqtester);
+ REQUIRE(c->count==1u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ REQUIRE(terminal_for(start,oldrid,"superseded","aborted")==1u);
+ puts("PASS P0 ISO-TP retry 3: queued FF and CF1 removed together");
+
+ /* 4. Ordinary RX before and after FF survives FIFO compaction in
+    precisely original order; a new tester reply comes after both. */
+ enqueue(c,0x555u,filler,8u);
+ send(ch,&req);
+ enqueue(c,0x556u,filler,8u);
+ REQUIRE(c->count==3u);
+ send(ch,&reqtester);REQUIRE(c->count==3u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x56u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ puts("PASS P0 ISO-TP retry 4: unrelated RX order retained");
+
+ /* 5. Ring wrap still removes only old exchange generations.
+    New response follows retained ordinary RX across the array boundary. */
+ REQUIRE(c->count==0u);
+ c->r=c->w=MAX_QUEUE-2u;
+ enqueue(c,0x555u,filler,8u);
+ send(ch,&req);
+ enqueue(c,0x556u,filler,8u);
+ REQUIRE(c->count==3u&&c->w==1u);
+ send(ch,&reqtester);
+ REQUIRE(c->count==3u&&c->r==MAX_QUEUE-2u&&c->w==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x55u);
+ rx=readmsg(ch);REQUIRE(rx.Data[3]==0x56u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ puts("PASS P0 ISO-TP retry 5: wraparound FIFO compaction");
+
+ /* 6. Exchange identity is private transport state, not a backend
+    request ID. Disabling telemetry does not expose old FF to client. */
+ g_backend_enabled=0u;
+ send(ch,&req);
+ REQUIRE(c->count==1u&&c->pending_len==20u);
+ REQUIRE(c->pending_trace==0u&&c->pending_raw_exchange!=0u);
+ send(ch,&reqtester);
+ REQUIRE(c->count==1u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ g_backend_enabled=saved_backend;
+ puts("PASS P0 ISO-TP retry 6: works without backend request IDs");
+
+ /* 7. Channel B's pending FF/CF does not belong to a superseding
+    request on channel A. The peer still receives complete VIN reply. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ other=channel(peer);REQUIRE(other);
+ serial=other->session_serial;
+ send(peer,&req);send(ch,&req);
+ REQUIRE(other->count==1u&&other->pending_len==20u);
+ send(ch,&reqtester);
+ REQUIRE(c->count==1u&&other->count==1u);
+ REQUIRE(other->session_serial==serial);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x10u);
+ send(peer,&cts);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(other->pending_len==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS P0 ISO-TP retry 7: peer channel not cancelled");
+
+ /* 8. A previously COMPLETE SF response is legitimate queued RX and
+    must not be removed when a later unfinished FF is superseded. */
+ send(ch,&reqtester);
+ send(ch,&req);
+ REQUIRE(c->count==2u&&c->pending_len==20u);
+ send(ch,&reqtester);
+ REQUIRE(c->count==2u&&c->pending_len==0u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_strict_j2534_filters=saved_strict;
+ g_backend_enabled=saved_backend;
+ puts("PASS P0 ISO-TP retry 8: completed SF remains in FIFO");
+}
+
 /* P0 write isolation: mismatched J2534 ProtocolID and invalid classic
    CAN payloads cannot enter the read-only vehicle observer or RX FIFO. */
 static void test_write_transport_boundaries(U32 dev){
@@ -2156,6 +2292,7 @@ int main(){
  test_raw_can_orphan_cf_admission(dev);
  test_raw_isotp_retune_cancels_old_bus(dev);
  test_raw_can_cf_filter_gap_isolation(dev);
+ test_raw_isotp_supersession_queued_rx(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
