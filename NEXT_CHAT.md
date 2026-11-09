@@ -1,5 +1,41 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## VERIFIED: periodic J2534 transport guard and three-source SectorV triage (2026-11-09)
+
+- **Latest native change:** [PR #233](https://github.com/vorlocsev/virtualcar/pull/233),
+  squash merged as `da5155ee2550738267ea548678fecaedd8a3fdaa`.
+  Exact-SHA owner-only
+  [VMware #42574500120](https://github.com/vorlocsev/virtualcar/actions/runs/42574500120)
+  **SUCCESS**, **431/431 Python tests**, **29/29 workflow steps** and
+  the new native C `PASS J2534 periodic TX: shared protocol, CAN DLC/ID,
+  ISO and valid repeat` check. The actual `emulator/src/virtualcar.c`
+  now shares side-effect-free `validate_tx_message` across immediate
+  `PassThruWriteMsgs` and `PassThruStartPeriodicMsg`, closing the
+  previous bypass for protocol mismatch, >8-byte classic CAN,
+  30/32-bit CAN IDs and strict ISO15765 extended-address requests.
+  Invalid schedules create no periodic slot or ID. Ordinary valid
+  tester-present repeating RX remains tested. This is offline only.
+- **Earlier GUI diagnostic feature:** [PR #232](https://github.com/vorlocsev/virtualcar/pull/232)
+  merged as `65677f363de7906d6b39f8f58764c129cd826dd6`;
+  exact-SHA [VMware #42573617336](https://github.com/vorlocsev/virtualcar/actions/runs/42573617336)
+  **SUCCESS**, **431/431 Python tests** and **29/29 CI steps**.
+  `emulator/tools/audit_sectorv_ui_window_triage.py` accepts an
+  **optional third redacted operator module snapshot** in addition
+  to the bounded J2534/backend summary and curated GUI states.
+  Strict schema and private-data checks do not promote DLL snapshot
+  or operator assertions into OEM VIN/ECU acceptance.
+- **Unresolved [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):**
+  a genuine SectorV GUI session on the **user's actual isolated
+  VMware Windows guest** is still unperformed; the CI runner is a
+  different, non-interactive observation scope. The user should
+  use [operator instructions](emulator/README_SECTORV_FRESH_WINDOW_RU.md)
+  for one read-only run, registered x86 DLL snapshot while GUI open,
+  bounded log window, curated GUI status and optionally three-source
+  triage. Do not invent CEM replies, publish binaries or claim
+  real VIN/ECU success. No modification to `main`.
+
+---
+
 ## ACTIVE: P0 genuine SectorV GUI J2534 binding gate (2026-11-09)
 
 - **Latest feature `development` commit:**
