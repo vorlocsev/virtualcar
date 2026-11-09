@@ -356,6 +356,37 @@ class FreshWindowTests(unittest.TestCase):
 
 
 
+    def test_17_bounded_window_marks_byte_short_b9_final_partial(self):
+        # End-to-end audit: a single 0x4F byte cannot finish a B9 CAN RX.
+        private_j2534 = "".join((
+            log_event("TX context channel/protocol/flags/baud/time-us (BE) "
+                      + be(1, 5, 0, 500000, 100000)),
+            log_event("TX (app request) 00 0F FF FE CB 50 B9 FB 00 00 00 00"),
+            log_event("RX context channel/protocol/status/baud/time-us (BE) "
+                      + be(1, 5, 0, 500000, 102000)),
+            log_event("PassThruReadMsgs -> delivered "
+                      "01 20 00 03 8F 50 F9 FB 57 00 30 66"),
+            log_event("RX context channel/protocol/status/baud/time-us (BE) "
+                      + be(1, 5, 0, 500000, 103000)),
+            log_event("PassThruReadMsgs -> delivered 01 20 00 03 4F"),
+        ))
+        result = gate.summarize(private_j2534.splitlines(True), [],
+                                operator_one_run=True)
+        target = result["discovery"]["d2"]["0x50"]["B9FB"]
+        self.assertEqual(target["requests"], 1)
+        self.assertEqual(target["statuses"], {"partial_rx": 1})
+        self.assertEqual(target["rx_frame_buckets"]["one_to_twelve"], 1)
+        self.assertEqual(result["cross_log_transaction_attribution"],
+                         "not_established")
+        self.assertEqual(result["client_vehicle_identity_accepted"],
+                         "not_verified")
+        report = json.dumps(result)
+        for secret in ("DEADBEEF", "SyntheticClient.exe", "YV1LAB",
+                       "01 20 00 03 4F"):
+            self.assertNotIn(secret, report)
+
+
+
 class FreshToGuiPipelineTests(unittest.TestCase):
     """CLI-to-CLI synthetic checks: raw private text -> redacted window -> GUI triage.
 
