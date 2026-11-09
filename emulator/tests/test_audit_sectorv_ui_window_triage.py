@@ -611,5 +611,100 @@ class SectorVUiWindowTriageTests(unittest.TestCase):
             self.assertFalse((root / "forged.json").exists())
 
 
+    def test_45_reject_d2_and_p3_double_counting_one_transaction(self):
+        case = set_b9(window())
+        case["discovery"]["p3_count"] = 1
+        # Each individual route fits the total, but their sum does not.
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui(), operator_pair_confirmed=True)
+
+    def test_46_reject_overlapping_known_and_unknown_d2_transport(self):
+        case = set_b9(window())
+        entry = case["discovery"]["d2"]["0x50"]["B9FB"]
+        entry["unknown_protocol_or_baud"] = 1
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_47_reject_d2_service_status_not_present_in_global_summary(self):
+        case = set_b9(window())
+        case["discovery"]["statuses"] = {"unverified": 1}
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_48_reject_aggregate_d2_status_inflation_across_targets(self):
+        case = set_b9(window())
+        case["discovery"]["d2"]["0x40"]["A3"] = copy.deepcopy(
+            case["discovery"]["d2"]["0x50"]["B9FB"])
+        case["discovery"]["transactions"] = 2
+        case["discovery"]["statuses"] = {"no_fixture": 1, "unverified": 1}
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_49_reject_two_backend_probes_claiming_one_tx(self):
+        case = window()
+        case["backend"]["requests"] = 1
+        case["backend"]["statuses"] = {"delivered": 1}
+        for probe in ("D2_40_B9FB", "D2_50_B9FB"):
+            case["backend"]["d2_probe_coverage"][probe] = {
+                "requests": 1, "statuses": {"delivered": 1}}
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_50_reject_backend_probe_status_not_in_total(self):
+        case = window()
+        case["backend"]["requests"] = 1
+        case["backend"]["statuses"] = {"no_fixture": 1}
+        case["backend"]["d2_probe_coverage"]["D2_50_B9FB"] = {
+            "requests": 1, "statuses": {"delivered": 1}}
+        with self.assertRaises(ValueError):
+            triage.triage(case, ui())
+
+    def test_51_valid_mixed_d2_p3_and_unattributed_probes_stay_unverified(self):
+        case = set_b9(window(), rx=True)
+        case["discovery"]["transactions"] = 3
+        case["discovery"]["p3_count"] = 1
+        case["discovery"]["statuses"] = {"delivered": 1, "unverified": 2}
+        case["backend"]["requests"] = 3
+        case["backend"]["statuses"] = {
+            "no_fixture": 1, "unsupported": 1, "unverified": 1}
+        case["backend"]["d2_probe_coverage"]["D2_50_B9FB"] = {
+            "requests": 1, "statuses": {"no_fixture": 1}}
+        case["backend"]["d2_probe_coverage"]["D2_40_A3"] = {
+            "requests": 1, "statuses": {"unsupported": 1}}
+        case["windows"]["j2534"].update({
+            "complete_lines": 10, "new_bytes": 1024})
+        case["windows"]["backend"].update({
+            "complete_lines": 10, "new_bytes": 1024})
+        result = triage.triage(case, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["b9fb_request_count_in_window"], 1)
+        self.assertEqual(result["first_next_gate"],
+                         "review_client_vin_failure_after_unlinked_rx")
+        self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
+        self.assertFalse(result["oem_vin_and_ecu_verified"])
+
+    def test_52_cli_rejects_contradiction_without_leaking_private_input(self):
+        with tempfile.TemporaryDirectory() as td:
+            private = Path(td)
+            win = private / "private-window.json"
+            gui_path = private / "private-gui.json"
+            output = private / "redacted-output.json"
+            case = set_b9(window())
+            case["discovery"]["p3_count"] = 1
+            win.write_text(json.dumps(case), encoding="utf-8")
+            gui_path.write_text(json.dumps(ui()), encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                result = triage.main([
+                    "--window-report", str(win),
+                    "--ui-observation", str(gui_path),
+                    "--output", str(output),
+                    "--operator-same-run-confirmed",
+                ])
+            self.assertEqual(result, 2)
+            self.assertFalse(output.exists())
+            self.assertNotIn(str(private), stderr.getvalue())
+            self.assertNotIn("VIN", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
