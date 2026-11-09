@@ -682,10 +682,82 @@ static void test_zero_baud_guard(U32 dev){
  REQUIRE(PassThruDisconnect(cid)==ERR_OK);
 }
 
+/* P0 write isolation: mismatched J2534 ProtocolID and invalid classic
+   CAN payloads cannot enter the read-only vehicle observer or RX FIFO. */
+static void test_write_transport_boundaries(U32 dev){
+ const U8 uds_vin[]={0x22u,0xF1u,0x90u};
+ const U8 tester_long[]={0x3Eu,0u,0u,0u,0u,0u,0u,0u,0u};
+ const U8 can_a3[]={0xCFu,0x50u,0xA3u,0x02u,0x03u,0xA5u,0xA5u,0u};
+ const U8 can_nine[]={0x03u,0x22u,0xF1u,0x90u,0u,0u,0u,0u,0u};
+ U32 can=0,iso=0,n,prior_events,prior_tx;
+ PASSTHRU_MSG msg,rx,batch[2];
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000u,&iso)==ERR_OK);
+ prior_events=backend_len;prior_tx=g_vehicle_bridge.inspected_tx;
+ /* 1. ISO message cannot be silently interpreted on a raw CAN channel. */
+ msg=frame(PROTO_ISO15765,0x7E0u,uds_vin,3u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_MSG_PROTOCOL_ID&&n==0);
+ REQUIRE(backend_len==prior_events && g_vehicle_bridge.inspected_tx==prior_tx);
+ REQUIRE(channel(can)->count==0);
+ /* 2. Raw CAN message cannot enter a reassembled ISO15765 channel. */
+ msg=frame(PROTO_CAN,0x7E0u,can_a3,8u);
+ n=1;REQUIRE(PassThruWriteMsgs(iso,&msg,&n,0)==ERR_MSG_PROTOCOL_ID&&n==0);
+ REQUIRE(backend_len==prior_events && g_vehicle_bridge.inspected_tx==prior_tx);
+ REQUIRE(channel(iso)->count==0);
+ /* 3. Unknown vendor protocol in PASSTHRU_MSG is not silently aliased. */
+ msg=frame(0x8004u,0x7E0u,uds_vin,3u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_MSG_PROTOCOL_ID&&n==0);
+ REQUIRE(backend_len==prior_events && g_vehicle_bridge.inspected_tx==prior_tx);
+ /* 4. A raw CAN DLC of nine is invalid, with no diagnostic side effect. */
+ msg=frame(PROTO_CAN,0x7E0u,can_nine,9u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_INVALID_MSG&&n==0);
+ REQUIRE(backend_len==prior_events && g_vehicle_bridge.inspected_tx==prior_tx);
+ REQUIRE(channel(can)->count==0);
+ /* 5. Existing minimum J2534 payload guard still rejects short data. */
+ msg=frame(PROTO_CAN,0x7E0u,can_a3,8u);msg.DataSize=4u;
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_INVALID_MSG&&n==0);
+ REQUIRE(backend_len==prior_events && g_vehicle_bridge.inspected_tx==prior_tx);
+ /* 6. Normal eight-byte read-only CEM A3 remains accepted but silent. */
+ msg=frame(PROTO_CAN,0x000FFFFEu,can_a3,8u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&msg,&n,0)==ERR_OK&&n==1);
+ REQUIRE(g_vehicle_bridge.inspected_tx>prior_tx);
+ REQUIRE(channel(can)->count==0);
+ n=1;REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 7. A longer ISO15765 UDS payload remains valid and receives a reply. */
+ msg=frame(PROTO_ISO15765,0x7E0u,tester_long,9u);
+ n=1;REQUIRE(PassThruWriteMsgs(iso,&msg,&n,0)==ERR_OK&&n==1);
+ rx=readmsg(iso);REQUIRE(rx.ProtocolID==PROTO_ISO15765);
+ REQUIRE(rx.DataSize==6u&&rx.Data[4]==0x7Eu&&rx.Data[5]==0u);
+ /* 8. A mixed batch preserves the count already written, but the invalid
+    next message cannot produce extra events, RX or observer evidence. */
+ batch[0]=frame(PROTO_CAN,0x000FFFFEu,can_a3,8u);
+ batch[1]=frame(PROTO_ISO15765,0x7E0u,uds_vin,3u);
+ prior_tx=g_vehicle_bridge.inspected_tx;
+ n=2;REQUIRE(PassThruWriteMsgs(can,batch,&n,0)==ERR_MSG_PROTOCOL_ID&&n==1);
+ REQUIRE(g_vehicle_bridge.inspected_tx==prior_tx+1u);
+ REQUIRE(channel(can)->count==0);
+ /* 9. A bad first batch entry leaves a valid later entry unprocessed. */
+ batch[0]=frame(PROTO_ISO15765,0x7E0u,uds_vin,3u);
+ batch[1]=frame(PROTO_CAN,0x000FFFFEu,can_a3,8u);
+ prior_events=backend_len;prior_tx=g_vehicle_bridge.inspected_tx;
+ n=2;REQUIRE(PassThruWriteMsgs(can,batch,&n,0)==ERR_MSG_PROTOCOL_ID&&n==0);
+ REQUIRE(backend_len==prior_events && g_vehicle_bridge.inspected_tx==prior_tx);
+ /* 10. Ordinary ISO VIN read remains available on the correct channel. */
+ msg=frame(PROTO_ISO15765,0x7E0u,uds_vin,3u);
+ n=1;REQUIRE(PassThruWriteMsgs(iso,&msg,&n,0)==ERR_OK&&n==1);
+ rx=readmsg(iso);REQUIRE(rx.ProtocolID==PROTO_ISO15765);
+ REQUIRE(rx.Data[4]==0x62u&&rx.Data[5]==0xF1u&&rx.Data[6]==0x90u);
+ REQUIRE(channel(can)->count==0);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ puts("PASS J2534 WriteMsgs: protocol isolation, classic CAN DLC and batch boundaries");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
+ test_write_transport_boundaries(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);

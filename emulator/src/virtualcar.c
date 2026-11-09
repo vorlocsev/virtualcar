@@ -1431,7 +1431,18 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
-        if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5){*count=i;unlock_state();return error(ERR_INVALID_MSG);}
+        /* A channel's transport must agree with each J2534 message. Do not
+           silently reinterpret CAN as ISO15765 (or vice versa) and create
+           spurious CEM/ECU receive evidence on an unrelated route. */
+        if(msgs[i].ProtocolID!=c->protocol){
+            *count=i;unlock_state();return error(ERR_MSG_PROTOCOL_ID);
+        }
+        /* Classic CAN carries at most eight payload bytes after the 4-byte
+           identifier; ISO15765 may hold a longer reassembled UDS payload. */
+        if(msgs[i].DataSize>MAX_DATA||msgs[i].DataSize<5 ||
+           (c->protocol==PROTO_CAN && msgs[i].DataSize>12u)){
+            *count=i;unlock_state();return error(ERR_INVALID_MSG);
+        }
         /* Extended ISO15765 addressing needs a real fifth-byte transport
            mapping, not a silent normal-addressing UDS interpretation. */
         if(g_strict_j2534_filters && c->protocol==PROTO_ISO15765 &&
