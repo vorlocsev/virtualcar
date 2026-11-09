@@ -1,5 +1,38 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## CURRENT P0: periodic text-log provenance and SectorV report parity (2026-11-09)
+
+- **Verified baseline** before this change: `development`
+  `6b3771c50bceab46574add4cc7aacc2105027768`;
+  exact-SHA [VMware #42584831833](https://github.com/vorlocsev/virtualcar/actions/runs/42584831833)
+  **SUCCESS**, 467 Python tests and 30/30 workflow steps.
+- Source-level gap: native `pump_periodic` now generates backend
+  request IDs, but the J2534 text audit only recognized
+  `TX (app request)`, not `J2534 periodic TX (read-only simulator)`.
+  The bounded GUI evidence chain therefore undercounted B9FB/A3/A6
+  executed via periodic schedules relative to backend probe totals.
+- Focused fix: native J2534 text log now emits a **20-byte periodic
+  channel/protocol/flags/baud/time context**, distinct from direct GUI
+  writes. `audit_j2534_discovery.py` requires a valid immediately adjacent
+  context and labels each transaction `request_origin=direct_write` or
+  `periodic_scheduler`; no missing-context guessing, oversized classic
+  CAN, ISO15765 D2 crossover, CAN Flow Control synthetic request, or
+  private data reproduction. The bounded fresh-window summary counts
+  both sources while retaining
+  `cross_log_transaction_attribution=not_established` and
+  `client_vehicle_identity_accepted=not_verified`.
+  Eight Python synthetic discovery checks, two pipeline checks and
+  native C marker guard were added.
+- **This focused PR needs exact merged SHA owner-only VMware CI**
+  before declaring it verified. Preserve
+  [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4):
+  genuine SectorV GUI in user's isolated Windows VMware guest has not
+  yet been observed reading B9FB, accepting VIN or listing actual ECUs.
+  No fabricated CEM response, physical J2534 validation, PIN/coding,
+  new binary release or `main` merge.
+
+---
+
 ## CURRENT P0 CHANGE: periodic D2 request evidence needs exact-SHA CI (2026-11-09)
 
 - Source finding: `emulator/src/virtualcar.c` `pump_periodic`
