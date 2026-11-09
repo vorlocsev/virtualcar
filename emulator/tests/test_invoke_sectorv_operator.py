@@ -122,8 +122,13 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
 
     def test_08_invalid_python_path_does_not_echo_private_arguments(self):
-        bad = self.run_helper("Begin", "-NonInteractive",
-                              "-PythonExe", str(self.dir / "PRIVATE_NONEXISTENT.exe"))
+        args = list(self.common)
+        args[args.index("-PythonExe") + 1] = str(
+            self.dir / "PRIVATE_NONEXISTENT.exe")
+        bad = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", str(WRAPPER), "-Phase", "Begin", *args],
+            capture_output=True, text=True, timeout=35)
         self.assertEqual(bad.returncode, 2)
         self.assertFalse(self.session.exists())
         self.assertNotIn(str(self.dir), bad.stderr)
