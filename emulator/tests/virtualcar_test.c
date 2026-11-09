@@ -883,9 +883,6 @@ static void test_known_b9fb_13frame_final_marker(void){
  puts("PASS D2 B9FB 13-frame final 4F boundary, synthetic native audit");
 }
 
-/* A follow-up D2 read-only request supersedes the old exchange on the
-   same J2534 channel even if its target/opcode has no recorded fixture.
-   No real CEM identity or positive A3/A6 response is synthesized. */
 /* P0: a B9FB replay is bound to the channel bitrate at request time.
    A DATA_RATE change must never deliver its queued/staged D2 frames on
    the new bus. All fixtures here are synthetic and read-only. */
@@ -997,6 +994,9 @@ static void test_d2_replay_isolation_on_set_config(U32 dev){
  puts("PASS P0 D2 DATA_RATE retune isolation: 8 read-only host cases");
 }
 
+/* A follow-up D2 read-only request supersedes the old exchange on the
+   same J2534 channel even if its target/opcode has no recorded fixture.
+   No real CEM identity or positive A3/A6 response is synthesized. */
 static void test_d2_unknown_target_supersession(U32 dev){
  D2_PROFILE saved_fb=g_d2[2],saved_fc=g_d2[5];
  U32 saved_strict=g_p2_strict_routing;
