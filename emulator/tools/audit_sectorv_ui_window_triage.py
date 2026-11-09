@@ -194,6 +194,7 @@ def _check_window(report):
     if type(d2) is not dict or set(d2) != {"0x40", "0x50"}:
         raise ValueError("unknown CEM target")
     d2_requests = 0
+    d2_status_totals = {status: 0 for status in STATUSES}
     for target in ("0x40", "0x50"):
         group = d2[target]
         if type(group) is not dict or set(group) != set(SERVICES):
@@ -208,17 +209,23 @@ def _check_window(report):
             d2_requests += count
             _uint(item["known_can_500k"])
             _uint(item["unknown_protocol_or_baud"])
-            if (item["known_can_500k"] > count
-                    or item["unknown_protocol_or_baud"] > count):
-                raise ValueError("invalid route accounting")
+            # One request cannot be both known CAN/500k and unknown.
+            if (item["known_can_500k"] + item["unknown_protocol_or_baud"] > count):
+                raise ValueError("mutually exclusive route counts overlap")
             _check_status_counts(item["statuses"], STATUSES, count)
+            for status, n in item["statuses"].items():
+                d2_status_totals[status] += n
             buckets = item["rx_frame_buckets"]
             if type(buckets) is not dict or set(buckets) != set(B9_BUCKETS):
                 raise ValueError("invalid RX bucket schema")
             if sum(_uint(v) for v in buckets.values()) != count:
                 raise ValueError("invalid RX bucket total")
-    if d2_requests > transactions:
-        raise ValueError("D2 count exceeds discovery transaction total")
+    # D2 and P3 are mutually exclusive classifications of one J2534 TX.
+    if d2_requests + discovery["p3_count"] > transactions:
+        raise ValueError("D2 and P3 exceed discovery transaction total")
+    if any(n > discovery["statuses"].get(status, 0)
+           for status, n in d2_status_totals.items()):
+        raise ValueError("D2 status counts contradict discovery total")
     connect = report["connect"]
     if type(connect) is not dict or set(connect) != {"attempts", "statuses"}:
         raise ValueError("invalid connect summary")
@@ -238,13 +245,22 @@ def _check_window(report):
                 for service in SERVICES}
     if type(probes) is not dict or set(probes) != expected:
         raise ValueError("invalid backend probe keys")
+    backend_probe_requests = 0
+    backend_probe_statuses = {status: 0 for status in STATUSES}
     for probe in probes.values():
         if type(probe) is not dict or set(probe) != {"requests", "statuses"}:
             raise ValueError("invalid backend probe shape")
         count = _uint(probe["requests"])
-        if count > backend_requests:
-            raise ValueError("backend probe exceeds total")
+        backend_probe_requests += count
         _check_status_counts(probe["statuses"], STATUSES, count)
+        for status, n in probe["statuses"].items():
+            backend_probe_statuses[status] += n
+    # The backend assigns at most one trusted allowlisted probe per TX.
+    if backend_probe_requests > backend_requests:
+        raise ValueError("backend probe coverage double-counted requests")
+    if any(n > backend["statuses"].get(status, 0)
+           for status, n in backend_probe_statuses.items()):
+        raise ValueError("backend probe status contradicts summary")
     if ((attempts or transactions) and
             report["windows"]["j2534"]["complete_lines"] == 0):
         raise ValueError("J2534 counts without appended log lines")
