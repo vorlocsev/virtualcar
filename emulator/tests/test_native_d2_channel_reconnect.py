@@ -89,15 +89,15 @@ class NativeD2ChannelReuseTests(unittest.TestCase):
         self.assertEqual(result["b9fb_13frame_control_sequence_groups"], 1)
         self.assertEqual(result["groups_with_missing_duplicate_or_out_of_order_indices"], 1)
 
-    def test_04_orphan_disconnect_metadata_alone_does_not_split(self):
-        # The actual C emitter writes a second bare PassThruDisconnect.
-        # Without it no channel lifecycle change has been proven.
+    def test_04_disconnect_metadata_alone_prevents_false_complete_group(self):
+        # The actual C emitter writes a second bare PassThruDisconnect,
+        # but a lost final log line must not join two apparent sessions.
         rows = frames(range(1, 7))
         rows += [line("PassThruDisconnect channel (BE)", be(1))]
         rows += frames(range(7, 14))
         result = counts(rows)
-        self.assertEqual(result["generation_groups"], 1)
-        self.assertEqual(result["b9fb_13frame_control_sequence_groups"], 1)
+        self.assertEqual(result["generation_groups"], 2)
+        self.assertEqual(result["b9fb_13frame_control_sequence_groups"], 0)
 
     def test_05_malformed_channel_metadata_with_disconnect_splits_all(self):
         rows = frames(range(1, 7))
