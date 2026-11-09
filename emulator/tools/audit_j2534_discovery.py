@@ -541,6 +541,7 @@ def audit(lines, *, include_obd=False):
             sessions[pid] = {"number": epoch, "active": {},
                              "txctx": None, "periodicctx": None,
                              "rxctx": None, "clearctx": None,
+                             "native_rx_context_seen": False,
                              "last_tx_channel": None, "disconnect_channel": None,
                              "obd_repeats": {}}
         return sessions[pid]
@@ -870,6 +871,15 @@ def audit(lines, *, include_obd=False):
                 observed_events[observed] += 1
         s = scope(pid)
         stamp = _stamp(line)
+        # Native C places each RX context immediately before the delivered
+        # frame in PassThruReadMsgs. Never carry its channel/protocol/RxStatus
+        # across an unrelated line and later label an orphan as ECU RX.
+        if (s["rxctx"] is not None
+                and not text.startswith((
+                    "RX context channel/protocol/status/baud/time-us (BE)",
+                    "PassThruReadMsgs -> delivered"))):
+            s["rxctx"] = None
+            errors["interrupted_native_rx_context"] += 1
         # The native scheduler emits context immediately before its tick.
         # Any intervening text discards that context rather than binding a
         # later unrelated or forged periodic payload to the old channel.
@@ -882,6 +892,7 @@ def audit(lines, *, include_obd=False):
             for ch in list(s["active"]):
                 finish(s, ch, "new_connection")
             s["txctx"] = s["periodicctx"] = s["rxctx"] = s["clearctx"] = None
+            s["native_rx_context_seen"] = False
             s["last_tx_channel"] = s["disconnect_channel"] = None
             s["obd_repeats"].clear()
         txctx = _context(text, "TX context channel/protocol/flags/baud/time-us (BE)", include_obd)
@@ -901,6 +912,14 @@ def audit(lines, *, include_obd=False):
         rxctx = _context(text, "RX context channel/protocol/status/baud/time-us (BE)", include_obd)
         if rxctx is not None:
             s["rxctx"] = rxctx
+            s["native_rx_context_seen"] = True
+            continue
+        if text.startswith("RX context "):
+            # A malformed native metadata record is not license to reuse an
+            # older context or demote later native RX to unscoped legacy RX.
+            s["rxctx"] = None
+            s["native_rx_context_seen"] = True
+            errors["malformed_context"] += 1
             continue
         clearctx = _context(text, "CLEAR_RX context channel/protocol/flags/baud/time-us (BE)", include_obd)
         if clearctx is not None:
@@ -971,6 +990,13 @@ def audit(lines, *, include_obd=False):
             s["txctx"] = None
             continue
         if "PassThruReadMsgs -> delivered" in text or "PassThruReadMsgs() msg" in text:
+            if ("PassThruReadMsgs -> delivered" in text
+                    and s["native_rx_context_seen"] and s["rxctx"] is None):
+                # Previous native RX metadata proves this PID used scoped
+                # delivery records; an orphan cannot fall back to a lone
+                # active request, even when it looks like a correct B9FB.
+                errors["native_rx_without_fresh_context"] += 1
+                continue
             marker = "PassThruReadMsgs -> delivered" if "PassThruReadMsgs -> delivered" in text else "Data = ["
             tx = active(s, s["rxctx"][0] if s["rxctx"] else None)
             if (include_obd and tx and tx["route"] == "OBD" and marker == "PassThruReadMsgs -> delivered"
