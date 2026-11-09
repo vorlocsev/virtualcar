@@ -31,6 +31,37 @@ GATES = frozenset((
     "review_ecu_identification_after_ui_identity",
     "review_incomplete_gui_or_transport_evidence",
 ))
+# Fixed, read-only Russian instructions for the first evidence bottleneck.
+# These are next checks, never a claim about a real vehicle, ECU, or VIN.
+NEXT_ACTION_RU = {
+    "establish_isolated_same_run_evidence":
+        "Проведите новый Begin, ровно один ручной read-only запуск SectorV и Finish в одной изолированной VM. Указывайте SingleRunConfirmed только для действительно одного запуска.",
+    "resolve_provider_endpoint_change":
+        "Регистрация или бинарный файл J2534 изменились между Begin и Finish. Проверьте провайдер в гостевой Windows и повторите опыт с новым Begin; этот сеанс нельзя считать непрерывным.",
+    "obtain_provider_endpoint_evidence":
+        "Проверьте 32-битную регистрацию J2534 и наличие локальной PE32 DLL в гостевой Windows. Затем повторите один изолированный read-only сеанс.",
+    "obtain_bounded_j2534_window_evidence":
+        "Проверьте, что J2534 пишет журнал в заданный локальный файл гостевой Windows. Создайте новый Begin до ручного запуска SectorV и Finish после его закрытия.",
+    "verify_j2534_provider_and_connect":
+        "В SectorV проверьте выбор виртуального адаптера и исход Connect. Сопоставьте его с J2534 Connect result в новом ограниченном окне, не подключая физический адаптер.",
+    "review_absent_b9fb_in_bounded_j2534_window":
+        "В новом изолированном сеансе проверьте, отправляет ли SectorV запрос CEM B9FB, и правильно ли выбраны канал и CAN-маршрут. Не добавляйте непроверенные ответы ECU.",
+    "review_discarded_j2534_line_boundaries":
+        "Границы журнала оборваны: отсутствие B9FB не доказано. Закройте клиент, проверьте полноту строк и повторите Begin/Finish с новым каталогом.",
+    "review_b9fb_without_observed_rx":
+        "B9FB отправлен, но ответ J2534 не наблюдается. Проверьте фильтры CAN, очередь RX и наличие разрешённой проверенной фикстуры; не подменяйте ответ синтетическим CEM.",
+    "review_client_vin_failure_after_unlinked_rx":
+        "RX наблюдался, но SectorV сообщил об ошибке VIN. Сверьте фактический экран клиента и транспорт B9FB; наличие RX не подтверждает принятие VIN.",
+    "review_identity_display_without_oem_validation":
+        "Интерфейс показывает идентификатор и список ECU. Сохраните обезличенные факты экрана и независимо проверьте происхождение VIN и ECU; это ещё не OEM-подтверждение.",
+    "review_ecu_identification_after_ui_identity":
+        "Идентификатор отображён, но список ECU не подтверждён. Проверьте последующие read-only запросы идентификации блоков и их подтверждённые ответы.",
+    "review_incomplete_gui_or_transport_evidence":
+        "Сопоставьте шесть наблюдений GUI с новым ограниченным окном J2534; при неполных данных повторите изолированный read-only сеанс без записи в ECU.",
+}
+if set(NEXT_ACTION_RU) != GATES:
+    raise RuntimeError("first next-gate action mapping differs from triage vocabulary")
+
 MAX_MODULE_FILE = 4096
 MODULE_SCHEMA = "virtualcar-sectorv-process-binding-operator-v1"
 MODULE_FIELDS = frozenset((
@@ -392,6 +423,9 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False,
         "oem_vin_and_ecu_verified": False,
         "replay_approved": False,
         "first_next_gate": gate,
+        # A fixed allowlisted instruction is useful when the operator cannot
+        # decode gate identifiers. It never interpolates log/GUI free text.
+        "first_next_action_ru": NEXT_ACTION_RU[gate],
     }
     if "native_d2_delivery_tags" in window["discovery"]:
         emitter = window["discovery"]["native_d2_delivery_tags"]
