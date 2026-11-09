@@ -61,6 +61,52 @@ Flow Control не считается самостоятельным диагно
 параметры шины. Это проверка транспортных доказательств, не
 расшифровка полезных байтов D2 и не подтверждение VIN.
 
+## Упрощённый операторский сбор в Windows VMware
+
+В полном VMware LAB ZIP есть `tools/invoke_sectorv_operator.ps1`. Он
+использует существующие проверяемые `begin/finish` и предлагает ввести
+шесть категорий наблюдений с клавиатуры. Запускать его нужно **в той же
+гостевой Windows и под той же учётной записью**, где работает SectorV,
+при отключённом физическом J2534. Он **не запускает SectorV**, не
+вызывает J2534 и не записывает данные автомобиля.
+
+Из корня полностью распакованного LAB-каталога, после создания приватной
+родительской папки `$env:USERPROFILE\VirtualCarLab`:
+
+~~~powershell
+$session = Join-Path $env:USERPROFILE "VirtualCarLab\p0-gui-001"
+.\tools\invoke_sectorv_operator.ps1 -Phase Begin -SessionDir $session -IsolatedReadOnlyVm -PhysicalAdapterDisconnected
+~~~
+
+Затем **вручную** откройте SectorV и выполните один короткий read-only
+сеанс обнаружения. При открытом клиенте (необязательная стадия):
+
+~~~powershell
+.\tools\invoke_sectorv_operator.ps1 -Phase Module -SessionDir $session -IsolatedReadOnlyVm -PhysicalAdapterDisconnected
+~~~
+
+Закройте SectorV полностью. Запустите `Finish` и выберите **только
+фактически увиденные** шесть категорий; Enter означает `unknown`:
+
+~~~powershell
+.\tools\invoke_sectorv_operator.ps1 -Phase Finish -SessionDir $session -IsolatedReadOnlyVm -PhysicalAdapterDisconnected
+~~~
+
+Флаг `-SingleRunConfirmed` добавляйте к `Finish` только когда
+самостоятельно гарантируете, что один новый GUI-запуск находится между
+`Begin` и `Finish`. Это утверждение оператора, **не** доказательство
+истинности VIN/ECU. По умолчанию связь сеансов `unpaired`.
+Если пути журналов отличаются от стандартных, передавайте
+`-J2534Log` и `-BackendLog` в **обоих** вызовах неизменными;
+`-PythonExe` задаёт отдельный Python 3, когда `py -3` недоступен.
+Для автоматизированной диагностики допустим `-NonInteractive`, но
+тогда все шесть категорий должны быть явно перечислены.
+
+Приватный `p0-before.private.json` не отправляйте; для анализа
+предназначены только `p0-window.redacted.json` и
+`p0-triage.redacted.json`. Проверьте их вручную перед передачей.
+И эти отчёты не заменяют независимую проверку подлинного клиента.
+
 ## Короткий сбор P0: один операторский сеанс
 
 Вместо ручного создания JSON можно использовать новый Python-скрипт
