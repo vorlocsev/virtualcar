@@ -98,12 +98,12 @@ SectorV с явно выбранным виртуальным J2534. Запиш�
 
 ## Совмещение обезличенного J2534-окна с наблюдением GUI
 
-После получения локального \`bin7-fresh-01.redacted.json\` отдельно зафиксируйте
+После получения локального `bin7-fresh-01.redacted.json` отдельно зафиксируйте
 шесть категорий состояния интерфейса SectorV в **новом локальном**
-\`sectorv-ui-private.json\`. Пример для случая, когда адаптер выбран,
+`sectorv-ui-private.json`. Пример для случая, когда адаптер выбран,
 подключение отображается, VIN не показан, а список ECU пуст:
 
-\`\`\`json
+```json
 {
   "schema_version": "virtualcar-sectorv-ui-observation-v1",
   "client": "SectorV",
@@ -121,7 +121,7 @@ SectorV с явно выбранным виртуальным J2534. Запиш�
     "error_category": "vin_read_failed"
   }
 }
-\`\`\`
+```
 
 Это **пример формата**, а не новый факт о SectorV. Не копируйте пример
 как результат испытания, если фактический экран показал другое состояние.
@@ -130,28 +130,28 @@ SectorV с явно выбранным виртуальным J2534. Запиш�
 
 В той же изолированной гостевой Windows с Python 3.12:
 
-\`\`\`powershell
+```powershell
 $tool = ".\tools\audit_sectorv_ui_window_triage.py"
 $ui = Join-Path $private "sectorv-ui-private.json"
 $triage = Join-Path $private "bin7-one-run-triage.redacted.json"
 py -3 $tool --window-report $report --ui-observation $ui --output $triage --operator-same-run-confirmed
-\`\`\`
+```
 
-**Флаг \`--operator-same-run-confirmed\` допустим только когда оба источника
+**Флаг `--operator-same-run-confirmed` допустим только когда оба источника
 действительно относятся к одному изолированному сеансу** и у исходного
-анализатора уже установлен \`--operator-one-run-confirmed\`. Без
-подтверждения запустите без флага; итог будет \`run_pairing=unpaired\`.
+анализатора уже установлен `--operator-one-run-confirmed`. Без
+подтверждения запустите без флага; итог будет `run_pairing=unpaired`.
 Для одиночного исторического скриншота флаг недопустим.
 
-Результат \`audit_sectorv_ui_window_triage.py\` полностью категоризирован.
+Результат `audit_sectorv_ui_window_triage.py` полностью категоризирован.
 Он покажет количество запросов B9FB и запросов с ненулевым числом RX
 в пределах отчёта, состояние GUI и приоритет проверки.
 Если J2534-журнал отсутствует, вывод будет **«получить журнал»**, а не
 **«клиент не запросил VIN»**. Совпадение DLL в двух точках не доказывает,
 что SectorV загрузил эту DLL или что она была неизменной весь сеанс.
 
-Даже при \`run_pairing=operator_asserted_not_independently_verified\`
-инструмент оставляет \`transaction_level_correlation=not_established\`,
-\`client_vehicle_identity_accepted=not_verified\` и
-\`oem_vin_and_ecu_verified=false\`. Нужны независимые данные клиента
+Даже при `run_pairing=operator_asserted_not_independently_verified`
+инструмент оставляет `transaction_level_correlation=not_established`,
+`client_vehicle_identity_accepted=not_verified` и
+`oem_vin_and_ecu_verified=false`. Нужны независимые данные клиента
 и допустимые диагностические образцы для подтверждения OEM-идентификации.
