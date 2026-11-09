@@ -492,5 +492,103 @@ class D2ThirteenFrameTerminalEvidenceTests(unittest.TestCase):
 
 
 
+
+class D2ClassicCanRxEvidenceTests(unittest.TestCase):
+    """Eight synthetic cases; no real VIN, donor frame or GUI acceptance."""
+
+    def test_33_short_final_4f_must_not_complete_b9_transport(self):
+        lines = tx(0xFFFFE, D2FB, ch=1)
+        lines += rx(0x01200003, FIRST, ch=1)
+        lines += rx(0x01200003, b"\x4F", ch=1)
+        report = tool.audit(lines)
+        one = report["transactions"][0]
+        self.assertEqual((one["status"], one["reason"], one["rx_frames"]),
+                         ("partial_rx", "d2_classic_can_rx_size_invalid", 2))
+        self.assertEqual(report["parse_errors"]["d2_classic_can_rx_size_invalid"], 1)
+        self.assertFalse(report["replay_approved"])
+
+    def test_34_truncated_first_frame_cannot_be_rehabilitated_by_final(self):
+        lines = tx(0xFFFFE, D2FB, ch=1)
+        lines += rx(0x01200003, FIRST[:4], ch=1)
+        lines += rx(0x01200003, FIRST, ch=1)
+        lines += rx(0x01200003, b"\x4F" + b"\0" * 7, ch=1)
+        one = tool.audit(lines)["transactions"][0]
+        self.assertEqual(one["status"], "partial_rx")
+        self.assertEqual(one["reason"], "d2_classic_can_rx_size_invalid")
+        self.assertEqual(one["rx_frames"], 3)
+
+    def test_35_oversized_b9_can_payload_does_not_pass_as_first_frame(self):
+        for length in (9, 12, 16):
+            with self.subTest(length=length):
+                lines = tx(0xFFFFE, D2FB, ch=1)
+                lines += rx(0x01200003, FIRST + b"\0" * (length - 8), ch=1)
+                item = tool.audit(lines)["transactions"][0]
+                self.assertEqual(item["reason"], "d2_classic_can_rx_size_invalid")
+                self.assertEqual(item["status"], "partial_rx")
+
+    def test_36_mismatched_rx_protocol_is_not_the_d2_response(self):
+        lines = tx(0xFFFFE, D2FB, ch=1)
+        lines += rx(0x01200003, FIRST, ch=1, proto=6)
+        lines += frames13(ch=1)
+        report = tool.audit(lines)
+        one = report["transactions"][0]
+        self.assertEqual((one["status"], one["rx_frames"], one["off_route_rx"]),
+                         ("delivered", 13, 1))
+        self.assertEqual(report["parse_errors"]["d2_rx_protocol_mismatch"], 1)
+
+    def test_37_wrong_bus_speed_does_not_contribute_to_b9_frames(self):
+        lines = tx(0xFFFFE, D2FB, ch=1, baud=500000)
+        lines += rx(0x01200003, FIRST, ch=1, baud=125000)
+        lines += frames13(ch=1)
+        report = tool.audit(lines)
+        one = report["transactions"][0]
+        self.assertEqual((one["status"], one["rx_frames"], one["off_route_rx"]),
+                         ("delivered", 13, 1))
+        self.assertEqual(report["parse_errors"]["d2_rx_baud_mismatch"], 1)
+
+    def test_38_rx_indications_and_echoes_are_not_vehicle_data(self):
+        lines = tx(0xFFFFE, D2FB, ch=1)
+        for status in (0x01, 0x02, 0x08):
+            lines += rx(0x01200003, FIRST, ch=1, flags=status)
+        lines += frames13(ch=1)
+        result = tool.audit(lines)
+        one = result["transactions"][0]
+        self.assertEqual((one["status"], one["rx_frames"], one["off_route_rx"]),
+                         ("delivered", 13, 3))
+        self.assertEqual(result["parse_errors"]["d2_rx_indication_not_payload"], 3)
+
+    def test_39_direct_d2_tx_on_iso15765_remains_unverified(self):
+        lines = tx(0xFFFFE, D2FB, ch=1, proto=6)
+        lines += frames13(ch=1)
+        one = tool.audit(lines)["transactions"][0]
+        self.assertEqual(one["protocol"], "ISO15765")
+        self.assertEqual(one["status"], "unverified")
+        self.assertEqual(one["reason"], "d2_request_non_can_transport")
+        self.assertNotEqual(one["status"], "delivered")
+
+    def test_40_concurrent_b9_channels_and_redaction_remain_independent(self):
+        lines = tx(0xFFFFE, D2FB, ch=1)
+        lines += tx(0xFFFFE, D2FB, ch=2)
+        lines += rx(0x01200003, FIRST, ch=1)
+        lines += rx(0x01200003, b"\x4F", ch=1)
+        # A malformed but unrelated CAN ID on the other channel is
+        # off-route, not evidence that its valid B9 response is corrupt.
+        lines += rx(0x01200004, b"\x4F", ch=2)
+        lines += frames13(ch=2)
+        report = tool.audit(lines)
+        states = {x["channel"]: x for x in report["transactions"]}
+        self.assertEqual((states[1]["status"], states[2]["status"]),
+                         ("partial_rx", "delivered"))
+        self.assertEqual(states[2]["off_route_rx"], 1)
+        self.assertEqual(states[1]["reason"], "d2_classic_can_rx_size_invalid")
+        result = json.dumps(report)
+        for sensitive in ("DEADBEEF", "DiagnosticClient", "00 0F FF FE",
+                          "YV1LAB", "0x01200003"):
+            self.assertNotIn(sensitive, result)
+        self.assertFalse(report["contains_payload_data"])
+        self.assertFalse(report["replay_approved"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
