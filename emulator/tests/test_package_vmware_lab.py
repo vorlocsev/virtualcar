@@ -16,22 +16,8 @@ spec = importlib.util.spec_from_file_location("package_vmware_lab", MODULE)
 tool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tool)
 COMMIT = "a" * 40
-PROFILE = """[Vehicle]
-VIN=YV1CZ0002A0000001
-ECUCount=1
-[P2]
-StrictRouting=1
-[D2_40]
-B9FBFrameCount=0
-[D2_50]
-B9FBFrameCount=0
-[D2_50_B9F0]
-FrameCount=0
-[PassiveCAN]
-Enabled=0
-[PassiveTrace]
-Enabled=0
-"""
+SOURCE_ROOT = MODULE.parents[1]
+PROFILE = (SOURCE_ROOT / "virtualcar-p2.ini").read_text(encoding="utf-8")
 
 
 def fake_pe(machine=0x014C, magic=0x010B):
@@ -55,9 +41,11 @@ class VMwarePackageTests(unittest.TestCase):
         for rel in tool.FILES.values():
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            content = fake_pe() if path.suffix in (".exe", ".dll") else b"BENCH ONLY\n"
-            path.write_bytes(content)
-        (self.root / "virtualcar-p2.ini").write_text(PROFILE, encoding="utf-8")
+            if rel in tool.APPROVED_INI_SHA256:
+                shutil.copyfile(SOURCE_ROOT / rel, path)
+            else:
+                content = fake_pe() if path.suffix in (".exe", ".dll") else b"BENCH ONLY\n"
+                path.write_bytes(content)
 
     def build(self):
         return tool.create_package(self.root, self.out, COMMIT, "vmware-lab-test")
@@ -76,7 +64,7 @@ class VMwarePackageTests(unittest.TestCase):
         with zipfile.ZipFile(self.build()) as z:
             active = z.read(tool.PREFIX + "/virtualcar.ini").decode("utf-8")
             self.assertIn("[Diagnostics]\nBackendTelemetryEnabled=1", active)
-            self.assertIn("StrictRouting=1", active)
+            self.assertIn("StrictRouting = 1", active)
             self.assertIn("ECUCount=1", active)
             self.assertIn("B9FBFrameCount=0", active)
             self.assertNotIn("DIDF1B0Hex=", active)
@@ -113,8 +101,8 @@ class VMwarePackageTests(unittest.TestCase):
         path = self.root / "virtualcar-p2.ini"
         for profile in (PROFILE.replace(tool.SYNTHETIC_VIN, "PRIVATE_IDENTIFIER"),
                         PROFILE.replace("B9FBFrameCount=0", "B9FBFrameCount=1", 1),
-                        PROFILE.replace("StrictRouting=1", "StrictRouting=0"),
-                        PROFILE.replace("[PassiveTrace]\nEnabled=0", "[PassiveTrace]\nEnabled=1")):
+                        PROFILE.replace("StrictRouting = 1", "StrictRouting = 0"),
+                        PROFILE + "\n[PassiveTrace]\nEnabled=1\n"):
             path.write_text(profile, encoding="utf-8")
             with self.assertRaises(ValueError):
                 self.build()
@@ -326,6 +314,71 @@ class VMwarePackageTests(unittest.TestCase):
         self.assertEqual(report["accepted_vin_or_ecu"], "not_verified")
         self.assertNotIn(str(self.temp.name), json.dumps(report))
         self.assertFalse((lab / "redacted-module.json").exists())
+
+
+    def _assert_unreviewed_profile_rejected(self, name, data):
+        path = self.root / name
+        original = path.read_bytes()
+        self.assertNotEqual(data, original)
+        try:
+            path.write_bytes(data)
+            with self.assertRaisesRegex(ValueError, "unreviewed_lab_profile_source"):
+                self.build()
+            self.assertEqual(list(self.out.iterdir()), [])
+        finally:
+            path.write_bytes(original)
+
+    def test_19_reviewed_p2_and_default_profiles_match_approved_sha256(self):
+        for name, expected in tool.APPROVED_INI_SHA256.items():
+            with self.subTest(name=name):
+                data = (self.root / name).read_bytes()
+                self.assertEqual(hashlib.sha256(data).hexdigest(), expected)
+        with zipfile.ZipFile(self.build()) as archive:
+            for name in tool.APPROVED_INI_SHA256:
+                self.assertEqual(archive.read(tool.PREFIX + "/" + name),
+                                 (self.root / name).read_bytes())
+
+    def test_20_reject_staged_b9fb_frame_even_with_count_zero(self):
+        data = (self.root / "virtualcar-p2.ini").read_bytes()
+        self._assert_unreviewed_profile_rejected(
+            "virtualcar-p2.ini",
+            data.replace(b"B9FBFrameCount=0",
+                         b"B9FBFrameCount=0\nB9FBFrame0=10 00 00 00", 1))
+
+    def test_21_reject_donor_like_comment_in_p2_source(self):
+        data = (self.root / "virtualcar-p2.ini").read_bytes()
+        self._assert_unreviewed_profile_rejected(
+            "virtualcar-p2.ini", data + b"; DONOR_PRIVATE_MARKER=do-not-export\n")
+
+    def test_22_reject_p2_unreviewed_ecu_part_number(self):
+        data = (self.root / "virtualcar-p2.ini").read_bytes()
+        self._assert_unreviewed_profile_rejected(
+            "virtualcar-p2.ini",
+            data.replace(b"PartNumber=VIRTUAL-ECU",
+                         b"PartNumber=UNREVIEWED-PRIVATE"))
+
+    def test_23_reject_p2_disabled_passive_trace_payload(self):
+        data = (self.root / "virtualcar-p2.ini").read_bytes()
+        self._assert_unreviewed_profile_rejected(
+            "virtualcar-p2.ini",
+            data + b"\n[PassiveTrace]\nEnabled=0\nFrame0=AA BB\n")
+
+    def test_24_reject_default_did_payload_even_when_inactive(self):
+        data = (self.root / "virtualcar-default.ini").read_bytes()
+        self._assert_unreviewed_profile_rejected(
+            "virtualcar-default.ini",
+            data.replace(b"DIDF1B0Hex=", b"DIDF1B0Hex=DEADBEEF", 1))
+
+    def test_25_reject_private_comment_in_default_source(self):
+        data = (self.root / "virtualcar-default.ini").read_bytes()
+        self._assert_unreviewed_profile_rejected(
+            "virtualcar-default.ini", data + b"; DONOR_PRIVATE_MARKER=do-not-export\n")
+
+    def test_26_reject_default_source_vin_change(self):
+        data = (self.root / "virtualcar-default.ini").read_bytes()
+        self._assert_unreviewed_profile_rejected(
+            "virtualcar-default.ini",
+            data.replace(tool.SYNTHETIC_VIN.encode(), b"UNREVIEWED-IDENTITY"))
 
 
 if __name__ == "__main__":
