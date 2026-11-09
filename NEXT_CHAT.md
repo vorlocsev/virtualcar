@@ -1,5 +1,37 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## VERIFIED: one-run SectorV GUI operator collection (2026-11-09)
+
+- **Latest code commit:** `168dbe77ec472ecd3cae7d6310876c0548d46b28`,
+  [PR #235](https://github.com/vorlocsev/virtualcar/pull/235) **MERGED**
+  to `development`. Owner-only exact-SHA
+  [VMware #42576837517](https://github.com/vorlocsev/virtualcar/actions/runs/42576837517)
+  **SUCCESS**: **441/441 Python tests**, **29/29 CI steps**, new
+  10/10 operator-collector safety checks, native C J2534 regression,
+  x86/x64 builds, .NET and IPC checks.
+- **New code:** `emulator/tools/audit_sectorv_operator_session.py` is a
+  Python two-phase **operator-only** collector. `begin` exclusively creates
+  a local private baseline of the J2534/backend logs and Registry32 provider.
+  **After** a separate, genuine read-only GUI run, `finish` requires explicit
+  operator assertions for isolated VM, disconnected physical J2534,
+  plus six allowlisted, manually observed GUI categories; an optional
+  separately captured redacted DLL module snapshot is accepted.
+  Existing bounded-prefix, schema/provenance, redaction and GUI triage
+  validators are reused. Two new redacted reports result; raw logs, hashes,
+  VIN and source paths are never exported. The collector never starts
+  SectorV, changes the system or creates ECU traffic. See
+  [operator guide](emulator/README_SECTORV_FRESH_WINDOW_RU.md).
+- **P0 still unresolved:** [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  requires a **real authorized SectorV GUI session on the user's own
+  Windows VMware guest**, not a service-session CI runner. During it,
+  verify the observed selected J2534 DLL, B9FB read-only request and RX
+  categories, and GUI VIN and ECU-list observations. No real GUI evidence
+  has yet been collected. Do not claim successful XC90 V8 MY2009 OEM VIN,
+  ECU identity, VIDA compatibility or physical adapter behavior from
+  synthetic CI. No new releases or `main` merge.
+
+---
+
 ## VERIFIED: periodic J2534 transport guard and three-source SectorV triage (2026-11-09)
 
 - **Latest native change:** [PR #233](https://github.com/vorlocsev/virtualcar/pull/233),
