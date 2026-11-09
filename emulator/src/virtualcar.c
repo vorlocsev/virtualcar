@@ -187,6 +187,9 @@ typedef struct {
     /* Nonzero only for optional passive CAN fixtures generated on a given
        bitrate. Staged trace/tick RX must not cross a later bus retune. */
     U32 queue_passive_baud[MAX_QUEUE];
+    /* Source baud of emulator-generated raw CAN UDS SF/FF/CF only.
+       A J2534 channel DATA_RATE change cannot carry these old replies. */
+    U32 queue_raw_response_baud[MAX_QUEUE];
     /* Diagnostic correlation metadata. Never sent to the J2534 client. */
     U64 queue_trace[MAX_QUEUE],active_trace,d2_trace,pending_trace;
     BACKEND_ABORT aborted[MAX_QUEUE];
@@ -1003,6 +1006,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
     for(i=0;i<len;i++)msg->Data[4+i]=payload[i];
     c->queue_d2_gen[c->w]=0;c->queue_d2_frame[c->w]=0;c->queue_ready_us[c->w]=0;
     c->queue_passive_baud[c->w]=0;
+    c->queue_raw_response_baud[c->w]=0;
     c->queue_trace[c->w]=c->active_trace;
     c->w=(c->w+1)%MAX_QUEUE;c->count++;
     backend_event(c,c->active_trace,"filter_pass","UNKNOWN","none","unknown");
@@ -1053,7 +1057,10 @@ static void pump_can_cf(CHANNEL *c) {
         now=now_us();due=c->pending_next_us>now?c->pending_next_us:now;
         {U32 slot=c->w,before=c->count;U64 previous=c->active_trace;c->active_trace=c->pending_trace;
          enqueue(c,c->pending_id,f,8);c->active_trace=previous;
-         if(c->count>before){c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;}}
+         if(c->count>before){
+             c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;
+             c->queue_raw_response_baud[slot]=c->baud;
+         }}
         c->pending_next_us=due+(U64)c->pending_stmin_us;
         c->pending_pos+=sz;c->pending_sn++;
         if(c->pending_cf_credit && --c->pending_cf_credit==0)
@@ -1114,7 +1121,14 @@ static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 
             enqueue_status(c,response_id,0,0,START_OF_MESSAGE);
         enqueue(c,response_id,payload,len);return;
     }
-    if(len<=7){bytes_zero(f,8);f[0]=(U8)len;for(i=0;i<len;i++)f[i+1]=payload[i];enqueue(c,response_id,f,8);return;}
+    if(len<=7){
+        U32 slot=c->w,before=c->count;
+        bytes_zero(f,8);f[0]=(U8)len;
+        for(i=0;i<len;i++)f[i+1]=payload[i];
+        enqueue(c,response_id,f,8);
+        if(c->count>before)c->queue_raw_response_baud[slot]=c->baud;
+        return;
+    }
     if(len>sizeof(c->pending))return;
     bytes_zero(f,8);f[0]=(U8)(0x10|(len>>8));f[1]=(U8)len;
     for(i=0;i<6;i++)f[i+2]=payload[i];
@@ -1122,12 +1136,13 @@ static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 
        admitted into this channel's RX FIFO. A strict filter can reject
        it, and a full queue can drop it. Without this guard, a later FC
        could produce orphan CFs, falsely resembling an ECU reply. */
-    {U32 before=c->count;
+    {U32 slot=c->w,before=c->count;
      enqueue(c,response_id,f,8);
      if(c->count==before){
          logline("Raw CAN ISO-TP first frame not queued; CF staging blocked",0,0);
          return;
      }
+     c->queue_raw_response_baud[slot]=c->baud;
     }
     bytes_copy(c->pending,payload,len);c->pending_len=len;c->pending_pos=6;
     c->pending_id=response_id;c->pending_sn=1;c->pending_trace=c->active_trace;c->pending_next_us=0;c->pending_stmin_us=0;
@@ -1195,7 +1210,8 @@ static U32 drop_queued_d2(CHANNEL *c){
         if(to!=from){bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
             c->queue_d2_gen[to]=0;c->queue_d2_frame[to]=0;
             c->queue_trace[to]=c->queue_trace[from];c->queue_ready_us[to]=c->queue_ready_us[from];
-            c->queue_passive_baud[to]=c->queue_passive_baud[from];}
+            c->queue_passive_baud[to]=c->queue_passive_baud[from];
+            c->queue_raw_response_baud[to]=c->queue_raw_response_baud[from];}
         keep++;
     }
     c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
@@ -1217,10 +1233,53 @@ static U32 drop_old_bus_passive_rx(CHANNEL *c){
             c->queue_trace[to]=c->queue_trace[from];
             c->queue_ready_us[to]=c->queue_ready_us[from];
             c->queue_passive_baud[to]=origin;
+            c->queue_raw_response_baud[to]=c->queue_raw_response_baud[from];
         }
         keep++;
     }
     c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
+    return removed;
+}
+/* In-flight emulator-generated raw CAN ISO-TP replies also belong to the
+   original bitrate. Cancel pending CF state and compact only those marked
+   queue slots. Keep passive/ordinary RX, D2 and other channels intact.
+   Report discarded request evidence as aborted rather than responded. */
+static U32 cancel_old_bus_raw_iso_rx(CHANNEL *c){
+    U64 rids[MAX_QUEUE+2u];U32 n=0,read,keep=0,removed=0,original=c->count,i;
+    U64 pending_rid=c->pending_len?c->pending_trace:0;
+    for(read=0;read<original;read++){
+        U32 from=(c->r+read)%MAX_QUEUE,to=(c->r+keep)%MAX_QUEUE;
+        U32 origin=c->queue_raw_response_baud[from];
+        if(origin && origin!=c->baud){
+            U64 rid=c->queue_trace[from];
+            if(rid){
+                backend_event(c,rid,"rx_dropped","UNKNOWN","bus_rate_change","unknown");
+                backend_collect_rid(rids,&n,rid);
+            }
+            removed++;continue;
+        }
+        if(to!=from){
+            bytes_copy(&c->queue[to],&c->queue[from],sizeof(PASSTHRU_MSG));
+            c->queue_d2_gen[to]=c->queue_d2_gen[from];
+            c->queue_d2_frame[to]=c->queue_d2_frame[from];
+            c->queue_trace[to]=c->queue_trace[from];
+            c->queue_ready_us[to]=c->queue_ready_us[from];
+            c->queue_passive_baud[to]=c->queue_passive_baud[from];
+            c->queue_raw_response_baud[to]=origin;
+        }
+        keep++;
+    }
+    c->count=keep;c->w=(c->r+keep)%MAX_QUEUE;
+    if(c->protocol==PROTO_CAN && c->pending_len){
+        /* Do not release stored CTS grants after retuning the bus. */
+        c->pending_len=0;c->pending_pos=0;c->pending_id=0;
+        c->pending_request_id=0;c->pending_sn=0;
+        c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
+        c->pending_cf_active=0;c->pending_cf_credit=0;
+        backend_collect_rid(rids,&n,pending_rid);
+    }
+    for(i=0;i<n;i++)
+        backend_abort_pending(c,rids[i],BACKEND_ABORT_SUPERSEDED);
     return removed;
 }
 /* Precise schedule: increment by the configured period from the planned time,
@@ -1625,6 +1684,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
              backend_event(c,rid,"rx_dequeued","UNKNOWN","none","unknown");
              c->queue_trace[c->r]=0;c->queue_ready_us[c->r]=0;
              c->queue_passive_baud[c->r]=0;
+             c->queue_raw_response_baud[c->r]=0;
              c->r=(c->r+1)%MAX_QUEUE;c->count--;actual++;
              /* Resume only previously granted CFs after this slot is freed. */
              pump_can_cf(c);
@@ -1834,6 +1894,10 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
             {U32 removed=drop_old_bus_passive_rx(c);
              if(removed){U8 count_be[4];u32_be(count_be,removed);
               logline("J2534 DATA_RATE stale passive RX dropped (BE)",count_be,4);}
+            }
+            {U32 removed=cancel_old_bus_raw_iso_rx(c);
+             if(removed){U8 count_be[4];u32_be(count_be,removed);
+              logline("J2534 DATA_RATE stale raw ISO-TP RX dropped (BE)",count_be,4);}
             }
             logline("J2534 DATA_RATE changed; old-bus D2 replay disallowed",0,0);
             /* Passive CEM observation must follow the effective transport
