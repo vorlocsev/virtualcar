@@ -99,6 +99,23 @@ def set_b9(window_report, *, rx=False, target="0x50"):
     return window_report
 
 
+def module_snapshot(*, observation="registered_library_loaded_in_name_matched_client",
+                    comparison="exact_bytes_at_snapshot"):
+    return {
+        "schema_version": triage.MODULE_SCHEMA,
+        "scope": "operator_requested_current_host_snapshot_only",
+        "observation": observation,
+        "installed_vs_reference_dll": comparison,
+        "next_safe_gate": triage._module_next_gate(observation, comparison),
+        "name_matched_executable_authenticity": "not_verified",
+        "operator_same_run_pairing": "not_independently_attested",
+        "registered_provider_unchanged_during_run": "not_verified",
+        "reference_dll_pe32": "not_assessed_by_this_tool",
+        "client_was_launched_by_audit": False,
+        "accepted_vin_or_ecu": "not_verified",
+    }
+
+
 class SectorVUiWindowTriageTests(unittest.TestCase):
     def test_01_without_explicit_pairing_no_same_run_claim(self):
         result = triage.triage(window(), ui())
@@ -449,6 +466,149 @@ class SectorVUiWindowTriageTests(unittest.TestCase):
                 self.assertNotIn(forbidden, saved)
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(triage.main(args), 2)
+
+    def test_37_optional_module_does_not_change_legacy_contract(self):
+        original = triage.triage(set_b9(window(), rx=True), ui(),
+                                operator_pair_confirmed=True)
+        with_module = triage.triage(set_b9(window(), rx=True), ui(),
+                                   operator_pair_confirmed=True,
+                                   module_snapshot=module_snapshot())
+        self.assertNotIn("operator_module_snapshot", original)
+        self.assertEqual(with_module["first_next_gate"], original["first_next_gate"])
+        self.assertEqual(with_module["j2534_binary_loaded_in_gui_client"], "not_verified")
+        self.assertEqual(with_module["client_vehicle_identity_accepted"], "not_verified")
+        self.assertFalse(with_module["oem_vin_and_ecu_verified"])
+        self.assertEqual(with_module["operator_module_snapshot"]["observation"],
+                         "registered_library_loaded_in_name_matched_client")
+        self.assertFalse(with_module["operator_module_snapshot"]["same_guest_or_run_attested"])
+
+    def test_38_name_matched_module_and_reference_bytes_never_verify_identity(self):
+        report = triage.triage(window(), ui(identity="displayed", ecus="populated",
+                                            error="none"), operator_pair_confirmed=True,
+                               module_snapshot=module_snapshot())
+        observed = report["operator_module_snapshot"]
+        self.assertEqual(observed["reference_byte_comparison"], "exact_bytes_at_snapshot")
+        self.assertEqual(observed["module_used_for_j2534_requests"], "not_verified")
+        self.assertEqual(observed["client_executable_authenticity"], "not_verified")
+        self.assertEqual(report["transaction_level_correlation"], "not_established")
+        self.assertFalse(report["oem_vin_and_ecu_verified"])
+
+    def test_39_missing_client_and_reference_mismatch_are_separate_categories(self):
+        absent = module_snapshot(observation="client_not_observed_in_local_snapshot",
+                                 comparison="not_compared")
+        result = triage.triage(window(), ui(), module_snapshot=absent,
+                               operator_pair_confirmed=True)
+        self.assertEqual(result["operator_module_snapshot"]["next_safe_gate"],
+                         "observe_client_with_gui_open")
+        self.assertEqual(result["first_next_gate"],
+                         "review_absent_b9fb_in_bounded_j2534_window")
+        mismatch = module_snapshot(comparison="different_bytes_at_snapshot")
+        result = triage.triage(window(), ui(), module_snapshot=mismatch)
+        self.assertEqual(result["operator_module_snapshot"]["next_safe_gate"],
+                         "resolve_reference_vs_registered_dll_difference")
+        self.assertEqual(result["run_pairing"], "unpaired")
+
+    def test_40_reject_private_path_vin_raw_text_and_unknown_snapshot_fields(self):
+        for key, value in (("registered_path", r"C:\PRIVATE\J2534.dll"),
+                           ("sha256", "A" * 64), ("vin", "YV1LAB00000000001"),
+                           ("raw_module", "PassThruOpen")):
+            bad = module_snapshot()
+            bad[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                triage.triage(window(), ui(), module_snapshot=bad)
+
+    def test_41_reject_forged_module_provenance_and_verified_client_claims(self):
+        mutations = (
+            ("scope", "current_ci_runner_process_snapshot_only"),
+            ("name_matched_executable_authenticity", "verified"),
+            ("operator_same_run_pairing", "independently_verified"),
+            ("registered_provider_unchanged_during_run", "verified"),
+            ("reference_dll_pe32", "verified"),
+            ("client_was_launched_by_audit", True),
+            ("accepted_vin_or_ecu", "verified"),
+        )
+        for key, value in mutations:
+            bad = module_snapshot()
+            bad[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                triage.triage(window(), ui(), module_snapshot=bad)
+
+    def test_42_reject_unknown_categories_and_forged_next_gate(self):
+        for key, value in (
+            ("observation", "VIN was accepted"),
+            ("installed_vs_reference_dll", "hash:private"),
+            ("next_safe_gate", "collect_same_run_redacted_j2534_and_gui_evidence")
+        ):
+            bad = module_snapshot(observation="client_not_observed_in_local_snapshot",
+                                  comparison="not_compared")
+            bad[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                triage.triage(window(), ui(), module_snapshot=bad)
+
+    def test_43_cli_accepts_third_redacted_snapshot_without_exporting_private_data(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            wp, up, mp = (root / name for name in
+                          ("private-window.json", "private-gui.json",
+                           "private-module.json"))
+            output = root / "redacted-triage.json"
+            wp.write_text(json.dumps(set_b9(window(), rx=True)), encoding="utf-8")
+            up.write_text(json.dumps(ui()), encoding="utf-8")
+            mp.write_text(json.dumps(module_snapshot()), encoding="utf-8")
+            args = ["--window-report", str(wp), "--ui-observation", str(up),
+                    "--module-snapshot", str(mp), "--output", str(output),
+                    "--operator-same-run-confirmed"]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(triage.main(args), 0)
+            raw = output.read_text(encoding="utf-8")
+            result = json.loads(raw)
+            self.assertEqual(result["b9fb_requests_with_nonzero_rx_in_window"], 1)
+            self.assertEqual(result["operator_module_snapshot"]["observation"],
+                             "registered_library_loaded_in_name_matched_client")
+            for secret in (str(root), "PRIVATE", "PassThruOpen", "sha256",
+                           "YV1", "C:/", "0x50", "module_path"):
+                self.assertNotIn(secret, raw)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(triage.main(args), 2)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+
+    def test_44_cli_rejects_duplicate_oversized_and_forged_module_sources(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            wp, up, mp = (root / name for name in
+                          ("window.json", "ui.json", "module.json"))
+            output = root / "result.json"
+            wp.write_text(json.dumps(window()), encoding="utf-8")
+            up.write_text(json.dumps(ui()), encoding="utf-8")
+            mp.write_text(json.dumps(module_snapshot()), encoding="utf-8")
+            args = ["--window-report", str(wp), "--ui-observation", str(up),
+                    "--module-snapshot", str(mp), "--output", str(output)]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(triage.main(args), 0)
+            original = output.read_bytes()
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(triage.main(args), 2)
+            self.assertEqual(output.read_bytes(), original)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(triage.main([
+                    "--window-report", str(wp), "--ui-observation", str(up),
+                    "--module-snapshot", str(wp),
+                    "--output", str(root / "duplicate.json")]), 2)
+            mp.write_text("X" * (triage.MAX_MODULE_FILE + 1), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(triage.main([
+                    "--window-report", str(wp), "--ui-observation", str(up),
+                    "--module-snapshot", str(mp),
+                    "--output", str(root / "oversized.json")]), 2)
+            forged = module_snapshot()
+            forged["accepted_vin_or_ecu"] = "verified"
+            mp.write_text(json.dumps(forged), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(triage.main([
+                    "--window-report", str(wp), "--ui-observation", str(up),
+                    "--module-snapshot", str(mp),
+                    "--output", str(root / "forged.json")]), 2)
+            self.assertFalse((root / "forged.json").exists())
 
 
 if __name__ == "__main__":

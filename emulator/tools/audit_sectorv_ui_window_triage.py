@@ -31,6 +31,69 @@ GATES = frozenset((
     "review_ecu_identification_after_ui_identity",
     "review_incomplete_gui_or_transport_evidence",
 ))
+MAX_MODULE_FILE = 4096
+MODULE_SCHEMA = "virtualcar-sectorv-process-binding-operator-v1"
+MODULE_FIELDS = frozenset((
+    "schema_version", "scope", "observation", "installed_vs_reference_dll",
+    "next_safe_gate", "name_matched_executable_authenticity",
+    "operator_same_run_pairing", "registered_provider_unchanged_during_run",
+    "reference_dll_pe32", "client_was_launched_by_audit",
+    "accepted_vin_or_ecu",
+))
+MODULE_OBSERVATIONS = frozenset((
+    "client_not_observed_in_local_snapshot",
+    "client_process_listing_unavailable",
+    "multiple_client_name_matches", "registered_library_unknown",
+    "registered_library_path_unverifiable",
+    "registered_library_loaded_in_name_matched_client",
+    "registered_library_not_in_enumerated_modules",
+    "client_module_list_unavailable",
+))
+MODULE_COMPARISONS = frozenset((
+    "exact_bytes_at_snapshot", "different_bytes_at_snapshot",
+    "comparison_unverifiable", "not_compared",
+))
+
+
+def _module_next_gate(observation, comparison):
+    """Mirror the fixed-category PS5.1 operator script, not a process attestation."""
+    if comparison == "different_bytes_at_snapshot":
+        return "resolve_reference_vs_registered_dll_difference"
+    if observation in (
+            "client_not_observed_in_local_snapshot",
+            "client_process_listing_unavailable"):
+        return "observe_client_with_gui_open"
+    if observation != "registered_library_loaded_in_name_matched_client":
+        return "verify_registered_dll_in_client_module_list"
+    if comparison == "not_compared":
+        return "collect_gui_evidence_without_reference_attestation"
+    if comparison != "exact_bytes_at_snapshot":
+        return "verify_reference_and_registered_dll_equivalence"
+    return "collect_same_run_redacted_j2534_and_gui_evidence"
+
+
+def _check_module_snapshot(value):
+    """Reject spoofed provenance, free text, paths, hashes and forged next gates."""
+    if type(value) is not dict or set(value) != MODULE_FIELDS:
+        raise ValueError("unexpected operator module snapshot fields")
+    if (value["schema_version"] != MODULE_SCHEMA
+            or value["scope"] != "operator_requested_current_host_snapshot_only"
+            or type(value["observation"]) is not str
+            or value["observation"] not in MODULE_OBSERVATIONS
+            or type(value["installed_vs_reference_dll"]) is not str
+            or value["installed_vs_reference_dll"] not in MODULE_COMPARISONS
+            or value["name_matched_executable_authenticity"] != "not_verified"
+            or value["operator_same_run_pairing"] != "not_independently_attested"
+            or value["registered_provider_unchanged_during_run"] != "not_verified"
+            or value["reference_dll_pe32"] != "not_assessed_by_this_tool"
+            or value["client_was_launched_by_audit"] is not False
+            or value["accepted_vin_or_ecu"] != "not_verified"):
+        raise ValueError("operator snapshot has unsupported provenance")
+    if value["next_safe_gate"] != _module_next_gate(
+            value["observation"], value["installed_vs_reference_dll"]):
+        raise ValueError("operator snapshot next gate contradicts observations")
+
+
 B9_BUCKETS = ("zero", "one_to_twelve", "thirteen", "fourteen_plus")
 PROVIDER_CONSISTENCY = frozenset((
     "same_at_endpoints_only", "changed_between_endpoints",
@@ -190,11 +253,14 @@ def _check_window(report):
         raise ValueError("backend counts without appended log lines")
 
 
-def triage(window, gui_observation, *, operator_pair_confirmed=False):
-    """Do not promote a same-run claim or UI display into verified OEM identity."""
+def triage(window, gui_observation, *, operator_pair_confirmed=False,
+           module_snapshot=None):
+    """Keep optional module observation separate from VIN and transaction proof."""
     if type(operator_pair_confirmed) is not bool:
         raise ValueError("pairing flag must be boolean")
     _check_window(window)
+    if module_snapshot is not None:
+        _check_module_snapshot(module_snapshot)
     ui = audit_gui(gui_observation)
     raw_gui_source = gui_observation["source"]
     eligible = (window["operator_one_run_confirmed"] is True
@@ -242,9 +308,11 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False):
         gate = "review_incomplete_gui_or_transport_evidence"
     if gate not in GATES:
         raise ValueError("invalid triage category")
-    return {
+    result = {
         "schema_version": SCHEMA,
-        "inputs": "redacted_bounded_window_and_curated_gui_categories",
+        "inputs": ("redacted_window_gui_and_operator_module_categories"
+                   if module_snapshot is not None
+                   else "redacted_bounded_window_and_curated_gui_categories"),
         "read_only": True,
         "contains_raw_can_vin_paths_or_hashes": False,
         "run_pairing": pair,
@@ -265,26 +333,49 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False):
         "replay_approved": False,
         "first_next_gate": gate,
     }
+    if module_snapshot is not None:
+        # This was a snapshot of a *name-matched* process on the caller's
+        # host. Neither the host/session nor genuine executable identity
+        # is independently authenticated. Do not alter the original
+        # transport/GUI gate or set j2534_binary_loaded_in_gui_client.
+        result["operator_module_snapshot"] = {
+            "observation": module_snapshot["observation"],
+            "reference_byte_comparison": module_snapshot["installed_vs_reference_dll"],
+            "next_safe_gate": module_snapshot["next_safe_gate"],
+            "same_guest_or_run_attested": False,
+            "client_executable_authenticity": "not_verified",
+            "module_used_for_j2534_requests": "not_verified",
+        }
+    return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--window-report", type=Path, required=True)
     parser.add_argument("--ui-observation", type=Path, required=True)
+    parser.add_argument("--module-snapshot", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--operator-same-run-confirmed", action="store_true")
     args = parser.parse_args(argv)
     try:
         from audit_sectorv_fresh_window import _external_output
-        if args.window_report.resolve() == args.ui_observation.resolve():
-            raise ValueError("same input source")
-        _external_output(args.output, (args.window_report, args.ui_observation))
+        sources = [args.window_report, args.ui_observation]
+        if args.module_snapshot is not None:
+            sources.append(args.module_snapshot)
+        if len({p.resolve() for p in sources}) != len(sources):
+            raise ValueError("duplicate input source")
+        _external_output(args.output, tuple(sources))
         if (args.window_report.stat().st_size > MAX_WINDOW_FILE
-                or args.ui_observation.stat().st_size > MAX_UI_FILE):
+                or args.ui_observation.stat().st_size > MAX_UI_FILE
+                or (args.module_snapshot is not None
+                    and args.module_snapshot.stat().st_size > MAX_MODULE_FILE)):
             raise ValueError("input size exceeded")
         win = json.loads(args.window_report.read_text(encoding="utf-8"))
         gui = json.loads(args.ui_observation.read_text(encoding="utf-8"))
-        result = triage(win, gui, operator_pair_confirmed=args.operator_same_run_confirmed)
+        module = (json.loads(args.module_snapshot.read_text(encoding="utf-8"))
+                  if args.module_snapshot is not None else None)
+        result = triage(win, gui, operator_pair_confirmed=args.operator_same_run_confirmed,
+                        module_snapshot=module)
         with args.output.open("x", encoding="utf-8") as output:
             json.dump(result, output, ensure_ascii=False, indent=2)
             output.write("\n")
