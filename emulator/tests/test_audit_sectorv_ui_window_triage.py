@@ -29,9 +29,9 @@ def _empty_d2():
 
 def window(*, run=True, provider="same_at_endpoints_only"):
     metadata = {
-        "new_bytes": 0, "complete_lines": 0,
+        "new_bytes": 32, "complete_lines": 1,
         "dropped_first": False, "dropped_last": False,
-        "source_present": False, "prefix_verified": False,
+        "source_present": True, "prefix_verified": True,
     }
     return {
         "schema_version": REPORT_SCHEMA,
@@ -244,6 +244,40 @@ class SectorVUiWindowTriageTests(unittest.TestCase):
                     "--window-report", str(win),
                     "--ui-observation", str(gui_path),
                     "--output", str(win)]), 2)
+
+
+    def test_17_missing_j2534_log_is_not_no_b9fb_request(self):
+        report = window()
+        report["windows"]["j2534"].update({
+            "source_present": False, "prefix_verified": False,
+            "new_bytes": 0, "complete_lines": 0,
+        })
+        result = triage.triage(report, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["first_next_gate"],
+                         "obtain_bounded_j2534_window_evidence")
+        self.assertEqual(result["b9fb_request_count_in_window"], 0)
+
+    def test_18_unknown_provider_is_not_treated_as_changed(self):
+        report = window(provider="not_verified")
+        result = triage.triage(report, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["first_next_gate"],
+                         "obtain_provider_endpoint_evidence")
+
+    def test_19_absent_log_cannot_contain_new_bytes(self):
+        report = window()
+        report["windows"]["j2534"].update({
+            "source_present": False, "prefix_verified": False
+        })
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui(), operator_pair_confirmed=True)
+
+    def test_20_empty_new_log_has_no_analyzable_b9fb_window(self):
+        report = window()
+        report["windows"]["j2534"]["new_bytes"] = 0
+        report["windows"]["j2534"]["complete_lines"] = 0
+        result = triage.triage(report, ui(), operator_pair_confirmed=True)
+        self.assertEqual(result["first_next_gate"],
+                         "obtain_bounded_j2534_window_evidence")
 
 
 if __name__ == "__main__":
