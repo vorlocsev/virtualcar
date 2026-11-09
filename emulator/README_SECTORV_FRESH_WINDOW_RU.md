@@ -81,6 +81,14 @@ $session = Join-Path $env:USERPROFILE "VirtualCarLab\p0-gui-001"
 Затем **вручную** откройте SectorV и выполните один короткий read-only
 сеанс обнаружения. При открытом клиенте (необязательная стадия):
 
+Стадия `Module` допускается только при наличии исходного
+`p0-before.private.json` после `Begin`, пока ещё не создан ни один
+итоговый `p0-window.redacted.json` или `p0-triage.redacted.json`.
+Обычный пустой каталог или уже завершённый сеанс не подходят:
+снимок модулей после `Finish` нельзя приписывать прошедшему GUI-запуску.
+Повторный снимок не перезаписывает предыдущий. Наличие исходного
+манифеста само по себе не доказывает общность VM/GUI-сеанса.
+
 ~~~powershell
 .\tools\invoke_sectorv_operator.ps1 -Phase Module -SessionDir $session -IsolatedReadOnlyVm -PhysicalAdapterDisconnected
 ~~~

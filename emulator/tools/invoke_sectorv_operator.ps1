@@ -70,6 +70,16 @@ try {
         if (-not (Test-Path -LiteralPath $SessionDir -PathType Container)) {
             throw 'No prior private operator session'
         }
+        # A module snapshot is meaningful only between Begin and Finish.
+        # An arbitrary existing folder is not evidence of an active session.
+        $baseline = Join-Path $SessionDir 'p0-before.private.json'
+        $windowReport = Join-Path $SessionDir 'p0-window.redacted.json'
+        $triageReport = Join-Path $SessionDir 'p0-triage.redacted.json'
+        if (-not (Test-Path -LiteralPath $baseline -PathType Leaf) -or
+            (Test-Path -LiteralPath $windowReport) -or
+            (Test-Path -LiteralPath $triageReport)) {
+            throw 'Module snapshot requires an unfinished operator baseline'
+        }
         $moduleReport = Join-Path $SessionDir 'p0-module.redacted.json'
         $moduleArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
                         '-File', $moduleTool, '-OperatorSession', '-OutputFile', $moduleReport)
