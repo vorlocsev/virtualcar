@@ -230,9 +230,9 @@ def main():
             # Local output remains UNVERIFIED regardless of framing, VIN shape
             # or operator-selected index. Comment-only metadata is ignored by
             # the emulator, never claim a donor ECU was independently observed.
-            f.write('; Virtual Car local read-only import, NOT an OEM-certified fixture.\\n'
-                    '; Source classification: '+origin+'; replay_approved=false.\\n'
-                    '; Selected session index: '+str(selected)+' of '+str(len(groups))+'.\\n')
+            f.write('; Virtual Car local read-only import, NOT an OEM-certified fixture.\n'
+                    '; Source classification: '+origin+'; replay_approved=false.\n'
+                    '; Selected session index: '+str(selected)+' of '+str(len(groups))+'.\n')
             cfg.write(f)
     except OSError:
         a.error('Unable to create new output; existing files are never overwritten')
