@@ -1,5 +1,29 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: stage Module constrained to active operator window (2026-11-09)
+
+- Verified starting baseline: `development` `395d3901954a380db64920a0af11ef6680ead5db`,
+  exact-SHA [automatic VMware #42615432355](https://github.com/vorlocsev/virtualcar/actions/runs/42615432355)
+  **SUCCESS**, 510 Python tests, 30/30 workflow steps. No genuine SectorV GUI run.
+- Focused safety correction in `emulator/tools/invoke_sectorv_operator.ps1`:
+  `Module` now requires the actual private `Begin` manifest to exist, and
+  refuses invocation after either `Finish` report is present. A pre-created
+  folder or a belated process/module observation cannot be presented as
+  evidence belonging to an active two-phase GUI collection window.
+  Existing exclusive snapshot writes remain unchanged.
+- Seven additional Windows-only synthetic/integration regression groups
+  cover missing baseline, two completed/partial report states, a valid active
+  read-only module snapshot + redacted finish, repeated snapshot refusal, and
+  explicit hardware-isolation flags. They do not launch SectorV or send CAN.
+- **Integration gate:** confirm PR is merged into `development`, then inspect
+  exact merged SHA automatic owner-only VMware CI before claiming these new
+  tests verified. User's actual isolated Windows guest still needs one genuine
+  read-only SectorV GUI session for J2534 DLL binding, B9FB, VIN and ECU list.
+  [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains OPEN.
+  No fabricated A3/A6/B9F0, main merge, release or physical J2534 testing.
+
+---
+
 ## CURRENT P0: guided guest operator collection (2026-11-09)
 
 - **Starting verified baseline:** `development` `8816fff7ca2de24e6e0f819c8b6370fbeae8f656`,
