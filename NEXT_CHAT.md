@@ -1,5 +1,33 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: native RX context must immediately precede delivered frame (2026-11-09)
+
+- Verified baseline: `development` `d3069b83e326db0b04f11068110afbad248d832d`,
+  exact-SHA [automatic VMware #42619097319](https://github.com/vorlocsev/virtualcar/actions/runs/42619097319)
+  **SUCCESS**, 517 Python tests, 30/30 CI steps. This remains synthetic/offline
+  validation, not real SectorV GUI or MY2009 VIN acceptance.
+- Source finding: native `PassThruReadMsgs` emits a 20-byte `RX context`
+  and the delivered frame in adjacent text-log records. The evidence
+  analyzer previously retained old `rxctx` across an unrelated same-PID
+  line and could apply stale channel/protocol/baud/RxStatus to a later
+  orphaned native RX, falsely promoting D2 to `delivered`.
+- Narrow change: once a native RX context has been seen for this PID/session,
+  each native delivery needs a fresh immediately adjacent valid context.
+  Intervening or malformed metadata is counted but cannot be attributed.
+  Context-free historical logs remain backward-compatible, with unknown
+  metadata; unrelated PID lines do not interrupt this PID's context.
+- Eight synthetic Python groups verify correct 13-frame transport, same-PID
+  interruption, malformed metadata, one-time use, recovery with new context,
+  legacy records, parallel channel isolation and privacy/PID isolation.
+- **Integration gate:** PR merge to `development` and automatic owner-only
+  VMware CI success on the exact merged SHA are required before calling the
+  change verified. [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still requires a *genuine* read-only SectorV GUI session in the user's
+  isolated Windows guest to observe DLL binding, B9FB, VIN and ECU list.
+  No emulated ECU positives, `main` merge, new binaries or release.
+
+---
+
 ## P0: stage Module constrained to active operator window (2026-11-09)
 
 - Verified starting baseline: `development` `395d3901954a380db64920a0af11ef6680ead5db`,
