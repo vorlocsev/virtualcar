@@ -1,5 +1,40 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: D2/B9FB import needs explicit candidate selection, never source authenticity by length (2026-11-09)
+
+- Last verified integration baseline `development` SHA
+  `665989bc394ec302a89718ed4f7b9994b9ec0062`,
+  [VMware CI #42688487593](https://github.com/vorlocsev/virtualcar/actions/runs/42688487593)
+  `success` after [PR #293](https://github.com/vorlocsev/virtualcar/pull/293).
+- The user-operated real isolated VMware SectorV session `p0-gui-004` confirmed
+  the exact x86 LAB J2534 DLL loaded in the WOW64 SectorV process (matching
+  module, registered temporary Registry32 entry and sole J2534-window PID).
+  GUI showed Connected/12.5 V then VIN read failed, empty ECU identity.
+  CEM B9FB: 0x40/125 kbit/s five `no_fixture`, 0x50/500 five `no_fixture`,
+  0x50/250 one `strict_route_rejected`, all eleven 0 RX; P3 `22F114`
+  twice unimplemented/unhandled. Runtime origin of individual backend requests
+  remains uncorrelated; no OEM success or physical J2534.
+- Privacy/provenance defect in `tools/import_p2_trace.py`: with more than one
+  D2 response it silently did `max(groups,key=len)`. The guest's local
+  candidate collection includes simulator-generated responses, so this can
+  choose a perfectly framed but non-OEM sequence by length alone.
+- Focused mitigation on a development child branch: retain frame-only
+  `sessions()` compatibility, add read-only per-session textual origin
+  classification (emulator-marked vs unknown), require explicit zero-based
+  `--session-index` if multiple responses, reject invalid indices before
+  writing, and prepend a `replay_approved=false` comment to each *private*
+  imported INI. Never infer authentic CEM from missing emulator markers.
+  Eight regression groups cover one/many, shorter-negative selection,
+  invalid/out-of-range, both origin classes, mixed RX and output preservation.
+- **Gate:** reviewed focused PR into `development`, then actual automatic
+  trusted owner-only VMware CI **success on the exact merged SHA**. This
+  change does not produce any real B9FB source data, does not ship a new LAB
+  INI, and does not allow VIN/ECU acceptance. [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains OPEN pending a licensed, source-backed independent MY2009 CEM capture.
+
+---
+
+
 ## P0: загрузка J2534 в SectorV под WOW64 (2026-11-09)
 
 - В отдельном read-only запуске SectorV в VMware GUI показал подключение
