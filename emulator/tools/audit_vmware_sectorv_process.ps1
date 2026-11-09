@@ -1,9 +1,10 @@
 #Requires -Version 5.1
 <#
-Read-only, strictly redacted snapshot of SectorV process -> registered J2534 DLL
-on the *current self-hosted CI runner*. Never starts SectorV, loads a DLL,
-changes registry, opens other processes by PID or prints a path, PID or VIN.
-A process-name match is not proof of the genuine SectorV binary.
+Read-only, strictly redacted snapshot of SectorV process -> registered J2534 DLL.
+Default mode checks the *current self-hosted CI runner*. OperatorSession
+checks the *current host* and does not prove it is the target guest VM.
+Never starts SectorV, loads a DLL, changes registry, opens a process by PID,
+prints private paths, hashes or VINs. A name match is not binary authenticity.
 #>
 [CmdletBinding()]
 param(
@@ -72,7 +73,7 @@ function Get-ByteEquivalence {
                 return 'comparison_unverifiable'
             }
             $full = [IO.Path]::GetFullPath($expanded)
-            $file = New-Object IO.FileInfo($full)
+            $file = [IO.FileInfo]::new($full)
             if (-not $file.Exists -or $file.Length -lt 96 -or
                 $file.Length -gt 67108864) { return 'comparison_unverifiable' }
             $paths += $file
