@@ -886,6 +886,117 @@ static void test_known_b9fb_13frame_final_marker(void){
 /* A follow-up D2 read-only request supersedes the old exchange on the
    same J2534 channel even if its target/opcode has no recorded fixture.
    No real CEM identity or positive A3/A6 response is synthesized. */
+/* P0: a B9FB replay is bound to the channel bitrate at request time.
+   A DATA_RATE change must never deliver its queued/staged D2 frames on
+   the new bus. All fixtures here are synthetic and read-only. */
+static void test_d2_replay_isolation_on_set_config(U32 dev){
+ D2_PROFILE saved_fb=g_d2[2];U32 saved_strict=g_p2_strict_routing;
+ p2_j2534_bridge saved_bridge=g_vehicle_bridge;
+ U32 hs=0,peer=0,n=1;U64 rid,prior;CHANNEL *ch,*other;
+ PASSTHRU_MSG m,rx;const char *start;
+ const U8 fb[]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
+ SCONFIG rate={1u,500000u},noop={779u,0u};
+ SCONFIG_LIST single={1u,&rate},nonrate={1u,&noop};
+ SCONFIG pair[2]={{1u,125000u},{1u,0u}},reversible[2]={{1u,125000u},{1u,500000u}};
+ SCONFIG_LIST batch={2u,pair},roundtrip={2u,reversible};
+ bytes_zero(&g_d2[2],sizeof(g_d2[2]));
+ g_d2[2].target=0x50u;g_d2[2].subcommand=0xFBu;
+ g_d2[2].response_id=0x01200003u;g_d2[2].baud=500000u;
+ g_d2[2].frame_count=3u;
+ g_d2[2].frame[0][0]=0x8Fu;g_d2[2].frame[0][1]=0x50u;
+ g_d2[2].frame[0][2]=0xF9u;g_d2[2].frame[0][3]=0xFBu;
+ g_d2[2].frame[1][0]=0x09u;g_d2[2].frame[2][0]=0x4Cu;
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ g_p2_strict_routing=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&hs)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ ch=channel(hs);other=channel(peer);
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);
+
+ /* 1. A changed DATA_RATE cancels staged frames and first queued frame. */
+ start=backend_lines+backend_len;send(hs,&m);
+ rid=last_tx_request(start);REQUIRE(rid && ch->count==1u&&ch->d2_count==3u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ REQUIRE(ch->baud==125000u&&ch->count==0u&&ch->d2_count==0u);
+ REQUIRE(terminal_for(start,rid,"d2_superseded","aborted")==1u);
+ tick+=100;n=1;
+ REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 2. Already queued old-bus D2 frames are removed; unrelated CAN
+    entries survive compaction in their original FIFO order. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ fill_untraced_rx(ch,1u);
+ start=backend_lines+backend_len;send(hs,&m);rid=last_tx_request(start);
+ REQUIRE(ch->count==2u);
+ tick+=100; pump_d2(ch);pump_d2(ch);
+ REQUIRE(ch->d2_count==0u&&ch->count==4u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ REQUIRE(ch->count==1u && ch->d2_count==0u);
+ REQUIRE(terminal_for(start,rid,"d2_superseded","aborted")==1u);
+ rx=readmsg(hs);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ n=1;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+
+ /* 3. Retuning one channel cannot abort a different channel's B9FB. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ send(peer,&m);prior=other->d2_trace;
+ REQUIRE(prior&&other->count==1u&&other->d2_count==3u);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ REQUIRE(other->d2_trace==prior&&other->count==1u&&other->d2_count==3u);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x8Fu);
+ REQUIRE(PassThruIoctl(peer,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+
+ /* 4. A non-DATA_RATE SET_CONFIG is not a bus retune. */
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ send(hs,&m);prior=ch->d2_trace;
+ REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&nonrate,0)==ERR_OK);
+ REQUIRE(prior && ch->d2_trace==prior && ch->count==1u);
+ rx=readmsg(hs);REQUIRE(rx.Data[4]==0x8Fu);
+ REQUIRE(PassThruIoctl(hs,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+
+ /* 5. Reapplying the current rate leaves the staged reply intact. */
+ send(hs,&m);prior=ch->d2_trace;
+ REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ REQUIRE(ch->d2_trace==prior&&ch->count==1u&&ch->d2_count==3u);
+ REQUIRE(PassThruIoctl(hs,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+
+ /* 6. A zero baud in a later list entry is rejected atomically. */
+ send(hs,&m);prior=ch->d2_trace;
+ REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&batch,0)==ERR_INVALID_BAUDRATE);
+ REQUIRE(ch->baud==500000u&&ch->d2_trace==prior&&ch->count==1u);
+ REQUIRE(PassThruIoctl(hs,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+
+ /* 7. Intermediate rate changes ending at the original bitrate are
+    not a real retune: preserve staged B9FB and observer generation. */
+ send(hs,&m);prior=ch->d2_trace;
+ {U32 observer_gen=g_vehicle_bridge.next_generation;
+  REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&roundtrip,0)==ERR_OK);
+  REQUIRE(g_vehicle_bridge.next_generation==observer_gen);
+ }
+ REQUIRE(ch->baud==500000u&&ch->d2_trace==prior&&ch->count==1u);
+ REQUIRE(PassThruIoctl(hs,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+
+ /* 8. After retuning away and back, a NEW read-only B9FB request
+    delivers its own 8F / 09 / 4C frames, never stale prior attempts. */
+ start=backend_lines+backend_len;send(hs,&m);rid=last_tx_request(start);
+ rate.Value=125000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ REQUIRE(terminal_for(start,rid,"d2_superseded","aborted")==1u);
+ rate.Value=500000u;REQUIRE(PassThruIoctl(hs,IO_SET_CONFIG,&single,0)==ERR_OK);
+ start=backend_lines+backend_len;send(hs,&m);prior=last_tx_request(start);
+ REQUIRE(prior && prior!=rid);
+ rx=readmsg(hs);REQUIRE(rx.Data[4]==0x8Fu);
+ tick+=25;rx=readmsg(hs);REQUIRE(rx.Data[4]==0x09u);
+ tick+=25;rx=readmsg(hs);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(start,prior,"none","responded")==1u);
+ REQUIRE(terminal_count_for(start,prior)==1u);
+ n=1;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ g_d2[2]=saved_fb;g_p2_strict_routing=saved_strict;
+ g_vehicle_bridge=saved_bridge;
+ puts("PASS P0 D2 DATA_RATE retune isolation: 8 read-only host cases");
+}
+
 static void test_d2_unknown_target_supersession(U32 dev){
  D2_PROFILE saved_fb=g_d2[2],saved_fc=g_d2[5];
  U32 saved_strict=g_p2_strict_routing;
@@ -1466,6 +1577,7 @@ int main(){
  test_j2534_lifecycle_lock_races();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
+ test_d2_replay_isolation_on_set_config(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
