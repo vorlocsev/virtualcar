@@ -1,5 +1,29 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: Connect mode append test must tolerate native Windows CRLF (2026-11-09)
+
+- [PR #264](https://github.com/vorlocsev/virtualcar/pull/264) merged into
+  `development` `f076da9ddcae98617f04d8b26959e2ae4f8ce6a4`;
+  automatic owner-only [VMware #42631860319](https://github.com/vorlocsev/virtualcar/actions/runs/42631860319)
+  **FAILED**, Python 573 tests (one skip, one failure). Seven of the eight
+  new bounded Connect/SET_CONFIG cases passed.
+- The sole failure is `test_bounded_j2534_connect_modes.py::test_08_only_appended_connect_modes_enter_one_operator_window`:
+  Windows `Path.open("a", encoding="utf-8")` expands fixture LF into
+  CRLF, and `fresh._append_lines` preserves complete raw line endings.
+  The test incorrectly compared `\r\n` and `\n` as unequal text.
+  Logical records, scopes and categories are unchanged.
+- Narrow test-only correction strips terminal CR/LF **for this assertion**
+  without weakening `fresh._append_lines` or redacted triage validation.
+  Continue to assert that the new bounded window excludes old vendor
+  protocol events and private identifiers.
+- **Gate:** squash-merge to `development`; verify newly triggered owner
+  Windows VMware CI against the exact merged SHA. Do not report #42631860319
+  as successful. No physical J2534, true SectorV GUI identity proof,
+  `main` merge or release. [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  remains open.
+
+---
+
 ## P0: bounded J2534 Connect / SET_CONFIG mode evidence (2026-11-09)
 
 - Starting verified `development`: `891b5b8f6cdb206fa51bfc1a3a68dbcc00917e2e`;
