@@ -515,6 +515,8 @@ def _native_event(text):
             return name
     if text.startswith("TX (app request) "):
         return "tx_record"
+    if text.startswith("J2534 periodic TX (read-only simulator) "):
+        return "periodic_scheduler_tx_record"
     if text.startswith("PassThruReadMsgs -> delivered "):
         return "rx_delivery_record"
     return None
@@ -796,6 +798,14 @@ def audit(lines, *, include_obd=False):
                 observed_events[observed] += 1
         s = scope(pid)
         stamp = _stamp(line)
+        # The native scheduler emits context immediately before its tick.
+        # Any intervening text discards that context rather than binding a
+        # later unrelated or forged periodic payload to the old channel.
+        if (s["periodicctx"] is not None
+                and not text.startswith((
+                    "Periodic TX context ",
+                    "J2534 periodic TX (read-only simulator)"))):
+            s["periodicctx"] = None
         if "PassThruOpen ->" in text:
             for ch in list(s["active"]):
                 finish(s, ch, "new_connection")
@@ -847,14 +857,18 @@ def audit(lines, *, include_obd=False):
             ctx = s["periodicctx"]
             s["periodicctx"] = None
             if (ctx is None or not re.fullmatch(
-                    r"[0-9A-Fa-f]{2}(?:\\s+[0-9A-Fa-f]{2}){4,11}", suffix)):
+                    r"[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){4,4127}", suffix)):
                 errors["unattributed_periodic_tx"] += 1
                 continue
             raw = _words(suffix)
-            if ctx[1] not in (5, 6) or ctx[3] == 0:
+            if (ctx[0] == 0 or ctx[1] not in (5, 6) or ctx[3] == 0 or
+                    (ctx[1] == 5 and len(raw) > 12)):
                 errors["invalid_periodic_transport"] += 1
                 continue
             req = _request(raw, include_obd)
+            if req and req[0] == "D2" and ctx[1] != 5:
+                errors["invalid_periodic_transport"] += 1
+                continue
             if req:
                 start(s, req, stamp, raw, origin="periodic_scheduler")
             elif ctx[1] == 5 and _flow_control(raw, include_obd):
