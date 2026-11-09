@@ -3765,17 +3765,28 @@ int main(){
  REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
  REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
  REQUIRE(event_count_since(case_log,"\"outcome\":\"aborted\"")==0);
- /* Group F: wrong-channel-address Flow Control cannot finish a transfer. */
+ /* Group F: wrong-channel-address FC is a separate unhandled TX.
+     It MUST NOT complete or abort the earlier VIN exchange. Since P0 #284
+     attributes stray FC-like traffic, the old blanket zero-terminal
+     expectation is obsolete. Keep two exact request IDs distinct. */
  case_log=backend_lines+backend_len;
  m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
+ U64 f08_vin_rid=last_tx_request(case_log);
+ REQUIRE(f08_vin_rid!=0);
  r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
  m=frame(PROTO_CAN,0x726,iso_fc_cts,8);send(cid,&m);
- REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
+ U64 f08_wrong_fc_rid=last_tx_request(case_log);
+ REQUIRE(f08_wrong_fc_rid!=0&&f08_wrong_fc_rid!=f08_vin_rid);
+ REQUIRE(terminal_for(case_log,f08_wrong_fc_rid,
+                      "unhandled_request","no_response")==1u);
+ REQUIRE(terminal_count_for(case_log,f08_vin_rid)==0u);
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  m=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(cid,&m);
  r=readmsg(cid);REQUIRE(r.Data[4]==0x21);
  r=readmsg(cid);REQUIRE(r.Data[4]==0x22);
- REQUIRE(event_count_since(case_log,"\"outcome\":\"responded\"")==1);
+ REQUIRE(terminal_for(case_log,f08_vin_rid,"none","responded")==1u);
+ REQUIRE(terminal_count_for(case_log,f08_wrong_fc_rid)==1u);
+ REQUIRE(terminal_count_for(case_log,f08_vin_rid)==1u);
  /* Group G: telemetry is disabled by default in production and explicit
     opt-out cannot change PassThru responses or generate a journal record. */
  g_backend_enabled=0;
