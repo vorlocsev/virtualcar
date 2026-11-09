@@ -1118,7 +1118,17 @@ static void emit_response(CHANNEL *c,U32 response_id,U32 fc_request_id,const U8 
     if(len>sizeof(c->pending))return;
     bytes_zero(f,8);f[0]=(U8)(0x10|(len>>8));f[1]=(U8)len;
     for(i=0;i<6;i++)f[i+2]=payload[i];
-    enqueue(c,response_id,f,8);
+    /* ISO-TP CF staging is valid only if the First Frame was actually
+       admitted into this channel's RX FIFO. A strict filter can reject
+       it, and a full queue can drop it. Without this guard, a later FC
+       could produce orphan CFs, falsely resembling an ECU reply. */
+    {U32 before=c->count;
+     enqueue(c,response_id,f,8);
+     if(c->count==before){
+         logline("Raw CAN ISO-TP first frame not queued; CF staging blocked",0,0);
+         return;
+     }
+    }
     bytes_copy(c->pending,payload,len);c->pending_len=len;c->pending_pos=6;
     c->pending_id=response_id;c->pending_sn=1;c->pending_trace=c->active_trace;c->pending_next_us=0;c->pending_stmin_us=0;
 }
