@@ -109,8 +109,10 @@ class OperatorOneSessionTests(unittest.TestCase):
                          "operator_asserted_not_independently_verified")
         self.assertFalse(result["same_guest_independently_attested"])
         self.assertEqual(result["transaction_level_correlation"], "not_established")
+        # Synthetic platform has no registered x86 provider: that missing
+        # provenance takes precedence over an otherwise empty J2534 window.
         self.assertEqual(result["first_next_gate"],
-                         "obtain_bounded_j2534_window_evidence")
+                         "obtain_provider_endpoint_evidence")
 
     def test_05_optional_local_module_is_never_promoted_to_gui_or_vin(self):
         self.begin()
