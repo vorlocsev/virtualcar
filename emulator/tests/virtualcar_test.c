@@ -80,7 +80,43 @@ static U64 last_tx_request(const char *start){
  return 0;
 }
 
-void Sleep(U32 ms){tick+=ms;}
+/* A one-shot intervention in ReadMsgs' unlocked wait, before its next
+   poll. No real threads, physical adapters or SectorV process are used. */
+static U32 read_race_action=0,read_race_target=0,read_race_new_id=0;
+static U32 read_race_status=0,read_race_status2=0,read_race_executed=0;
+static const U8 read_race_lab_data[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0};
+void Sleep(U32 ms){
+ U32 action=read_race_action;
+ if(action){
+  U32 device=0;SCONFIG rate={1u,125000u};SCONFIG_LIST cfg={1u,&rate};
+  read_race_action=0;read_race_executed++;
+  if(action==1u||action==2u||action==4u){
+   read_race_status=PassThruDisconnect(read_race_target);
+   if(action!=2u){
+    read_race_status2=PassThruConnect(1u,PROTO_CAN,0,500000u,&read_race_new_id);
+    if(action==1u && read_race_status2==ERR_OK)
+     enqueue(channel(read_race_new_id),0x555u,read_race_lab_data,8u);
+   }
+  }else if(action==3u){
+   read_race_status=PassThruClose(1u);
+   if(read_race_status==ERR_OK){
+    read_race_status2=PassThruOpen(0,&device);
+    if(read_race_status2==ERR_OK){
+     read_race_status2=PassThruConnect(device,PROTO_CAN,0,500000u,&read_race_new_id);
+     if(read_race_status2==ERR_OK)
+      enqueue(channel(read_race_new_id),0x555u,read_race_lab_data,8u);
+    }
+   }
+  }else if(action==5u){
+   read_race_status=PassThruIoctl(read_race_target,IO_SET_CONFIG,&cfg,0);
+  }else if(action==6u){
+   CHANNEL *c=channel(read_race_target);
+   if(c){enqueue(c,0x555u,read_race_lab_data,8u);read_race_status=ERR_OK;}
+   else read_race_status=ERR_INVALID_CHANNEL_ID;
+  }
+ }
+ tick+=ms;
+}
 U32 GetTickCount(void){return tick;}
 int QueryPerformanceFrequency(I64 *v){*v=1000000;return 1;}
 int QueryPerformanceCounter(I64 *v){*v=(I64)tick*1000+qpc_offset_us;return 1;}
@@ -1572,9 +1608,84 @@ static void test_j2534_lifecycle_lock_races(void){
  puts("PASS P0 J2534 lifecycle: atomic Open/Close/Connect and lock-entry races");
 }
 
+/* Eight host-side checks of a blocking J2534 read spanning a
+   disconnect/reconnect. A numeric J2534 channel ID is NOT a lifetime ID. */
+static void test_j2534_blocked_read_session_reuse(void){
+ U32 dev=0,ch=0,peer=0,n,previous;U64 serial;
+ PASSTHRU_MSG rx;CHANNEL *current;
+ REQUIRE(g_open==0u&&read_race_action==0u);
+ REQUIRE(PassThruOpen(0,&dev)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ current=channel(ch);REQUIRE(current&&current->session_serial);
+ serial=current->session_serial;
+ /* 1. A timed out read on an unchanged channel retains J2534 behavior. */
+ n=1u;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,2u)==ERR_TIMEOUT&&n==0u);
+ REQUIRE(channel(ch)->session_serial==serial);
+ /* 2. Zero-timeout polling is still a nonblocking buffer-empty result. */
+ n=1u;
+ REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(channel(ch)->session_serial==serial);
+ /* 3. A blocking old reader must not consume the new channel's queued
+    marker after Disconnect/Connect reuses exactly the same numeric ID. */
+ previous=read_race_executed;read_race_action=1u;read_race_target=ch;
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,5u)==ERR_INVALID_CHANNEL_ID);
+ REQUIRE(n==0u&&read_race_executed==previous+1u);
+ REQUIRE(read_race_status==ERR_OK&&read_race_status2==ERR_OK);
+ REQUIRE(read_race_new_id==ch&&channel(ch)->session_serial!=serial);
+ REQUIRE(channel(ch)->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ serial=channel(ch)->session_serial;
+ /* 4. Disconnection without reallocation interrupts the blocked read. */
+ previous=read_race_executed;read_race_action=2u;read_race_target=ch;
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,5u)==ERR_INVALID_CHANNEL_ID);
+ REQUIRE(n==0u&&read_race_executed==previous+1u);
+ REQUIRE(read_race_status==ERR_OK&&channel(ch)==0);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ REQUIRE(channel(ch)->session_serial!=serial);
+ /* 5. Close/Open/Connect also reuses the numeric handle; it cannot leak
+    the new session's queued marker to an old blocking ReadMsgs. */
+ serial=channel(ch)->session_serial;
+ previous=read_race_executed;read_race_action=3u;read_race_target=ch;
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,5u)==ERR_INVALID_CHANNEL_ID);
+ REQUIRE(n==0u&&read_race_executed==previous+1u);
+ REQUIRE(read_race_status==ERR_OK&&read_race_status2==ERR_OK);
+ REQUIRE(read_race_new_id==ch&&channel(ch)->session_serial!=serial);
+ REQUIRE(channel(ch)->count==1u);
+ rx=readmsg(ch);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ /* 6. An unrelated channel's disconnect/reconnect cannot terminate
+    a wait on our channel or change its session token. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&peer)==ERR_OK);
+ serial=channel(ch)->session_serial;
+ previous=read_race_executed;read_race_action=4u;read_race_target=peer;
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,3u)==ERR_TIMEOUT);
+ REQUIRE(n==0u&&read_race_executed==previous+1u);
+ REQUIRE(read_race_status==ERR_OK&&read_race_status2==ERR_OK);
+ REQUIRE(read_race_new_id==peer&&channel(ch)->session_serial==serial);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ /* 7. SET_CONFIG(DATA_RATE) changes the channel speed, but not its
+    J2534 session; a blocking read still reports the real timeout. */
+ previous=read_race_executed;read_race_action=5u;read_race_target=ch;
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,3u)==ERR_TIMEOUT);
+ REQUIRE(n==0u&&read_race_executed==previous+1u);
+ REQUIRE(read_race_status==ERR_OK&&channel(ch)->baud==125000u);
+ REQUIRE(channel(ch)->session_serial==serial);
+ /* 8. A new RX appearing during unlocked wait on the SAME session is
+    returned normally. No stale-session false positive. */
+ previous=read_race_executed;read_race_action=6u;read_race_target=ch;
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,5u)==ERR_OK);
+ REQUIRE(n==1u&&read_race_executed==previous+1u);
+ REQUIRE(read_race_status==ERR_OK&&channel(ch)->session_serial==serial);
+ REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruClose(dev)==ERR_OK);
+ puts("PASS P0 J2534 ReadMsgs: 8 channel-session reuse/timeout cases");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
+ test_j2534_blocked_read_session_reuse();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_d2_replay_isolation_on_set_config(dev);

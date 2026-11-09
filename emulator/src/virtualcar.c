@@ -174,6 +174,9 @@ typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
+    /* Monotonic private connection lifetime. Reused numeric channel IDs
+       must not make an in-flight ReadMsgs consume a new channel's FIFO. */
+    U64 session_serial;
     FILTER filters[MAX_FILTERS]; U32 filters_count;
     U32 passive_next_tick;
     U32 trace_next_tick[MAX_PASSIVE_TRACES];
@@ -193,6 +196,8 @@ typedef struct {
     U32 pending_cf_active,pending_cf_credit,read_timeout_count;
 } CHANNEL;
 static CHANNEL g_ch[MAX_CHANNELS];
+/* Never reset on Open/Close: even a device reopen can reuse channel ID 1. */
+static U64 g_next_channel_serial;
 /* Read-only vehicle-state observer, serialized by g_lock. */
 static p2_j2534_bridge g_vehicle_bridge;
 
@@ -1467,6 +1472,9 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
+    ++g_next_channel_serial;
+    if(!g_next_channel_serial)++g_next_channel_serial;
+    g_ch[i].session_serial=g_next_channel_serial;
     g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
@@ -1526,13 +1534,18 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     *count=n;unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
-    U32 want,actual=0,started;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
+    U32 want,actual=0,started;
+    U64 original_session=0;
+    if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     /* NumMsgs is the caller buffer capacity; MAX_QUEUE is only our internal queue. */
     want=*count;if(want==0)return error(ERR_INVALID_MSG);
     started=GetTickCount();
     for(;;){
         CHANNEL *c;lock_state();c=channel(id);
-        if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+        if(!c || (original_session && c->session_serial!=original_session)){
+            unlock_state();*count=0;return error(ERR_INVALID_CHANNEL_ID);
+        }
+        if(!original_session)original_session=c->session_serial;
         maybe_passive_frame(c);
         pump_recorded_trace(c);
         pump_periodic(c);
@@ -1575,18 +1588,26 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         }
         unlock_state();
         if(actual){
-            lock_state();c=channel(id);if(c)c->read_timeout_count=0;unlock_state();
-            *count=actual;return error(ERR_OK);
+            /* Frames were delivered from original_session under the lock.
+               A concurrent new connection must not inherit its counter. */
+            lock_state();c=channel(id);
+            if(c && c->session_serial==original_session)c->read_timeout_count=0;
+            unlock_state();*count=actual;return error(ERR_OK);
         }
         if((U32)(GetTickCount()-started)>=timeout){
-            /* Record bounded timeout telemetry, not every polling call. */
-            if(timeout){
-                U32 failures=0; U8 info[12];
-                lock_state();c=channel(id);if(c)failures=++c->read_timeout_count;unlock_state();
-                if(failures<=3||(failures%25u)==0){
-                    u32_be(info,id);u32_be(info+4,timeout);u32_be(info+8,failures);
-                    logline("PassThruReadMsgs timeout: channel / wait-ms / consecutive-count (BE)",info,12);
-                }
+            U32 failures=0; U8 info[12];
+            /* The channel can be disconnected and reused after our last
+               polling lock, even at the exact timeout boundary. Check
+               its identity before recording another timeout. */
+            lock_state();c=channel(id);
+            if(!c || c->session_serial!=original_session){
+                unlock_state();*count=0;return error(ERR_INVALID_CHANNEL_ID);
+            }
+            if(timeout)failures=++c->read_timeout_count;
+            unlock_state();
+            if(timeout && (failures<=3||(failures%25u)==0)){
+                u32_be(info,id);u32_be(info+4,timeout);u32_be(info+8,failures);
+                logline("PassThruReadMsgs timeout: channel / wait-ms / consecutive-count (BE)",info,12);
             }
             *count=0;return error(timeout?ERR_TIMEOUT:ERR_BUFFER_EMPTY);
         }
