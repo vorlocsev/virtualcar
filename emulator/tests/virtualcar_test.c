@@ -993,6 +993,125 @@ static void test_d2_unknown_target_supersession(U32 dev){
  puts("PASS P0 D2 retry isolation: unconfigured target, B9FC and channel FIFO");
 }
 
+/* Recognized CEM A3/A6 probes have NO validated positive OEM reply.
+   They must also close the previous same-channel B9 exchange, otherwise a
+   stale 8F/09/4C fragment could look like an A3/A6 discovery response. */
+static void test_d2_a3_a6_supersession(U32 dev){
+ D2_PROFILE saved=g_d2[2];U32 strict=g_p2_strict_routing;
+ U32 ch1=0,ch2=0,n,i;U64 old,newrid;
+ CHANNEL *ch;PASSTHRU_MSG m,rx;const char *start;
+ const U8 fb[]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
+ const U8 a3[]={0xCFu,0x50u,0xA3u,0x02u,0x03u,0xA5u,0xA5u,0};
+ const U8 a6[]={0xCFu,0x50u,0xA6u,0x1Au,0x04u,0x01u,0,0};
+ bytes_zero(&g_d2[2],sizeof(g_d2[2]));
+ g_d2[2].target=0x50u;g_d2[2].subcommand=0xFBu;
+ g_d2[2].response_id=0x01200003u;g_d2[2].baud=500000u;
+ g_d2[2].frame_count=3u;
+ g_d2[2].frame[0][0]=0x8Fu;g_d2[2].frame[0][1]=0x50u;
+ g_d2[2].frame[0][2]=0xF9u;g_d2[2].frame[0][3]=0xFBu;
+ g_d2[2].frame[1][0]=0x09u;g_d2[2].frame[2][0]=0x4Cu;
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ g_p2_strict_routing=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch1)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch2)==ERR_OK);
+ ch=channel(ch1);
+
+ /* 1: A3 cancels queued first B9FB and staged tail, and finishes
+    as an unsupported read-only probe with no simulated CEM RX. */
+ start=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ old=last_tx_request(start);REQUIRE(old&&ch->count==1u&&ch->d2_count==3u);
+ m=frame(PROTO_CAN,0x000FFFFEu,a3,8);send(ch1,&m);
+ newrid=last_tx_request(start);
+ REQUIRE(newrid&&newrid!=old);
+ REQUIRE(terminal_for(start,old,"d2_superseded","aborted")==1);
+ REQUIRE(terminal_for(start,newrid,"unimplemented_probe","no_response")==1);
+ REQUIRE(terminal_count_for(start,old)==1&&terminal_count_for(start,newrid)==1);
+ REQUIRE(ch->count==0u&&ch->d2_count==0u&&ch->d2_trace==0u);
+ tick+=100;n=1;
+ REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 2: A6 also cancels B9FB with no invented E6 reply. */
+ start=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ old=last_tx_request(start);
+ m=frame(PROTO_CAN,0x000FFFFEu,a6,8);send(ch1,&m);
+ newrid=last_tx_request(start);
+ REQUIRE(terminal_for(start,old,"d2_superseded","aborted")==1);
+ REQUIRE(terminal_for(start,newrid,"unimplemented_probe","no_response")==1);
+ REQUIRE(ch->count==0u&&ch->d2_count==0u);
+
+ /* 3: all 3 old B9FB frames already queued must be dropped together. */
+ start=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ old=last_tx_request(start);
+ tick+=100;for(i=0;i<2u;i++)pump_d2(ch);
+ REQUIRE(ch->count==3u&&ch->d2_count==0u);
+ m=frame(PROTO_CAN,0x000FFFFEu,a3,8);send(ch1,&m);
+ REQUIRE(ch->count==0u);
+ REQUIRE(event_count_since(start,"\"kind\":\"rx_dropped\"")==3u);
+ REQUIRE(terminal_for(start,old,"d2_superseded","aborted")==1);
+
+ /* 4: a first frame already delivered is not revocable, only remaining
+    response tail is cancelled by the new A6 probe. */
+ start=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ old=last_tx_request(start);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ m=frame(PROTO_CAN,0x000FFFFEu,a6,8);send(ch1,&m);
+ REQUIRE(terminal_for(start,old,"d2_superseded","aborted")==1);
+ REQUIRE(terminal_count_for(start,old)==1);
+ tick+=100;n=1;
+ REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 5: A3 on another J2534 channel cannot stop channel one's reply. */
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ old=ch->d2_trace;REQUIRE(old&&ch->count==1u);
+ m=frame(PROTO_CAN,0x000FFFFEu,a3,8);send(ch2,&m);
+ REQUIRE(ch->d2_trace==old&&ch->count==1u);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x09u);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x4Cu);
+
+ /* 6: a matching byte pattern on an unrelated CAN ID is not a D2
+    discovery request and cannot cancel a staged B9FB reply. */
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ old=ch->d2_trace;REQUIRE(old&&ch->count==1u);
+ m=frame(PROTO_CAN,0x555u,a3,8);send(ch1,&m);
+ REQUIRE(ch->d2_trace==old&&ch->count==1u);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x09u);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x4Cu);
+
+ /* 7: unrelated RX remains FIFO ordered across A3 cancellation. */
+ fill_untraced_rx(ch,1u);
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ REQUIRE(ch->count==2u);
+ m=frame(PROTO_CAN,0x000FFFFEu,a3,8);send(ch1,&m);
+ REQUIRE(ch->count==1u&&ch->d2_count==0u);
+ rx=readmsg(ch1);REQUIRE(rx.Data[2]==0x05u&&rx.Data[3]==0x55u);
+ n=1;REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 8: a fresh B9FB after an unsupported A6 probe still delivers only
+    its own 3 recorded frames, with a single successful terminal. */
+ start=backend_lines+backend_len;
+ m=frame(PROTO_CAN,0x000FFFFEu,a6,8);send(ch1,&m);
+ old=last_tx_request(start);
+ REQUIRE(terminal_for(start,old,"unimplemented_probe","no_response")==1);
+ m=frame(PROTO_CAN,0x000FFFFEu,fb,8);send(ch1,&m);
+ newrid=last_tx_request(start);REQUIRE(newrid&&newrid!=old);
+ rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x8Fu);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x09u);
+ tick+=20;rx=readmsg(ch1);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(start,newrid,"none","responded")==1);
+ REQUIRE(terminal_count_for(start,newrid)==1);
+ n=1;REQUIRE(PassThruReadMsgs(ch1,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(ch2)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ch1)==ERR_OK);
+ g_d2[2]=saved;g_p2_strict_routing=strict;
+ puts("PASS P0 D2 CEM A3/A6 supersede stale B9 without invented replies");
+}
+
 /* Periodic TX previously bypassed the immediate WriteMsgs transport guards.
    Reject malformed schedules before installing a repeating transmitter, and
    keep the ordinary read-only periodic lab request working on both transports. */
@@ -1148,6 +1267,7 @@ int main(){
  test_filter_can_id_boundaries(dev);
  test_known_b9fb_13frame_final_marker();
  test_d2_unknown_target_supersession(dev);
+ test_d2_a3_a6_supersession(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
