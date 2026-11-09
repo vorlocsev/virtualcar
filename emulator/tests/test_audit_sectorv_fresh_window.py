@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import audit_sectorv_fresh_window as gate
@@ -179,6 +180,119 @@ class FreshWindowTests(unittest.TestCase):
                                             "--backend", str(b), "--manifest", str(manifest),
                                             "--output", str(output)]), 2)
             self.assertFalse(output.exists())
+
+
+    @staticmethod
+    def _registered_provider(path_byte="a", file_byte="b"):
+        return {
+            "state": "installed_library_x86",
+            "path_sha256": path_byte * 64,
+            "file_sha256": file_byte * 64,
+            "bytes": 512,
+        }
+
+    def test_09_same_x86_provider_only_proves_endpoint_stability(self):
+        before = self._registered_provider()
+        result = gate._provider_endpoints(before, dict(before))
+        self.assertEqual(result["binary_endpoint_consistency"], "same_at_endpoints_only")
+        self.assertEqual(result["loaded_in_sectorv_client"], "not_observed")
+        self.assertEqual(result["during_run_immutability"], "not_verified")
+        self.assertFalse(result["same_guest_independently_attested"])
+
+    def test_10_changed_binary_or_registered_path_not_a_stable_run(self):
+        before = self._registered_provider()
+        for after in (self._registered_provider(file_byte="c"),
+                      self._registered_provider(path_byte="d")):
+            with self.subTest(kind=after):
+                result = gate._provider_endpoints(before, after)
+                self.assertEqual(result["binary_endpoint_consistency"],
+                                 "changed_between_endpoints")
+
+    def test_11_missing_and_changing_provider_cannot_claim_identity(self):
+        absent = {key: None for key in ("path_sha256", "file_sha256", "bytes")}
+        absent["state"] = "canonical_provider_absent"
+        unchanged = gate._provider_endpoints(absent, dict(absent))
+        self.assertEqual(unchanged["binary_endpoint_consistency"], "not_verified")
+        changed = gate._provider_endpoints(absent, self._registered_provider())
+        self.assertEqual(changed["binary_endpoint_consistency"], "provider_state_changed")
+
+    def test_12_private_manifest_fingerprint_strictly_validated(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = gate._baseline(root / "missing-j2534.log", root / "missing-backend.jsonl")
+            manifest["provider"] = self._registered_provider()
+            gate._validate_baseline(manifest)
+            for bad in (
+                    {**self._registered_provider(), "path_sha256": "secret-private"},
+                    {**self._registered_provider(), "bytes": True},
+                    {**self._registered_provider(), "binary_path": "C:/private/fixture.dll"},
+                    {**self._registered_provider(), "file_sha256": "A" * 64},
+            ):
+                altered = dict(manifest)
+                altered["provider"] = bad
+                with self.subTest(bad=list(bad)), self.assertRaises(ValueError):
+                    gate._validate_baseline(altered)
+            original = dict(manifest)
+            original["schema_version"] = "virtualcar-private-log-baseline-v1"
+            with self.assertRaises(ValueError):
+                gate._validate_baseline(original)
+
+    def test_13_cli_redacts_provider_hashes_with_real_append_window(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            logs = root / "private-j2534.log"
+            backend = root / "private-backend.jsonl"
+            baseline = root / "PRIVATE-before.json"
+            report = root / "safe-report.json"
+            logs.write_text("historical private VIN YV1UNKNOWN\n", encoding="utf-8")
+            backend.write_text("", encoding="utf-8")
+            fingerprint = self._registered_provider()
+            with mock.patch.object(gate, "_provider_snapshot", return_value=fingerprint):
+                self.assertEqual(gate.main([
+                    "baseline", "--j2534", str(logs), "--backend", str(backend),
+                    "--manifest", str(baseline)]), 0)
+            with logs.open("a", encoding="utf-8") as source:
+                source.write(b9fb_no_fixture())
+            with backend.open("a", encoding="utf-8") as source:
+                source.write(backend_evt("tx_received"))
+            with mock.patch.object(gate, "_provider_snapshot", return_value=dict(fingerprint)):
+                self.assertEqual(gate.main([
+                    "analyze", "--j2534", str(logs), "--backend", str(backend),
+                    "--manifest", str(baseline), "--output", str(report),
+                    "--operator-one-run-confirmed"]), 0)
+            out = report.read_text(encoding="utf-8")
+            result = json.loads(out)
+            self.assertEqual(result["registered_provider"]["binary_endpoint_consistency"],
+                             "same_at_endpoints_only")
+            self.assertEqual(result["operator_one_run_confirmed"], True)
+            self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
+            self.assertNotIn("YV1UNKNOWN", out)
+            self.assertNotIn("PRIVATE-before", out)
+            self.assertNotIn("a" * 64, out)
+            self.assertNotIn("b" * 64, out)
+            self.assertNotIn(str(logs), out)
+
+    def test_14_changed_provider_requires_a_categorical_result_not_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            logs = root / "j.log"
+            backend = root / "b.jsonl"
+            before = root / "manifest.json"
+            after = root / "report.json"
+            with mock.patch.object(gate, "_provider_snapshot",
+                                   return_value=self._registered_provider()):
+                self.assertEqual(gate.main([
+                    "baseline", "--j2534", str(logs), "--backend", str(backend),
+                    "--manifest", str(before)]), 0)
+            with mock.patch.object(gate, "_provider_snapshot",
+                                   return_value=self._registered_provider(file_byte="c")):
+                self.assertEqual(gate.main([
+                    "analyze", "--j2534", str(logs), "--backend", str(backend),
+                    "--manifest", str(before), "--output", str(after)]), 0)
+            result = json.loads(after.read_text())
+            self.assertEqual(result["registered_provider"]["binary_endpoint_consistency"],
+                             "changed_between_endpoints")
+            self.assertEqual(result["client_vehicle_identity_accepted"], "not_verified")
 
 
 if __name__ == "__main__":
