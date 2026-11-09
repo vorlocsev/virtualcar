@@ -232,8 +232,10 @@ function Invoke-LocalSelfTests {
         $blocked = $false
         try { Write-ExclusiveOperatorReport $safe $reportPath }
         catch { $blocked=$true }
-        if (-not $blocked -or -not [Linq.Enumerable]::SequenceEqual(
-            [byte[]]$preserved, [byte[]][IO.File]::ReadAllBytes($reportPath))) {
+        $afterAttempt = [IO.File]::ReadAllBytes($reportPath)
+        if (-not $blocked -or
+            [Convert]::ToBase64String($preserved) -cne
+            [Convert]::ToBase64String($afterAttempt)) {
             throw 'operator test 7: exclusive output'
         }; $operatorChecks++
         if ((Get-OperatorNextGate 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot') -cne
