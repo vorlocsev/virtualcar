@@ -1,5 +1,42 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: abort strict-filtered ISO-TP CF before any later sequence number (2026-11-09)
+
+- Verified starting `development` is
+  `426d93829dca039a61d696d7a69e2ab0a08e661c`;
+  automatic owner-only [VMware CI #42642408111](https://github.com/vorlocsev/virtualcar/actions/runs/42642408111)
+  **SUCCESS**, Python 573 tests (572 pass, 1 optional skip),
+  native C harness and full 30/30 workflow steps.
+- Source-backed bug: `pump_can_cf` under strict raw CAN byte-pattern
+  filtering always increments `pending_pos` and ISO-TP Sequence Number
+  even if `enqueue` rejects CF1 by PCI payload. A filter allowing
+  FF and CF2 but not CF1 could emit an invalid FF, CF2 sequence.
+  Prior P0 #270 only required successful FF enqueue, not continuity
+  for subsequent filtered CFs.
+- Minimal fix in native J2534 `virtualcar.c`: if `enqueue` leaves FIFO
+  count unchanged while space is available, the CF was not admitted.
+  Keep existing `filter_reject` drop evidence, clear this channel's
+  pending CF, grant/credit and timestamp state, and finish backend
+  trace as `dropped` after any queued FF/CF is consumed. Never
+  emit CF(n+1) after a lost CF(n), even following another CTS.
+  Ordinary allowed CF and FIFO backpressure behavior unchanged.
+- Eight deterministic native C host checks in
+  `test_raw_can_cf_filter_gap_isolation`:
+  FF only/CF1 denied; late CTS silent; FF+CF2 allowlist cannot
+  skip CF1; CF1 passes but CF2 denied; FIFO-full grant resumes
+  with CF1 denied; independent healthy peer; fresh broad-filter
+  FF/CF1/CF2 success; long F106 read (145-byte) allows CF1 and
+  CF3 but not CF2 and never emits CF3.
+- **Gate:** review PR, merge into `development` only, and verify new
+  automatic owner-only VMware CI on the exact merged SHA before
+  calling this correction tested.
+- [P0 Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still awaits a real isolated read-only SectorV GUI observation:
+  virtual x86 J2534 binding, B9FB, VIN, ECU list. No `main`
+  merge, physical J2534, new fabricated OEM replies or release.
+
+---
+
 ## P0: isolate raw CAN ISO-TP responses across DATA_RATE retune (2026-11-09)
 
 - Exact verified baseline `development`:
