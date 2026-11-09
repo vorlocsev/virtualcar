@@ -1,5 +1,35 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: bounded Begin/Finish D2 generation evidence (2026-11-09)
+
+- Starting exact verified `development`: `e87b70a585f87ef315183976543d55a38886bf7f`;
+  owner-only automatic [VMware #42625017295](https://github.com/vorlocsev/virtualcar/actions/runs/42625017295)
+  **SUCCESS**, 541 Python tests (540 passed, one optional skipped), 30/30 workflow steps.
+- The D2 generation auditor added via #259 had categorical generation/frame evidence
+  only in full-file `audit_j2534_discovery.py` output. The actual operator
+  `Begin` / `Finish` pipeline omitted it from its bounded
+  `p0-window.redacted.json` and derived `p0-triage.redacted.json`.
+- Focused integration: `audit_sectorv_fresh_window.summarize` now carries
+  `native_d2_delivery_tags` directly from the already-bounded J2534 lines
+  into `discovery`. The strict GUI-triage parser validates exact allowed
+  fields and conservation of record/group counts, prohibits unsupported OEM
+  or client acceptance claims, and emits a small separate
+  `native_d2_generation_evidence` category. Old v2 window JSON without
+  the field remains readable but does not imply those checks happened.
+- Eight synthetic groups cover valid full B9FB in the bounded report,
+  missing/duplicate markers, old window compatibility, injected private
+  fields, spoofed provenance, inconsistent/impossible counts, historical
+  prefix exclusion, and full `collector begin -> append -> finish` privacy.
+- **Gate:** merge a focused PR to `development`, inspect the automatically
+  triggered full VMware CI for the exact resulting commit SHA, and fix any
+  actual failures. No read/write J2534 behavior, fixtures or OEM data changed.
+  P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) still needs
+  genuine, isolated, read-only SectorV GUI operator observation of the virtual
+  x86 provider, B9FB, VIN display and ECU list; synthetic test counts are not
+  that proof. No merge to `main`, public release or physical J2534 test.
+
+---
+
 ## P0: native emitted D2 frame-generation evidence (2026-11-09)
 
 - Starting exact verified baseline: `development`
