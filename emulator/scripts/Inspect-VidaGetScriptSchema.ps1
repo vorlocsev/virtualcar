@@ -13,7 +13,8 @@
 param(
     [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$ServerInstance,
     [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$OutputFile,
-    [System.Management.Automation.PSCredential]$Credential
+    [System.Management.Automation.PSCredential]$Credential,
+    [switch]$TrustServerCertificate
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -85,6 +86,13 @@ $params = @{
     ErrorAction = 'Stop'
 }
 if ($null -ne $Credential) { $params.Credential = $Credential }
+# Explicit opt-in only for known local SQL endpoints. Validate TLS by default.
+if ($TrustServerCertificate) {
+    if ($ServerInstance -notmatch '^(?:\.|\(local\)|localhost)(?:\\[A-Za-z0-9_]+)?$') {
+        throw 'TrustServerCertificate is allowed only for a local SQL Server instance.'
+    }
+    $params.TrustServerCertificate = $true
+}
 $rows = @(Invoke-Sqlcmd @params)
 if ($rows.Count -ne 1) { throw 'Expected exactly one SQL catalog row.' }
 $row = $rows[0]

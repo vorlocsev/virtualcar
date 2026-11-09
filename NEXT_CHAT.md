@@ -1,5 +1,49 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## ACTIVE: connected local VIDA 2015A SQL catalog gate (2026-11-07)
+
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains OPEN.
+  The owner confirmed on a **separate** Windows 11 IoT Enterprise LTSC x64
+  workstation with installed VIDA 2015A: `MSSQL$VIDA` and `SQLBrowser`
+  running; `Invoke-Sqlcmd` v22.4.5.1 successfully returned
+  `Connected=1` on `.\VIDA` **only with**
+  `-TrustServerCertificate` because local SQL TLS certificate chain
+  was untrusted; `DiagSwdlRepository` is `ONLINE` and
+  `HAS_DBACCESS=1`. This confirms SQL connection and database
+  access. Subsequent real, read-only `sys.procedures` returned
+  `dbo.GetScript`; `sys.parameters` returned exactly FIVE input
+  parameters in ordinal order: `@scriptType varchar(50)`,
+  `@profileList varchar(4000)`, `@scriptId varchar(32)`,
+  `@languageCode char(5)`, `@ecuType int` (all non-output).
+  The five names match original DLL research; text `@scriptType`
+  means actual runtime `ReadVin=4` SQL string remains unknown.
+  No GetScript was executed and no XML, VIN or ECU identity is
+  confirmed.
+- [PR #169](https://github.com/vorlocsev/virtualcar/pull/169)
+  **MERGED** as `5f396cc321da8cf769453924c2cff6e197e60f36`.
+  Exact-feature owner-only VMware [#42401960139](https://github.com/vorlocsev/virtualcar/actions/runs/42401960139)
+  **SUCCESS**, source `0eed884a4b6b5ed1f94b0c6a9d8f25f3668e0795`,
+  Python **330**, native CTest x86/x64 **8/8** each;
+  post-merge [#42402867121](https://github.com/vorlocsev/virtualcar/actions/runs/42402867121)
+  **SUCCESS** on exact merge commit. No artifact release.
+- Current focused source branch `fix/vida-local-sql-tls-optin`
+  adds **opt-in, local-instance-only**
+  `-TrustServerCertificate` to the existing metadata-only
+  catalog helper. Default TLS validation remains enabled.
+  Eight new static source/privacy checks; expected full Python
+  **338**. **Not yet confirmed by exact-source Windows VMware
+  or by a live helper run**. Do not promote before checks.
+- Next real evidence gate: inspect authorized local
+  `DiagSwdlRepository` catalog for GetScript name visibility
+  across schemas and `dbo.GetScript` five parameter metadata;
+  share categorical JSON only after owner review. Then
+  separately establish the selected actual `ReadVin=4` XML and
+  same-run read-only client/J2534/identity/ECU evidence.
+  No SQL procedure executions, VIN/PIN/SecurityAccess, ECU
+  writes, invented responses or Virtual Car releases.
+
+---
+
 ## ACTIVE: VIDA GetScript any-schema catalog visibility (2026-11-07)
 
 - [PR #166](https://github.com/vorlocsev/virtualcar/pull/166)

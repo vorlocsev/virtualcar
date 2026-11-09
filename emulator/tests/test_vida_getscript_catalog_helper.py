@@ -128,5 +128,57 @@ class VidaGetScriptMetadataSourceTests(unittest.TestCase):
         self.assertIn('Any-schema visibility is not proof', self.source)
 
 
+    def test_15_tls_exception_is_explicit_opt_in_switch(self):
+        self.assertIn('[switch]$TrustServerCertificate', self.source)
+        self.assertIn('if ($TrustServerCertificate) {', self.source)
+        self.assertNotIn('[Parameter(Mandatory=$true)][switch]$TrustServerCertificate', self.source)
+
+    def test_16_default_connection_still_validates_certificate(self):
+        before = self.source.split('if ($TrustServerCertificate) {', 1)[0]
+        self.assertNotIn('$params.TrustServerCertificate', before)
+        self.assertEqual(self.source.count('$params.TrustServerCertificate = $true'), 1)
+
+    def test_17_explicit_tls_waiver_requires_local_instance(self):
+        trust = self.source.split('if ($TrustServerCertificate) {', 1)[1].split(
+            '$rows = @(Invoke-Sqlcmd @params)', 1)[0]
+        self.assertIn("$ServerInstance -notmatch", trust)
+        self.assertIn(r'localhost', trust)
+        self.assertIn(r'\(local\)', trust)
+        self.assertIn("throw 'TrustServerCertificate is allowed only for a local SQL Server instance.'", trust)
+
+    def test_18_no_remote_endpoint_or_tls_global_toggle(self):
+        for token in ('Set-Item WSMan:', 'ServicePointManager',
+                      'Encrypt =', 'EncryptConnection =', 'Invoke-Expression',
+                      'Set-ExecutionPolicy', 'Set-ItemProperty'):
+            self.assertNotIn(token, self.source)
+        self.assertNotIn('TrustServerCertificate = $true\n    ErrorAction', self.source)
+
+    def test_19_local_tls_flag_uses_existing_sql_splat(self):
+        suffix = self.source.split('if ($TrustServerCertificate) {', 1)[1]
+        self.assertLess(suffix.index('$params.TrustServerCertificate = $true'),
+                        suffix.index('$rows = @(Invoke-Sqlcmd @params)'))
+        self.assertIn("Database = 'DiagSwdlRepository'", self.source)
+
+    def test_20_tls_flag_does_not_change_fixed_catalog_query(self):
+        for catalog in ('sys.procedures', 'sys.schemas', 'sys.parameters', 'sys.tables'):
+            self.assertIn(catalog, self.sql)
+        self.assertNotIn('TrustServerCertificate', self.sql)
+        self.assertNotRegex(self.sql, r'(?i)\b(exec|execute|alter|update|delete|insert)\b')
+
+    def test_21_tls_flag_is_not_reported_as_vehicle_evidence(self):
+        report = self.source.split('$report = [ordered]@{', 1)[1].split('\n}\n$json', 1)[0]
+        self.assertNotIn('TrustServerCertificate', report)
+        self.assertIn("runtime_readvin_script_selected = 'unknown'", report)
+        self.assertIn('replay_approved = $false', report)
+
+    def test_22_existing_data_protection_and_auth_remain(self):
+        for token in ('[System.Management.Automation.PSCredential]$Credential',
+                      '$params.Credential = $Credential',
+                      '[System.IO.FileMode]::CreateNew',
+                      'output.StartsWith($prefix',
+                      "contains_script_or_vehicle_data = $false"):
+            self.assertIn(token, self.source)
+
+
 if __name__ == '__main__':
     unittest.main()
