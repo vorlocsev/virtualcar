@@ -1,5 +1,37 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: block unreviewed INI bytes from private VMware LAB (2026-11-09)
+
+- **Current development baseline:** `7b6fa203605bf8586e19012c22d5263ece206bf5`;
+  owner-only [CI #42671554194](https://github.com/vorlocsev/virtualcar/actions/runs/42671554194)
+  **FAILED before creating any job** (0 jobs, 0 artifacts; GitHub API rejected
+  rerunning failed jobs with 403). Keep [Issue #290](https://github.com/vorlocsev/virtualcar/issues/290)
+  open until infrastructure/admission cause is identified; no false CI success.
+- **Source-backed privacy flaw:** `package_vmware_lab.py` checks disabled CEM frame
+  counts and synthetic VIN, but copies **complete** source `virtualcar-p2.ini`
+  and `virtualcar-default.ini` to the private ZIP. It previously could include
+  an unused `B9FBFrame0`/DID payload, donor comment or extra identifiers
+  even when the active replay is disabled. `BUILDINFO` claiming no private
+  vehicle data does not magically remove those bytes.
+- **Change:** pin SHA256 of both complete reviewed, synthetic INI files
+  (including comments and inactive fields) before packaging, and independently
+  reject altered copies in the ZIP verifier, even when source and archive
+  checksums are both repaired. Future safe source INI changes require explicit
+  review and updated pins; unrelated source code remains outside this guarantee.
+- Eight focused packager checks include approved-profile acceptance plus seven
+  reject cases; two verifier regressions reject rehashed source-and-ZIP
+  tampering. Existing packaging and redacted collector tests continue.
+- **Merge gate:** one reviewed PR into `development`, then inspect automatic
+  owner-only VMware CI on **exact merged SHA** and check for a real 3-day
+  private Actions LAB artifact with ZIP and SHA256. If again 0 jobs,
+  report an infrastructure blocker rather than marking tests passed.
+  Keep [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) open:
+  real isolated SectorV GUI VIN/ECU acceptance and physical J2534 untested.
+  Leave `main` and draft PR #2 untouched.
+
+---
+
+
 ## P0: private VMware LAB artifact gate (2026-11-09)
 
 - Checked current `development` baseline `5987c5bba2e49eb92d92859f53654b5d89bce374`:
