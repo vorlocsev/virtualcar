@@ -1735,7 +1735,7 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
         SCONFIG_LIST *list=(SCONFIG_LIST*)input;
-        U32 speed_changed=0;
+        U32 initial_baud=c->baud;
         if(!list||(!list->ConfigPtr&&list->NumOfParams)){unlock_state();return error(ERR_NULL_PARAMETER);}
         if(list->NumOfParams>64){unlock_state();return error(ERR_INVALID_IOCTL_VALUE);}
         /* Validate every DATA_RATE before mutating any parameter. A zero
@@ -1751,18 +1751,23 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1){
-                    if(c->baud!=s->Value)speed_changed=1;
-                    c->baud=s->Value;
-                }
+                if(s->Parameter==1)c->baud=s->Value;
                 log_set_config(id,s->Parameter,s->Value);
             }
             if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
         }
-        /* The passive CEM observer must see the same effective channel speed
-           as the J2534 transport after SET_CONFIG. Never create ECU RX. */
-        if(speed_changed)
+        /* A staged or queued D2 reply belongs to the baud of the original
+           B9 request. Re-tuning this channel must not release those frames
+           on a different CAN bus. Preserve unrelated RX FIFO entries.
+           Compare only the FINAL rate: a list that ends at its original
+           rate must not invalidate the transfer or reset bridge state. */
+        if(ioctl==IO_SET_CONFIG && c->baud!=initial_baud){
+            supersede_d2_exchange(c);
+            logline("P2 D2 old-baud replay invalidated by DATA_RATE change",0,0);
+            /* Passive CEM observation must follow the effective transport
+               speed; this never creates ECU RX or CAN TX. */
             p2_bridge_connect(&g_vehicle_bridge,id,c->protocol,c->baud);
+        }
         unlock_state();return error(ERR_OK);
     }
     unlock_state();return error(ERR_INVALID_IOCTL_ID);
