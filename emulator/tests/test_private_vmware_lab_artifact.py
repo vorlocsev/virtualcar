@@ -64,7 +64,7 @@ class PrivateVmwareLabArtifactTests(unittest.TestCase):
         self.assertIn("[switch]$RetainValidatedLab", self.ps)
         for clause in ("$env:GITHUB_EVENT_NAME -cne 'push'",
                        "$env:GITHUB_REF -cne 'refs/heads/development'",
-                       "$env:GITHUB_ACTOR -cne 'vorloc'",
+                       "$env:GITHUB_ACTOR -cne 'vorlocsev'",
                        "$env:GITHUB_SHA -cne $sourceSha"):
             self.assertIn(clause, self.ps)
         self.assertIn("$retainVerifiedOutputs = $false", self.ps)
