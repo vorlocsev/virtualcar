@@ -1,5 +1,38 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: guard raw CAN ISO-TP CF staging on actual FF admission (2026-11-09)
+
+- Verified starting `development`: `7bcdf8514113b6f094028dcf48f1bb1a5a1b75a5`,
+  automatic [VMware CI #42638605320](https://github.com/vorlocsev/virtualcar/actions/runs/42638605320)
+  **SUCCESS**, Python 573 (572 pass, one optional skip),
+  30/30 steps; eight passive RX bus-rate tests passed.
+- Source-backed transport issue: `emit_response` for raw CAN
+  multi-frame UDS first enqueues ISO-TP FF with `enqueue`, but
+  unconditionally populated `pending_len/pending_trace` afterwards.
+  A full RX FIFO or strict J2534 filter can reject/drop FF, yet
+  later Flow Control still released **orphan Consecutive Frames**.
+- Narrow native fix: compare FIFO count before/after FF enqueue and
+  *only* stage pending CF when FF actually entered the channel.
+  Existing drop evidence (`queue_full`, `filter_reject`) remains,
+  and `backend_end_if_drained` can mark a dropped request. No
+  J2534 API changes, no ECU response bytes, no writes, and no
+  new undocumented CEM behavior.
+- Eight deterministic C-harness cases cover no strict PASS,
+  matching strict BLOCK, fully occupied queue, later CTS after
+  drop, one remaining FF slot + valid CTS, strict PASS FF/CF,
+  full FIFO in one channel vs healthy peer, and recovery after
+  installing a PASS filter. Entirely synthetic read-only lab.
+- **Gate:** focused PR squash merge into `development` only,
+  inspect new automatic full owner-only Windows VMware CI
+  on exact resulting merge SHA. Existing baseline success does not
+  validate this patch.
+- P0 [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  still needs real isolated read-only Windows SectorV GUI
+  operator observation of x86 virtual J2534, CEM B9FB, VIN display
+  and ECU list. Keep `main` and releases unchanged.
+
+---
+
 ## P0: passive CAN replay RX belongs to its original bus rate (2026-11-09)
 
 - Exact verified baseline `development`: `008deebfbef563ef7adae41dd185ee536544f7ad`;
