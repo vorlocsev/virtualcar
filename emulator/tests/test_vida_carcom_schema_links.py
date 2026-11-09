@@ -26,7 +26,7 @@ class VidaCarcomSchemaTests(unittest.TestCase):
         path = self.folder / (database + '.sqlite')
         if path.exists():
             path.unlink()
-        with sqlite3.connect(path) as db:
+        with contextlib.closing(sqlite3.connect(path)) as db:
             db.executescript('''
                 CREATE TABLE _vida_meta ("key" TEXT, "value" TEXT);
                 CREATE TABLE _vida_tables ("schema_name" TEXT, "table_name" TEXT, "rows_exported" INTEGER);
