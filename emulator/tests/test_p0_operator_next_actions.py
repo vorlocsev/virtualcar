@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_audit_sectorv_ui_window_triage import (
-    triage, window, ui, set_b9,
+    triage, window, ui, set_b9, module_snapshot,
 )
 
 
@@ -20,10 +20,24 @@ def render(report, gui=None, paired=True):
     )
 
 
+def no_rx_b9(cem40, cem50):
+    report = window()
+    discovery = report["discovery"]
+    for target, statuses in (("0x40", cem40), ("0x50", cem50)):
+        probe = discovery["d2"][target]["B9FB"]
+        probe["statuses"] = statuses
+        probe["requests"] = probe["rx_frame_buckets"]["zero"] = sum(statuses.values())
+        discovery["transactions"] += probe["requests"]
+        for status, count in statuses.items():
+            summary = discovery["statuses"]
+            summary[status] = summary.get(status, 0) + count
+    return report
+
+
 class OperatorNextActionTests(unittest.TestCase):
     def test_01_fixed_gate_vocabulary_has_one_safe_action_each(self):
         self.assertEqual(set(triage.NEXT_ACTION_RU), triage.GATES)
-        self.assertEqual(len(triage.NEXT_ACTION_RU), 12)
+        self.assertEqual(len(triage.NEXT_ACTION_RU), 15)
         for gate, action in triage.NEXT_ACTION_RU.items():
             with self.subTest(gate=gate):
                 self.assertIs(type(action), str)
@@ -71,7 +85,7 @@ class OperatorNextActionTests(unittest.TestCase):
     def test_05_absent_boundary_discard_and_missing_rx_have_separate_actions(self):
         cases = (
             (window(), "review_absent_b9fb_in_bounded_j2534_window"),
-            (set_b9(window()), "review_b9fb_without_observed_rx"),
+            (no_rx_b9({}, {"unverified": 1}), "review_b9fb_without_observed_rx"),
         )
         for report, gate in cases:
             with self.subTest(gate=gate):
@@ -117,6 +131,74 @@ class OperatorNextActionTests(unittest.TestCase):
         self.assertEqual(output["transaction_level_correlation"],
                          "not_established")
         self.assertFalse(output["same_guest_independently_attested"])
+
+    def test_08_all_b9fb_no_fixture_points_to_active_profile(self):
+        result = render(no_rx_b9({"no_fixture": 2}, {"no_fixture": 1}))
+        self.assertEqual(result["first_next_gate"], "review_missing_b9fb_fixture")
+        self.assertIn("активный профиль", result["first_next_action_ru"])
+
+    def test_09_all_b9fb_rejected_by_route_points_to_can_channel_and_rate(self):
+        result = render(no_rx_b9({}, {"unsupported": 2}))
+        self.assertEqual(result["first_next_gate"], "review_rejected_b9fb_route")
+        self.assertIn("CAN-канал и скорость", result["first_next_action_ru"])
+
+    def test_10_mixed_terminal_markers_retain_both_actions(self):
+        report = no_rx_b9({"no_fixture": 5}, {"no_fixture": 5, "unsupported": 1})
+        report["discovery"]["d2"]["0x50"]["B9FB"]["known_can_500k"] = 5
+        result = render(report)
+        self.assertEqual(result["b9fb_request_count_in_window"], 11)
+        self.assertEqual(result["first_next_gate"],
+                         "review_missing_b9fb_fixture_and_rejected_route")
+        self.assertIn("фикстуры", result["first_next_action_ru"])
+        self.assertIn("маршрутизации", result["first_next_action_ru"])
+        self.assertEqual(result["transaction_level_correlation"], "not_established")
+        self.assertFalse(result["replay_approved"])
+
+    def test_11_incomplete_terminal_coverage_keeps_generic_review(self):
+        for status in ("unverified", "timeout", "partial_rx"):
+            with self.subTest(status=status):
+                result = render(no_rx_b9({"no_fixture": 1}, {"unsupported": 1, status: 1}))
+                self.assertEqual(result["first_next_gate"], "review_b9fb_without_observed_rx")
+
+    def test_12_matching_backend_counts_cannot_supply_j2534_terminals(self):
+        report = no_rx_b9({"no_fixture": 1}, {"unverified": 1})
+        backend = report["backend"]
+        backend["requests"] = 2
+        backend["statuses"] = {"no_fixture": 1, "unsupported": 1}
+        for target, status in (("40", "no_fixture"), ("50", "unsupported")):
+            backend["d2_probe_coverage"][f"D2_{target}_B9FB"] = {
+                "requests": 1, "statuses": {status: 1},
+            }
+        result = render(report)
+        self.assertEqual(result["first_next_gate"], "review_b9fb_without_observed_rx")
+        self.assertEqual(result["transaction_level_correlation"], "not_established")
+
+    def test_13_rx_and_partial_boundaries_keep_conservative_actions(self):
+        report = no_rx_b9({"no_fixture": 1}, {"delivered": 1})
+        buckets = report["discovery"]["d2"]["0x50"]["B9FB"]["rx_frame_buckets"]
+        buckets["zero"], buckets["thirteen"] = 0, 1
+        self.assertEqual(render(report)["first_next_gate"],
+                         "review_client_vin_failure_after_unlinked_rx")
+        for boundary in ("dropped_first", "dropped_last"):
+            with self.subTest(boundary=boundary):
+                report = no_rx_b9({}, {"no_fixture": 1})
+                report["windows"]["j2534"][boundary] = True
+                self.assertEqual(render(report)["first_next_gate"],
+                                 "review_b9fb_without_observed_rx")
+
+    def test_14_provenance_precedence_and_module_action_stay_separate(self):
+        report = no_rx_b9({}, {"no_fixture": 1})
+        self.assertEqual(render(report, paired=False)["first_next_gate"],
+                         "establish_isolated_same_run_evidence")
+        result = triage.triage(
+            report, ui(), operator_pair_confirmed=True,
+            module_snapshot=module_snapshot(comparison="different_bytes_at_snapshot"),
+        )
+        self.assertEqual(result["first_next_gate"], "review_missing_b9fb_fixture")
+        self.assertEqual(result["operator_module_snapshot"]["next_safe_gate"],
+                         "resolve_reference_vs_registered_dll_difference")
+        report["registered_provider"]["binary_endpoint_consistency"] = "changed_between_endpoints"
+        self.assertEqual(render(report)["first_next_gate"], "resolve_provider_endpoint_change")
 
 
 if __name__ == "__main__":

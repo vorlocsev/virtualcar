@@ -30,6 +30,9 @@ GATES = frozenset((
     "review_absent_b9fb_in_bounded_j2534_window",
     "review_discarded_j2534_line_boundaries",
     "review_b9fb_without_observed_rx",
+    "review_missing_b9fb_fixture",
+    "review_rejected_b9fb_route",
+    "review_missing_b9fb_fixture_and_rejected_route",
     "review_client_vin_failure_after_unlinked_rx",
     "review_identity_display_without_oem_validation",
     "review_ecu_identification_after_ui_identity",
@@ -54,6 +57,12 @@ NEXT_ACTION_RU = {
         "Границы журнала оборваны: отсутствие B9FB не доказано. Закройте клиент, проверьте полноту строк и повторите Begin/Finish с новым каталогом.",
     "review_b9fb_without_observed_rx":
         "B9FB отправлен, но ответ J2534 не наблюдается. Проверьте фильтры CAN, очередь RX и наличие разрешённой проверенной фикстуры; не подменяйте ответ синтетическим CEM.",
+    "review_missing_b9fb_fixture":
+        "Для всех наблюдаемых запросов B9FB журнал J2534 фиксирует отсутствие фикстуры. Проверьте активный профиль и наличие разрешённой записи ответа CEM для нужного автомобиля и маршрута.",
+    "review_rejected_b9fb_route":
+        "По журналу J2534 строгая маршрутизация отклонила все наблюдаемые запросы B9FB. Сверьте CAN-канал и скорость с целевым адресом CEM в активном профиле.",
+    "review_missing_b9fb_fixture_and_rejected_route":
+        "Для части запросов B9FB журнал J2534 фиксирует отсутствие фикстуры, для остальных зафиксировано отклонение строгой маршрутизации. Сверьте CAN-канал и скорость с целевым адресом CEM и проверьте наличие разрешённой записи ответа для этого маршрута.",
     "review_client_vin_failure_after_unlinked_rx":
         "RX наблюдался, но SectorV сообщил об ошибке VIN. Сверьте фактический экран клиента и транспорт B9FB; наличие RX не подтверждает принятие VIN.",
     "review_identity_display_without_oem_validation":
@@ -476,6 +485,17 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False,
         gate = "review_absent_b9fb_in_bounded_j2534_window"
     elif nonzero_rx == 0:
         gate = "review_b9fb_without_observed_rx"
+        # Only explicit terminal markers in this J2534 window can narrow
+        # the action. Backend counts are independent and cannot fill gaps.
+        missing = sum(cem["statuses"].get("no_fixture", 0) for cem in (cem40, cem50))
+        rejected = sum(cem["statuses"].get("unsupported", 0) for cem in (cem40, cem50))
+        if not partial_lines_discarded and missing + rejected == requests:
+            if missing and rejected:
+                gate = "review_missing_b9fb_fixture_and_rejected_route"
+            elif missing:
+                gate = "review_missing_b9fb_fixture"
+            else:
+                gate = "review_rejected_b9fb_route"
     elif observed["error_category"] == "vin_read_failed":
         gate = "review_client_vin_failure_after_unlinked_rx"
     else:

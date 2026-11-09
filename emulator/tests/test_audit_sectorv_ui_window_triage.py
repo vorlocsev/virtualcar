@@ -165,7 +165,7 @@ class SectorVUiWindowTriageTests(unittest.TestCase):
         result = triage.triage(set_b9(window()), ui(), operator_pair_confirmed=True)
         self.assertEqual(result["b9fb_request_count_in_window"], 1)
         self.assertEqual(result["b9fb_requests_with_nonzero_rx_in_window"], 0)
-        self.assertEqual(result["first_next_gate"], "review_b9fb_without_observed_rx")
+        self.assertEqual(result["first_next_gate"], "review_missing_b9fb_fixture")
 
     def test_08_nonzero_rx_still_does_not_correlate_to_gui_or_acceptance(self):
         result = triage.triage(set_b9(window(), rx=True), ui(),
