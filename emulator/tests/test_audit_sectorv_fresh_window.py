@@ -495,7 +495,7 @@ class FreshToGuiPipelineTests(unittest.TestCase):
                          {"requests": 1, "statuses": {"no_fixture": 1}})
         self.assertEqual(r["b9fb_request_count_in_window"], 1)
         self.assertEqual(r["b9fb_requests_with_nonzero_rx_in_window"], 0)
-        self.assertEqual(r["first_next_gate"], "review_b9fb_without_observed_rx")
+        self.assertEqual(r["first_next_gate"], "review_missing_b9fb_fixture")
         self._assert_unverified(r)
         for secret in ("0123456789abcdef", "DEADBEEF", "private-j2534",
                        "PassThruReadMsgs", "00 0F FF FE", "a" * 64):
