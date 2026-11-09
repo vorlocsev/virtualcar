@@ -1060,6 +1060,19 @@ static void pump_can_cf(CHANNEL *c) {
          if(c->count>before){
              c->queue_ready_us[slot]=due;c->queue[slot].Timestamp=(U32)due;
              c->queue_raw_response_baud[slot]=c->baud;
+         }else{
+             /* A strict raw-CAN data filter can admit FF while rejecting
+                one or more CFs by PCI sequence byte. Never advance past a
+                missing CF and emit later frames with a gap in the sequence.
+                enqueue() recorded the filter_reject/drop for this RID. */
+             U64 interrupted=c->pending_trace;
+             logline("Raw CAN ISO-TP CF rejected; remaining CFs cancelled",0,0);
+             c->pending_len=0;c->pending_pos=0;c->pending_id=0;
+             c->pending_request_id=0;c->pending_sn=0;
+             c->pending_trace=0;c->pending_next_us=0;c->pending_stmin_us=0;
+             c->pending_cf_active=0;c->pending_cf_credit=0;
+             backend_end_if_drained(c,interrupted);
+             return;
          }}
         c->pending_next_us=due+(U64)c->pending_stmin_us;
         c->pending_pos+=sz;c->pending_sn++;
