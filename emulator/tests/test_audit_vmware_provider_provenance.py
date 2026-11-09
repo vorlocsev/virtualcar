@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+from unittest import mock
 from pathlib import Path
 import struct
 import sys
@@ -20,6 +21,25 @@ def fake_pe(path, *, x86=True, tail=b"synthetic"):
     struct.pack_into("<H", buf, 68, 0x14C if x86 else 0x8664)
     struct.pack_into("<H", buf, 88, 0x10B if x86 else 0x20B)
     path.write_bytes(bytes(buf) + tail)
+    return path
+
+
+def executable_pe(path, *, code=b"AAA", metadata=b"metadata"):
+    """Synthetic bounded PE32 with one executable section, no valid J2534 exports."""
+    image = bytearray(1024)
+    image[:2] = b"MZ"
+    struct.pack_into("<I", image, 0x3C, 0x80)
+    image[0x80:0x84] = b"PE\x00\x00"
+    struct.pack_into("<HH", image, 0x84, 0x14C, 1)
+    struct.pack_into("<H", image, 0x94, 0xE0)
+    struct.pack_into("<H", image, 0x98, 0x10B)
+    section = 0x80 + 24 + 0xE0
+    image[section:section + 8] = b".text\x00\x00\x00"
+    struct.pack_into("<II", image, section + 16, 256, 512)
+    struct.pack_into("<I", image, section + 36, 0x60000020)
+    image[512:512 + len(code)] = code
+    image[800:800 + len(metadata)] = metadata
+    path.write_bytes(image)
     return path
 
 
@@ -108,6 +128,67 @@ class ProviderProvenanceTests(unittest.TestCase):
                 self.assertEqual(audit._pe_machine(f), "invalid_pe")
             finally:
                 audit.MAX_DLL = prior
+
+
+    def test_12_image_difference_can_be_non_executable_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            installed = executable_pe(root / "installed.dll",
+                                      code=b"same-code", metadata=b"older-stamp")
+            built = executable_pe(root / "built.dll",
+                                  code=b"same-code", metadata=b"newer-stamp")
+            result = audit.assess(True, str(installed), built)
+            self.assertEqual(result["binary_comparison"], "different_bytes")
+            self.assertEqual(result["executable_sections"], "same_bytes")
+            self.assertEqual(result["vin_or_ecu_accepted"], "not_verified")
+
+    def test_13_executable_difference_is_separately_reported(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            installed = executable_pe(root / "installed.dll", code=b"code-old")
+            built = executable_pe(root / "built.dll", code=b"code-new")
+            result = audit.assess(True, str(installed), built)
+            self.assertEqual(result["executable_sections"], "different_bytes")
+            self.assertEqual(result["binary_comparison"], "different_bytes")
+
+    def test_14_missing_pe_section_evidence_cannot_claim_same_code(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            installed = fake_pe(root / "minimal.dll")
+            built = fake_pe(root / "built.dll")
+            result = audit.assess(True, str(installed), built)
+            self.assertEqual(result["executable_sections"], "unverifiable")
+            self.assertEqual(result["installed_export_contract"],
+                             "not_exact_or_unverifiable")
+
+    def test_15_exact_export_probe_suppresses_verifier_prints(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            installed = executable_pe(root / "private.dll")
+            built = executable_pe(root / "built.dll")
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] /
+                                   "native-cpp" / "tests"))
+            import verify_pe_exports
+            capture = io.StringIO()
+            with mock.patch.object(verify_pe_exports, "verify",
+                                   side_effect=lambda *a: print("PRIVATE VERSION PATH")):
+                with contextlib.redirect_stdout(capture):
+                    result = audit.assess(True, str(installed), built)
+            self.assertEqual(result["installed_export_contract"],
+                             "exact_14_named_j2534")
+            self.assertNotIn("PRIVATE", capture.getvalue())
+
+    def test_16_report_cannot_promote_binary_identity_to_client_acceptance(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            installed = executable_pe(root / "private.dll")
+            built = executable_pe(root / "current.dll")
+            result = audit.assess(True, str(installed), built)
+            self.assertEqual(result["binary_comparison"], "exact_bytes")
+            self.assertEqual(result["executable_sections"], "same_bytes")
+            self.assertEqual(result["sectorv_client_execution"], "not_performed")
+            self.assertEqual(result["vin_or_ecu_accepted"], "not_verified")
+            self.assertNotIn(str(root), json.dumps(result))
 
 
 if __name__ == "__main__":
