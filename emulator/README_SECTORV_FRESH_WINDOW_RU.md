@@ -19,6 +19,24 @@ SectorV и тем более не доказательство того, что 
 GUI в отдельной гостевой Windows без физического адаптера. В GitHub нельзя
 публиковать приватные пути, оригинальные CAN-логи, INI или идентификаторы.
 
+В операторском помощнике `tools/invoke_sectorv_operator.ps1` стадия
+`-Phase Module` сразу показывает безопасную текстовую подсказку,
+основанную только на фиксированной категории `reference_dll_pe32`.
+Например, для `other_pe` он предупреждает, что заголовок не PE32/x86;
+для `invalid_pe` сообщает о повреждённом заголовке. `Finish` повторяет
+ту же подсказку рядом с отдельным следующим шагом анализа GUI/J2534.
+Если `-ReferenceDll` не указан, печатается `none supplied`, а не
+мнимое совпадение. Локальные пути, хеши и VIN никогда не выводятся.
+
+При необходимости можно указать свой **локальный эталонный DLL** только
+на этапе `Module`, когда SectorV уже запущен вручную:
+
+~~~powershell
+$referenceDll = "C:\VirtualCarLab\Reference\VirtualCarJ2534.dll"
+.\tools\invoke_sectorv_operator.ps1 -Phase Module -SessionDir $session -ReferenceDll $referenceDll -IsolatedReadOnlyVm -PhysicalAdapterDisconnected
+~~~
+
+
 
 Инструмент audit_sectorv_fresh_window.py **не запускает** SectorV, не
 устанавливает драйверы, не открывает J2534 DLL, не передаёт CAN, не
