@@ -24,6 +24,7 @@ GATES = frozenset((
     "obtain_bounded_j2534_window_evidence",
     "verify_j2534_provider_and_connect",
     "review_absent_b9fb_in_bounded_j2534_window",
+    "review_discarded_j2534_line_boundaries",
     "review_b9fb_without_observed_rx",
     "review_client_vin_failure_after_unlinked_rx",
     "review_identity_display_without_oem_validation",
@@ -90,8 +91,13 @@ def _check_window(report):
                 raise ValueError("invalid append provenance")
         if not value["source_present"] and (
                 value["new_bytes"] or value["complete_lines"]
-                or value["prefix_verified"]):
+                or value["prefix_verified"] or value["dropped_first"]
+                or value["dropped_last"]):
             raise ValueError("missing log cannot contain appended evidence")
+        if value["dropped_first"] and not value["prefix_verified"]:
+            raise ValueError("first boundary drop requires an existing prefix")
+        if value["dropped_last"] and not value["new_bytes"]:
+            raise ValueError("last boundary drop requires appended bytes")
 
     provider = report["registered_provider"]
     if type(provider) is not dict or set(provider) != {
@@ -206,6 +212,8 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False):
     requests = cem40["requests"] + cem50["requests"]
     nonzero_rx = sum(cem["rx_frame_buckets"][bucket]
                      for cem in (cem40, cem50) for bucket in B9_BUCKETS[1:])
+    jmeta = window["windows"]["j2534"]
+    partial_lines_discarded = jmeta["dropped_first"] or jmeta["dropped_last"]
     if not operator_pair_confirmed:
         gate = "establish_isolated_same_run_evidence"
     elif provider in ("changed_between_endpoints", "provider_state_changed"):
@@ -221,6 +229,9 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False):
         gate = ("review_ecu_identification_after_ui_identity"
                 if observed["ecu_list"] != "populated"
                 else "review_identity_display_without_oem_validation")
+    elif requests == 0 and partial_lines_discarded:
+        # A dropped TX or matching context line must never become "no B9FB".
+        gate = "review_discarded_j2534_line_boundaries"
     elif requests == 0:
         gate = "review_absent_b9fb_in_bounded_j2534_window"
     elif nonzero_rx == 0:
@@ -246,6 +257,7 @@ def triage(window, gui_observation, *, operator_pair_confirmed=False):
         "gui_error_category": observed["error_category"],
         "gui_vehicle_identity_displayed": observed["vehicle_identity"] == "displayed",
         "gui_ecu_list_populated": observed["ecu_list"] == "populated",
+        "j2534_discarded_partial_boundary_lines": partial_lines_discarded,
         "b9fb_request_count_in_window": requests,
         "b9fb_requests_with_nonzero_rx_in_window": nonzero_rx,
         "client_vehicle_identity_accepted": "not_verified",
