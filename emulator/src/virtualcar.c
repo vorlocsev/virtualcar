@@ -1577,6 +1577,15 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     } else if(mask->DataSize<4u||pattern->DataSize<4u){
         unlock_state();return error(ERR_INVALID_MSG);
     }
+    /* A filter pattern and optional FC source are actual physical CAN IDs.
+       Reject IDs outside the 29-bit wire range *before* consuming a filter
+       slot or emitting filter evidence. Deliberately do NOT restrict the
+       32-bit mask: 0xFFFFFFFF is a legitimate J2534 match mask. */
+    if((pattern->Data[0]&0xE0u)!=0u ||
+       (type==3u && flow && flow->DataSize>=4u &&
+        (flow->Data[0]&0xE0u)!=0u)){
+        unlock_state();return error(ERR_INVALID_MSG);
+    }
     /* 0x18: Pattern and FlowControl CAN IDs must not collide with either
        side of any existing ISO15765 FC filter on this channel. Overlapping
        RX masks are also ambiguous, including wildcard/specific pairs. */
