@@ -58,6 +58,22 @@ try {
     $archive = Join-Path $output $filename
     & $python emulator/tools/verify_local_vmware_lab.py --archive $archive --source-root emulator --source-sha $sourceSha
     if ($LASTEXITCODE -ne 0) { throw 'Packaged real x86 inputs did not verify' }
+    # The private artifact must consist of exactly the archive plus its hash.
+    $sidecar = $archive + '.sha256'
+    if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) {
+        throw 'LAB checksum sidecar missing'
+    }
+    $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedSidecar = $digest + '  ' + $filename
+    $actualSidecar = (Get-Content -LiteralPath $sidecar -Raw).TrimEnd([char]13, [char]10)
+    if ($actualSidecar -cne $expectedSidecar) {
+        throw 'LAB outer checksum mismatch'
+    }
+    $members = @(Get-ChildItem -LiteralPath $output -File | Select-Object -ExpandProperty Name)
+    if ($members.Count -ne 2 -or $members -cnotcontains $filename -or
+        $members -cnotcontains ($filename + '.sha256')) {
+        throw 'Unexpected files in private LAB artifact directory'
+    }
     Write-Host 'PASS: actual Win32 GUI and C J2534 DLL matched private LAB ZIP; no release or GUI'
     # Permit retention ONLY after the full ZIP/hash/source/PE32 verifier passed.
     $retainVerifiedOutputs = $RetainValidatedLab.IsPresent
