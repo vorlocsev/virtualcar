@@ -1,4 +1,4 @@
-"""Eight synthetic tests for private VIDA metadata-only preflight boundaries."""
+"""Synthetic tests for private VIDA metadata-only preflight boundaries."""
 import contextlib
 import importlib.util
 import io
@@ -188,6 +188,33 @@ class VidaCarcomSchemaTests(unittest.TestCase):
         self.assertNotIn('PRIVATE_VIN_AND_BAUD', value)
         self.assertNotIn('PRIVATE_VEHICLE_HARDWARE', value)
         self.assertTrue(mod.audit(self.folder)['hardware_init_value_column_shape_present'])
+
+    def test_14_missing_exporter_table_schema_column_fails_closed(self):
+        # Before the fix SQLite returned the literal "schema_name", allowing
+        # a structurally invalid metadata export to be treated as a result.
+        def malformed(db):
+            db.execute('ALTER TABLE _vida_tables RENAME TO _old_tables')
+            db.execute('CREATE TABLE _vida_tables AS '
+                       'SELECT table_name, rows_exported FROM _old_tables')
+            db.execute('DROP TABLE _old_tables')
+        self.build('CarCom', mod.TABLES['CarCom'], override=malformed)
+        with self.assertRaisesRegex(mod.PreflightError,
+                                    'invalid exporter metadata schema'):
+            mod.audit(self.folder)
+
+    def test_15_missing_exporter_column_name_fails_closed(self):
+        # Silent "column_shape_present=false" is not a valid substitute for
+        # proving that the exported metadata itself has the required schema.
+        def malformed(db):
+            db.execute('ALTER TABLE _vida_columns RENAME TO _old_columns')
+            db.execute('CREATE TABLE _vida_columns AS '
+                       'SELECT schema_name, table_name, system_type_id '
+                       'FROM _old_columns')
+            db.execute('DROP TABLE _old_columns')
+        self.build('CarCom', mod.TABLES['CarCom'], override=malformed)
+        with self.assertRaisesRegex(mod.PreflightError,
+                                    'invalid exporter metadata schema'):
+            mod.audit(self.folder)
 
 
 if __name__=='__main__':
