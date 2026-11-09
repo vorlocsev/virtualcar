@@ -166,6 +166,8 @@ class ProviderProvenanceTests(unittest.TestCase):
             root = Path(td)
             installed = executable_pe(root / "private.dll")
             built = executable_pe(root / "built.dll")
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] /
+                                   "native-cpp" / "tests"))
             import verify_pe_exports
             capture = io.StringIO()
             with mock.patch.object(verify_pe_exports, "verify",
