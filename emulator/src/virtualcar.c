@@ -1529,12 +1529,16 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         n=msg->DataSize-4;data=msg->Data+4;
         if(c->protocol==PROTO_CAN){
             if((data[0]&0xF0)==0x30 && c->pending_len){
+                if(id!=c->pending_request_id){
+                    /* A FC-like frame for another ECU is not the Flow
+                       Control of this exchange. Leave the old transfer
+                       intact, then classify this TX as unhandled exactly
+                       once (including a short or malformed FC frame). */
+                    logline("ISO-TP FC ignored (different request CAN ID)",msg->Data,msg->DataSize);
+                    continue;
+                }
                 if(n<3){
                     logline("ISO-TP FC ignored (missing block size or STmin)",msg->Data,msg->DataSize);
-                    return;
-                }
-                if(id!=c->pending_request_id){
-                    logline("ISO-TP FC ignored (different request CAN ID)",msg->Data,msg->DataSize);
                     return;
                 }
                 if((data[0]&15)==1){
@@ -1626,11 +1630,15 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
 }
 
 /* Every actual read-only request needs one transaction ID, including
-   requests emitted by the periodic scheduler. A CAN ISO-TP Flow Control
-   grants a prior response and must NOT create another diagnostic request. */
+   requests emitted by the periodic scheduler. Only a CAN ISO-TP Flow Control
+   for this channel's ACTIVE, exact physical ECU request grants/stops the
+   previous response and must NOT create a fresh diagnostic request. A late
+   or misaddressed FC-like frame instead receives ordinary unhandled TX
+   evidence; never disguise its presence by checking PCI alone. */
 static void begin_tx_evidence(CHANNEL *c,const PASSTHRU_MSG *msg){
-    if(c->protocol==PROTO_CAN && msg->DataSize>=5u &&
-       (msg->Data[4]&0xF0u)==0x30u){
+    if(c->protocol==PROTO_CAN && c->pending_len && msg->DataSize>=5u &&
+       (msg->Data[4]&0xF0u)==0x30u &&
+       can_id_from_data(msg->Data)==c->pending_request_id){
         c->active_trace=0;return;
     }
     c->active_trace=next_backend_request();

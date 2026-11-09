@@ -2650,6 +2650,124 @@ static void test_j2534_blocked_read_session_reuse(void){
 }
 
 
+/* A FC-shaped CAN TX is a control continuation only when it belongs
+   to the exact outstanding raw ISO-TP exchange. Otherwise suppressing
+   tx_received loses evidence of late/wrong-route diagnostic traffic.
+   Eight synthetic read-only native cases; no GUI or OEM confirmation. */
+static void test_raw_fc_evidence_attribution(U32 dev){
+ const U8 vin[8]={0x03u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 cts[8]={0x30u,0,0,0,0,0,0,0};
+ const U8 wait_fc[8]={0x31u,0,0,0,0,0,0,0};
+ const U8 short_fc[1]={0x30u};
+ const U8 tester[8]={0x02u,0x3Eu,0,0,0,0,0,0};
+ U32 old_strict=g_strict_j2534_filters,old_backend=g_backend_enabled;
+ U32 old_count=g_ecu_count,ch=0,n;
+ ECU old_ecus[MAX_ECUS];
+ CHANNEL *c;
+ PASSTHRU_MSG req=frame(PROTO_CAN,0x7E0u,vin,8);
+ PASSTHRU_MSG good=frame(PROTO_CAN,0x7E0u,cts,8);
+ PASSTHRU_MSG wrong=frame(PROTO_CAN,0x726u,cts,8);
+ PASSTHRU_MSG unknown=frame(PROTO_CAN,0x7E1u,cts,8);
+ PASSTHRU_MSG wait=frame(PROTO_CAN,0x7E0u,wait_fc,8);
+ PASSTHRU_MSG shortmsg=frame(PROTO_CAN,0x7E0u,short_fc,1);
+ PASSTHRU_MSG shortreq=frame(PROTO_CAN,0x7E0u,tester,8),rx;
+ const char *begin;U64 rid;
+ bytes_copy(old_ecus,g_ecu,sizeof(g_ecu));
+ bytes_zero(g_ecu,sizeof(g_ecu));g_ecu_count=2u;
+ g_ecu[0].req=0x7E0u;g_ecu[0].resp=0x7E8u;
+ g_ecu[1].req=0x726u;g_ecu[1].resp=0x72Eu;
+ g_strict_j2534_filters=0u;g_backend_enabled=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&ch)==ERR_OK);
+ c=channel(ch);REQUIRE(c);
+
+ /* 1. A CTS with no outstanding FF is ordinary unhandled TX, not FC. */
+ begin=backend_lines+backend_len;send(ch,&good);
+ rid=last_tx_request(begin);
+ REQUIRE(rid&&terminal_for(begin,rid,"unhandled_request","no_response")==1u);
+ REQUIRE(c->count==0u&&c->pending_len==0u);
+ puts("PASS P0 FC evidence 1: no pending request records unhandled CTS");
+
+ /* 2. A short FC-shaped TX is still visible when no FF is pending. */
+ begin=backend_lines+backend_len;send(ch,&shortmsg);rid=last_tx_request(begin);
+ REQUIRE(rid&&terminal_for(begin,rid,"unhandled_request","no_response")==1u);
+ REQUIRE(c->count==0u);
+ puts("PASS P0 FC evidence 2: short stray FC observed");
+
+ /* 3. An exact matching CTS belongs to original exchange, not a new RID. */
+ begin=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(begin);
+ REQUIRE(rid&&c->pending_len==20u&&c->count==1u);
+ {const char *fc_start=backend_lines+backend_len;
+  send(ch,&good);
+  REQUIRE(event_count_since(fc_start,"\"kind\":\"tx_received\"")==0u);
+  REQUIRE(c->count==3u&&c->pending_len==0u);
+ }
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ REQUIRE(terminal_for(begin,rid,"none","responded")==1u);
+ puts("PASS P0 FC evidence 3: exact CTS stays part of prior exchange");
+
+ /* 4. Exact WAIT also belongs to the old request, with no new RID. */
+ send(ch,&req);REQUIRE(c->pending_len==20u&&c->count==1u);
+ {const char *fc_start=backend_lines+backend_len;
+  send(ch,&wait);
+  REQUIRE(event_count_since(fc_start,"\"kind\":\"tx_received\"")==0u);
+  REQUIRE(c->pending_len==20u&&c->count==1u);
+ }
+ send(ch,&good);rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ puts("PASS P0 FC evidence 4: matching WAIT is a continuation");
+
+ /* 5. Misaddressed FC on a second configured ECU is unhandled TX,
+    not a control instruction for the outstanding 7E0 transfer. */
+ send(ch,&req);REQUIRE(c->pending_len==20u&&c->count==1u);
+ begin=backend_lines+backend_len;send(ch,&wrong);rid=last_tx_request(begin);
+ REQUIRE(rid&&terminal_for(begin,rid,"unhandled_request","no_response")==1u);
+ REQUIRE(c->count==1u&&c->pending_len==20u);
+ send(ch,&good);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ puts("PASS P0 FC evidence 5: second configured ECU cannot mask wrong-route FC");
+
+ /* 6. Misaddressed FC on an unconfigured ECU must also be accounted for. */
+ send(ch,&req);REQUIRE(c->pending_len==20u&&c->count==1u);
+ begin=backend_lines+backend_len;send(ch,&unknown);rid=last_tx_request(begin);
+ REQUIRE(rid&&terminal_for(begin,rid,"unhandled_request","no_response")==1u);
+ REQUIRE(c->pending_len==20u&&c->count==1u);
+ send(ch,&good);rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ puts("PASS P0 FC evidence 6: unknown ECU FC visible and pending intact");
+
+ /* 7. Incomplete matching FC is ignored as control, not a new RID. */
+ send(ch,&req);REQUIRE(c->pending_len==20u&&c->count==1u);
+ {const char *fc_start=backend_lines+backend_len;
+  send(ch,&shortmsg);
+  REQUIRE(event_count_since(fc_start,"\"kind\":\"tx_received\"")==0u);
+  REQUIRE(c->pending_len==20u&&c->count==1u);
+ }
+ send(ch,&good);rx=readmsg(ch);REQUIRE(rx.Data[4]==0x10u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x21u);
+ rx=readmsg(ch);REQUIRE(rx.Data[4]==0x22u);
+ puts("PASS P0 FC evidence 7: short matching FC has no false RID");
+
+ /* 8. After CLEAR_RX, a late CTS is unhandled and a fresh SF works. */
+ send(ch,&req);REQUIRE(c->pending_len==20u&&c->count==1u);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ begin=backend_lines+backend_len;send(ch,&good);rid=last_tx_request(begin);
+ REQUIRE(rid&&terminal_for(begin,rid,"unhandled_request","no_response")==1u);
+ REQUIRE(c->count==0u&&c->pending_len==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ send(ch,&shortreq);rx=readmsg(ch);
+ REQUIRE(rx.Data[4]==0x02u&&rx.Data[5]==0x7Eu);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ bytes_copy(g_ecu,old_ecus,sizeof(g_ecu));g_ecu_count=old_count;
+ g_strict_j2534_filters=old_strict;g_backend_enabled=old_backend;
+ puts("PASS P0 FC evidence 8: late FC visible and new SF recovered");
+}
+
 /* P0: eight native read-only CLEAR_RX_BUFFER ISO-TP lifecycle scenarios.
    Synthetic CAN only; no SectorV GUI or real car is exercised. */
 static void test_clear_rx_raw_iso_lifetime(U32 dev){
@@ -2782,6 +2900,7 @@ int main(){
  test_d2_strict_filter_no_frame_gaps(dev);
  test_raw_isotp_supersession_queued_rx(dev);
  test_raw_isotp_fully_staged_retry(dev);
+ test_raw_fc_evidence_attribution(dev);
  test_clear_rx_raw_iso_lifetime(dev);
  test_raw_isotp_overflow_queued_cf(dev);
  test_write_transport_boundaries(dev);
