@@ -545,12 +545,48 @@ def _native_d2_delivery_tags(lines):
         if not m:
             continue  # Native emitted records have a bounded PID prefix.
         pid, text = m.group(1), m.group(2).rstrip("\r\n")
-        scope = scopes.setdefault(pid, {"session": 0, "ctx": None,
-                                        "pending": None})
+        scope = scopes.setdefault(pid, {
+            "session": 0, "channel_epochs": {},
+            "disconnect_marker_seen": False, "ctx": None, "pending": None,
+        })
         if text.startswith(("PassThruOpen ->", "PassThruClose")):
             scope["session"] += 1
+            scope["channel_epochs"].clear()
+            scope["disconnect_marker_seen"] = False
             scope["ctx"] = scope["pending"] = None
             continue
+        # A J2534 numeric channel ID can be reused after PassThruDisconnect
+        # without a device Close/Open; its D2 generation then resets to 1.
+        # Split at the explicit metadata immediately. A truncated/missing
+        # trailing bare event must not join two different channel lifetimes.
+        disconnect_label = "PassThruDisconnect channel (BE)"
+        if text.startswith(disconnect_label):
+            suffix = text[len(disconnect_label):].strip()
+            channel = (
+                int.from_bytes(bytes.fromhex(suffix), "big")
+                if re.fullmatch(r"[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2}){3}", suffix)
+                else 0
+            )
+            scope["disconnect_marker_seen"] = True
+            scope["ctx"] = scope["pending"] = None
+            if channel:
+                epochs = scope["channel_epochs"]
+                epochs[channel] = epochs.get(channel, 0) + 1
+            else:
+                # Broken channel metadata: split *all* scope generations.
+                scope["session"] += 1
+                scope["channel_epochs"].clear()
+            continue
+        if text == "PassThruDisconnect":
+            if not scope["disconnect_marker_seen"]:
+                # The canonical channel metadata was lost or interrupted.
+                scope["session"] += 1
+                scope["channel_epochs"].clear()
+            scope["disconnect_marker_seen"] = False
+            scope["ctx"] = scope["pending"] = None
+            continue
+        # A non-disconnect record cannot keep a stale closing marker.
+        scope["disconnect_marker_seen"] = False
         if text.startswith("RX context "):
             scope["ctx"] = _context(text, rx_label, True)
             scope["pending"] = None
@@ -584,7 +620,8 @@ def _native_d2_delivery_tags(lines):
                     or raw is None or len(raw) != 12):
                 counters["route_or_metadata_mismatch"] += 1
                 continue
-            key = (pid, scope["session"], channel, generation)
+            key = (pid, scope["session"], channel,
+                   scope["channel_epochs"].get(channel, 0), generation)
             group = groups.setdefault(key, [])
             group.append((frame, raw[4:]))
             counters["paired_tag_records"] += 1
