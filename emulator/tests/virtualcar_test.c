@@ -1186,6 +1186,17 @@ int main(){
       m=frame(PROTO_CAN,id,request,length);
       label=backend_probe_name(channel(cid),&m);
       REQUIRE((label!=NULL)==expected);
+      /* An overlong raw CAN payload is now rejected by J2534 before
+         CEM classification, backend telemetry or vehicle observation. */
+      if(group==3u){
+       U32 written=1u,prior_tx=g_vehicle_bridge.inspected_tx;
+       U32 prior_events=backend_len;
+       REQUIRE(PassThruWriteMsgs(cid,&m,&written,0)==ERR_INVALID_MSG);
+       REQUIRE(written==0u&&backend_len==prior_events);
+       REQUIRE(g_vehicle_bridge.inspected_tx==prior_tx);
+       n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+       continue;
+      }
       start=backend_lines+backend_len;send(cid,&m);rid=last_tx_request(start);
       REQUIRE(rid!=0 && terminal_count_for(start,rid)==1);
       REQUIRE(terminal_for(start,rid,expected?"unimplemented_probe":"unhandled_request","no_response")==1);
