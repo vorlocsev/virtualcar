@@ -1032,8 +1032,14 @@ static void test_raw_can_cf_filter_gap_isolation(U32 dev){
  p0_add_can_pci_pass(ch,0x7E8u,0x10u);
  start=backend_lines+backend_len;send(ch,&req);rid=last_tx_request(start);
  REQUIRE(c->count==1u);
- g_strict_j2534_filters=0u;fill_untraced_rx(c,MAX_QUEUE);
+ /* Legacy filter mode still honors an installed PASS filter.
+    Clear it while populating unrelated test FIFO, then reinstate the
+    strict FF-only filter before granting CTS. Never spin on rejected RX. */
+ g_strict_j2534_filters=0u;
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ fill_untraced_rx(c,MAX_QUEUE);
  g_strict_j2534_filters=1u;
+ p0_add_can_pci_pass(ch,0x7E8u,0x10u);
  send(ch,&cts);
  REQUIRE(c->pending_cf_active&&c->pending_len==20u&&c->count==MAX_QUEUE);
  {PASSTHRU_MSG *batch=(PASSTHRU_MSG*)calloc(MAX_QUEUE,sizeof(*batch));
