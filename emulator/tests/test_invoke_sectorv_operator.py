@@ -134,5 +134,73 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         self.assertNotIn(str(self.dir), bad.stderr)
 
 
+    def test_09_module_requires_begin_not_just_an_existing_folder(self):
+        self.session.mkdir()
+        proc = self.run_helper("Module")
+        self.assertEqual(proc.returncode, 2)
+        self.assertFalse((self.session / "p0-module.redacted.json").exists())
+        self.assertNotIn(str(self.dir), proc.stderr)
+
+    def test_10_module_after_finish_must_not_create_late_evidence(self):
+        self.begin()
+        done = self.run_helper("Finish", "-NonInteractive", *STATES)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        proc = self.run_helper("Module")
+        self.assertEqual(proc.returncode, 2)
+        self.assertFalse((self.session / "p0-module.redacted.json").exists())
+        self.assertNotIn(str(self.dir), proc.stderr)
+
+    def test_11_partial_window_report_blocks_module_snapshot(self):
+        self.begin()
+        (self.session / "p0-window.redacted.json").write_text("{}", encoding="utf-8")
+        proc = self.run_helper("Module")
+        self.assertEqual(proc.returncode, 2)
+        self.assertFalse((self.session / "p0-module.redacted.json").exists())
+
+    def test_12_existing_triage_report_blocks_module_snapshot(self):
+        self.begin()
+        (self.session / "p0-triage.redacted.json").write_text("{}", encoding="utf-8")
+        proc = self.run_helper("Module")
+        self.assertEqual(proc.returncode, 2)
+        self.assertFalse((self.session / "p0-module.redacted.json").exists())
+
+    def test_13_active_module_snapshot_is_observation_not_gui_proof(self):
+        self.begin()
+        proc = self.run_helper("Module")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        module_path = self.session / "p0-module.redacted.json"
+        module = json.loads(module_path.read_text(encoding="utf-8"))
+        self.assertEqual(module["accepted_vin_or_ecu"], "not_verified")
+        finished = self.run_helper("Finish", "-NonInteractive", *STATES)
+        self.assertEqual(finished.returncode, 0, finished.stderr)
+        result = json.loads((self.session / "p0-triage.redacted.json").read_text())
+        self.assertFalse(result["oem_vin_and_ecu_verified"])
+        self.assertNotIn(str(self.dir), json.dumps(result))
+
+    def test_14_repeated_module_never_overwrites_first_snapshot(self):
+        self.begin()
+        first = self.run_helper("Module")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        path = self.session / "p0-module.redacted.json"
+        original = path.read_bytes()
+        second = self.run_helper("Module")
+        self.assertEqual(second.returncode, 2)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertNotIn(str(self.dir), second.stderr)
+
+    def test_15_module_requires_offline_safety_flags(self):
+        self.begin()
+        args = list(self.common)
+        args.remove("-PhysicalAdapterDisconnected")
+        proc = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", str(WRAPPER), "-Phase", "Module", *args],
+            capture_output=True, text=True, timeout=35)
+        self.assertEqual(proc.returncode, 2)
+        self.assertFalse((self.session / "p0-module.redacted.json").exists())
+        self.assertNotIn(str(self.dir), proc.stderr)
+
+
+
 if __name__ == "__main__":
     unittest.main()
