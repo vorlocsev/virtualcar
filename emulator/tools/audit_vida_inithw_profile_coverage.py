@@ -140,7 +140,7 @@ def _summarize(db, tables: dict, names: tuple[str, ...]) -> dict:
 def audit(folder: Path, exact_file: Path, general_file: Path) -> dict:
     exact = _identifiers(exact_file, EXPECTED_EXACT, EXPECTED_EXACT)
     general = _identifiers(general_file, 1, MAX_GENERAL)
-    if set(exact).intersection(general):
+    if {name.casefold() for name in exact}.intersection(name.casefold() for name in general):
         raise CoverageError("overlapping profile selection groups")
     if (not folder.is_dir() or folder.is_symlink() or
             (folder / "CarCom.sqlite").is_symlink() or
@@ -185,6 +185,10 @@ def main(argv=None):
         output = args.output.resolve()
         if output == checkout or checkout in output.parents:
             raise CoverageError("output inside checkout")
+        for private in (args.exact_profiles, args.general_profiles):
+            resolved = private.resolve()
+            if resolved == checkout or checkout in resolved.parents:
+                raise CoverageError("private input inside checkout")
         source_paths = (args.folder / "CarCom.sqlite", args.exact_profiles, args.general_profiles)
         if output in {p.resolve() for p in source_paths}:
             raise CoverageError("output aliases owner source")
