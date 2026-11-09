@@ -71,3 +71,74 @@ without exporting original row values or silently using guessed column names.
 A metadata-only result does not justify adding a CEM `B9FB` response,
 `F114`, VIN acceptance or ECU presence. Keep `B9FBFrameCount=0`,
 `main`, draft PR #2, and published releases unchanged.
+
+
+## Additive v2 gate: InitHw inheritance versus per-ECU busRate (2026-11-10)
+
+The owner-supplied *later* offline research summary for XC90 V8 MY2009
+reported 43 candidate profiles, nine direct ECU defaults across two
+profiles, two CEM candidates and one ECM candidate. For GGD CEM/ECM,
+the source report described CAN 500 kbit/s with 29-bit addressing, while
+**the D2 CEM rows had no bus speed**. This is static catalog
+classification, not proven CAN/DiCE traffic or an approved CEM fixture.
+
+Independently published [`spnda/volvo_vida_db` source at pinned revision](https://github.com/spnda/volvo_vida_db/blob/e2f8ee165e373360d7f7fd0e80298f68c25bc07e/scripts/carcom.py)
+documents two distinct metadata paths in its **2014D research port**:
+
+1. `get_vehicle_ecus` joins `T120/T121_Config`, `T122_Protocol`
+   and `T123_Bus`; a `T121_Config.busRate` is per configuration and
+   can be absent. It is not a universal D2 speed.
+2. `get_hw_settings` joins `T136_InitHw_Profile` through
+   `T130_Init` / `T131_InitValue` / `T132_InitValueType` and
+   `T161_Profile.folderLevel`. Its research implementation chooses
+   higher folder level (more specific) settings when multiple profiles
+   supply the same setting. **This does not independently prove the
+   exact owner 2015A installation selected those inherited values.**
+
+The schema preflight tool now emits `schema_version=...-v2` and
+an additional *separate* six-element `hardware_edge_shape_candidates`
+array, alongside the original six `edge_shape_candidates` (unchanged).
+It only checks fixed allowlisted table and column **names** in the
+three exporter catalog tables, never source data or the user's
+actual `InitHw` setting values. Key safety flags:
+
+- `hardware_init_value_column_shape_present`: true only if all
+  four `T136/T130/T131/T132/T161` edge column shapes exist and
+  `folderLevel`, `initValue`, and `name` are present. **Only
+  source shape, not any live value or effective precedence.**
+- `hardware_init_profile_priority_verified=false`.
+- `d2_baud_from_original_data_verified=false`.
+- `d2_baud_inferred_from_ggd_forbidden=true`.
+
+This deliberately does **not** merge the GGD 500 kbit/s finding into
+the D2 CEM row, or treat `0x50` as a bus-speed selector.
+Missing expected tables/columns are simply flagged as not present,
+while ambiguous duplicate fixed table names or columns fail closed.
+
+### Owner-only next schema experiment
+
+Run a separately reviewed commit with exact-head successful Windows CI
+inside the owner-controlled guest, using a **new** private output path
+because the v1 report already exists:
+
+```powershell
+$python=(Get-Content 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+& $python '.\emulator\tools\audit_vida_carcom_schema_links.py' --folder 'E:\VirtualCar\VIDA-private' --output 'E:\VirtualCar\VIDA-private\p0-carcom-hw-schema-002.redacted.json'
+```
+
+Check the working directory points to the reviewed Git checkout. The
+private report contains **no actual baud, hardware-setting values,
+CAN IDs, ECU addresses, VIN or private column names**. Review
+it privately before publishing even summary counts.
+Only after actual schema confirmation should a separately reviewed,
+bounded owner-local **aggregate query** investigate inherited hardware
+settings for the two candidate profiles. A `folderLevel` shape,
+or a fallback algorithm in a third-party port, does not establish
+the original VIDA client selected that profile. Initial
+`ReadVin=4` runs against `VehicleProfile.Empty`; lack of direct
+target-profile `ScriptProfileMap` linkage must not on its own
+be categorized as a failed VIN read.
+
+**All work remains read-only, original outputs private, and
+`B9FBFrameCount=0` unchanged. No physical J2534, GUI VIDA,
+SecurityAccess, coding, ECU programming or Virtual Car Release.**
