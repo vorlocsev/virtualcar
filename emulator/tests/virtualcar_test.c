@@ -2540,6 +2540,7 @@ int main(){
  test_d2_strict_filter_no_frame_gaps(dev);
  test_raw_isotp_supersession_queued_rx(dev);
  test_raw_isotp_fully_staged_retry(dev);
+ test_clear_rx_raw_iso_lifetime(dev);
  test_write_transport_boundaries(dev);
  test_can_id_range_guard(dev);
  test_periodic_tx_transport_parity(dev);
@@ -3571,17 +3572,16 @@ int main(){
   REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
   REQUIRE(ch->d2_trace==0 && ch->d2_count==0 && ch->count==0);
   tick+=100;n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
-  /* 3: clearing an already-queued FF invalidates its delivery evidence.
-     Historical pending ISO-TP transport behavior remains unchanged. */
+  /* 3: CLEAR_RX aborts queued FF AND staged ISO-TP continuation.
+     Late CTS must not release orphan CFs from an aborted exchange. */
   start=backend_lines+backend_len;
   tmp=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(lc,&tmp);
   first=ch->pending_trace;REQUIRE(first && ch->pending_len==20);
   REQUIRE(PassThruIoctl(lc,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
-  REQUIRE(ch->pending_len==20 && ch->pending_trace==0);
+  REQUIRE(ch->pending_len==0 && ch->pending_trace==0 && ch->pending_raw_exchange==0);
   REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
   tmp=frame(PROTO_CAN,0x7E0,iso_fc_cts,8);send(lc,&tmp);
-  r=readmsg(lc);REQUIRE(r.Data[4]==0x21);
-  r=readmsg(lc);REQUIRE(r.Data[4]==0x22);
+  n=1;REQUIRE(PassThruReadMsgs(lc,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
   REQUIRE(terminal_for(start,first,"clear_rx_buffer","aborted")==1);
   REQUIRE(terminal_for(start,first,"none","responded")==0);
   /* 4: new D2 attempt supersedes staged and queued old D2 bytes. */
