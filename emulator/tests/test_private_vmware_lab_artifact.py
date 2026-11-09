@@ -25,7 +25,8 @@ class PrivateVmwareLabArtifactTests(unittest.TestCase):
 
     def test_01_trusted_owner_only_development_push_remains_the_job_boundary(self):
         self.assertIn("github.repository == 'vorlocsev/virtualcar'", self.yml)
-        self.assertIn("github.actor == 'vorloc'", self.yml)
+        self.assertIn("github.actor == 'vorlocsev'", self.yml)
+        self.assertIn("$env:GITHUB_ACTOR -cne 'vorlocsev'", self.ps)
         self.assertIn("github.ref == 'refs/heads/development'", self.yml)
         self.assertIn("branches: [development]", self.yml)
         self.assertNotIn("pull_request:", self.yml)
