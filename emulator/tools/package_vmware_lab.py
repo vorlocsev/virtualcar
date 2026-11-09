@@ -23,6 +23,7 @@ FILES = {
     # Real GUI-guest P0 collection tools. Preserve the exact reviewed
     # two-phase Python import closure inside the self-contained local LAB.
     # None of these tools starts SectorV, sends CAN or authenticates a VIN.
+    "tools/invoke_sectorv_operator.ps1": "tools/invoke_sectorv_operator.ps1",
     "tools/audit_sectorv_operator_session.py": "tools/audit_sectorv_operator_session.py",
     "tools/audit_sectorv_fresh_window.py": "tools/audit_sectorv_fresh_window.py",
     "tools/audit_sectorv_ui_window_triage.py": "tools/audit_sectorv_ui_window_triage.py",

@@ -141,6 +141,7 @@ class VMwarePackageTests(unittest.TestCase):
     def test_09_two_phase_collector_and_every_required_script_bundled(self):
         names = (
             "tools/audit_sectorv_operator_session.py",
+            "tools/invoke_sectorv_operator.ps1",
             "tools/audit_sectorv_fresh_window.py",
             "tools/audit_sectorv_ui_window_triage.py",
             "tools/audit_sectorv_ui_observation.py",

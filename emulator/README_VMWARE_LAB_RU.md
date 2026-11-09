@@ -9,7 +9,7 @@
 - Активный virtualcar.ini на основе строго маршрутизируемого **синтетического P2 профиля**: ECM и вымышленный VIN, P2 CAN-LS 125 кбит/с и CAN-HS 500 кбит/с. Отсутствуют подтверждённые положительные ответы CEM A3/A6/B9F0/B9FB/B9FC. Они не генерируются автоматически.
 - Включена только мета-телеметрия секции Diagnostics: BackendTelemetryEnabled=1. VIN и CAN payload не записываются в backend JSONL.
 - Скрипты регистрации и удаления J2534 из 32-битного раздела реестра, Python-анализаторы, SHA256SUMS.txt и BUILDINFO.json.
-- **Полный набор для одного реального GUI-сеанса SectorV:** `tools/audit_sectorv_operator_session.py` (двухэтапный `begin/finish`), `tools/audit_vmware_sectorv_process.ps1` (пассивный снимок DLL при открытом клиенте), связанные анализаторы и `README_SECTORV_FRESH_WINDOW_RU.md`. Все зависимости Python включены в ZIP, запуск из полного исходного дерева не требуется.
+- **Полный набор для одного реального GUI-сеанса SectorV:** `tools/invoke_sectorv_operator.ps1` (упрощённый интерактивный помощник), `tools/audit_sectorv_operator_session.py` (двухэтапный `begin/finish`), `tools/audit_vmware_sectorv_process.ps1` (пассивный снимок DLL при открытом клиенте), связанные анализаторы и `README_SECTORV_FRESH_WINDOW_RU.md`. Все зависимости Python включены в ZIP, запуск из полного исходного дерева не требуется.
 
 ## Установка в VMware
 
