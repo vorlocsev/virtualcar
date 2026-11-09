@@ -52,6 +52,13 @@ class VidaCarcomSchemaTests(unittest.TestCase):
         self.assertTrue(result['read_only'])
         self.assertEqual(len(result['edge_shape_candidates']), 6)
         self.assertTrue(all(x['column_shape_present'] for x in result['edge_shape_candidates']))
+        self.assertEqual(result['schema_version'], 'virtualcar-vida-carcom-schema-preflight-v2')
+        self.assertEqual(len(result['hardware_edge_shape_candidates']), 6)
+        self.assertTrue(all(x['column_shape_present'] for x in result['hardware_edge_shape_candidates']))
+        self.assertTrue(result['hardware_init_value_column_shape_present'])
+        self.assertFalse(result['hardware_init_profile_priority_verified'])
+        self.assertFalse(result['d2_baud_from_original_data_verified'])
+        self.assertTrue(result['d2_baud_inferred_from_ggd_forbidden'])
         self.assertFalse(result['xc90_v8_my2009_profile_verified'])
         self.assertFalse(result['getscript_runtime_selection_verified'])
         self.assertFalse(result['client_vin_accepted'])
@@ -122,6 +129,65 @@ class VidaCarcomSchemaTests(unittest.TestCase):
         self.assertEqual(source.read_bytes(),before)
         self.assertEqual(json.loads(out.read_text(encoding='utf-8'))['status'],'schema_only')
         self.assertNotIn('PRIVATE_VIN_S3CRET_1234567',out.read_text(encoding='utf-8'))
+
+
+    def test_09_hardware_tables_absent_do_not_break_prior_six_edges(self):
+        original = {name: columns for name, columns in mod.TABLES['CarCom'].items()
+                    if name not in ('T136_InitHw_Profile', 'T130_Init',
+                                   'T131_InitValue', 'T132_InitValueType',
+                                   'T121_Config', 'T123_Bus')}
+        self.build('CarCom', original)
+        result = mod.audit(self.folder)
+        self.assertTrue(all(x['column_shape_present'] for x in result['edge_shape_candidates']))
+        self.assertFalse(result['hardware_init_value_column_shape_present'])
+        self.assertFalse(any(x['column_shape_present']
+                             for x in result['hardware_edge_shape_candidates']))
+
+    def test_10_missing_profile_folder_level_does_not_imply_init_priority(self):
+        modified = dict(mod.TABLES['CarCom'])
+        modified['T161_Profile'] = ('id', 'identifier')
+        self.build('CarCom', modified)
+        result = mod.audit(self.folder)
+        self.assertTrue(all(x['column_shape_present']
+                            for x in result['hardware_edge_shape_candidates']))
+        self.assertFalse(result['hardware_init_value_column_shape_present'])
+        self.assertFalse(result['hardware_init_profile_priority_verified'])
+        self.assertIn('folderLevel', result['databases']['CarCom']
+                      ['fixed_tables']['T161_Profile']['expected_columns_missing'])
+
+    def test_11_missing_init_value_does_not_create_baudrate_evidence(self):
+        modified = dict(mod.TABLES['CarCom'])
+        modified['T131_InitValue'] = ('fkT130_Init', 'fkT132_InitValueType', 'sortOrder')
+        self.build('CarCom', modified)
+        result = mod.audit(self.folder)
+        self.assertTrue(all(x['column_shape_present']
+                            for x in result['hardware_edge_shape_candidates'][:4]))
+        self.assertFalse(result['hardware_init_value_column_shape_present'])
+        self.assertFalse(result['d2_baud_from_original_data_verified'])
+
+    def test_12_missing_config_bus_rate_never_borrows_ggd_value(self):
+        modified = dict(mod.TABLES['CarCom'])
+        modified['T121_Config'] = ('id', 'addressSize', 'fkT122_Protocol', 'fkT123_Bus')
+        self.build('CarCom', modified)
+        result = mod.audit(self.folder)
+        self.assertIn('busRate', result['databases']['CarCom']
+                      ['fixed_tables']['T121_Config']['expected_columns_missing'])
+        self.assertTrue(all(x['column_shape_present']
+                            for x in result['hardware_edge_shape_candidates'][-2:]))
+        self.assertFalse(result['d2_baud_from_original_data_verified'])
+        self.assertTrue(result['d2_baud_inferred_from_ggd_forbidden'])
+
+    def test_13_sensitive_unknown_hw_setting_labels_never_leave_report(self):
+        def add(db):
+            db.execute('INSERT INTO _vida_columns VALUES (?,?,?,?)',
+                       ('dbo', 'T131_InitValue', 'PRIVATE_VIN_AND_BAUD_123456', 165))
+            db.execute('INSERT INTO _vida_tables VALUES (?,?,?)',
+                       ('dbo', 'PRIVATE_VEHICLE_HARDWARE_123456', 2))
+        self.build('CarCom', mod.TABLES['CarCom'], override=add)
+        value = json.dumps(mod.audit(self.folder))
+        self.assertNotIn('PRIVATE_VIN_AND_BAUD', value)
+        self.assertNotIn('PRIVATE_VEHICLE_HARDWARE', value)
+        self.assertTrue(mod.audit(self.folder)['hardware_init_value_column_shape_present'])
 
 
 if __name__=='__main__':

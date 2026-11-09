@@ -15,7 +15,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
-SCHEMA = "virtualcar-vida-carcom-schema-preflight-v1"
+SCHEMA = "virtualcar-vida-carcom-schema-preflight-v2"
 EXPORT_SCHEMA = "virtualcar-vida-offline-sqlite-v1"
 MAX_TABLES = 1000
 MAX_COLUMNS = 30000
@@ -30,7 +30,15 @@ TABLES = {
         "T100_EcuVariant": ("id", "identifier", "fkT101_Ecu"),
         "T101_Ecu": ("id",),
         "T160_DefaultEcuVariant": ("fkT161_Profile", "fkT100_EcuVariant"),
-        "T161_Profile": ("id", "identifier"),
+        "T161_Profile": ("id", "identifier", "folderLevel"),
+        # Candidate setting lookup from independently published VIDA 2014D
+        # research. These are allowlisted *names*, not observed target schema.
+        "T121_Config": ("id", "busRate", "addressSize", "fkT122_Protocol", "fkT123_Bus"),
+        "T123_Bus": ("id", "identifier"),
+        "T130_Init": ("id",),
+        "T131_InitValue": ("fkT130_Init", "fkT132_InitValueType", "initValue", "sortOrder"),
+        "T132_InitValueType": ("id", "name"),
+        "T136_InitHw_Profile": ("fkT161_Profile", "fkT130_Init"),
     },
     "DiagSwdlRepository": {
         "ScriptType": ("id", "description"),
@@ -49,6 +57,18 @@ CANDIDATE_EDGES = (
     ("CarCom", "T100_EcuVariant", "fkT101_Ecu", "T101_Ecu", "id"),
     ("CarCom", "T160_DefaultEcuVariant", "fkT161_Profile", "T161_Profile", "id"),
     ("CarCom", "T160_DefaultEcuVariant", "fkT100_EcuVariant", "T100_EcuVariant", "id"),
+)
+
+# Distinct optional hardware/init *column shape* hypotheses from
+# spnda/volvo_vida_db/scripts/carcom.py@get_hw_settings (2014D port).
+# Never promote them to real baud, gateway or a chosen profile.
+HARDWARE_CANDIDATE_EDGES = (
+    ("CarCom", "T136_InitHw_Profile", "fkT161_Profile", "T161_Profile", "id"),
+    ("CarCom", "T136_InitHw_Profile", "fkT130_Init", "T130_Init", "id"),
+    ("CarCom", "T131_InitValue", "fkT130_Init", "T130_Init", "id"),
+    ("CarCom", "T131_InitValue", "fkT132_InitValueType", "T132_InitValueType", "id"),
+    ("CarCom", "T121_Config", "fkT122_Protocol", "T122_Protocol", "id"),
+    ("CarCom", "T121_Config", "fkT123_Bus", "T123_Bus", "id"),
 )
 
 
@@ -143,6 +163,28 @@ def audit(folder: Path) -> dict:
         edges.append({"source_table": source, "target_table": target,
                       "column_shape_present": plausible,
                       "data_join_verified": False, "referential_integrity_verified": False})
+    hardware_edges = []
+    for db, source, source_col, target, target_col in HARDWARE_CANDIDATE_EDGES:
+        left, right = fixed[db][source], fixed[db][target]
+        plausible = (left["present"] and right["present"]
+                     and source_col in left["expected_columns_present"]
+                     and target_col in right["expected_columns_present"])
+        hardware_edges.append({
+            "source_table": source,
+            "target_table": target,
+            "column_shape_present": plausible,
+            "data_join_verified": False,
+            "referential_integrity_verified": False,
+        })
+    # A complete-looking route is necessary but not sufficient to resolve
+    # inherited InitHw settings: profile selection and folderLevel precedence
+    # still require source rows and original implementation verification.
+    hw_value_shape = (
+        all(edge["column_shape_present"] for edge in hardware_edges[:4])
+        and "folderLevel" in fixed["CarCom"]["T161_Profile"]["expected_columns_present"]
+        and "initValue" in fixed["CarCom"]["T131_InitValue"]["expected_columns_present"]
+        and "name" in fixed["CarCom"]["T132_InitValueType"]["expected_columns_present"]
+    )
     return {"schema_version": SCHEMA, "status": "schema_only",
             "read_only": True, "contains_source_rows": False,
             "contains_original_column_names_outside_allowlist": False,
@@ -153,7 +195,12 @@ def audit(folder: Path) -> dict:
             "xc90_v8_my2009_profile_verified": False,
             "client_vin_accepted": False,
             "replay_approved": False,
-            "databases": parts, "edge_shape_candidates": edges}
+            "hardware_init_value_column_shape_present": hw_value_shape,
+            "hardware_init_profile_priority_verified": False,
+            "d2_baud_from_original_data_verified": False,
+            "d2_baud_inferred_from_ggd_forbidden": True,
+            "databases": parts, "edge_shape_candidates": edges,
+            "hardware_edge_shape_candidates": hardware_edges}
 
 
 def main(argv=None) -> int:
