@@ -319,6 +319,7 @@ def _result(tx):
         "response_pending_frames": tx["_p3_pending"],
         "off_route_rx": tx["off_route_rx"], "window_ms": window,
         "status": status, "reason": reason,
+        "request_origin": tx["_request_origin"],
     }
     if tx["route"] == "OBD":
         result["start_indications"] = tx["_obd_starts"]
@@ -532,7 +533,8 @@ def audit(lines, *, include_obd=False):
         if pid not in sessions:
             epoch += 1
             sessions[pid] = {"number": epoch, "active": {},
-                             "txctx": None, "rxctx": None, "clearctx": None,
+                             "txctx": None, "periodicctx": None,
+                             "rxctx": None, "clearctx": None,
                              "last_tx_channel": None, "disconnect_channel": None,
                              "obd_repeats": {}}
         return sessions[pid]
@@ -543,9 +545,9 @@ def audit(lines, *, include_obd=False):
             tx["_end_reason"] = why
             results.append(_result(tx))
 
-    def start(s, request, stamp, raw, metadata=None):
+    def start(s, request, stamp, raw, metadata=None, origin="direct_write"):
         kind, service, target, can_id = request
-        ctx = s["txctx"]
+        ctx = s["periodicctx"] if origin == "periodic_scheduler" else s["txctx"]
         channel = metadata["channel"] if metadata is not None else ctx[0] if ctx else None
         previous = s["active"].get(channel)
         flags = metadata["flags"] if metadata is not None else ctx[2] if ctx else None
@@ -568,6 +570,7 @@ def audit(lines, *, include_obd=False):
         mod = 2**32 if ctx else 86400000
         tx = {
             "session": s["number"], "service": service, "route": kind,
+            "_request_origin": origin,
             "can_id": f"0x{can_id:08X}" if can_id > 0x7FF else f"0x{can_id:03X}",
             "id_format": _id_format(can_id, flags), "channel": channel,
             "protocol": {5: "CAN", 6: "ISO15765"}.get(protocol, "other") if protocol is not None else "unknown",
@@ -796,12 +799,22 @@ def audit(lines, *, include_obd=False):
         if "PassThruOpen ->" in text:
             for ch in list(s["active"]):
                 finish(s, ch, "new_connection")
-            s["txctx"] = s["rxctx"] = s["clearctx"] = None
+            s["txctx"] = s["periodicctx"] = s["rxctx"] = s["clearctx"] = None
             s["last_tx_channel"] = s["disconnect_channel"] = None
             s["obd_repeats"].clear()
         txctx = _context(text, "TX context channel/protocol/flags/baud/time-us (BE)", include_obd)
         if txctx is not None:
             s["txctx"] = txctx
+            continue
+        periodicctx = _context(
+            text, "Periodic TX context channel/protocol/flags/baud/time-us (BE)",
+            True)
+        if periodicctx is not None:
+            s["periodicctx"] = periodicctx
+            continue
+        if text.startswith("Periodic TX context "):
+            s["periodicctx"] = None
+            errors["malformed_periodic_context"] += 1
             continue
         rxctx = _context(text, "RX context channel/protocol/status/baud/time-us (BE)", include_obd)
         if rxctx is not None:
@@ -823,6 +836,31 @@ def audit(lines, *, include_obd=False):
             data = _words(text.split("(BE)", 1)[-1])
             if len(data) == 4:
                 s["disconnect_channel"] = int.from_bytes(data, "big")
+            continue
+        if text.startswith("J2534 periodic TX (read-only simulator)"):
+            # This is a scheduler-generated dispatch, never a new direct
+            # PassThruWriteMsgs call by SectorV. Require an immediately
+            # preceding, valid, scoped native context; do not infer a channel
+            # from an unrelated direct TX or RX log entry.
+            marker = "J2534 periodic TX (read-only simulator)"
+            suffix = text[len(marker):].strip()
+            ctx = s["periodicctx"]
+            s["periodicctx"] = None
+            if (ctx is None or not re.fullmatch(
+                    r"[0-9A-Fa-f]{2}(?:\\s+[0-9A-Fa-f]{2}){4,11}", suffix)):
+                errors["unattributed_periodic_tx"] += 1
+                continue
+            raw = _words(suffix)
+            if ctx[1] not in (5, 6) or ctx[3] == 0:
+                errors["invalid_periodic_transport"] += 1
+                continue
+            req = _request(raw, include_obd)
+            if req:
+                start(s, req, stamp, raw, origin="periodic_scheduler")
+            elif ctx[1] == 5 and _flow_control(raw, include_obd):
+                pass  # Flow Control continues an existing ISO-TP response.
+            else:
+                finish(s, ctx[0], "superseded_by_other_periodic_tx")
             continue
         if "TX (app request)" in text or "PassThruWriteMsgs() msg" in text:
             marker = "TX (app request)" if "TX (app request)" in text else "Data = ["
@@ -882,7 +920,7 @@ def audit(lines, *, include_obd=False):
         if text.startswith("PassThruClose"):
             for ch in list(s["active"]):
                 finish(s, ch, "connection_closed")
-            s["txctx"] = s["rxctx"] = None
+            s["txctx"] = s["periodicctx"] = s["rxctx"] = None
             s["last_tx_channel"] = s["disconnect_channel"] = None
         elif text.startswith("PassThruDisconnect"):
             ch = s["disconnect_channel"]
@@ -912,6 +950,7 @@ def audit(lines, *, include_obd=False):
             "A second identical F114 request before the first completes leaves later RX attribution ambiguous without a reset boundary.",
             "A6 delivery validates a single-frame E6 echo and length only; no parameter value or normal-mode state is decoded.",
             "A6 route candidates are limited to observed CEM IDs; unknown routes and non-CD ... 01 request shapes stay unverified.",
+            "Periodic scheduler TX is a separate source from direct PassThruWriteMsgs; it is not proof that the GUI initiated each tick.",
             ("OBD window_ms is observed TX-to-last matched RX, not a claimed ECU processing duration."
              if include_obd else "Window is observed first-to-last delivered RX, not a claimed ECU processing duration."),
         ],
