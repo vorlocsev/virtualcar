@@ -963,4 +963,54 @@ jobs:
           Write-Host 'PASS: Native C++ x64 configure/build/CTest'
           Write-Host 'PASS: .NET 10 core, SQLite storage and scenario checks'
           Write-Host 'M5A/M5B IPC and M5C2 authenticated lifecycle/host restart checks run when the selected source contains the projects.'
-          Write-Host 'No artifacts uploaded. No releases or deployments performed.'
+          Write-Host 'No public releases or deployments. A private short-lived LAB artifact is staged only after full success on owner development pushes.'
+
+      # Only after ALL previous build/tests/gates pass on the immutable trusted SHA.
+      # This repeat packaging step reuses the already built/tested x86 C DLL.
+      # The earlier packaging smoke leaves no files behind.
+      - name: Stage private verified VMware LAB after full validation
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/development'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File emulator/tools/verify_local_vmware_lab_ci.ps1 -RetainValidatedLab
+          if ($LASTEXITCODE -ne 0) { throw 'Private LAB staging failed validation' }
+
+      # GitHub Actions artifacts in this private repository require collaborator
+      # access. This is not a GitHub Release or a vehicle/OEM acceptance result.
+      - name: Upload short-lived private VMware LAB x86 artifact
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/development'
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtualcar-vmware-lab-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/virtualcar-ci-local-lab-${{ github.run_id }}-${{ github.run_attempt }}/*.zip
+            ${{ runner.temp }}/virtualcar-ci-local-lab-${{ github.run_id }}-${{ github.run_attempt }}/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+      # The self-hosted runner is persistent: never leave binaries, ZIPs or
+      # temporary lab data on disk, including when upload or earlier tests fail.
+      - name: Clean temporary private LAB output from persistent runner
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_RUN_ID -cnotmatch '^[0-9]+$' -or
+              $env:GITHUB_RUN_ATTEMPT -cnotmatch '^[0-9]+$') {
+            throw 'Cannot determine isolated LAB run directory'
+          }
+          $root = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          $name = 'virtualcar-ci-local-lab-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          $target = [IO.Path]::GetFullPath((Join-Path $root $name))
+          $parent = [IO.Path]::GetFullPath((Split-Path -Parent $target)).TrimEnd('\')
+          if (-not [String]::Equals($parent, $root,
+                  [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Refusing to clean outside RUNNER_TEMP'
+          }
+          if (Test-Path -LiteralPath $target -PathType Container) {
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop
+          }
+          Write-Host 'Private LAB temporary outputs removed (or none existed)'
+

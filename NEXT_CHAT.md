@@ -1,5 +1,34 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: private VMware LAB artifact gate (2026-11-09)
+
+- Checked current `development` baseline `5987c5bba2e49eb92d92859f53654b5d89bce374`:
+  [owner-only VMware CI #42667246867](https://github.com/vorlocsev/virtualcar/actions/runs/42667246867)
+  **SUCCESS**. This is offline validation, not a real SectorV GUI test.
+- Previous CI built and verified a real synthetic P2 x86 LAB ZIP, then deleted it;
+  no downloadable package remained for the authorized manual guest observation.
+- This focused change adds **private** Actions upload only on successful owner
+  `development` push and only after all existing CI steps complete. The verified
+  x86 ZIP and matching external SHA256 are retained for 3 days, then deleted by
+  GitHub. Package retains the synthetic P2 read-only profile and flags
+  `vmware_e2e_verified=false`, `operator_gui_acceptance_verified=false`.
+  No donor VIN, raw logs, security access, releases or `main` merge.
+- The preexisting packaging smoke still removes its copy. A second packaging
+  pass after all gates may retain the archive only when `github.sha` equals the
+  actual checked-out owner-development push SHA. Persistently hosted runner
+  temporary output is removed via unconditional final step. Eight CI safety
+  checks cover trigger scope, gate order, exact two file paths, sidecar, failure
+  cleanup and negative unauthorized retention.
+- **Next gate:** check exact merged `development` SHA, successful automatic
+  workflow and an actual `Artifacts` entry with a ZIP plus `.zip.sha256`.
+  Only then offer the private LAB download from that run for an isolated
+  human-observed SectorV GUI session. The operator report still cannot prove
+  OEM identity from J2534 delivery. [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4)
+  stays open until real guest evidence; keep draft PR #2 and `main` untouched.
+
+---
+
+
 ## P0: raw CAN FC telemetry attribution requires an active matching exchange (2026-11-09)
 
 - **Last verified baseline:** `development` `26e1266bdf9c4f2fb9d42e675504c7f2b4e65259`, owner-only automatic [VMware CI #42662926844](https://github.com/vorlocsev/virtualcar/actions/runs/42662926844) **SUCCESS**, 30/30 steps, 582 Python tests (1 optional skip) and all 8 FC OVERFLOW queued-CF native checks passed.
