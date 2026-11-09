@@ -245,5 +245,87 @@ class VMwarePackageTests(unittest.TestCase):
                 self.assertNotIn(word, json.dumps(metadata).lower())
 
 
+    def _extracted_real_lab(self):
+        source = MODULE.parents[1]
+        for relative in tool.FILES.values():
+            if relative.endswith((".py", ".ps1")):
+                shutil.copyfile(source / relative, self.root / relative)
+        with zipfile.ZipFile(self.build()) as archive:
+            extracted = Path(self.temp.name) / "extracted"
+            archive.extractall(extracted)
+        return extracted / tool.PREFIX
+
+    def test_15_extracted_package_detects_its_own_root_not_parent_directory(self):
+        lab = self._extracted_real_lab()
+        tools_dir = lab / "tools"
+        command = ("import sys;sys.path.insert(0,sys.argv[1]);"
+                   "import audit_sectorv_fresh_window as fresh;"
+                   "print(fresh.ROOT)")
+        result = subprocess.run([sys.executable, "-c", command, str(tools_dir)],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), lab.resolve())
+
+    def test_16_extracted_collector_can_create_private_baseline_beside_lab(self):
+        lab = self._extracted_real_lab()
+        private = Path(self.temp.name) / "separate-private"
+        private.mkdir()
+        j = private / "empty-j2534.log"
+        b = private / "empty-backend.jsonl"
+        j.write_bytes(b"")
+        b.write_bytes(b"")
+        session = private / "session-1"
+        collector = lab / "tools" / "audit_sectorv_operator_session.py"
+        result = subprocess.run([
+            sys.executable, str(collector), "begin",
+            "--session-dir", str(session), "--j2534", str(j),
+            "--backend", str(b)],
+            capture_output=True, text=True, timeout=25)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((session / "p0-before.private.json").is_file())
+        self.assertFalse((session / "p0-triage.redacted.json").exists())
+        self.assertFalse((session / "p0-window.redacted.json").exists())
+
+    def test_17_extracted_collector_refuses_outputs_inside_package(self):
+        lab = self._extracted_real_lab()
+        private = Path(self.temp.name) / "outside"
+        private.mkdir()
+        j = private / "j2534.log"
+        b = private / "backend.jsonl"
+        j.write_bytes(b"")
+        b.write_bytes(b"")
+        forbidden = lab / "forbidden-session"
+        collector = lab / "tools" / "audit_sectorv_operator_session.py"
+        result = subprocess.run([
+            sys.executable, str(collector), "begin",
+            "--session-dir", str(forbidden), "--j2534", str(j),
+            "--backend", str(b)],
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(forbidden.exists())
+        self.assertNotIn(str(j), result.stderr)
+
+    def test_18_packaged_powershell_module_report_has_correct_sibling_boundary(self):
+        if sys.platform != "win32":
+            self.skipTest("requires Windows PowerShell 5.1")
+        powershell = shutil.which("powershell.exe")
+        if not powershell:
+            self.skipTest("PowerShell 5.1 not available")
+        lab = self._extracted_real_lab()
+        sibling = Path(self.temp.name) / "extracted" / "redacted-module.json"
+        script = lab / "tools" / "audit_vmware_sectorv_process.ps1"
+        result = subprocess.run([
+            powershell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(script), "-OperatorSession", "-OutputFile", str(sibling)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(sibling.read_text(encoding="utf-8-sig"))
+        self.assertEqual(report["schema_version"],
+                         "virtualcar-sectorv-process-binding-operator-v1")
+        self.assertEqual(report["accepted_vin_or_ecu"], "not_verified")
+        self.assertNotIn(str(self.temp.name), json.dumps(report))
+        self.assertFalse((lab / "redacted-module.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
