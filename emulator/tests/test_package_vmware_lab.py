@@ -3,7 +3,10 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -134,6 +137,112 @@ class VMwarePackageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build()
         self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_09_two_phase_collector_and_every_required_script_bundled(self):
+        names = (
+            "tools/audit_sectorv_operator_session.py",
+            "tools/audit_sectorv_fresh_window.py",
+            "tools/audit_sectorv_ui_window_triage.py",
+            "tools/audit_sectorv_ui_observation.py",
+            "tools/audit_vmware_provider_provenance.py",
+            "tools/audit_vmware_sectorv_process.ps1",
+            "native-cpp/tests/verify_pe_exports.py",
+            "README_SECTORV_FRESH_WINDOW_RU.md",
+        )
+        with zipfile.ZipFile(self.build()) as archive:
+            for name in names:
+                with self.subTest(name=name):
+                    self.assertIn(tool.PREFIX + "/" + name, archive.namelist())
+            self.assertEqual(len(archive.namelist()), len(set(archive.namelist())))
+
+    def test_10_operator_import_closure_uses_same_relative_paths_as_zip(self):
+        # Read the real checked-in scripts, not the fake fixture binaries.
+        source = MODULE.parents[1]
+        for relative in (
+            "tools/audit_sectorv_operator_session.py",
+            "tools/audit_sectorv_fresh_window.py",
+            "tools/audit_sectorv_ui_window_triage.py",
+            "tools/audit_vmware_provider_provenance.py",
+        ):
+            content = (source / relative).read_text(encoding="utf-8")
+            self.assertIn(relative, tool.FILES.values())
+            for required in (
+                "audit_sectorv_fresh_window",
+                "audit_sectorv_ui_window_triage",
+                "audit_sectorv_ui_observation",
+            ) if relative.endswith("operator_session.py") else ():
+                self.assertIn("tools/" + required + ".py", tool.FILES.values())
+                self.assertIn(required, content)
+        # Provenance's static export parser expects this exact relative tree.
+        self.assertIn("native-cpp/tests/verify_pe_exports.py", tool.FILES.values())
+        self.assertIn("from verify_pe_exports import EXPORTS",
+                      (source / "tools/audit_vmware_provider_provenance.py")
+                      .read_text(encoding="utf-8"))
+
+    def test_11_extracted_real_collector_imports_and_displays_help(self):
+        # Replace only safe tool stubs with source scripts; test against
+        # an extracted archive, never by importing the checkout's sys.path.
+        source = MODULE.parents[1]
+        for relative in tool.FILES.values():
+            if relative.endswith((".py", ".ps1")):
+                shutil.copyfile(source / relative, self.root / relative)
+        with zipfile.ZipFile(self.build()) as archive:
+            extracted = Path(self.temp.name) / "extracted"
+            archive.extractall(extracted)
+        executable = (extracted / tool.PREFIX / "tools" /
+                      "audit_sectorv_operator_session.py")
+        run = subprocess.run([sys.executable, str(executable), "--help"],
+                             capture_output=True, text=True, timeout=20)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("begin", run.stdout)
+        self.assertIn("finish", run.stdout)
+        self.assertIn("--module-snapshot", run.stdout)
+
+    def test_12_extracted_package_preserves_old_audit_cli_entrypoints(self):
+        source = MODULE.parents[1]
+        for relative in tool.FILES.values():
+            if relative.endswith(".py"):
+                shutil.copyfile(source / relative, self.root / relative)
+        with zipfile.ZipFile(self.build()) as archive:
+            extracted = Path(self.temp.name) / "extracted"
+            archive.extractall(extracted)
+        for script in ("audit_sectorv_fresh_window.py",
+                       "audit_sectorv_ui_window_triage.py",
+                       "audit_vmware_provider_provenance.py"):
+            with self.subTest(script=script):
+                path = extracted / tool.PREFIX / "tools" / script
+                result = subprocess.run([sys.executable, str(path), "--help"],
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_13_missing_collector_or_transitive_helper_rejects_package(self):
+        for name in ("tools/audit_sectorv_operator_session.py",
+                     "tools/audit_sectorv_fresh_window.py",
+                     "native-cpp/tests/verify_pe_exports.py",
+                     "tools/audit_vmware_sectorv_process.ps1"):
+            with self.subTest(name=name):
+                target = self.root / name
+                data = target.read_bytes()
+                target.unlink()
+                try:
+                    with self.assertRaises(ValueError):
+                        self.build()
+                    self.assertFalse(any(self.out.iterdir()))
+                finally:
+                    target.write_bytes(data)
+
+    def test_14_local_lab_manifest_never_claims_gui_acceptance(self):
+        with zipfile.ZipFile(self.build()) as archive:
+            metadata = json.loads(archive.read(
+                tool.PREFIX + "/BUILDINFO.json"))
+            self.assertEqual(metadata["source_commit"], COMMIT)
+            self.assertEqual(metadata["architecture"], "windows-x86-pe32")
+            self.assertTrue(metadata["two_phase_operator_collector_included"])
+            self.assertFalse(metadata["operator_gui_acceptance_verified"])
+            self.assertFalse(metadata["vmware_e2e_verified"])
+            self.assertFalse(metadata["ecu_identity_verified"])
+            for word in ("C:\\\\Users", "private-vin", "raw-log"):
+                self.assertNotIn(word, json.dumps(metadata).lower())
 
 
 if __name__ == "__main__":
