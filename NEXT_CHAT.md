@@ -1,5 +1,31 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## P0: reject contradictory SectorV GUI triage counters (2026-11-09)
+
+- Starting verified `development`: `819a356eafcb1514c323b6f1a1a206b8f9d7a5eb`,
+  exact-SHA owner-only [VMware CI #42611032516](https://github.com/vorlocsev/virtualcar/actions/runs/42611032516)
+  **SUCCESS**, all 30 workflow steps. This is test/packaging evidence, NOT real SectorV GUI acceptance.
+- A bounded redacted report could previously satisfy individual J2534/coverage counter bounds
+  while violating cross-category totals: one TX counted as both D2 and P3, overlapping
+  known CAN/500k and unknown metadata, service statuses conflicting with discovery totals,
+  or the same backend request attributed to multiple trusted probes.
+- Focused `audit_sectorv_ui_window_triage.py` correction rejects these impossible
+  aggregates before generating a GUI decision. It does not change TX/RX, CEM answers,
+  VIN, J2534 DLL code or the stored private logs. Eight synthetic checks include
+  contradictory aggregate cases, a valid mixed D2/P3/unattributed report, and CLI
+  rejection with no unredacted output. The source change is not a VMware GUI trial.
+- **Next integration gate:** verify this focused PR is merged to `development`,
+  then obtain the automatic owner-only VMware CI result for its **exact merged SHA**
+  before claiming the new checks passed.
+- [Issue #4](https://github.com/vorlocsev/virtualcar/issues/4) remains OPEN until
+  a real isolated read-only SectorV GUI session in the user's Windows VMware guest
+  supplies genuine fresh log/UI evidence for DLL loading, CEM B9FB, VIN and ECUs.
+  Do not infer OEM acceptance from synthetic reports, invent A3/A6/B9F0,
+  change `main`, merge draft PR #2, or publish a binary release.
+
+---
+
+
 ## P0: harden B9 classic CAN receive evidence (2026-11-09)
 
 - **Verified starting baseline:** `development`
