@@ -3122,14 +3122,15 @@ int main(){
  REQUIRE(strstr(case_log,"\"reason\":\"flow_overflow\",\"outcome\":\"aborted\"")!=NULL);
  REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
  REQUIRE(strstr(case_log,"\"outcome\":\"responded\"")==NULL);
- /* Group C: a new SF response supersedes a pending FF still in RX FIFO.
-    The old request is aborted; the new complete response may succeed. */
+ /* Group C: a new SF supersedes a pending FF still in the RX FIFO.
+    Since the old FF is now retracted (P0 #274), its aborted terminal
+    occurs before the new SF is dequeued. No old FF may reach the client. */
  case_log=backend_lines+backend_len;
  m=frame(PROTO_CAN,0x7E0,iso_vin_sf,8);send(cid,&m);
  m=frame(PROTO_CAN,0x7E0,tester_present,8);send(cid,&m);
  REQUIRE(channel(cid)->pending_len==0);
- REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==0);
- r=readmsg(cid);REQUIRE(r.Data[4]==0x10);
+ REQUIRE(channel(cid)->count==1);
+ REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==1);
  REQUIRE(strstr(case_log,"\"reason\":\"superseded\",\"outcome\":\"aborted\"")!=NULL);
  r=readmsg(cid);REQUIRE(r.Data[4]==0x02 && r.Data[5]==0x7E);
  REQUIRE(event_count_since(case_log,"\"kind\":\"request_completed\"")==2);
