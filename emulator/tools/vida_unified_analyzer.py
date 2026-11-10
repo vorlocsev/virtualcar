@@ -181,9 +181,15 @@ def load_sqlserver(dsn: str, connector=None):
         for ss, st, sc, ts, tt, tc, disabled, untrusted in key_rows:
             if not all(isinstance(x, str) and x for x in (ss, st, sc, ts, tt, tc)):
                 raise AnalyzerError("invalid SQL Server key metadata")
-            if (ss.casefold(), st.casefold()) not in tables or (
-                    ts.casefold(), tt.casefold()) not in tables:
+            source_key = (ss.casefold(), st.casefold())
+            target_key = (ts.casefold(), tt.casefold())
+            if (source_key not in tables or target_key not in tables):
                 raise AnalyzerError("orphaned SQL Server key metadata")
+            if (sc.casefold() not in tables[source_key]
+                    or tc.casefold() not in tables[target_key]):
+                raise AnalyzerError("SQL Server key references missing column")
+            if disabled not in (0, 1) or untrusted not in (0, 1):
+                raise AnalyzerError("invalid SQL Server key trust metadata")
             keys.append((ss.casefold(), st.casefold(), sc.casefold(),
                          ts.casefold(), tt.casefold(), tc.casefold(),
                          bool(disabled), bool(untrusted)))
