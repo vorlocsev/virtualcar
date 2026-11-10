@@ -34,7 +34,14 @@ Server bracket escaping; raw private names never appear in output.
 The SQL query preserves the **exact spelling** of schema, table and column
 identifiers from the checked catalog so case-sensitive SQL Server databases
 do not fail from accidental lowercasing. Only known T111/T122 identifiers
-are eligible; case-folded duplicates fail closed. Existing output files
+are eligible; case-folded duplicates fail closed. An additional fixed
+read of `sys.columns` obtains only SQL type metadata for the two relevant
+reference columns. The auditor checks `system_type_id`, `max_length`,
+`precision` and `scale` for exact equality before sampling application rows.
+Missing, malformed or unequal type metadata fail closed, and all unknown
+catalog names remain absent from the report. This is only a conservative
+type-consistency check; it cannot prove successful SQL execution, collation
+compatibility, or actual referential integrity. Existing output files
 are rejected **before** the private CarCom query is attempted.
 
 Login and query deadlines are 8 seconds. The output is a newly created
@@ -73,9 +80,11 @@ It must run with a genuinely SELECT-only SQL Server principal.
 
 ## Verification
 
-The exact source and 14 regression tests were executed on Linux Python
-3.13 with a synthetic mocked SQL Server connection: **14/14 PASS**. The
-full pre-existing 48 VIDA tests plus 14 new tests: **62/62 PASS**.
+The exact source and 18 regression tests were executed on Linux Python
+3.13 with a synthetic mocked SQL Server connection: **18/18 PASS**. The
+full pre-existing 48 VIDA tests plus 18 tests: **66/66 PASS**.
+Four new tests cover type mismatches, missing or malformed type metadata,
+case-preserved identifiers and redaction before any application-row read.
 Python compileall: **PASS**. The GitHub blob SHA of both new files was
 verified against the local copies.
 
