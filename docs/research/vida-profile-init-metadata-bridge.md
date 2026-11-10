@@ -61,11 +61,19 @@ on the owner-controlled system, where the operator must review them.
 The summary refuses a profile bridge when either original redacted input
 is absent or its bytes differ from the bridge's declared SHA-256.
 
-## Three new acceptance categories
+## Four static acceptance categories
 
 - `carcom_profile_init_shape`: Passed when the **public column
   hypothesis** is structurally present in the input report, Failed when
   fixed expected fields are missing, Not tested when no bridge report exists.
+- `carcom_profile_service_shape`: separately checks the **complete**
+  previously researched CarCom column-shape route
+  `T161_Profile → T160_DefaultEcuVariant → T100_EcuVariant →
+  T110_Service_EcuVariant → T111_Service → T122_Protocol`.
+  This requires the six known `service_shape` hints and fixed
+  profile/variant/service/protocol identifiers. A missing link causes Failed,
+  while absent bridge input stays Not tested. **No row-level association
+  or selected ECU is confirmed.**
 - `carcom_service_protocol_shape`: equivalent shape-only semantics for
   the service, protocol and bus hypothesis.
 - `dicetiming_to_carcom_row_join`: **always Not tested**. Metadata
@@ -73,7 +81,7 @@ is absent or its bytes differ from the bridge's declared SHA-256.
   separate databases, which is required before determining actual
   InitHw settings for a selected vehicle.
 
-The master summary now has 15 acceptance gates. Even a fully
+The master summary now has 16 acceptance gates. Even a fully
 `candidate_shape` result does **not** imply a real selected XC90 V8
 MY2009 ECU profile, inherited InitHw precedence, timing values, D2 baud,
 successful ReadVin or permission to enable replay.
@@ -130,3 +138,34 @@ top-level import cycle. Verified exact Git blob hashes:
 No original VIDA SQL, VMware exact-head workflow, physical J2534 or
 client VIN acceptance was run. Recalculation does **not** authenticate
 the source files or prove same-installation provenance.
+
+## Profile-to-Service structural route extension (2026-11-10)
+
+The original static bridge assessed the Profile/InitHw and Service/Protocol
+shapes **separately**. The two checks could pass while `T110_Service_EcuVariant`
+or `T160_DefaultEcuVariant` lacked a column needed to associate a profile
+with its diagnostic services. The independent
+`carcom_profile_service_shape` gate closes this *metadata-only* gap using
+the six existing `CANDIDATE_EDGES` and fixed, public CarCom research hints.
+
+The report now carries `profile_service_shape` and a corresponding
+`missing_public_hints.profile_service` count. The master summary
+recomputes and checks this new field from the SHA-bound, already-redacted
+catalog and DiceTiming inputs before displaying Passed or Failed.
+Neither matched column shapes nor a Passed stage proves actual record
+joins, original 2015A layout, a selected XC90 V8 MY2009 profile,
+GetScript selection, D2 baud, VIN acceptance, or J2534.
+
+**Actual local checks:** the focused synthetic Python suite completed
+**141/141 PASS**, zero errors/failures, with `compileall` PASS.
+Seven new cases cover middle-link absence, default-variant/profile
+absence, forged status/count, a missing candidate edge, no-bridge
+behavior and independent downstream runtime negatives.
+GitHub files match the locally tested Git blobs:
+- `vida_profile_init_bridge.py` `f5823030913270403fbfcf92b41e8b29aad05229`
+- `vida_evidence_summary.py` `39ec059b0a382533e648576e277bae2b19a5e7c3`
+- `test_vida_profile_init_bridge.py` `f8b26d25c59e3296becdc18ef90ae7efb5f8e92e`
+
+The earlier 127/127 count elsewhere in this document is historical.
+No exact-head VMware CI, original VIDA data or physical hardware
+was tested in this extension.
