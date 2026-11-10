@@ -368,6 +368,8 @@ class VidaSelectionTraceTests(unittest.TestCase):
         run = running().replace("16:51:31,591", "00:00:00,017")
         result = audit_lines([request, fetch, run])
         self.assertEqual(result["events"]["matched_read_vin_triplets"], 1)
+        self.assertEqual(result["events"]["matched_midnight_rollover_triplets"], 1)
+        self.assertEqual(result["events"]["matched_read_vin_midnight_rollover_triplets"], 1)
         self.assertEqual(result["events"]["out_of_order_running_script_events"], 0)
         self.assertTrue(result["midnight_rollover_is_clock_only_inference"])
         self.assertFalse(result["actual_vida_client_identity_verified"])
@@ -380,6 +382,7 @@ class VidaSelectionTraceTests(unittest.TestCase):
         result = audit_lines([request, fetch, run])
         self.assertEqual(result["events"]["matched_get_fetch_run_triplets"], 1)
         self.assertEqual(result["events"]["matched_read_vin_triplets"], 1)
+        self.assertEqual(result["events"]["matched_read_vin_midnight_rollover_triplets"], 1)
         self.assertFalse(result["script_selected_for_identify_vehicle_verified"])
 
     def test_33_backdated_running_before_midnight_fetch_is_rejected(self):
@@ -390,6 +393,7 @@ class VidaSelectionTraceTests(unittest.TestCase):
         result = audit_lines([request, fetch, run])
         self.assertEqual(result["events"]["matched_read_vin_triplets"], 0)
         self.assertEqual(result["events"]["out_of_order_running_script_events"], 1)
+        self.assertEqual(result["events"]["matched_midnight_rollover_triplets"], 0)
 
     def test_34_midnight_crossing_beyond_30_second_limit_rejected(self):
         request = get(script_type="ReadVin").replace(
@@ -414,7 +418,7 @@ class VidaSelectionTraceTests(unittest.TestCase):
             "16:51:31,544", "23:59:59,950")
         fetch = fetched().replace("16:51:31,576", "00:00:00,010")
         run = running().replace("16:51:31,591", "00:00:00,025")
-        result = audit_lines([request, "Starting new logsession: 2026-11-11\\n",
+        result = audit_lines([request, "Starting new logsession: 2026-11-11\n",
                               fetch, run])
         self.assertEqual(result["events"]["matched_read_vin_triplets"], 0)
         self.assertEqual(result["events"]["orphan_fetched_script_events"], 1)
