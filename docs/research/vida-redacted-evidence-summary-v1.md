@@ -114,7 +114,7 @@ Mismatched digests, forged positive provenance/runtime flags, invalid
 keys, duplicate file aliases and overlong manifest files fail closed.
 A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 
-## Fifteen evidence gates
+## Sixteen evidence gates
 
 | Stage | Meaning of `passed` |
 | --- | --- |
@@ -125,6 +125,7 @@ A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 | `dice_timing_count_comparison` | Two already-redacted reports agree on table and column totals only; no schema equivalence or same-origin proof |
 | `dice_timing_visible_schema_hmac` | Optional two-source HMAC match for the visible normalized DiceTiming catalog using the same owner-private key; no source attestation or runtime proof |
 | `carcom_profile_init_shape` | Fixed CarCom Profile/InitHw column-shape hypotheses agree with the bound redacted catalog; not actual source-row joins |
+| `carcom_profile_service_shape` | The six fixed CarCom Profile/Variant/Service/Protocol shape edges are present in bound metadata; no actual vehicle profile or data join proven |
 | `carcom_service_protocol_shape` | Fixed CarCom Service/Protocol/Bus column-shape hypotheses agree with the bound redacted catalog; not actual speed or selected vehicle |
 | `dicetiming_to_carcom_row_join` | Always Not tested; the independent DiceTiming catalog contains no verified cross-database row relationship |
 | `catalog_shape_comparison` | A supplied comparison report declares no table/column/edge shape disagreement; it is not a verified same-installation join |
@@ -273,3 +274,22 @@ PASS, `compileall` PASS. Test sources used a local-only transcription of
 the existing published research-hint constants, not original VIDA data.
 No exact-head Windows VMware CI, original 2015A SQL Server data, physical
 J2534 or real client VIN acceptance was executed.
+
+### Independent Profile-to-Service chain coverage (2026-11-10)
+
+The bridge now checks the full static CarCom
+`Profile → DefaultEcuVariant → EcuVariant → Service_EcuVariant →
+Service → Protocol` research-hint path, not only the previously
+separate Profile/InitHw and Service/Protocol shapes. The new
+`carcom_profile_service_shape` gate may pass only if all fixed,
+allowlisted candidate columns and edges exist and agree in the
+already-redacted input. Missing middle links fail independently.
+
+The gate and its count are revalidated from the two SHA-bound
+source JSON inputs by the master summary. This is **not** a selected
+vehicle, authenticated profile, executed script, actual record join,
+or client VIN acceptance.
+
+Local focused regression suite: **141/141 synthetic PASS**, Python
+`compileall` PASS. Original VIDA 2015A, exact-head Windows VMware CI
+and physical J2534 are not tested.
