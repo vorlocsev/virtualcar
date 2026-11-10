@@ -122,6 +122,7 @@ class UnifiedVidaTests(unittest.TestCase):
         self.assertFalse(report["client_vin_accepted"])
         self.assertFalse(report["replay_approved"])
         self.assertFalse(report["record_joins_verified"])
+        self.assertFalse(report["catalog_visibility_complete_verified"])
         self.assertEqual(report["databases"]["CarCom"]["declared_fk_column_count"], 0)
         blob = json.dumps(report)
         for secret in ("PRIVATE_CUSTOMER", "PRIVATE_VIN", "MY_PRIVATE", "SECRET_PAYLOAD"):
@@ -199,6 +200,7 @@ class UnifiedVidaTests(unittest.TestCase):
         self.assertTrue(declared[0]["fk_untrusted"])
         self.assertFalse(declared[0]["referential_rows_verified"])
         self.assertFalse(report["record_joins_verified"])
+        self.assertFalse(report["catalog_visibility_complete_verified"])
         self.assertNotIn("SECRET_USER", json.dumps(report))
         self.assertEqual(len(connections), 3)
         self.assertTrue(all(c.closed for c in connections))
@@ -266,6 +268,34 @@ class UnifiedVidaTests(unittest.TestCase):
             self.skipTest("Symlinks unavailable without Windows privilege")
         with self.assertRaises(mod.AnalyzerError):
             mod.load_sqlite_export(self.folder)
+    def test_13_sqlserver_empty_visible_catalog_fails_closed(self):
+        connections = []
+
+        class EmptyVisibleCatalog(FakeConnection):
+            def cursor(self):
+                cursor = FakeCursor(self.database, self.queries)
+                execute_original = cursor.execute
+
+                def no_visible_tables(sql):
+                    if "FROM sys.tables" in sql:
+                        cursor.current = []
+                        return cursor
+                    return execute_original(sql)
+
+                cursor.execute = no_visible_tables
+                return cursor
+
+        def connect(string, autocommit, timeout):
+            database = string.split("DATABASE=")[1].split(";")[0]
+            connection = EmptyVisibleCatalog(database, [])
+            connections.append(connection)
+            return connection
+
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "empty or inaccessible SQL Server catalog"):
+            mod.load_sqlserver("VIDA_LOCAL", connect)
+        self.assertEqual(len(connections), 1)
+        self.assertTrue(connections[0].closed)
 
 
 if __name__ == "__main__":
