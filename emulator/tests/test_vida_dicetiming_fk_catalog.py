@@ -20,9 +20,9 @@ COLUMNS = [
     ('dbo', 'PrivateConfig', 'id_alt'),
 ]
 KEYS = [
-    (100, 1, 'dbo', 'PrivateTimings', 'cfg', 'dbo', 'PrivateConfig', 'id', False, True),
-    (100, 2, 'dbo', 'PrivateTimings', 'cfg_alt', 'dbo', 'PrivateConfig', 'id_alt', False, True),
-    (101, 1, 'dbo', 'PrivateTimings', 'parent', 'dbo', 'PrivateTimings', 'id', True, False),
+    (100, 1, 'dbo', 'PrivateTimings', 'cfg', 'dbo', 'PrivateConfig', 'id', False, True, 2),
+    (100, 2, 'dbo', 'PrivateTimings', 'cfg_alt', 'dbo', 'PrivateConfig', 'id_alt', False, True, 2),
+    (101, 1, 'dbo', 'PrivateTimings', 'parent', 'dbo', 'PrivateTimings', 'id', True, False, 1),
 ]
 
 
@@ -73,6 +73,8 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
         self.assertEqual(len(db.cursor_obj.queries), 4)
         self.assertIn('JOIN sys.foreign_keys', db.cursor_obj.queries[-1])
         self.assertIn('fkc.constraint_column_id', db.cursor_obj.queries[-1])
+        self.assertIn('FROM sys.index_columns', db.cursor_obj.queries[-1])
+        self.assertIn('ic.key_ordinal > 0', db.cursor_obj.queries[-1])
         self.assertTrue(all('sys.' in q or q == 'SELECT DB_NAME()'
                             for q in db.cursor_obj.queries))
         return result
@@ -99,7 +101,7 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
 
     def test_03_conflicting_same_constraint_identity_rejected(self):
         rows = list(KEYS)
-        rows[1] = rows[1][:-2] + (True, True)
+        rows[1] = rows[1][:-3] + (True, True, 2)
         with self.assertRaises(dt.DiceTimingError):
             dt._foreign_key_summary(rows, self._tables())
 
@@ -109,7 +111,7 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(dt.DiceTimingError):
                 dt._foreign_key_summary(rows, self._tables())
         for value in (2, -1, 'true', None):
-            rows = [KEYS[0][:-2] + (value, False)]
+            rows = [KEYS[0][:-3] + (value, False, 2)]
             with self.subTest(flag=value), self.assertRaises(dt.DiceTimingError):
                 dt._foreign_key_summary(rows, self._tables())
 
@@ -217,6 +219,42 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
         self.assertEqual(report['visible_fk_catalog']['constraint_count'], 2)
         self.assertEqual(report['declared_fk_column_count'], 3)
         self.assertFalse(report['visible_fk_catalog']['complete_metadata_visibility_verified'])
+
+    def test_19_missing_trailing_fk_member_rejected(self):
+        # Existing contiguous ordinal 1 is insufficient when target key has 2 columns.
+        with self.assertRaisesRegex(dt.DiceTimingError, 'incomplete referenced key column coverage'):
+            dt._foreign_key_summary([KEYS[0]], self._tables())
+
+    def test_20_inconsistent_index_key_sizes_rejected(self):
+        bad = [KEYS[0], KEYS[1][:-1] + (3,)]
+        with self.assertRaisesRegex(dt.DiceTimingError, 'inconsistent referenced key column count'):
+            dt._foreign_key_summary(bad, self._tables())
+
+    def test_21_invalid_independent_index_key_counts_rejected(self):
+        for value in (None, True, '2', -1, 0, 33):
+            row = KEYS[0][:-1] + (value,)
+            with self.subTest(key_size=value), self.assertRaisesRegex(
+                    dt.DiceTimingError, 'invalid referenced key column count'):
+                dt._foreign_key_summary([row], self._tables())
+
+    def test_22_correct_composite_key_passes_without_runtime_proof(self):
+        report = self.collect(KEYS)
+        self.assertEqual(report['declared_fk_column_count'], 3)
+        self.assertEqual(report['visible_fk_catalog']['constraint_count'], 2)
+        self.assertFalse(report['visible_fk_catalog']['complete_metadata_visibility_verified'])
+        self.assertFalse(report['d2_baud_verified'])
+
+    def test_23_partial_index_visibility_fails_closed(self):
+        # Missing index metadata would return count=0, not a verified empty FK.
+        partial = [KEYS[0][:-1] + (0,)]
+        with self.assertRaises(dt.DiceTimingError):
+            dt._foreign_key_summary(partial, self._tables())
+
+    def test_24_no_fk_does_not_establish_complete_visibility(self):
+        report = self.collect([])
+        self.assertEqual(report['visible_fk_catalog']['constraint_count'], 0)
+        self.assertIs(report['visible_fk_catalog']['complete_metadata_visibility_verified'], False)
+        self.assertFalse(report['replay_approved'])
 
     @staticmethod
     def _tables():
