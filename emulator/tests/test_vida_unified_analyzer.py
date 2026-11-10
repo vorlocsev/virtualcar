@@ -387,6 +387,28 @@ class UnifiedVidaTests(unittest.TestCase):
                                     "uncheckpointed SQLite export sidecar"):
             mod.load_sqlite_export(self.folder)
 
+    def test_19_sqlite_catalog_view_rejected_before_indirect_reads(self):
+        def replace_with_view(db):
+            db.execute('ALTER TABLE _vida_meta RENAME TO _real_exporter_meta')
+            db.execute('CREATE VIEW _vida_meta AS '
+                       'SELECT "key", "value" FROM _real_exporter_meta')
+        self.build("CarCom", override=replace_with_view)
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "unsafe exporter catalog object type"):
+            mod.load_sqlite_export(self.folder)
+
+    def test_20_sqlite_virtual_catalog_table_rejected(self):
+        def replace_with_virtual(db):
+            db.execute('DROP TABLE _vida_meta')
+            try:
+                db.execute('CREATE VIRTUAL TABLE _vida_meta USING fts5("key", "value")')
+            except sqlite3.OperationalError:
+                self.skipTest("FTS5 unavailable in this SQLite build")
+        self.build("CarCom", override=replace_with_virtual)
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "unsafe exporter catalog object type"):
+            mod.load_sqlite_export(self.folder)
+
 
 if __name__ == "__main__":
     unittest.main()
