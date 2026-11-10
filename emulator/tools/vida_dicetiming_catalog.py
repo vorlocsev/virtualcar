@@ -39,7 +39,10 @@ SQL_COLUMNS = ('SELECT s.name, t.name, c.name FROM sys.columns AS c '
                'JOIN sys.schemas AS s ON s.schema_id = t.schema_id')
 SQL_KEYS = ('SELECT fk.object_id, fkc.constraint_column_id, '
             'ss.name, st.name, sc.name, ts.name, tt.name, tc.name, '
-            'fk.is_disabled, fk.is_not_trusted '
+            'fk.is_disabled, fk.is_not_trusted, '
+            '(SELECT COUNT(*) FROM sys.index_columns AS ic '
+            'WHERE ic.object_id = fk.referenced_object_id '
+            'AND ic.index_id = fk.key_index_id AND ic.key_ordinal > 0) '
             'FROM sys.foreign_key_columns AS fkc '
             'JOIN sys.foreign_keys AS fk ON fk.object_id = fkc.constraint_object_id '
             'JOIN sys.tables AS st ON st.object_id = fkc.parent_object_id '
@@ -98,16 +101,24 @@ def _foreign_key_summary(rows, tables):
     identities = {}
     members = {}
     ordinals = {}
+    expected_sizes = {}
     for row in rows:
-        if len(row) != 10:
+        if len(row) != 11:
             raise DiceTimingError('invalid FK catalog row')
-        fk_id, ordinal, ss, st, sc, ts, tt, tc, disabled, untrusted = row
+        (fk_id, ordinal, ss, st, sc, ts, tt, tc,
+         disabled, untrusted, referenced_key_columns) = row
         if type(fk_id) is not int or fk_id <= 0:
             raise DiceTimingError('invalid FK catalog identifier')
         # SQL Server sys.foreign_key_columns.constraint_column_id is 1..n.
         # A missing prefix or interior ordinal indicates partial metadata.
         if type(ordinal) is not int or not 1 <= ordinal <= 32:
             raise DiceTimingError('invalid FK ordinal')
+        if (type(referenced_key_columns) is not int or
+                not 1 <= referenced_key_columns <= 32):
+            raise DiceTimingError('invalid referenced key column count')
+        if fk_id in expected_sizes and expected_sizes[fk_id] != referenced_key_columns:
+            raise DiceTimingError('inconsistent referenced key column count')
+        expected_sizes[fk_id] = referenced_key_columns
         if not all(isinstance(x, str) and x for x in (ss, st, sc, ts, tt, tc)):
             raise DiceTimingError('invalid FK metadata')
         # pyodbc maps SQL BIT to Python bool; accept canonical 0/1 ints too.
@@ -136,9 +147,13 @@ def _foreign_key_summary(rows, tables):
         if (len({src for src, _ in pair_set}) != len(pair_set) or
                 len({dst for _, dst in pair_set}) != len(pair_set)):
             raise DiceTimingError('duplicate FK member column')
-    for positions in ordinals.values():
+    for fk_id, positions in ordinals.items():
         if positions != set(range(1, len(positions) + 1)):
             raise DiceTimingError('noncontiguous FK ordinals')
+        # Independently count key columns on the referenced unique index.
+        # This also catches an otherwise-undetectable truncated FK suffix.
+        if len(positions) != expected_sizes[fk_id]:
+            raise DiceTimingError('incomplete referenced key column coverage')
     return {
         'constraint_count': len(identities),
         'disabled_constraint_count': sum(flags[2] for flags in identities.values()),
