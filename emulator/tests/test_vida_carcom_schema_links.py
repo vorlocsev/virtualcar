@@ -40,7 +40,7 @@ class VidaCarcomSchemaTests(unittest.TestCase):
                 db.execute('INSERT INTO _vida_meta VALUES (?,?)', (key,val))
             for tbl, cols in (tables or {"UnrelatedBaseData": ("id",)}).items():
                 db.execute('INSERT INTO _vida_tables VALUES (?,?,?)', ('dbo', tbl, 7))
-                for col in cols:
+                for col in (cols or ('PRIVATE_UNREPORTED_COLUMN',)):
                     db.execute('INSERT INTO _vida_columns VALUES (?,?,?,?)', ('dbo',tbl,col,56))
             if override:
                 override(db)
@@ -183,6 +183,8 @@ class VidaCarcomSchemaTests(unittest.TestCase):
                        ('dbo', 'T131_InitValue', 'PRIVATE_VIN_AND_BAUD_123456', 165))
             db.execute('INSERT INTO _vida_tables VALUES (?,?,?)',
                        ('dbo', 'PRIVATE_VEHICLE_HARDWARE_123456', 2))
+            db.execute('INSERT INTO _vida_columns VALUES (?,?,?,?)',
+                       ('dbo', 'PRIVATE_VEHICLE_HARDWARE_123456', 'PRIVATE_FIELD', 56))
         self.build('CarCom', mod.TABLES['CarCom'], override=add)
         value = json.dumps(mod.audit(self.folder))
         self.assertNotIn('PRIVATE_VIN_AND_BAUD', value)
@@ -248,6 +250,14 @@ class VidaCarcomSchemaTests(unittest.TestCase):
             with self.assertRaisesRegex(mod.PreflightError,
                                         'incomplete SQLite exporter snapshot'):
                 mod.audit(self.folder)
+
+    def test_20_one_exporter_table_missing_columns_fails_closed(self):
+        def remove_columns(db):
+            db.execute("DELETE FROM _vida_columns WHERE table_name='T111_Service'")
+        self.build('CarCom', mod.TABLES['CarCom'], override=remove_columns)
+        with self.assertRaisesRegex(mod.PreflightError,
+                                    'incomplete table column inventory'):
+            mod.audit(self.folder)
 
     def test_19_rollback_journal_sidecar_rejected(self):
         (self.folder / 'CarCom.sqlite-journal').write_bytes(b'synthetic journal')
