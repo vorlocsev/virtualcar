@@ -187,6 +187,13 @@ class OriginalTableTests(unittest.TestCase):
         self.assertEqual(report['rows'][1][0],'é 🧪')
         self.assertEqual(base64.b64decode(report['rows'][1][1]['value']),bytes(range(5)))
 
+    def test_13_database_name_cannot_inject_odbc_connection_properties(self):
+        for bad in ('CarCom;PWD=secret', 'CarCom}UID=sa', 'CarCom\\Trusted_Connection=No',
+                    'CarCom\nInjected', 'X'*129):
+            with self.subTest(value=bad[:15]), self.assertRaises(capture.OriginalCaptureError):
+                capture.capture(bad, 'dbo', 'T161_Profile', dsn='VIDA_RO',
+                                connector=lambda *_a, **_kw: self.fail('connector invoked'))
+
 
 if __name__=='__main__':
     unittest.main()
