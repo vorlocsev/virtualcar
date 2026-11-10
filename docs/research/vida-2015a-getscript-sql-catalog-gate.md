@@ -117,6 +117,37 @@ From the project root in Windows PowerShell 5.1 or a compatible PowerShell:
     -OutputFile 'C:\VIDA-private\GetScript-catalog-01.json'
 ```
 
+### Explicit local SQL TLS compatibility (owner-only)
+
+On the owner's **separate** Windows 11 LTSC host with installed VIDA 2015A,
+read-only `Invoke-Sqlcmd` connections to `.\VIDA` succeeded with
+`-TrustServerCertificate` because the local SQL certificate chain was not
+trusted. This fact is distinct from the self-hosted VMware runner, which has
+offline SQLite exports but no VIDA GUI.
+
+The helper accepts an **optional** `-TrustServerCertificate` switch only
+when the SQL instance is syntactically local (`.`, `(local)`,
+`localhost`, optionally followed by `\INSTANCE`). Without the switch,
+standard TLS certificate validation remains in place. It does **not** change
+the fixed read-only `sys.*` catalog query or export server names and
+connection strings. Use the exception only for a verified local SQL instance:
+
+```powershell
+& .\emulator\scripts\Inspect-VidaGetScriptSchema.ps1 `
+    -ServerInstance '.\VIDA' `
+    -OutputFile 'C:\VIDA-private\GetScript-catalog-002.json' `
+    -TrustServerCertificate
+```
+
+Verify the example path/instance locally, keep the report outside Git and
+ensure that the output file does not exist. The actual host was previously
+confirmed to expose `dbo.GetScript` with five input parameters, including
+`@scriptType varchar(50)`; SQL `ScriptType.Id=7` corresponds to the stored
+ReadVin row, while `Id=4` corresponds to CarStatus. These **owner-observed
+facts** are not a runtime `GetScript` invocation, the selected XML, D2
+bitrate or an accepted VIN. Avoid automatically querying a shared or remote
+SQL Server with relaxed TLS.
+
 The SqlServer module must already be installed from a trusted source;
 the helper does not install dependencies. Use existing authorized Windows
 authentication, or pass a secure in-memory `PSCredential` if necessary.
