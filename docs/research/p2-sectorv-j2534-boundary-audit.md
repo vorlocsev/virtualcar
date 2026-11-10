@@ -1,5 +1,9 @@
 # Issue #4: evidence-only SectorV and J2534 boundary audit
 
+The later [SectorV 1.1.2 VIN and CAN analysis](sectorv-1.1.2-vin-can-j2534.md)
+maps the client's three VIN paths to the bounded VirtualCar no-response run
+and records which conclusions each evidence source supports.
+
 The two existing tools describe **different observational layers**:
 
 - `audit_j2534_discovery.py` produces a redacted
