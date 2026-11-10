@@ -88,6 +88,12 @@ class PreflightError(Exception):
 def _read_catalog(path: Path, expected: str) -> tuple[dict, dict]:
     if not path.is_file() or path.is_symlink():
         raise PreflightError("missing or redirected database")
+    # An immutable SQLite open ignores an active WAL or rollback journal.
+    # Refuse partial/inconsistent single-file exporter snapshots.
+    if any(path.with_name(path.name + suffix).exists()
+           or path.with_name(path.name + suffix).is_symlink()
+           for suffix in ("-wal", "-shm", "-journal")):
+        raise PreflightError("incomplete SQLite exporter snapshot")
     uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
     with closing(sqlite3.connect(uri, uri=True, timeout=5)) as db:
         db.execute("PRAGMA query_only=ON")
@@ -95,6 +101,13 @@ def _read_catalog(path: Path, expected: str) -> tuple[dict, dict]:
         # some builds. Verify the real columns first, without reading any rows.
         for table, required in METADATA_COLUMNS.items():
             try:
+                # Fixed catalog identifiers must be ordinary main tables.
+                # A view or virtual table could indirectly read user payloads.
+                entries = db.execute("PRAGMA table_list('" + table + "')").fetchmany(2)
+                if (len(entries) != 1 or entries[0][0].casefold() != 'main'
+                        or entries[0][1].casefold() != table.casefold()
+                        or entries[0][2] != 'table'):
+                    raise PreflightError("unsafe exporter catalog object type")
                 cursor = db.execute(f'SELECT * FROM "{table}" LIMIT 0')
                 actual = tuple(field[0].casefold() for field in cursor.description)
             except sqlite3.DatabaseError:
