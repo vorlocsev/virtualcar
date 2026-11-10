@@ -105,20 +105,22 @@ Eighteen unit tests cover these behaviors synthetically; run them on a reviewed 
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
-## Isolated PR-head test automation
+## PR test automation admission outcome (2026-11-10)
 
-`.github/workflows/vida-unified-analyzer-pr-tests.yml` adds a narrowly
-scoped GitHub-hosted `pull_request` check for PR #307 only. It checks out
-`github.event.pull_request.head.sha`, asserts that exact Git commit, compiles
-the two analyzer modules and test file, and runs the synthetic unittest file
-with Python 3.12. The job has read-only repository permissions and an
-eight-minute limit; it has **no** private VIDA sources, J2534 adapter or VM
-access. The authoritative Windows VMware workflow still runs exclusively
-on trusted development pushes or main-controlled manual dispatch.
+A narrowly scoped GitHub-hosted, read-only `pull_request` job was attempted
+for PR #307 with an exact-head SHA check, Python 3.12 unittest and compileall,
+without owner-private data or VMware access. The actual
+[GitHub Actions run #42730954493](https://github.com/vorlocsev/virtualcar/actions/runs/42730954493)
+concluded **failure**; GitHub exposed zero job steps and the job-log fetch
+returned an unavailable blob. **No Python code was confirmed executed** and
+the failure's root cause is not established. The temporary hosted workflow
+was removed to retain the repository's owner-only Windows runner policy
+and avoid repeated zero-step runs.
 
-This is merely the **automation definition** until GitHub supplies an
-actual successful workflow run against an exact SHA. Neither a YAML file
-nor local SQLite probes qualify as a passing 18/18 test run or VMware gate.
+The 18 Python PR tests and Python compileall are still **not verified on exact
+head**. A separate local SQLite-only reproduction previously passed 9/9
+checks; these are not the actual PR suite and cannot prove SQL Server or VIDA
+runtime correctness. Do not merge or claim completion based on this run.
 
 ## Still not established
 
