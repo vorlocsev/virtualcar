@@ -20,6 +20,7 @@ import uuid
 
 SCHEMA = 'virtualcar-vida-original-table-capture-v1'
 DSN_RE = re.compile(r'[A-Za-z0-9_.-]{1,128}\Z')
+DATABASE_RE = re.compile(r'[A-Za-z0-9_. -]{1,128}\Z')
 MAX_ROWS = 5000
 MAX_COLUMNS = 1024
 MAX_OUTPUT_BYTES = 50 * 1024 * 1024
@@ -91,7 +92,8 @@ def _consume(cursor, maximum):
 
 def capture(database, schema, table, *, dsn, max_rows=1000, connector=None):
     database, schema, table = (_name(x) for x in (database, schema, table))
-    if (type(dsn) is not str or not DSN_RE.fullmatch(dsn)
+    if (not DATABASE_RE.fullmatch(database) or
+            type(dsn) is not str or not DSN_RE.fullmatch(dsn)
             or type(max_rows) is not int or not 1 <= max_rows <= MAX_ROWS):
         raise OriginalCaptureError('invalid capture options')
     if connector is None:
