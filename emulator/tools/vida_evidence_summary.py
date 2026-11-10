@@ -46,6 +46,8 @@ STAGES = (
     "dice_timing_visible_fk_catalog",
     "catalog_shape_comparison", "dice_timing_count_comparison",
     "dice_timing_visible_schema_hmac",
+    "carcom_profile_init_shape", "carcom_service_protocol_shape",
+    "dicetiming_to_carcom_row_join",
     "readvin_static_graph",
     "profile_to_readvin_join", "getscript_runtime_selection",
     "j2534_correlated_exchange", "client_vin_acceptance",
@@ -230,6 +232,49 @@ def _dice_timing_count_comparison(report):
             "schema_equivalence_verified": False}
 
 
+def _profile_bridge(report, report_digests):
+    if (type(report) is not dict or
+            report.get('schema_version') != 'virtualcar-vida-profile-init-metadata-bridge-v1' or
+            report.get('status') != 'static_metadata_hypotheses_only'):
+        raise EvidenceError('unexpected profile InitHw bridge schema')
+    flags = ('dicetiming_to_carcom_join_verified', 'selected_ecu_profile_verified',
+             'inherited_init_hw_values_verified', 'd2_baud_verified',
+             'getscript_readvin_runtime_verified', 'client_vin_accepted',
+             'physical_j2534_verified', 'replay_approved')
+    _negative(report, flags)
+    if (type(report_digests) is not dict or
+            not {'catalog', 'dicetiming'}.issubset(report_digests)):
+        raise EvidenceError('profile bridge source reports missing')
+    fingerprints = report.get('source_report_sha256')
+    if (type(fingerprints) is not dict or
+            set(fingerprints) != {'catalog', 'dicetiming'}):
+        raise EvidenceError('profile bridge is not byte bound to input reports')
+    for kind in ('catalog', 'dicetiming'):
+        value = fingerprints[kind]
+        if (type(value) is not str or not _SHA256.fullmatch(value) or
+                not hmac.compare_digest(value, report_digests[kind])):
+            raise EvidenceError('profile bridge source bytes differ')
+    if report.get('dicetiming_metadata_checked') is not True:
+        raise EvidenceError('profile bridge did not check DiceTiming')
+    counts = report.get('missing_public_hints')
+    if type(counts) is not dict or set(counts) != {'profile_init', 'service_protocol'}:
+        raise EvidenceError('invalid profile bridge hint summary')
+    out = {}
+    for name, field in (('profile_init', 'profile_init_shape'),
+                        ('service_protocol', 'service_protocol_shape')):
+        count = _uint(counts[name], 32)
+        status = report.get(field)
+        if ((status == 'candidate_shape' and count != 0) or
+                (status == 'incomplete_shape' and count == 0) or
+                status not in ('candidate_shape', 'incomplete_shape')):
+            raise EvidenceError('contradictory profile bridge shape')
+        out[name] = status
+    return {'profile_init_shape': out['profile_init'],
+            'service_protocol_shape': out['service_protocol'],
+            'dicetiming_to_carcom_row_join_verified': False,
+            'redacted_report_byte_binding_verified': True}
+
+
 def _comparison(report):
     if (type(report) is not dict or
             report.get("schema_version") != "virtualcar-vida-catalog-compare-v1" or
@@ -268,16 +313,19 @@ def _readvin(report):
 
 
 def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
-             report_bytes_bound=False, dice_timing_comparison=None):
+             report_bytes_bound=False, dice_timing_comparison=None,
+             profile_bridge=None, input_digests=None):
     if type(report_bytes_bound) is not bool:
         raise EvidenceError("invalid byte-binding status")
     if all(item is None for item in (catalog, comparison, readvin, dice_timing,
-                                    dice_timing_comparison)):
+                                    dice_timing_comparison, profile_bridge)):
         raise EvidenceError("no evidence reports supplied")
     accepted_catalog = _catalog(catalog) if catalog is not None else None
     accepted_dice_timing = _dice_timing(dice_timing) if dice_timing is not None else None
     accepted_dice_comparison = (_dice_timing_count_comparison(dice_timing_comparison)
                                 if dice_timing_comparison is not None else None)
+    accepted_profile_bridge = (_profile_bridge(profile_bridge, input_digests)
+                               if profile_bridge is not None else None)
     accepted_comparison = _comparison(comparison) if comparison is not None else None
     accepted_readvin = _readvin(readvin) if readvin is not None else None
     if accepted_comparison is not None:
@@ -301,6 +349,13 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
         "catalog_shape_comparison": comparison_status,
         "dice_timing_count_comparison": dice_comparison_status,
         "dice_timing_visible_schema_hmac": hmac_status,
+        "carcom_profile_init_shape": ("not_tested" if accepted_profile_bridge is None else
+            "passed" if accepted_profile_bridge["profile_init_shape"] == "candidate_shape"
+            else "failed"),
+        "carcom_service_protocol_shape": ("not_tested" if accepted_profile_bridge is None else
+            "passed" if accepted_profile_bridge["service_protocol_shape"] == "candidate_shape"
+            else "failed"),
+        "dicetiming_to_carcom_row_join": "not_tested",
         "readvin_static_graph": "passed" if accepted_readvin else "not_tested",
         "profile_to_readvin_join": "not_tested",
         "getscript_runtime_selection": "not_tested",
@@ -316,6 +371,7 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
         "catalog": accepted_catalog,
         "dice_timing_catalog": accepted_dice_timing,
         "dice_timing_count_comparison": accepted_dice_comparison,
+        "profile_init_metadata_bridge": accepted_profile_bridge,
         "comparison_disagreement_counts": accepted_comparison,
         "readvin_graph": accepted_readvin,
         "open_blockers": [name for name in STAGES if statuses[name] != "passed"],
@@ -338,13 +394,15 @@ def main(argv=None):
     parser.add_argument("--readvin-report", type=Path)
     parser.add_argument("--dicetiming-report", type=Path)
     parser.add_argument("--dicetiming-compare-report", type=Path)
+    parser.add_argument("--profile-init-report", type=Path)
     parser.add_argument("--bundle-manifest", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         paths = {"catalog": args.catalog_report, "comparison": args.compare_report,
                  "readvin": args.readvin_report, "dicetiming": args.dicetiming_report,
-                 "dicetiming_compare": args.dicetiming_compare_report}
+                 "dicetiming_compare": args.dicetiming_compare_report,
+                 "profile_init": args.profile_init_report}
         sources = [p for p in paths.values() if p is not None]
         if args.bundle_manifest is not None:
             sources.append(args.bundle_manifest)
@@ -368,6 +426,8 @@ def main(argv=None):
             dice_timing=loaded["dicetiming"][0] if "dicetiming" in loaded else None,
             dice_timing_comparison=(loaded["dicetiming_compare"][0]
                                     if "dicetiming_compare" in loaded else None),
+            profile_bridge=loaded["profile_init"][0] if "profile_init" in loaded else None,
+            input_digests={key: pair[1] for key, pair in loaded.items()},
             report_bytes_bound=args.bundle_manifest is not None,
         )
         with args.output.open("x", encoding="utf-8") as stream:
