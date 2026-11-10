@@ -12,11 +12,29 @@ SCHEMA = 'virtualcar-vida-redacted-readvin-crosscheck-v1'
 MAX_BYTES = 128 * 1024
 
 
+def _unique_json_keys(pairs):
+    # Duplicate keys can hide conflicting evidence flags or schemas.
+    # Reject them at every nesting level instead of taking the last value.
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate redacted JSON key')
+        result[key] = value
+    return result
+
+
+def _no_nonfinite_json(value):
+    # Python's json parser otherwise accepts NaN and Infinity extensions.
+    raise ValueError('nonfinite redacted JSON value')
+
+
 def _read(path, expected):
     path = Path(path)
     if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_BYTES:
         raise ValueError('unsupported input')
-    obj = json.loads(path.read_text(encoding='utf-8'))
+    obj = json.loads(path.read_text(encoding='utf-8'),
+                     object_pairs_hook=_unique_json_keys,
+                     parse_constant=_no_nonfinite_json)
     if not isinstance(obj, dict) or obj.get('schema_version') != expected:
         raise ValueError('wrong report schema')
     return obj
