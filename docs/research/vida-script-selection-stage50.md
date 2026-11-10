@@ -77,3 +77,31 @@ still requires an independently observed and authorized original diagnostic
 session. Earlier test claims in this document refer to the earlier release;
 the focused follow-up adds six negative/positive synthetic regression cases.
 
+
+## Follow-up: clock-only midnight rollover (2026-11-10)
+
+Original VIDA ScriptProvider log event headers contain `HH:mm:ss,fff` but
+not a per-event calendar date. The previous 30-second request→fetch→run
+correlator compared only same-day millisecond clock values, so a valid
+trace beginning just before midnight and continuing after midnight would be
+wrongly treated as an orphan fetch or unmatched run.
+
+The clock-only classifier now accepts **one tightly bounded presumed
+midnight rollover** only when the GetScript request is in the final 30 seconds
+of the day and the subsequent event occurs in the first 30 seconds of the
+next clock day. Both elapsed times are measured relative to the same request
+and must remain within its original 30-second window; `Running script`
+must be no earlier than `Fetched script` on that request-relative timeline.
+A middle-of-day backwards timestamp, an overlong window, a reversed
+fetch/run and a new logsession remain uncorrelatable. This does **not**
+infer a reliable calendar date or permit cross-file/cross-session joins.
+
+Two new report counters, `matched_midnight_rollover_triplets` and
+`matched_read_vin_midnight_rollover_triplets`, count only fully ordered
+correlations. The original report schema version, `matching_scope`
+string, existing counters and all negative VIN/ECU/replay evidence flags
+are unchanged. Six synthetic regression cases were added (31–36).
+No real VIDA 2015A trace or original XML was examined. Even a positive
+rollover counter is only log chronology, **not** proof of
+`RunIdentifyVehicleScript` execution, selected XML, J2534 receipt or a
+VIN accepted by the client.

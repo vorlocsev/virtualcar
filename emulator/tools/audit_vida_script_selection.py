@@ -15,6 +15,7 @@ SCHEMA = "virtualcar-vida-script-selection-trace-v1"
 MAX_BYTES = 4 * 1024 * 1024
 MAX_LINES = 100_000
 MAX_WINDOW_MS = 30_000
+DAY_MS = 24 * 60 * 60 * 1000
 # Limit parsing to explicit VIDA-style components and thread IDs.
 HEADER = re.compile(
     r"^\s*(\d\d):(\d\d):(\d\d)[,.](\d{3})\s+"
@@ -54,6 +55,21 @@ def _time(parts):
     return (((hour * 60) + minute) * 60 + second) * 1000 + milli
 
 
+def _elapsed_ms(start_ms, end_ms):
+    """Elapsed within a short same-day window or one bounded midnight turn.
+
+    Clock-only VIDA logs carry no event date. Never assume an arbitrary
+    negative delta means midnight: only a request in the final 30 s of a
+    day and an event in the first 30 s may wrap. A successful correlation
+    is still log-shape evidence, not a verified ReadVin invocation.
+    """
+    if end_ms >= start_ms:
+        return end_ms - start_ms
+    if start_ms >= DAY_MS - MAX_WINDOW_MS and end_ms < MAX_WINDOW_MS:
+        return DAY_MS - start_ms + end_ms
+    return -1
+
+
 def audit_lines(lines):
     counts = {
         "get_script_requests": 0,
@@ -68,6 +84,8 @@ def audit_lines(lines):
         "matched_get_fetch_run_triplets": 0,
         "matched_veh_comm_specification_triplets": 0,
         "matched_read_vin_triplets": 0,
+        "matched_midnight_rollover_triplets": 0,
+        "matched_read_vin_midnight_rollover_triplets": 0,
         "matched_read_vin_explicit_empty_profile_triplets": 0,
         "matched_read_vin_unbound_bootstrap_shape_triplets": 0,
         "orphan_fetched_script_events": 0,
@@ -157,8 +175,7 @@ def audit_lines(lines):
             if fetched:
                 counts["fetched_script_events"] += 1
                 if (current is None or current["fetched"] is not None
-                        or time_ms - current["time"] < 0
-                        or time_ms - current["time"] > MAX_WINDOW_MS):
+                        or not 0 <= _elapsed_ms(current["time"], time_ms) <= MAX_WINDOW_MS):
                     counts["orphan_fetched_script_events"] += 1
                 else:
                     current["fetched"] = fetched.group(1)
@@ -169,18 +186,25 @@ def audit_lines(lines):
             if running:
                 counts["running_script_events"] += 1
                 if (current is None or current["fetched"] is None
-                        or time_ms - current["time"] < 0
-                        or time_ms - current["time"] > MAX_WINDOW_MS):
+                        or not 0 <= _elapsed_ms(current["time"], time_ms) <= MAX_WINDOW_MS):
                     counts["unmatched_running_script_events"] += 1
-                elif time_ms < current["fetched_time"]:
-                    # Do not promote log records printed out of time order
-                    # into an apparently executed GetScript/fetch/run chain.
+                elif (_elapsed_ms(current["time"], time_ms)
+                      < _elapsed_ms(current["time"], current["fetched_time"])):
+                    # Preserve request-relative ordering across a legitimate
+                    # midnight turn; reject reversed fetch/run timestamps.
+                    # Both elapsed values are bounded by the request window.
                     counts["unmatched_running_script_events"] += 1
                     counts["out_of_order_running_script_events"] += 1
                 elif running.group(1) != current["fetched"]:
                     counts["different_script_running_events"] += 1
                 else:
                     counts["matched_get_fetch_run_triplets"] += 1
+                    crossed_midnight = (current["fetched_time"] < current["time"]
+                                        or time_ms < current["time"])
+                    if crossed_midnight:
+                        counts["matched_midnight_rollover_triplets"] += 1
+                        if current["kind"] == "read_vin":
+                            counts["matched_read_vin_midnight_rollover_triplets"] += 1
                     if current["kind"] == "veh_comm_specification":
                         counts["matched_veh_comm_specification_triplets"] += 1
                     elif current["kind"] == "read_vin":
@@ -201,6 +225,7 @@ def audit_lines(lines):
         "parsed_line_count": observed,
         "events": counts,
         "matching_scope": "same_thread_30_second_window_and_same_declared_log_session",
+        "midnight_rollover_is_clock_only_inference": True,
         "release_declarations_are_per_supplied_log_not_original_dll_version": True,
         "literal_release_marker_does_not_prove_incompatible_diagnostic_engine": True,
         "image_repository_login_failure_is_not_getscript_failure": True,
