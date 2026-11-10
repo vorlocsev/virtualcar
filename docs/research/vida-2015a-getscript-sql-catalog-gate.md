@@ -120,22 +120,22 @@ From the project root in Windows PowerShell 5.1 or a compatible PowerShell:
 ### Explicit local SQL TLS compatibility (owner-only)
 
 On the owner's **separate** Windows 11 LTSC host with installed VIDA 2015A,
-read-only `Invoke-Sqlcmd` connections to `.\\VIDA` succeeded with
+read-only `Invoke-Sqlcmd` connections to `.\VIDA` succeeded with
 `-TrustServerCertificate` because the local SQL certificate chain was not
 trusted. This fact is distinct from the self-hosted VMware runner, which has
 offline SQLite exports but no VIDA GUI.
 
 The helper accepts an **optional** `-TrustServerCertificate` switch only
 when the SQL instance is syntactically local (`.`, `(local)`,
-`localhost`, optionally followed by `\\INSTANCE`). Without the switch,
+`localhost`, optionally followed by `\INSTANCE`). Without the switch,
 standard TLS certificate validation remains in place. It does **not** change
 the fixed read-only `sys.*` catalog query or export server names and
 connection strings. Use the exception only for a verified local SQL instance:
 
 ```powershell
-& .\\emulator\\scripts\\Inspect-VidaGetScriptSchema.ps1 `
-    -ServerInstance '.\\VIDA' `
-    -OutputFile 'C:\\VIDA-private\\GetScript-catalog-002.json' `
+& .\emulator\scripts\Inspect-VidaGetScriptSchema.ps1 `
+    -ServerInstance '.\VIDA' `
+    -OutputFile 'C:\VIDA-private\GetScript-catalog-002.json' `
     -TrustServerCertificate
 ```
 
