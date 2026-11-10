@@ -215,6 +215,45 @@ class VidaCarcomSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.PreflightError,
                                     'invalid exporter metadata schema'):
             mod.audit(self.folder)
+ 
+    def test_16_view_replacing_exporter_catalog_rejected(self):
+        def inject(db):
+            db.execute('ALTER TABLE _vida_meta RENAME TO _saved_meta')
+            db.execute('CREATE VIEW _vida_meta AS '
+                       'SELECT "key", "value" FROM _saved_meta')
+        self.build('CarCom', mod.TABLES['CarCom'], override=inject)
+        with self.assertRaisesRegex(mod.PreflightError,
+                                    'unsafe exporter catalog object type'):
+            mod.audit(self.folder)
+
+    def test_17_virtual_exporter_catalog_rejected(self):
+        def inject(db):
+            db.execute('DROP TABLE _vida_meta')
+            try:
+                db.execute('CREATE VIRTUAL TABLE _vida_meta USING fts5("key", "value")')
+            except sqlite3.OperationalError:
+                self.skipTest('FTS5 module unavailable')
+        self.build('CarCom', mod.TABLES['CarCom'], override=inject)
+        with self.assertRaisesRegex(mod.PreflightError,
+                                    'unsafe exporter catalog object type'):
+            mod.audit(self.folder)
+
+    def test_18_active_wal_snapshot_rejected(self):
+        with contextlib.closing(sqlite3.connect(self.folder / 'CarCom.sqlite')) as db:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute('INSERT INTO _vida_meta VALUES (?, ?)',
+                       ('synthetic_pending', '1'))
+            db.commit()
+            self.assertTrue((self.folder / 'CarCom.sqlite-wal').exists())
+            with self.assertRaisesRegex(mod.PreflightError,
+                                        'incomplete SQLite exporter snapshot'):
+                mod.audit(self.folder)
+
+    def test_19_rollback_journal_sidecar_rejected(self):
+        (self.folder / 'CarCom.sqlite-journal').write_bytes(b'synthetic journal')
+        with self.assertRaisesRegex(mod.PreflightError,
+                                    'incomplete SQLite exporter snapshot'):
+            mod.audit(self.folder)
 
 
 if __name__=='__main__':
