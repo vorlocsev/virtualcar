@@ -94,6 +94,14 @@ def _check(report, backend):
             raise CompareError("unexpected or duplicate shape edge")
         if edge.get("referential_rows_verified") is not False:
             raise CompareError("unverified referential claim")
+        _, db, src, source_column, dst, target_column = key
+        left = databases[db]["known_tables"][src]
+        right = databases[db]["known_tables"][dst]
+        expected = (left["present"] and right["present"]
+                    and source_column in left["known_columns_present"]
+                    and target_column in right["known_columns_present"])
+        if edge["column_shape_present"] != expected:
+            raise CompareError("inconsistent candidate edge shape")
         shapes[key] = edge["column_shape_present"]
     if set(shapes) != set(HINTS):
         raise CompareError("missing known shape edges")
