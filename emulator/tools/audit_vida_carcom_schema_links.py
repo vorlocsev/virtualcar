@@ -157,6 +157,10 @@ def _read_catalog(path: Path, expected: str) -> tuple[dict, dict]:
             if norm in names:
                 raise PreflightError("ambiguous catalog column")
             names.add(norm)
+        # Every exported user table must have visible catalog columns.
+        # Missing columns are an incomplete export, not an absent profile.
+        if any(not columns.get(key) for key in observed):
+            raise PreflightError("incomplete table column inventory")
         # Fail closed on duplicate *fixed* table matches across SQL schemas.
         fixed = {}
         for name, wanted in TABLES[expected].items():
