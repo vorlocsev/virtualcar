@@ -11,7 +11,10 @@ One command-line analyzer supports two schema metadata backends:
 * `sqlite-export`: reads **only** `_vida_meta`, `_vida_tables` and
   `_vida_columns` from the existing `CarCom.sqlite`,
   `DiagSwdlRepository.sqlite` and `BaseData.sqlite` *metadata-only exports*.
-  It opens immutable, read-only files only after rejecting any adjacent
+  It verifies that the three fixed `_vida_*` catalog objects are **ordinary
+  main-schema SQLite tables**, not a view or virtual table, before any
+  catalog `SELECT`. It then opens immutable, read-only files only after
+  rejecting any adjacent
   `-wal`, `-shm` or `-journal` file. These sidecars may indicate that a
   single-file SQLite snapshot was not checkpointed. It cannot reconstruct
   missing original user rows or SQL Server foreign-key constraints that the
@@ -97,11 +100,13 @@ before sharing even aggregate results.
    original table/column names do not escape to JSON.
 8. Exclusive output file, no SQLite source modification, and rejection of
    active SQLite WAL or rollback-journal sidecars.
-9. Empty or metadata-invisible SQL Server table or column catalogs rejected,
+9. Fixed exporter catalog identifiers must be ordinary tables: SQLite views
+   and virtual/FTS tables are rejected before they can redirect reads.
+10. Empty or metadata-invisible SQL Server table or column catalogs rejected,
    including one table with zero visible columns. A nonempty catalog still does
    not prove that its visibility is complete.
 
-Eighteen unit tests cover these behaviors synthetically; run them on a reviewed exact
+Twenty unit tests cover these behaviors synthetically; run them on a reviewed exact
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
@@ -117,10 +122,22 @@ the failure's root cause is not established. The temporary hosted workflow
 was removed to retain the repository's owner-only Windows runner policy
 and avoid repeated zero-step runs.
 
-The 18 Python PR tests and Python compileall are still **not verified on exact
+The 20 Python PR tests and Python compileall are still **not verified on exact
 head**. A separate local SQLite-only reproduction previously passed 9/9
 checks; these are not the actual PR suite and cannot prove SQL Server or VIDA
 runtime correctness. Do not merge or claim completion based on this run.
+
+### Ordinary catalog-table type preflight (2026-11-10)
+
+The analyzer now checks each fixed exporter catalog with
+`PRAGMA table_list('<allowlisted_name>')` before its first SELECT. Only a
+single ordinary object in the `main` schema is accepted. A SQLite VIEW may
+indirectly read application tables, and virtual/FTS tables can route reads
+through a module; neither is appropriate for the metadata-only exporter.
+Two new synthetic test cases cover these alternate object types. An isolated
+local five-case Python reproduction passed; it is **not** the full PR suite.
+A Python SQLite build lacking `PRAGMA table_list` fails closed and must be
+upgraded rather than bypassing the check.
 
 ## Still not established
 
