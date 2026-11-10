@@ -103,7 +103,7 @@ class UnifiedVidaTests(unittest.TestCase):
             for table, columns in mod.TABLES[database].items():
                 db.execute("INSERT INTO _vida_tables VALUES (?,?,?)",
                            ("dbo", table, 3))
-                for column in columns:
+                for column in (columns or ("SECRET_INTERNAL_COLUMN",)):
                     db.execute("INSERT INTO _vida_columns VALUES (?,?,?,?)",
                                ("dbo", table, column, 56))
             # Arbitrary original source names may be in the metadata but are
@@ -396,6 +396,23 @@ class UnifiedVidaTests(unittest.TestCase):
         self.build("CarCom", override=replace_with_view)
         with self.assertRaisesRegex(mod.AnalyzerError,
                                     "unsafe exporter catalog object type"):
+            mod.load_sqlite_export(self.folder)
+
+    def test_21_sqlite_empty_table_catalog_not_accepted_as_absence(self):
+        def empty(db):
+            db.execute('DELETE FROM _vida_tables')
+            db.execute('DELETE FROM _vida_columns')
+        self.build("CarCom", override=empty)
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "empty SQLite exporter table catalog"):
+            mod.load_sqlite_export(self.folder)
+
+    def test_22_sqlite_one_table_without_columns_is_incomplete(self):
+        def empty_one(db):
+            db.execute("DELETE FROM _vida_columns WHERE table_name='T111_Service'")
+        self.build("CarCom", override=empty_one)
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "SQLite exporter table has no columns"):
             mod.load_sqlite_export(self.folder)
 
     def test_20_sqlite_virtual_catalog_table_rejected(self):
