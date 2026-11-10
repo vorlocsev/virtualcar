@@ -292,6 +292,7 @@ def _profile_bridge(report, report_digests, source_catalog=None, source_dice_tim
             'dicetiming_to_carcom_row_join_verified': False,
             'redacted_report_byte_binding_verified': True}
 
+
 def _static_coverage(report, catalog, dice_timing, profile_bridge,
                      readvin, source_digests):
     """Recompute all published coverage claims from exact redacted sources."""
