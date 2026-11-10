@@ -83,11 +83,13 @@ def _check(report, backend):
             raise CompareError("invalid report edge")
         kind = edge.get("evidence")
         if kind == "sqlserver_declared_fk":
-            if backend != "sqlserver":
+            if backend != "sqlserver" or edge.get("referential_rows_verified") is not False:
                 raise CompareError("unexpected declared FK")
             continue  # No SQL Server declared FK can prove a row join.
         key = (kind, edge.get("database"), edge.get("source"),
                edge.get("source_column"), edge.get("target"), edge.get("target_column"))
+        if any(type(value) is not str for value in key):
+            raise CompareError("invalid report edge identity")
         if key not in HINTS or key in shapes or type(edge.get("column_shape_present")) is not bool:
             raise CompareError("unexpected or duplicate shape edge")
         if edge.get("referential_rows_verified") is not False:
