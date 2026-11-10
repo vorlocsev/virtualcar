@@ -202,5 +202,22 @@ class SafeCrosscheckTests(unittest.TestCase):
             self.assertFalse(result.exists())
 
 
+    def test_14_both_reports_agree_but_no_readvin_component(self):
+        a, b = fixtures()
+        a['identity_xml_graph_declarations']['readvin_component_count'] = 0
+        b['node_role_counts']['readvin'] = 0
+        b['node_role_counts']['other'] = 2
+        with self.assertRaisesRegex(ValueError, 'incomplete ReadVin identity'):
+            analyze(a, b)
+
+    def test_15_both_reports_agree_but_no_identity_output(self):
+        a, b = fixtures()
+        a['identity_xml_graph_declarations']['vehicle_identity_output_count'] = 0
+        b['node_role_counts']['identity_output'] = 0
+        b['node_role_counts']['other'] = 2
+        with self.assertRaisesRegex(ValueError, 'incomplete ReadVin identity'):
+            analyze(a, b)
+
+
 if __name__ == '__main__':
     unittest.main()

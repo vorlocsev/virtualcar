@@ -93,6 +93,13 @@ def analyze(v2, v3):
     if mismatches:
         # Do not print original source values, fields or paths.
         raise ValueError('redacted reports disagree on structural counters')
+    # Two reports can agree on all seven counters while carrying no ReadVin
+    # reader, no identity-output node, or no output declarations at all.
+    # Such vacuous agreement is not a valid ReadVin identity graph.
+    if (checks['readvin_nodes'][0] == 0
+            or checks['identity_output_nodes'][0] == 0
+            or checks['add_vin_declarations'][0] + checks['x40_declarations'][0] == 0):
+        raise ValueError('incomplete ReadVin identity declarations')
     total_nodes = checks['node_count'][0]
     roles = v3['node_role_counts']
     if sum(_uint(roles[k]) for k in ('readvin', 'identity_output', 'other', 'unresolved')) != total_nodes:
