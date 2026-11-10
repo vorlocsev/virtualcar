@@ -29,6 +29,10 @@ FETCHED = re.compile(r"\bFetched script:\s*'([^'\r\n]{1,128})'", re.IGNORECASE)
 RUNNING = re.compile(r"\bRunning script:\s*'([^'\r\n]{1,128})'", re.IGNORECASE)
 # Exact explicit diagnostic Profile label only. It is NOT a model/VIN mapping.
 EMPTY_PROFILE = re.compile(r"\bProfile:\s*'EMPTYPROFILE,'", re.IGNORECASE)
+# The first ReadVin lookup can be unbound: distinguish a literal bootstrap
+# request shape from a generic EmptyProfile mention. Neither proves VIN.
+EMPTY_SCRIPT_ID = re.compile(r"\bScriptId:\s*''", re.IGNORECASE)
+UNBOUND_ECU_TYPE = re.compile(r"\bEcuType:\s*'-1'", re.IGNORECASE)
 # Log source declarations, not a guess based on the calendar date.
 SESSION_START = re.compile(r"^Starting new logsession:\s+\d{4}-\d\d-\d\d\b")
 RELEASE = re.compile(r"^VIDA release:\s*(VIDA2014D|VIDA2015A)\s*$")
@@ -56,6 +60,7 @@ def audit_lines(lines):
         "requests_veh_comm_specification": 0,
         "requests_read_vin": 0,
         "requests_read_vin_explicit_empty_profile": 0,
+        "requests_read_vin_unbound_bootstrap_shape": 0,
         "requests_other_type": 0,
         "requests_empty_type": 0,
         "fetched_script_events": 0,
@@ -64,8 +69,10 @@ def audit_lines(lines):
         "matched_veh_comm_specification_triplets": 0,
         "matched_read_vin_triplets": 0,
         "matched_read_vin_explicit_empty_profile_triplets": 0,
+        "matched_read_vin_unbound_bootstrap_shape_triplets": 0,
         "orphan_fetched_script_events": 0,
         "unmatched_running_script_events": 0,
+        "out_of_order_running_script_events": 0,
         "different_script_running_events": 0,
         "superseded_incomplete_get_script_requests": 0,
         "script_missing_exception_mentions": 0,
@@ -135,8 +142,15 @@ def audit_lines(lines):
                 explicit_empty = kind == "read_vin" and EMPTY_PROFILE.search(payload) is not None
                 if explicit_empty:
                     counts["requests_read_vin_explicit_empty_profile"] += 1
+                bootstrap = (explicit_empty
+                             and EMPTY_SCRIPT_ID.search(payload) is not None
+                             and UNBOUND_ECU_TYPE.search(payload) is not None)
+                if bootstrap:
+                    counts["requests_read_vin_unbound_bootstrap_shape"] += 1
                 pending[thread] = {"time": time_ms, "kind": kind, "fetched": None,
+                                   "fetched_time": None,
                                    "explicit_empty_profile": explicit_empty,
+                                   "unbound_bootstrap_shape": bootstrap,
                                    "release": release}
                 continue
             fetched = FETCHED.search(payload)
@@ -148,6 +162,7 @@ def audit_lines(lines):
                     counts["orphan_fetched_script_events"] += 1
                 else:
                     current["fetched"] = fetched.group(1)
+                    current["fetched_time"] = time_ms
                 continue
         if component == "Script":
             running = RUNNING.search(payload)
@@ -157,6 +172,11 @@ def audit_lines(lines):
                         or time_ms - current["time"] < 0
                         or time_ms - current["time"] > MAX_WINDOW_MS):
                     counts["unmatched_running_script_events"] += 1
+                elif time_ms < current["fetched_time"]:
+                    # Do not promote log records printed out of time order
+                    # into an apparently executed GetScript/fetch/run chain.
+                    counts["unmatched_running_script_events"] += 1
+                    counts["out_of_order_running_script_events"] += 1
                 elif running.group(1) != current["fetched"]:
                     counts["different_script_running_events"] += 1
                 else:
@@ -171,6 +191,8 @@ def audit_lines(lines):
                         counts["readvin_triplets_" + suffix] += 1
                         if current["explicit_empty_profile"]:
                             counts["matched_read_vin_explicit_empty_profile_triplets"] += 1
+                        if current["unbound_bootstrap_shape"]:
+                            counts["matched_read_vin_unbound_bootstrap_shape_triplets"] += 1
                 pending.pop(thread, None)
 
     return {
@@ -189,6 +211,7 @@ def audit_lines(lines):
         "get_script_type_is_not_runtime_call_site": True,
         "read_vin_get_fetch_run_is_log_chronology_not_identity": True,
         "empty_profile_token_is_not_verified_vehicle_profile": True,
+        "empty_profile_unbound_ecu_type_is_only_request_shape": True,
         "script_content_provenance_verified": False,
         "script_selected_for_identify_vehicle_verified": False,
         "b9fb_to_vin_mapping_verified": False,
