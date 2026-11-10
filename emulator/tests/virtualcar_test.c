@@ -2892,12 +2892,53 @@ static void test_clear_rx_raw_iso_lifetime(U32 dev){
  puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
 }
 
+
+/* Seven source-derived, synthetic-only J2534 CAN-MS channel checks.
+   The original VIDA 2014D IL checks CAN_PS(5, 0x100, 125000)
+   and ISO15765_PS(6, 0, 125000) before ReadVin. The virtual adapter
+   exposes the numeric standard protocols. This tests actual API entry
+   points in our HOST_TEST shim, not VIDA runtime or a physical adapter. */
+static void test_vida_readvin_canms_preflight(U32 dev){
+ U32 can=0,iso=0,hs=0,bad=0xDEADBEEFu;
+ /* 1: original VIDA's CAN_PS numeric parameters are accepted. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000u,&can)==ERR_OK);
+ REQUIRE(can!=0u && channel(can)!=0);
+ REQUIRE(channel(can)->protocol==PROTO_CAN);
+ REQUIRE(channel(can)->flags==CAN_29BIT_ID && channel(can)->baud==125000u);
+ /* 2: release the exact CAN channel without leaving an active lease. */
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(channel(can)==0);
+ /* 3: original VIDA's ISO15765_PS numeric parameters are accepted. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0u,125000u,&iso)==ERR_OK);
+ REQUIRE(iso!=0u && channel(iso)!=0);
+ REQUIRE(channel(iso)->protocol==PROTO_ISO15765);
+ REQUIRE(channel(iso)->flags==0u && channel(iso)->baud==125000u);
+ /* 4: release the ISO channel exactly as original VIDA probes it. */
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(channel(iso)==0);
+ /* 5: repeat the CAN-MS channel and keep a separate HS channel. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000u,&can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0u,500000u,&hs)==ERR_OK);
+ REQUIRE(can!=hs && channel(can) && channel(hs));
+ REQUIRE(channel(can)->baud==125000u && channel(hs)->baud==500000u);
+ /* 6: reject an unrelated vendor protocol without touching live channels. */
+ REQUIRE(PassThruConnect(dev,0x8004u,0u,125000u,&bad)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(bad==0xDEADBEEFu);
+ REQUIRE(channel(can) && channel(hs));
+ /* 7: both open channels can close cleanly in reverse order. */
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(channel(hs)==0 && channel(can)==0);
+ puts("PASS: seven VIDA CAN-MS host J2534 channel groups (no ECU reply or VIN)");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
+ test_vida_readvin_canms_preflight(dev);
  test_d2_replay_isolation_on_set_config(dev);
  test_passive_can_replay_retune_isolation(dev);
  test_raw_can_orphan_cf_admission(dev);
