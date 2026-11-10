@@ -232,6 +232,7 @@ def _dice_timing_count_comparison(report):
             "schema_equivalence_verified": False}
 
 
+
 def _profile_bridge(report, report_digests):
     if (type(report) is not dict or
             report.get('schema_version') != 'virtualcar-vida-profile-init-metadata-bridge-v1' or
