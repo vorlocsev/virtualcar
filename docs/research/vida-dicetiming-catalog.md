@@ -82,6 +82,17 @@ to compare table and column totals without reading original data. The
 `--dicetiming-compare-report` input adds a separate gate to the evidence
 summary; matching totals are not a verified identical schema or timing link.
 
+## Optional keyed schema fingerprint
+
+Use the same owner-private random 256-bit key in
+`VIDA_DICETIMING_HMAC_KEY` when generating both the SQL Server and SQLite
+metadata reports, if stronger visible-schema comparison is needed. The
+collector then emits only `visible_schema_hmac_sha256` and a fixed scope
+label, without original table/column names or the key. A key is optional;
+reports without it preserve the existing format. See
+[the comparison documentation](vida-dicetiming-count-comparison.md)
+for command examples and strict evidence limits.
+
 ## Evidence boundary
 
 The aggregate gate `dice_timing_metadata` is `passed` only for accepted
