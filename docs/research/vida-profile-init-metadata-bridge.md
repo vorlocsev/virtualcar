@@ -92,3 +92,41 @@ Next meaningful evidence is an **owner-local metadata-only** report from
 actual VIDA 2015A, followed by explicitly authorized, bounded
 read-only validation of any candidate associations. No row joins,
 real baud, VIN acceptance, original XML or physical J2534 are certified.
+
+## Independent recomputation in the master summary (2026-11-10)
+
+Earlier revisions of the master summary checked the bridge's source-file
+SHA-256 and internal shape/count consistency, but **did not recalculate
+the claimed shape from source metadata**. A forged bridge could therefore
+report `candidate_shape` with `missing_public_hints=0` even when its
+correctly hashed CarCom input lacked `folderLevel`. This failure was
+reproduced using synthetic reports before the fix.
+
+The master summary now requires **both original parsed, already-redacted
+inputs**, reuses the fixed research allowlists, and independently calls the
+same static shape computation before accepting a bridge. It compares
+the entire reported bridge to the recomputed canonical JSON, including
+nested count types, exact source digests and negative runtime flags.
+Missing original inputs, changed source bytes, inconsistent counts,
+a forged passing Profile or Service shape, or unexpected extra fields
+fail closed. The manifest generator inherits this check because it
+reuses the master summary's preflight.
+
+The statuses retain their limited meaning: only public metadata
+column-shape hypotheses can pass. The
+`dicetiming_to_carcom_row_join` stage remains **Not tested**, as do
+InitHw source values, ECU profile selection, D2 baud, ReadVin execution
+and J2534 acceptance.
+
+Actual isolated local validation: **134/134 synthetic Python tests PASS**
+(previous 127 plus seven regression methods), with
+`python -m compileall -q emulator/tools emulator/tests` PASS.
+The direct CLI entrypoint was also executed in a separate subprocess on
+synthetic reports, confirming successful processing and no accidental
+top-level import cycle. Verified exact Git blob hashes:
+- `vida_evidence_summary.py`: `1bb6b1a902d0fb9853d5886e8f506159673fe749`
+- `test_vida_profile_init_bridge.py`: `f6352df535a9cd3a40bd057c370383e3ddb9f935`
+
+No original VIDA SQL, VMware exact-head workflow, physical J2534 or
+client VIN acceptance was run. Recalculation does **not** authenticate
+the source files or prove same-installation provenance.
