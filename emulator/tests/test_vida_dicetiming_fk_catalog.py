@@ -48,7 +48,9 @@ class FakeCursor:
         return self
 
     def fetchmany(self, count):
-        return self.current[:count]
+        # Model a consuming DB-API cursor, not a repeating test fixture.
+        batch, self.current = self.current[:count], self.current[count:]
+        return batch
 
 
 class FakeDB:
