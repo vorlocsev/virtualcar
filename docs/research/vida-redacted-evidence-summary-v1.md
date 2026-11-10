@@ -84,13 +84,14 @@ Mismatched digests, forged positive provenance/runtime flags, invalid
 keys, duplicate file aliases and overlong manifest files fail closed.
 A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 
-## Eleven evidence gates
+## Twelve evidence gates
 
 | Stage | Meaning of `passed` |
 | --- | --- |
 | `report_bytes_binding` | Optional manifest proves only supplied redacted file bytes match their declared SHA-256; no origin/trust proof |
 | `catalog_metadata` | A supplied metadata-only catalog report passed the summary's structural preflight; original catalog provenance is not verified |
 | `dice_timing_metadata` | A supplied fourth database metadata report passed DiceTiming identity and aggregate shape preflight; no timing values or mapping verified |
+| `dice_timing_visible_fk_catalog` | Optional SQL Server-only visible FK constraint inventory is structurally valid; no row joins, original timing values or complete metadata visibility proven |
 | `dice_timing_count_comparison` | Two already-redacted reports agree on table and column totals only; no schema equivalence or same-origin proof |
 | `dice_timing_visible_schema_hmac` | Optional two-source HMAC match for the visible normalized DiceTiming catalog using the same owner-private key; no source attestation or runtime proof |
 | `catalog_shape_comparison` | A supplied comparison report declares no table/column/edge shape disagreement; it is not a verified same-installation join |
@@ -195,3 +196,22 @@ actual diagnostic execution.
 GitHub sources for this change. Exact-head owner-only Windows VMware CI,
 real VIDA and physical J2534 are not verified. See
 [DiceTiming comparison](vida-dicetiming-count-comparison.md).
+
+### DiceTiming SQL Server FK metadata extension (2026-11-10)
+
+An additional gate, `dice_timing_visible_fk_catalog`, accepts only
+validated aggregate counts from `sys.foreign_keys` joined with
+`sys.foreign_key_columns`. SQL Server constraints are counted once per
+constraint even for composite keys, and disabled, untrusted and
+self-referencing counts remain separate. The SQLite metadata exporter has
+no such catalog and correctly leaves this gate `not_tested`.
+
+No actual relational rows, source SQL definitions or original timing
+parameters were inspected. The gate's `passed` result is strictly a
+metadata syntax/consistency pass, **not** a verified FK join, D2 baud,
+selected ECU profile, ReadVin runtime or VIN acceptance.
+
+The isolated local Python 3.13.5 test suite passed **70/70** synthetic
+tests, with `compileall` PASS. The current changed GitHub blobs match
+the locally executed source/test files. Exact-head owner-only VMware CI
+and original VIDA/J2534 were not tested for this revision.
