@@ -54,13 +54,16 @@ WITH sample AS (
 )
 SELECT COUNT_BIG(*),
        SUM(CASE WHEN sample.[protocol_ref] IS NULL THEN 1 ELSE 0 END),
-       SUM(CASE WHEN sample.[protocol_ref] IS NOT NULL AND EXISTS (
-           SELECT 1 FROM {target} AS p
-           WHERE p.[id] = sample.[protocol_ref]) THEN 1 ELSE 0 END),
-       SUM(CASE WHEN sample.[protocol_ref] IS NOT NULL AND NOT EXISTS (
-           SELECT 1 FROM {target} AS p
-           WHERE p.[id] = sample.[protocol_ref]) THEN 1 ELSE 0 END)
+       SUM(CASE WHEN sample.[protocol_ref] IS NOT NULL
+                    AND matched.[matched_ref] IS NOT NULL THEN 1 ELSE 0 END),
+       SUM(CASE WHEN sample.[protocol_ref] IS NOT NULL
+                    AND matched.[matched_ref] IS NULL THEN 1 ELSE 0 END)
 FROM sample
+OUTER APPLY (
+    SELECT TOP (1) p.[id] AS [matched_ref]
+    FROM {target} AS p
+    WHERE p.[id] = sample.[protocol_ref]
+) AS matched
 """
 
 
