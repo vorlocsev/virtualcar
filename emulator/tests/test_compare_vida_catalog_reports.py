@@ -62,6 +62,7 @@ class CompareVidaReportsTests(unittest.TestCase):
     def test_03_unknown_private_identifiers_never_emitted(self):
         self.sqlserver["databases"]["CarCom"]["PRIVATE_VIN_FROM_CUSTOMER"] = "SENSITIVE_DATA"
         self.sqlserver["edges"].append({"evidence": "sqlserver_declared_fk",
+                                        "referential_rows_verified": False,
                                         "source": "PRIVATE_USER_FK",
                                         "PRIVATE_KEY": "PRIVATE_VIN_123456789"})
         result = json.dumps(mod.compare(self.sqlite, self.sqlserver))
@@ -76,12 +77,21 @@ class CompareVidaReportsTests(unittest.TestCase):
         self.sqlserver["backend"] = "sqlite-export"
         with self.assertRaisesRegex(mod.CompareError, "unexpected backend"):
             mod.compare(self.sqlite, self.sqlserver)
+        self.sqlserver["backend"] = "sqlserver"
+        self.sqlserver["edges"].append({"evidence": "sqlserver_declared_fk",
+                                        "referential_rows_verified": True})
+        with self.assertRaisesRegex(mod.CompareError, "unexpected declared FK"):
+            mod.compare(self.sqlite, self.sqlserver)
 
     def test_05_reject_duplicate_missing_and_bogus_shape(self):
         self.sqlite["edges"].append(copy.deepcopy(self.sqlite["edges"][0]))
         with self.assertRaisesRegex(mod.CompareError, "duplicate shape edge"):
             mod.compare(self.sqlite, self.sqlserver)
         self.sqlite["edges"].pop()
+        self.sqlite["edges"][0]["database"] = ["unhashable"]
+        with self.assertRaisesRegex(mod.CompareError, "invalid report edge identity"):
+            mod.compare(self.sqlite, self.sqlserver)
+        self.sqlite["edges"][0]["database"] = "CarCom"
         self.sqlite["edges"].pop()
         with self.assertRaisesRegex(mod.CompareError, "missing known shape edges"):
             mod.compare(self.sqlite, self.sqlserver)
