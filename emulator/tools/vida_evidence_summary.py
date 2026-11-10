@@ -43,6 +43,7 @@ READVIN_NEGATIVE = (
 )
 STAGES = (
     "report_bytes_binding", "catalog_metadata", "dice_timing_metadata",
+    "dice_timing_visible_fk_catalog",
     "catalog_shape_comparison", "dice_timing_count_comparison",
     "dice_timing_visible_schema_hmac",
     "readvin_static_graph",
@@ -156,9 +157,35 @@ def _dice_timing(report):
     if (tables < 1 or columns < tables or
             (report["backend"] == "sqlite-export" and keys != 0)):
         raise EvidenceError("incomplete DiceTiming metadata")
-    return {"backend": report["backend"], "table_count": tables,
-            "column_count": columns, "declared_fk_column_count": keys,
-            "timing_values_verified": False}
+    result = {"backend": report["backend"], "table_count": tables,
+              "column_count": columns, "declared_fk_column_count": keys,
+              "timing_values_verified": False}
+    fk_catalog = report.get("visible_fk_catalog")
+    if fk_catalog is not None:
+        if (report["backend"] != "sqlserver" or type(fk_catalog) is not dict or
+                set(fk_catalog) != {"scope", "constraint_count",
+                                    "disabled_constraint_count",
+                                    "untrusted_constraint_count",
+                                    "self_referencing_constraint_count",
+                                    "complete_metadata_visibility_verified",
+                                    "referential_rows_verified"} or
+                fk_catalog["scope"] != "sqlserver_visible_constraints_only" or
+                fk_catalog["complete_metadata_visibility_verified"] is not False or
+                fk_catalog["referential_rows_verified"] is not False):
+            raise EvidenceError("unsupported DiceTiming FK catalog")
+        n = _uint(fk_catalog["constraint_count"], 30000)
+        if n > keys:
+            raise EvidenceError("inconsistent DiceTiming FK totals")
+        fields = ("disabled_constraint_count", "untrusted_constraint_count",
+                  "self_referencing_constraint_count")
+        for field in fields:
+            if _uint(fk_catalog[field], 30000) > n:
+                raise EvidenceError("inconsistent DiceTiming FK subgroup")
+        result["visible_fk_catalog"] = {name: fk_catalog[name]
+                                        for name in ("constraint_count",) + fields}
+        result["visible_fk_catalog"]["complete_metadata_visibility_verified"] = False
+        result["visible_fk_catalog"]["referential_rows_verified"] = False
+    return result
 
 
 def _dice_timing_count_comparison(report):
@@ -269,6 +296,8 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
         "report_bytes_binding": "passed" if report_bytes_bound else "not_tested",
         "catalog_metadata": "passed" if accepted_catalog else "not_tested",
         "dice_timing_metadata": "passed" if accepted_dice_timing else "not_tested",
+        "dice_timing_visible_fk_catalog": ("passed" if accepted_dice_timing and
+             accepted_dice_timing.get("visible_fk_catalog") is not None else "not_tested"),
         "catalog_shape_comparison": comparison_status,
         "dice_timing_count_comparison": dice_comparison_status,
         "dice_timing_visible_schema_hmac": hmac_status,
