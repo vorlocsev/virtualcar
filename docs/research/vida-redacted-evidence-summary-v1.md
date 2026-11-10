@@ -104,9 +104,19 @@ runtime flags. Errors never print private paths or values.
 ## Validation and remaining work
 
 The initial isolated synthetic suite passed **10/10** and `compileall`.
-Seven SHA-256 byte-binding regression methods have since been added to the
-Draft branch, but **the expanded 17-test suite and exact-head Windows CI
-have not yet been executed**. They must be run on the reviewed current HEAD. This does not certify the entire
+The expanded suite now contains **17 synthetic test methods**. An isolated
+local execution on Python 3 passed **17/17**, zero errors/failures, with
+`compileall` PASS on both files. The locally executed file contents match
+the exact GitHub PR blobs, checked using `git hash-object`:
+- Tool: `8fb540c8a6c67a75d6f2fba88ee468bfd9f114a9`
+- Tests: `feaa0822933bb8e9471c3e8ec964d3db60f34343`
+
+The first expanded run had **2 test expectation failures**, because
+the earlier tests hardcoded seven stages and indexed the old gate ordering.
+Both tests were corrected to reference stage IDs and the declared stage set;
+the unchanged production byte-binding implementation then passed 17/17.
+**Exact-head Windows VMware CI, the full repository test matrix and
+original VIDA data remain untested** for this PR. This does not certify the entire
 repository, the exact GitHub PR HEAD on Windows, original VIDA SQL Server,
 T111/T122/InitHw rows, effective GetScript, VIDA/SectorV VIN acceptance,
 or physical J2534.
