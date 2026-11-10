@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -156,6 +157,127 @@ class VidaEvidenceSummaryTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(mod.main(["--readvin-report", str(src), "--output", str(src)]), 2)
         self.assertEqual(json.loads(src.read_text())["schema_version"], readvin()["schema_version"])
+
+
+    def test_11_bundle_hash_checks_exact_bytes_without_proving_origin(self):
+        source = self.folder / "catalog.json"
+        source.write_text(json.dumps(catalog()), encoding="utf-8")
+        obj, digest = mod.read_report_with_digest(source)
+        self.assertEqual(digest, hashlib.sha256(source.read_bytes()).hexdigest())
+        manifest = {
+            "schema_version": mod.BUNDLE_SCHEMA,
+            "scope": "redacted_report_bytes_only",
+            "reports": {"catalog": digest},
+            "same_installation_provenance_verified": False,
+            "runtime_evidence_verified": False,
+        }
+        self.assertTrue(mod.verify_bundle_manifest(manifest, {"catalog": digest}))
+        result = mod.assemble(catalog=obj, report_bytes_bound=True)
+        self.assertEqual(result["stages"][0]["status"], "passed")
+        self.assertIs(result["same_installation_provenance_verified"], False)
+        self.assertIs(result["actual_getscript_selected"], False)
+
+    def test_12_manifest_mismatch_or_report_set_change_fails_closed(self):
+        digest = "a" * 64
+        manifest = {
+            "schema_version": mod.BUNDLE_SCHEMA,
+            "scope": "redacted_report_bytes_only",
+            "reports": {"catalog": digest},
+            "same_installation_provenance_verified": False,
+            "runtime_evidence_verified": False,
+        }
+        with self.assertRaises(mod.EvidenceError):
+            mod.verify_bundle_manifest(manifest, {"catalog": "b" * 64})
+        with self.assertRaises(mod.EvidenceError):
+            mod.verify_bundle_manifest(manifest, {"readvin": digest})
+        with self.assertRaises(mod.EvidenceError):
+            mod.verify_bundle_manifest(manifest, {"catalog": digest, "readvin": digest})
+
+    def test_13_manifest_cannot_forge_provenance_or_acceptance(self):
+        manifest = {
+            "schema_version": mod.BUNDLE_SCHEMA,
+            "scope": "redacted_report_bytes_only",
+            "reports": {"readvin": "a" * 64},
+            "same_installation_provenance_verified": True,
+            "runtime_evidence_verified": False,
+        }
+        with self.assertRaises(mod.EvidenceError):
+            mod.verify_bundle_manifest(manifest, {"readvin": "a" * 64})
+        manifest["same_installation_provenance_verified"] = False
+        manifest["runtime_evidence_verified"] = True
+        with self.assertRaises(mod.EvidenceError):
+            mod.verify_bundle_manifest(manifest, {"readvin": "a" * 64})
+        manifest["runtime_evidence_verified"] = False
+        manifest["reports"]["readvin"] = "A" * 64
+        with self.assertRaises(mod.EvidenceError):
+            mod.verify_bundle_manifest(manifest, {"readvin": "A" * 64})
+        manifest["reports"]["readvin"] = "a" * 64
+        manifest["operator_private_comment"] = "PRIVATE_VIN"
+        with self.assertRaises(mod.EvidenceError):
+            mod.verify_bundle_manifest(manifest, {"readvin": "a" * 64})
+
+    def test_14_bundle_cli_and_exclusive_output(self):
+        source = self.folder / "source.json"
+        source.write_text(json.dumps(readvin()), encoding="utf-8")
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        manifest = self.folder / "manifest.json"
+        manifest.write_text(json.dumps({
+            "schema_version": mod.BUNDLE_SCHEMA,
+            "scope": "redacted_report_bytes_only",
+            "reports": {"readvin": digest},
+            "same_installation_provenance_verified": False,
+            "runtime_evidence_verified": False,
+        }), encoding="utf-8")
+        output = self.folder / "result.json"
+        args = ["--readvin-report", str(source), "--bundle-manifest", str(manifest),
+                "--output", str(output)]
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(mod.main(args), 0)
+            self.assertEqual(mod.main(args), 2)
+        text = output.read_text(encoding="utf-8")
+        self.assertNotIn(str(source), text)
+        self.assertNotIn(digest, text)
+        self.assertTrue(json.loads(text)["redacted_report_bytes_bound"])
+        self.assertFalse(json.loads(text)["same_installation_provenance_verified"])
+
+    def test_15_bundle_cli_digest_mismatch_never_creates_summary(self):
+        source = self.folder / "source.json"
+        source.write_text(json.dumps(readvin()), encoding="utf-8")
+        manifest = self.folder / "manifest.json"
+        manifest.write_text(json.dumps({
+            "schema_version": mod.BUNDLE_SCHEMA,
+            "scope": "redacted_report_bytes_only",
+            "reports": {"readvin": "0" * 64},
+            "same_installation_provenance_verified": False,
+            "runtime_evidence_verified": False,
+        }), encoding="utf-8")
+        output = self.folder / "out.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(mod.main(["--readvin-report", str(source),
+                                       "--bundle-manifest", str(manifest),
+                                       "--output", str(output)]), 2)
+        self.assertFalse(output.exists())
+
+    def test_16_manifest_duplicate_keys_nan_and_oversize_rejected(self):
+        path = self.folder / "manifest.json"
+        for invalid in ('{"scope":"a","scope":"b"}', '{"x":Infinity}'):
+            path.write_text(invalid, encoding="utf-8")
+            with self.assertRaises(mod.EvidenceError):
+                mod.read_report_with_digest(path, mod.MAX_MANIFEST_BYTES)
+        path.write_bytes(b"X" * (mod.MAX_MANIFEST_BYTES + 1))
+        with self.assertRaises(mod.EvidenceError):
+            mod.read_report_with_digest(path, mod.MAX_MANIFEST_BYTES)
+
+    def test_17_bundle_manifest_may_not_alias_input(self):
+        path = self.folder / "input.json"
+        path.write_text(json.dumps(readvin()), encoding="utf-8")
+        output = self.folder / "output.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            status = mod.main(["--readvin-report", str(path),
+                               "--bundle-manifest", str(path),
+                               "--output", str(output)])
+        self.assertEqual(status, 2)
+        self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
