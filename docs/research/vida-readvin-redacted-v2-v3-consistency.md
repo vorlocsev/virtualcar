@@ -71,6 +71,24 @@ numbers are rejected rather than allowing a later key to shadow an earlier
 runtime-acceptance flag. The new checks are source-integrity safeguards,
 not evidence of the original script executing.
 
+
+## Follow-up: nonempty graph precondition (2026-11-10)
+
+A subtle false-positive remained after the redacted v2/v3 consistency
+checker was merged: both reports could agree that **zero** ReadVinComponent
+nodes or zero VehicleIdentityOutput nodes exist, while the checker still
+returned `structural_counters_consistent=true`. Agreement by itself does
+not establish that the required identity graph exists.
+
+The checker now fails closed when the graph has no ReadVin reader,
+no identity-output node, or no declared AddVIN/SetX40Serial output call.
+Two synthetic negative cases test mutually consistent yet empty reader
+and identity-output counters. The original previously reviewed source
+has **7 ReadVinComponent and 1 VehicleIdentityOutput**, so this does
+not reinterpret or promote its static graph. The checker still does
+not prove actual GetScript selection, callback execution, D2 bitrate,
+CEM RX or VIN accepted by VIDA or SectorV.
+
 ## Next evidence gate
 
 Investigate exact XML parameter reference semantics along the
