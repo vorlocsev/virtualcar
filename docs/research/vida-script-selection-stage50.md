@@ -48,3 +48,32 @@ Test file: emulator/tests/test_audit_vida_script_selection.py. Local synthetic *
 - Real VIDA/SectorV client acceptance, physical DiCE behavior and comprehensive CEM vehicle configuration.
 
 No J2534 code/fixture changed, no fabricated positive CEM/ECU responses, no Security Access, programming, PIN extraction or release publication. Continue only after a reliable authorized original-script/diagnostic-log observation.
+
+## Follow-up: monotonic GetScript triplets and first unbound ReadVin (2026-11-10)
+
+The original trace checker guarded the 30-second window relative to GetScript
+but did **not** compare the time of `Running script` to the preceding
+`Fetched script`. With out-of-order log timestamps it could mark a successful
+triplet even though the run appeared **before** the fetch. The corrected
+classifier requires `GetScript time <= Fetched time <= Running time`, on
+the same trace thread and within the same log session. Out-of-order running
+events have their own counter, also increment `unmatched_running_script_events`,
+and clear that thread's pending correlation.
+
+The first VIDA identify-vehicle lookup has a separate *literal request
+shape* that may contain `Type: 'ReadVin'`, `Profile: 'EMPTYPROFILE,'`,
+`ScriptId: ''`, and `EcuType: '-1'`. The checker now counts that complete
+four-field shape, separately from the existing broad explicit EMPTYPROFILE
+counter. A matching GetScript/fetch/run sequence increments a second bootstrap
+shape triplet counter, not a runtime identity or vehicle profile verification.
+Partial, wrong-type, cross-thread, out-of-order and missing-fetched sequences
+remain non-promotable. The output never includes original field values, VIN,
+script identifiers, private paths, raw log lines or timestamps.
+
+These are synthetic event-order guards, **not evidence that the owner's VIDA
+2015A actually executed ReadVin with those parameters**, nor proof of D2
+bitrate, CEM replies or VIN acceptance. Real GetScript/profile selection
+still requires an independently observed and authorized original diagnostic
+session. Earlier test claims in this document refer to the earlier release;
+the focused follow-up adds six negative/positive synthetic regression cases.
+
