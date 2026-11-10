@@ -233,7 +233,7 @@ def _dice_timing_count_comparison(report):
 
 
 
-def _profile_bridge(report, report_digests):
+def _profile_bridge(report, report_digests, source_catalog=None, source_dice_timing=None):
     if (type(report) is not dict or
             report.get('schema_version') != 'virtualcar-vida-profile-init-metadata-bridge-v1' or
             report.get('status') != 'static_metadata_hypotheses_only'):
@@ -270,6 +270,19 @@ def _profile_bridge(report, report_digests):
                 status not in ('candidate_shape', 'incomplete_shape')):
             raise EvidenceError('contradictory profile bridge shape')
         out[name] = status
+    if source_catalog is None or source_dice_timing is None:
+        raise EvidenceError('profile bridge source content missing')
+    # A hash only identifies source bytes. It cannot certify a bridge's claims.
+    # Recompute the static hypotheses from the original parsed, redacted inputs.
+    # Import here to avoid a top-level dependency cycle with the bridge CLI.
+    from vida_profile_init_bridge import bridge as compute_bridge
+    expected = compute_bridge(
+        source_catalog, source_dice_timing,
+        {'catalog': report_digests['catalog'],
+         'dicetiming': report_digests['dicetiming']})
+    if (json.dumps(report, sort_keys=True, separators=(',', ':')) !=
+            json.dumps(expected, sort_keys=True, separators=(',', ':'))):
+        raise EvidenceError('profile bridge differs from source metadata')
     return {'profile_init_shape': out['profile_init'],
             'service_protocol_shape': out['service_protocol'],
             'dicetiming_to_carcom_row_join_verified': False,
@@ -325,7 +338,8 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
     accepted_dice_timing = _dice_timing(dice_timing) if dice_timing is not None else None
     accepted_dice_comparison = (_dice_timing_count_comparison(dice_timing_comparison)
                                 if dice_timing_comparison is not None else None)
-    accepted_profile_bridge = (_profile_bridge(profile_bridge, input_digests)
+    accepted_profile_bridge = (_profile_bridge(profile_bridge, input_digests,
+                                                catalog, dice_timing)
                                if profile_bridge is not None else None)
     accepted_comparison = _comparison(comparison) if comparison is not None else None
     accepted_readvin = _readvin(readvin) if readvin is not None else None
