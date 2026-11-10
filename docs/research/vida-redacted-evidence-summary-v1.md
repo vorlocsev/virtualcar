@@ -25,6 +25,10 @@ Optional inputs (at least one required):
   two redacted DiceTiming SQL Server/SQLite catalogs
   (`virtualcar-vida-dicetiming-count-compare-v1`), see
   [DiceTiming count comparison](vida-dicetiming-count-comparison.md).
+- `--profile-init-report`: optional CarCom Profile / InitHw static shape
+  summary from `vida_profile_init_bridge.py`, bound to the exact
+  `--catalog-report` and `--dicetiming-report` file bytes.
+  See [metadata bridge](vida-profile-init-metadata-bridge.md).
 
 Use only owner-controlled, redacted reports. Source reports may originate
 from **different machines or installations**; supplying multiple reports
@@ -68,8 +72,8 @@ An owner-only manifest example for one report is:
 
 Replace the placeholder with the exact SHA-256 digest of the redacted
 input JSON **including its original whitespace/newlines**. Use the
-`catalog`, `comparison`, `readvin`, optional `dicetiming`, and
-`dicetiming_compare` keys
+`catalog`, `comparison`, `readvin`, optional `dicetiming`,
+`dicetiming_compare`, and `profile_init` keys
 for inputs actually supplied, no others. A digest is never included in the aggregate output.
 
 Run:
@@ -110,7 +114,7 @@ Mismatched digests, forged positive provenance/runtime flags, invalid
 keys, duplicate file aliases and overlong manifest files fail closed.
 A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 
-## Twelve evidence gates
+## Fifteen evidence gates
 
 | Stage | Meaning of `passed` |
 | --- | --- |
@@ -120,6 +124,9 @@ A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 | `dice_timing_visible_fk_catalog` | Optional SQL Server-only visible FK constraint inventory is structurally valid; no row joins, original timing values or complete metadata visibility proven |
 | `dice_timing_count_comparison` | Two already-redacted reports agree on table and column totals only; no schema equivalence or same-origin proof |
 | `dice_timing_visible_schema_hmac` | Optional two-source HMAC match for the visible normalized DiceTiming catalog using the same owner-private key; no source attestation or runtime proof |
+| `carcom_profile_init_shape` | Fixed CarCom Profile/InitHw column-shape hypotheses agree with the bound redacted catalog; not actual source-row joins |
+| `carcom_service_protocol_shape` | Fixed CarCom Service/Protocol/Bus column-shape hypotheses agree with the bound redacted catalog; not actual speed or selected vehicle |
+| `dicetiming_to_carcom_row_join` | Always Not tested; the independent DiceTiming catalog contains no verified cross-database row relationship |
 | `catalog_shape_comparison` | A supplied comparison report declares no table/column/edge shape disagreement; it is not a verified same-installation join |
 | `readvin_static_graph` | A supplied redacted v2/v3 crosscheck declares seven consistent counters, nonempty ReadVin/identity nodes and identity calls |
 | `profile_to_readvin_join` | Always `not_tested` until independently proven |
@@ -241,3 +248,28 @@ The isolated local Python 3.13.5 test suite passed **70/70** synthetic
 tests, with `compileall` PASS. The current changed GitHub blobs match
 the locally executed source/test files. Exact-head owner-only VMware CI
 and original VIDA/J2534 were not tested for this revision.
+
+### CarCom Profile / InitHw metadata bridge (2026-11-10)
+
+The optional static bridge now consumes the already-redacted unified
+CarCom catalog together with an independently redacted DiceTiming catalog
+and tests only the **existing research-hint column shapes**. It binds
+the two source JSON files by exact SHA-256 values and rejects missing or
+changed inputs when their output is included in the master summary.
+A manifest can include `profile_init` alongside `catalog` and
+`dicetiming`, providing another byte-integrity check but not
+authenticity or a same-installation guarantee.
+
+The three new stages `carcom_profile_init_shape`,
+`carcom_service_protocol_shape`, and
+`dicetiming_to_carcom_row_join` have explicitly different semantics:
+the first two can pass **shape-only** checks; the third always remains
+Not tested. Even when all expected columns are present, the data-level
+relationship, inherited InitHw setting, selected ECU profile, actual
+D2 baud, executed ReadVin and accepted VIN remain unknown.
+
+**Local verification:** 127/127 Python 3.13.5 isolated synthetic tests
+PASS, `compileall` PASS. Test sources used a local-only transcription of
+the existing published research-hint constants, not original VIDA data.
+No exact-head Windows VMware CI, original 2015A SQL Server data, physical
+J2534 or real client VIN acceptance was executed.
