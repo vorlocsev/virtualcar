@@ -43,7 +43,8 @@ READVIN_NEGATIVE = (
 )
 STAGES = (
     "report_bytes_binding", "catalog_metadata", "dice_timing_metadata",
-    "catalog_shape_comparison", "readvin_static_graph",
+    "catalog_shape_comparison", "dice_timing_count_comparison",
+    "readvin_static_graph",
     "profile_to_readvin_join", "getscript_runtime_selection",
     "j2534_correlated_exchange", "client_vin_acceptance",
 )
@@ -159,6 +160,38 @@ def _dice_timing(report):
             "timing_values_verified": False}
 
 
+def _dice_timing_count_comparison(report):
+    if (type(report) is not dict or
+            report.get("schema_version") != "virtualcar-vida-dicetiming-count-compare-v1" or
+            report.get("status") != "aggregate_count_comparison_only" or
+            report.get("database") != "DiceTiming"):
+        raise EvidenceError("unexpected DiceTiming comparison schema")
+    for name in ("sqlite_fk_metadata_available", "schema_equivalence_verified",
+                 "same_installation_provenance_verified", "referential_rows_verified",
+                 "timing_profile_link_verified", "original_timing_values_read",
+                 "d2_baud_verified", "readvin_execution_verified",
+                 "client_vin_accepted", "replay_approved"):
+        if report.get(name) is not False:
+            raise EvidenceError("unexpected DiceTiming comparison evidence claim")
+    st = _uint(report.get("sqlite_table_count"), 2000)
+    ss = _uint(report.get("sqlserver_table_count"), 2000)
+    ct = _uint(report.get("sqlite_column_count"), 30000)
+    cs = _uint(report.get("sqlserver_column_count"), 30000)
+    _uint(report.get("sqlserver_declared_fk_column_count"), 30000)
+    if not (st > 0 and ss > 0 and ct >= st and cs >= ss):
+        raise EvidenceError("incomplete DiceTiming comparison totals")
+    matches_tables, matches_columns = st == ss, ct == cs
+    for name, expected in (("table_counts_equal", matches_tables),
+                           ("column_counts_equal", matches_columns),
+                           ("aggregate_counts_equal", matches_tables and matches_columns)):
+        if report.get(name) is not expected:
+            raise EvidenceError("inconsistent DiceTiming count comparison")
+    return {"table_counts_equal": matches_tables,
+            "column_counts_equal": matches_columns,
+            "aggregate_counts_equal": matches_tables and matches_columns,
+            "schema_equivalence_verified": False}
+
+
 def _comparison(report):
     if (type(report) is not dict or
             report.get("schema_version") != "virtualcar-vida-catalog-compare-v1" or
@@ -197,13 +230,16 @@ def _readvin(report):
 
 
 def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
-             report_bytes_bound=False):
+             report_bytes_bound=False, dice_timing_comparison=None):
     if type(report_bytes_bound) is not bool:
         raise EvidenceError("invalid byte-binding status")
-    if all(item is None for item in (catalog, comparison, readvin, dice_timing)):
+    if all(item is None for item in (catalog, comparison, readvin, dice_timing,
+                                    dice_timing_comparison)):
         raise EvidenceError("no evidence reports supplied")
     accepted_catalog = _catalog(catalog) if catalog is not None else None
     accepted_dice_timing = _dice_timing(dice_timing) if dice_timing is not None else None
+    accepted_dice_comparison = (_dice_timing_count_comparison(dice_timing_comparison)
+                                if dice_timing_comparison is not None else None)
     accepted_comparison = _comparison(comparison) if comparison is not None else None
     accepted_readvin = _readvin(readvin) if readvin is not None else None
     if accepted_comparison is not None:
@@ -211,11 +247,15 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
         comparison_status = "passed" if matched else "failed"
     else:
         comparison_status = "not_tested"
+    dice_comparison_status = ("not_tested" if accepted_dice_comparison is None else
+                              "passed" if accepted_dice_comparison["aggregate_counts_equal"]
+                              else "failed")
     statuses = {
         "report_bytes_binding": "passed" if report_bytes_bound else "not_tested",
         "catalog_metadata": "passed" if accepted_catalog else "not_tested",
         "dice_timing_metadata": "passed" if accepted_dice_timing else "not_tested",
         "catalog_shape_comparison": comparison_status,
+        "dice_timing_count_comparison": dice_comparison_status,
         "readvin_static_graph": "passed" if accepted_readvin else "not_tested",
         "profile_to_readvin_join": "not_tested",
         "getscript_runtime_selection": "not_tested",
@@ -230,6 +270,7 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
         "stages": [{"id": name, "status": statuses[name]} for name in STAGES],
         "catalog": accepted_catalog,
         "dice_timing_catalog": accepted_dice_timing,
+        "dice_timing_count_comparison": accepted_dice_comparison,
         "comparison_disagreement_counts": accepted_comparison,
         "readvin_graph": accepted_readvin,
         "open_blockers": [name for name in STAGES if statuses[name] != "passed"],
@@ -251,12 +292,14 @@ def main(argv=None):
     parser.add_argument("--compare-report", type=Path)
     parser.add_argument("--readvin-report", type=Path)
     parser.add_argument("--dicetiming-report", type=Path)
+    parser.add_argument("--dicetiming-compare-report", type=Path)
     parser.add_argument("--bundle-manifest", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         paths = {"catalog": args.catalog_report, "comparison": args.compare_report,
-                 "readvin": args.readvin_report, "dicetiming": args.dicetiming_report}
+                 "readvin": args.readvin_report, "dicetiming": args.dicetiming_report,
+                 "dicetiming_compare": args.dicetiming_compare_report}
         sources = [p for p in paths.values() if p is not None]
         if args.bundle_manifest is not None:
             sources.append(args.bundle_manifest)
@@ -278,6 +321,8 @@ def main(argv=None):
             comparison=loaded["comparison"][0] if "comparison" in loaded else None,
             readvin=loaded["readvin"][0] if "readvin" in loaded else None,
             dice_timing=loaded["dicetiming"][0] if "dicetiming" in loaded else None,
+            dice_timing_comparison=(loaded["dicetiming_compare"][0]
+                                    if "dicetiming_compare" in loaded else None),
             report_bytes_bound=args.bundle_manifest is not None,
         )
         with args.output.open("x", encoding="utf-8") as stream:
