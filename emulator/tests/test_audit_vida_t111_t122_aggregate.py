@@ -29,17 +29,17 @@ class Cursor:
             self.current = [(self.connection.database,)]
         elif "FROM sys.columns" in sql:
             self.current = [
-                (self.connection.source_schema, "T111_Service", "id"),
-                (self.connection.source_schema, "T111_Service", "fkT122_Protocol"),
-                (self.connection.target_schema, "T122_Protocol", "id"),
+                (self.connection.source_schema, self.connection.source_table, self.connection.source_id),
+                (self.connection.source_schema, self.connection.source_table, self.connection.source_ref),
+                (self.connection.target_schema, self.connection.target_table, self.connection.target_id),
                 ("dbo", "PRIVATE_CLIENT_VIN_123456", "PRIVATE_SECRET")
             ]
             if self.connection.omit_column:
-                self.current = [r for r in self.current if r[2] != "fkT122_Protocol"]
+                self.current = [r for r in self.current if r[2] != self.connection.source_ref]
         elif "FROM sys.tables" in sql:
             self.current = [
-                (self.connection.source_schema, "T111_Service"),
-                (self.connection.target_schema, "T122_Protocol"),
+                (self.connection.source_schema, self.connection.source_table),
+                (self.connection.target_schema, self.connection.target_table),
                 ("dbo", "PRIVATE_CLIENT_VIN_123456")
             ]
             if self.connection.duplicate:
@@ -59,6 +59,11 @@ class Connection:
         self.database = database
         self.source_schema = source_schema
         self.target_schema = target_schema
+        self.source_table = "T111_Service"
+        self.target_table = "T122_Protocol"
+        self.source_id = "id"
+        self.source_ref = "fkT122_Protocol"
+        self.target_id = "id"
         self.queries = []
         self.aggregate = [(10, 2, 7, 1)]
         self.omit_column = False
@@ -175,6 +180,58 @@ class VidaAggregateTests(unittest.TestCase):
             result = json.loads(output.read_text())
             self.assertEqual(result["matching_reference_rows"], 7)
             self.assertFalse(result["replay_approved"])
+
+
+    def test_11_case_sensitive_catalog_identifiers_are_preserved(self):
+        self.conn.source_schema = "VidaMixed"
+        self.conn.target_schema = "ProtocolsMixed"
+        self.conn.source_table = "t111_service"
+        self.conn.target_table = "t122_PROTOCOL"
+        self.conn.source_id = "ID"
+        self.conn.source_ref = "FKt122_PROTOCOL"
+        self.conn.target_id = "Id"
+        report = mod.probe("VIDA_RESTRICTED", self.connect)
+        sql = self.conn.queries[-1]
+        self.assertIn("[VidaMixed].[t111_service]", sql)
+        self.assertIn("[ProtocolsMixed].[t122_PROTOCOL]", sql)
+        self.assertIn("s.[FKt122_PROTOCOL]", sql)
+        self.assertIn("ORDER BY s.[ID]", sql)
+        self.assertIn("p.[Id]", sql)
+        self.assertNotIn("VidaMixed", json.dumps(report))
+        self.assertEqual(report["source_table"], "T111_Service")
+
+    def test_12_escape_all_catalog_identifier_slots(self):
+        self.conn.source_schema = "Vida]Group"
+        self.conn.target_schema = "Proto]Group"
+        self.conn.source_table = "T111_]Service"  # This is not allowlisted; no aggregate.
+        with self.assertRaisesRegex(mod.ProbeError, "preflight failed"):
+            mod.probe("VIDA_RESTRICTED", self.connect)
+        self.assertFalse(any("OUTER APPLY" in sql for sql in self.conn.queries))
+        self.assertTrue(self.conn.closed)
+        self.conn = Connection(source_schema="Vida]Group", target_schema="Proto]Group")
+        self.conn.source_id = "iD"
+        self.conn.source_ref = "fkt122_protocol"
+        self.conn.target_id = "iD"
+        mod.probe("VIDA_RESTRICTED", self.connect)
+        sql = self.conn.queries[-1]
+        self.assertIn("[Vida]]Group].[T111_Service]", sql)
+        self.assertIn("[Proto]]Group].[T122_Protocol]", sql)
+
+    def test_13_duplicate_case_variants_fail_before_application_select(self):
+        self.conn.duplicate = True
+        with self.assertRaisesRegex(mod.ProbeError, "preflight failed"):
+            mod.probe("VIDA_RESTRICTED", self.connect)
+        self.assertFalse(any("OUTER APPLY" in sql for sql in self.conn.queries))
+
+    def test_14_existing_output_fails_before_private_query(self):
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "aggregate.json"
+            output.write_text("DO_NOT_OVERWRITE")
+            with patch.object(mod, "probe", side_effect=AssertionError("should not query")):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(mod.main(["--output", str(output)]), 2)
+            self.assertEqual(output.read_text(), "DO_NOT_OVERWRITE")
+
 
 
 if __name__ == "__main__":

@@ -32,25 +32,37 @@ def _quoted(value: str) -> str:
     return "[" + value.replace("]", "]]" ) + "]"
 
 
-def _resolve(tables, name, required):
-    matching = [(schema, cols) for (schema, table), cols in tables.items()
-                if table == name.casefold()]
+def _resolve(tables, raw_tables, raw_columns, name, required):
+    # Normalized keys are used only for detection and ambiguity checks.
+    # The actual SQL Server identifier spelling must be retained: on a
+    # case-sensitive database [t111_service] is not [T111_Service].
+    matching = [(schema, actual_name) for schema, actual_name in raw_tables
+                if actual_name.casefold() == name.casefold()]
     if len(matching) != 1:
         raise ProbeError("missing or ambiguous reference table")
-    schema, columns = matching[0]
-    if not set(col.casefold() for col in required).issubset(columns):
+    schema, actual_name = matching[0]
+    key = (schema.casefold(), actual_name.casefold())
+    columns = tables[key]
+    if not {col.casefold() for col in required}.issubset(columns):
         raise ProbeError("required reference columns are not visible")
-    return schema
+    spelling = {col.casefold(): col for sc, table, col in raw_columns
+                if (sc.casefold(), table.casefold()) == key}
+    return schema, actual_name, *(spelling[col.casefold()] for col in required)
 
 
-def _aggregate_sql(source_schema, target_schema):
-    source = _quoted(source_schema) + ".[T111_Service]"
-    target = _quoted(target_schema) + ".[T122_Protocol]"
+def _aggregate_sql(source, target):
+    source_schema, source_table, source_id, source_reference = source
+    target_schema, target_table, target_id = target
+    source_name = _quoted(source_schema) + "." + _quoted(source_table)
+    target_name = _quoted(target_schema) + "." + _quoted(target_table)
+    source_id_column = _quoted(source_id)
+    reference_column = _quoted(source_reference)
+    target_id_column = _quoted(target_id)
     return f"""
 WITH sample AS (
-    SELECT TOP ({SAMPLE_LIMIT}) s.[fkT122_Protocol] AS [protocol_ref]
-    FROM {source} AS s
-    ORDER BY s.[id]
+    SELECT TOP ({SAMPLE_LIMIT}) s.{reference_column} AS [protocol_ref]
+    FROM {source_name} AS s
+    ORDER BY s.{source_id_column}
 )
 SELECT COUNT_BIG(*),
        SUM(CASE WHEN sample.[protocol_ref] IS NULL THEN 1 ELSE 0 END),
@@ -60,9 +72,9 @@ SELECT COUNT_BIG(*),
                     AND matched.[matched_ref] IS NULL THEN 1 ELSE 0 END)
 FROM sample
 OUTER APPLY (
-    SELECT TOP (1) p.[id] AS [matched_ref]
-    FROM {target} AS p
-    WHERE p.[id] = sample.[protocol_ref]
+    SELECT TOP (1) p.{target_id_column} AS [matched_ref]
+    FROM {target_name} AS p
+    WHERE p.{target_id_column} = sample.[protocol_ref]
 ) AS matched
 """
 
@@ -107,8 +119,10 @@ def probe(dsn: str, connector=None):
                 _insert_table(tables, schema, name)
             for schema, name, column in column_rows:
                 _insert_column(tables, schema, name, column)
-            source = _resolve(tables, "T111_Service", ("id", "fkT122_Protocol"))
-            target = _resolve(tables, "T122_Protocol", ("id",))
+            source = _resolve(tables, table_rows, column_rows,
+                              "T111_Service", ("id", "fkT122_Protocol"))
+            target = _resolve(tables, table_rows, column_rows,
+                              "T122_Protocol", ("id",))
             rows = _rows(cursor, _aggregate_sql(source, target), 1)
         finally:
             db.close()
@@ -141,7 +155,8 @@ def main(argv=None):
     try:
         root = Path(__file__).resolve().parents[2]
         dest = args.output.resolve()
-        if root == dest or root in dest.parents or not args.output.parent.is_dir():
+        if (root == dest or root in dest.parents or not args.output.parent.is_dir()
+                or args.output.exists() or args.output.is_symlink()):
             raise ProbeError("unsafe output destination")
         result = probe(os.environ.get("VIDA_SQLSERVER_DSN", ""))
         with args.output.open("x", encoding="utf-8") as f:

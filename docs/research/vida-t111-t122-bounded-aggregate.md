@@ -12,7 +12,7 @@ classes of sampled reference coverage:
 - non-NULL value resolves to T122_Protocol.id;
 - non-NULL value does not resolve.
 
-It scans **at most the first 1000 service rows ordered by T111_Service.id**,
+It samples **at most 1000 service rows ordered by T111_Service.id**,
 and uses SQL Server OUTER APPLY with TOP (1) to classify each reference
 without allowing duplicate target matches to multiply sampled rows. Only
 aggregate counts leave SQL Server; the intermediate identifier never does.
@@ -31,6 +31,11 @@ T111_Service and T122_Protocol across SQL schemas with known id and
 fkT122_Protocol columns. Ambiguous or missing tables and columns fail
 closed. User/database-provided schema identifiers are quoted with SQL
 Server bracket escaping; raw private names never appear in output.
+The SQL query preserves the **exact spelling** of schema, table and column
+identifiers from the checked catalog so case-sensitive SQL Server databases
+do not fail from accidental lowercasing. Only known T111/T122 identifiers
+are eligible; case-folded duplicates fail closed. Existing output files
+are rejected **before** the private CarCom query is attempted.
 
 Login and query deadlines are 8 seconds. The output is a newly created
 JSON file outside the repository, and errors print only generic classes.
@@ -57,11 +62,20 @@ to T122. It does not choose a XC90 V8 MY2009 profile, connect T110/
 T100/T160/T161, inspect InitHw values, select ReadVin, or authorize replay.
 All those gates remain false in the output. Keep B9FBFrameCount=0.
 
+
+### SQL workload limits
+
+TOP (1000) limits the number of **sampled output rows**, not necessarily the
+number of SQL pages read or rows examined to sort and perform target lookups.
+The command uses an 8-second statement timeout, but neither its execution
+plan nor performance has been verified on the original VIDA 2015A database.
+It must run with a genuinely SELECT-only SQL Server principal.
+
 ## Verification
 
-The exact source and 10 regression tests were executed on Linux Python
-3.13 with a synthetic mocked SQL Server connection: **10/10 PASS**. The
-full pre-existing 48 VIDA tests plus 10 new tests: **58/58 PASS**.
+The exact source and 14 regression tests were executed on Linux Python
+3.13 with a synthetic mocked SQL Server connection: **14/14 PASS**. The
+full pre-existing 48 VIDA tests plus 14 new tests: **62/62 PASS**.
 Python compileall: **PASS**. The GitHub blob SHA of both new files was
 verified against the local copies.
 
