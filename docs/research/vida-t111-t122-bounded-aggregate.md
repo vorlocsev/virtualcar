@@ -13,7 +13,9 @@ classes of sampled reference coverage:
 - non-NULL value does not resolve.
 
 It scans **at most the first 1000 service rows ordered by T111_Service.id**,
-and uses SQL Server EXISTS/NOT EXISTS in one bounded aggregate SELECT.
+and uses SQL Server OUTER APPLY with TOP (1) to classify each reference
+without allowing duplicate target matches to multiply sampled rows. Only
+aggregate counts leave SQL Server; the intermediate identifier never does.
 Python receives exactly four integer counts, no original IDs, text, VIN,
 SQL definitions, XML, scripts, ECU packets, or row values. These counts
 are not full-catalog coverage. A non-unique order may also limit sample
