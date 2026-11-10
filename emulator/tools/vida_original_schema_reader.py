@@ -15,6 +15,7 @@ import sys
 
 SCHEMA = 'virtualcar-vida-original-schema-v1'
 DSN_RE = re.compile(r'[A-Za-z0-9_.-]{1,128}\Z')
+DATABASE_RE = re.compile(r'[A-Za-z0-9_. -]{1,128}\Z')
 MAX_TABLES, MAX_COLUMNS, MAX_FOREIGN_KEY_MEMBERS, MAX_INDEX_MEMBERS = 2000, 30000, 30000, 30000
 MAX_OUTPUT_BYTES = 20 * 1024 * 1024
 TABLES_SQL = (
@@ -220,7 +221,8 @@ def parse(database, table_rows, column_rows, index_rows, fk_rows):
 
 def capture(database, *, dsn, connector=None):
     database = _name(database)
-    if type(dsn) is not str or not DSN_RE.fullmatch(dsn):
+    if (not DATABASE_RE.fullmatch(database) or
+            type(dsn) is not str or not DSN_RE.fullmatch(dsn)):
         raise OriginalSchemaError('invalid SQL DSN')
     if connector is None:
         try:
