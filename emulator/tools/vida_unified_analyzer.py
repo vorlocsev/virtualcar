@@ -91,9 +91,20 @@ def _insert_column(tables, schema, table, column):
 
 
 def _metadata_table_shape(db, name, required):
-    # SQLite may interpret SELECT "missing_column" as a STRING LITERAL.
-    # Check the cursor schema using zero-row reads before any quoted SELECT.
+    # Fixed catalog names must identify ordinary MAIN tables, not a VIEW that
+    # could indirectly SELECT from user data or a virtual table/module.
+    # PRAGMA table_list reports type without reading original CREATE SQL.
+    # Names here come only from the fixed META allowlist.
     try:
+        entries = db.execute("PRAGMA table_list('" + name + "')").fetchmany(2)
+        if (len(entries) != 1 or not isinstance(entries[0][0], str)
+                or not isinstance(entries[0][1], str)
+                or entries[0][0].casefold() != "main"
+                or entries[0][1].casefold() != name.casefold()
+                or entries[0][2] != "table"):
+            raise AnalyzerError("unsafe exporter catalog object type")
+        # SQLite may interpret SELECT "missing_column" as a STRING LITERAL.
+        # Check the cursor schema using zero-row reads before any quoted SELECT.
         actual = [field[0].casefold()
                   for field in db.execute('SELECT * FROM "' + name + '" LIMIT 0').description]
     except sqlite3.DatabaseError:
