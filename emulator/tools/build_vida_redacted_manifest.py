@@ -22,6 +22,7 @@ INPUTS = {
     'dicetiming': 'dicetiming_report',
     'dicetiming_compare': 'dicetiming_compare_report',
     'profile_init': 'profile_init_report',
+    'profile_readvin': 'profile_readvin_coverage_report',
 }
 
 
@@ -37,6 +38,8 @@ def prepare_manifest(paths):
              dice_timing_comparison=(loaded['dicetiming_compare'][0]
                                      if 'dicetiming_compare' in loaded else None),
              profile_bridge=loaded['profile_init'][0] if 'profile_init' in loaded else None,
+             static_coverage=(loaded['profile_readvin'][0]
+                              if 'profile_readvin' in loaded else None),
              input_digests={kind: pair[1] for kind, pair in loaded.items()})
     manifest = {
         'schema_version': BUNDLE_SCHEMA,
