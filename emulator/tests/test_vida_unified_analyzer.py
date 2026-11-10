@@ -26,7 +26,9 @@ class FakeCursor:
         self.queries.append(sql)
         self._assert_metadata_only(sql)
         names = mod.TABLES[self.dbname]
-        if "FROM sys.foreign_key_columns" in sql:
+        if sql == "SELECT DB_NAME()":
+            self.current = [(self.dbname,)]
+        elif "FROM sys.foreign_key_columns" in sql:
             self.current = ([("dbo", "T111_Service", "fkT122_Protocol",
                               "dbo", "T122_Protocol", "id", 0, 1),
                              ("dbo", "SECRET_USER", "secret_ref",
@@ -45,7 +47,7 @@ class FakeCursor:
 
     @staticmethod
     def _assert_metadata_only(sql):
-        assert "sys." in sql
+        assert "sys." in sql or sql == "SELECT DB_NAME()"
         for forbidden in (" SELECT * FROM dbo", " OPENROWSET", " EXEC ", "FROM CarCom",
                           "ScriptContent", "PRIVATE_VIN_PAYLOAD"):
             assert forbidden not in sql
@@ -200,16 +202,43 @@ class UnifiedVidaTests(unittest.TestCase):
         self.assertNotIn("SECRET_USER", json.dumps(report))
         self.assertEqual(len(connections), 3)
         self.assertTrue(all(c.closed for c in connections))
-        self.assertEqual(len(queries), 9)
+        self.assertEqual(len(queries), 12)
+        self.assertEqual(queries.count("SELECT DB_NAME()"), 3)
 
-    def test_09_sql_errors_do_not_leak_dsn_or_credentials(self):
+    def test_09_sql_server_wrong_effective_database_is_rejected(self):
+        connections = []
+        class WrongDatabase(FakeConnection):
+            def cursor(self):
+                cursor = FakeCursor(self.database, self.queries)
+                original_execute = cursor.execute
+
+                def wrong_identity(sql):
+                    if sql == "SELECT DB_NAME()":
+                        cursor.current = [("WrongDatabase",)]
+                        return cursor
+                    return original_execute(sql)
+                cursor.execute = wrong_identity
+                return cursor
+
+        def connect(string, autocommit, timeout):
+            database = string.split("DATABASE=")[1].split(";")[0]
+            connection = WrongDatabase(database, [])
+            connections.append(connection)
+            return connection
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "unexpected SQL Server database identity"):
+            mod.load_sqlserver("VIDA_LOCAL", connect)
+        self.assertEqual(len(connections), 1)
+        self.assertTrue(connections[0].closed)
+
+    def test_10_sql_errors_do_not_leak_dsn_or_credentials(self):
         def fail(*_a, **_kw):
             raise RuntimeError("SECRET_CONNECTION_KEY=PRIVATE")
         with self.assertRaisesRegex(mod.AnalyzerError, "metadata read failed") as cm:
             mod.load_sqlserver("goodDSN", fail)
         self.assertNotIn("SECRET_CONNECTION", str(cm.exception))
 
-    def test_10_cli_writes_once_without_source_data(self):
+    def test_11_cli_writes_once_without_source_data(self):
         output = self.folder / "redacted.json"
         before = (self.folder / "CarCom.sqlite").read_bytes()
         with contextlib.redirect_stdout(io.StringIO()), \
@@ -223,7 +252,7 @@ class UnifiedVidaTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_CUSTOMER", body)
         self.assertEqual((self.folder / "CarCom.sqlite").read_bytes(), before)
 
-    def test_11_missing_export_and_symlink_rejected(self):
+    def test_12_missing_export_and_symlink_rejected(self):
         (self.folder / "BaseData.sqlite").unlink()
         with self.assertRaises(mod.AnalyzerError):
             mod.load_sqlite_export(self.folder)
