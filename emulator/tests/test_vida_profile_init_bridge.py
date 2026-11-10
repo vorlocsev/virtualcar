@@ -261,5 +261,100 @@ class ProfileBridgeTests(unittest.TestCase):
             summary._profile_bridge(report, {'catalog': '0'*64, 'dicetiming': '0'*64})
 
 
+    def test_18_forged_passed_shape_with_valid_source_digest_rejected(self):
+        cat = catalog()
+        shape = cat['databases']['CarCom']['known_tables']['T161_Profile']
+        shape['known_columns_present'].remove('folderLevel')
+        shape['known_columns_missing'].append('folderLevel')
+        digests = {'catalog': 'a'*64, 'dicetiming': 'b'*64}
+        report = bridge.bridge(cat, timing(), digests)
+        self.assertEqual(report['profile_init_shape'], 'incomplete_shape')
+        report['profile_init_shape'] = 'candidate_shape'
+        report['missing_public_hints']['profile_init'] = 0
+        with self.assertRaisesRegex(summary.EvidenceError, 'differs from source'):
+            summary.assemble(catalog=cat, dice_timing=timing(), profile_bridge=report,
+                             input_digests=digests)
+
+    def test_19_genuine_incomplete_shape_is_failed_not_fake_passed(self):
+        cat = catalog()
+        shape = cat['databases']['CarCom']['known_tables']['T161_Profile']
+        shape['known_columns_present'].remove('folderLevel')
+        shape['known_columns_missing'].append('folderLevel')
+        digests = {'catalog': 'c'*64, 'dicetiming': 'd'*64}
+        report = bridge.bridge(cat, timing(), digests)
+        result = summary.assemble(catalog=cat, dice_timing=timing(),
+                                  profile_bridge=report, input_digests=digests)
+        states = {x['id']: x['status'] for x in result['stages']}
+        self.assertEqual(states['carcom_profile_init_shape'], 'failed')
+        self.assertEqual(states['carcom_service_protocol_shape'], 'passed')
+        self.assertEqual(states['dicetiming_to_carcom_row_join'], 'not_tested')
+
+    def test_20_forged_service_bus_shape_with_valid_hash_rejected(self):
+        cat = catalog()
+        shape = cat['databases']['CarCom']['known_tables']['T121_Config']
+        shape['known_columns_present'].remove('busRate')
+        shape['known_columns_missing'].append('busRate')
+        digests = {'catalog': 'e'*64, 'dicetiming': 'f'*64}
+        report = bridge.bridge(cat, timing(), digests)
+        self.assertEqual(report['service_protocol_shape'], 'incomplete_shape')
+        report['service_protocol_shape'] = 'candidate_shape'
+        report['missing_public_hints']['service_protocol'] = 0
+        with self.assertRaisesRegex(summary.EvidenceError, 'differs from source'):
+            summary.assemble(catalog=cat, dice_timing=timing(), profile_bridge=report,
+                             input_digests=digests)
+
+    def test_21_extraneous_unreviewed_report_fields_fail_closed(self):
+        cat, dic = catalog(), timing()
+        digests = {'catalog': 'a'*64, 'dicetiming': 'b'*64}
+        report = bridge.bridge(cat, dic, digests)
+        report['PRIVATE_VIN'] = 'SECRET_NOT_FOR_OUTPUT'
+        with self.assertRaisesRegex(summary.EvidenceError, 'differs from source') as err:
+            summary.assemble(catalog=cat, dice_timing=dic, profile_bridge=report,
+                             input_digests=digests)
+        self.assertNotIn('SECRET_NOT_FOR_OUTPUT', str(err.exception))
+
+    def test_22_source_content_is_mandatory_not_only_hashes(self):
+        cat, dic = catalog(), timing()
+        digests = {'catalog': 'a'*64, 'dicetiming': 'b'*64}
+        report = bridge.bridge(cat, dic, digests)
+        with self.assertRaisesRegex(summary.EvidenceError, 'source content missing'):
+            summary.assemble(profile_bridge=report, input_digests=digests)
+        with self.assertRaisesRegex(summary.EvidenceError, 'source content missing'):
+            summary.assemble(catalog=cat, profile_bridge=report, input_digests=digests)
+
+    def test_23_genuine_complete_bridge_remains_accepted(self):
+        cat, dic = catalog(), timing()
+        digests = {'catalog': 'a'*64, 'dicetiming': 'b'*64}
+        report = bridge.bridge(cat, dic, digests)
+        result = summary.assemble(catalog=cat, dice_timing=dic,
+                                  profile_bridge=report, input_digests=digests)
+        self.assertEqual(result['profile_init_metadata_bridge']['profile_init_shape'],
+                         'candidate_shape')
+        self.assertFalse(result['dice_timing_profile_mapping_verified'])
+        self.assertEqual(next(x['status'] for x in result['stages']
+                              if x['id'] == 'dicetiming_to_carcom_row_join'), 'not_tested')
+
+    def test_24_forged_bridge_with_recalculated_hash_rejected_in_cli_and_manifest(self):
+        cat_path, dic_path, bridge_path = self._run_bridge()
+        cat = json.loads(cat_path.read_text())
+        shape = cat['databases']['CarCom']['known_tables']['T161_Profile']
+        shape['known_columns_present'].remove('folderLevel')
+        shape['known_columns_missing'].append('folderLevel')
+        cat_path.write_text(json.dumps(cat), encoding='utf-8')
+        forged = json.loads(bridge_path.read_text())
+        forged['source_report_sha256']['catalog'] = hashlib.sha256(cat_path.read_bytes()).hexdigest()
+        # The forged Passed status stays internally consistent with its counter.
+        self.assertEqual(forged['profile_init_shape'], 'candidate_shape')
+        self.assertEqual(forged['missing_public_hints']['profile_init'], 0)
+        bridge_path.write_text(json.dumps(forged), encoding='utf-8')
+        output = self.folder / 'must-not-exist.json'
+        inputs = ['--catalog-report', str(cat_path), '--dicetiming-report', str(dic_path),
+                  '--profile-init-report', str(bridge_path), '--output', str(output)]
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(summary.main(inputs), 2)
+            self.assertEqual(manifest_builder.main(inputs), 2)
+        self.assertFalse(output.exists())
+
+
 if __name__ == '__main__':
     unittest.main()
