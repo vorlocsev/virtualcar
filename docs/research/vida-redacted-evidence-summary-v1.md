@@ -84,7 +84,7 @@ Mismatched digests, forged positive provenance/runtime flags, invalid
 keys, duplicate file aliases and overlong manifest files fail closed.
 A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 
-## Ten evidence gates
+## Eleven evidence gates
 
 | Stage | Meaning of `passed` |
 | --- | --- |
@@ -92,6 +92,7 @@ A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 | `catalog_metadata` | A supplied metadata-only catalog report passed the summary's structural preflight; original catalog provenance is not verified |
 | `dice_timing_metadata` | A supplied fourth database metadata report passed DiceTiming identity and aggregate shape preflight; no timing values or mapping verified |
 | `dice_timing_count_comparison` | Two already-redacted reports agree on table and column totals only; no schema equivalence or same-origin proof |
+| `dice_timing_visible_schema_hmac` | Optional two-source HMAC match for the visible normalized DiceTiming catalog using the same owner-private key; no source attestation or runtime proof |
 | `catalog_shape_comparison` | A supplied comparison report declares no table/column/edge shape disagreement; it is not a verified same-installation join |
 | `readvin_static_graph` | A supplied redacted v2/v3 crosscheck declares seven consistent counters, nonempty ReadVin/identity nodes and identity calls |
 | `profile_to_readvin_join` | Always `not_tested` until independently proven |
@@ -178,3 +179,19 @@ Next: owner-local original DiceTiming schema evidence and source provenance,
 then bounded, explicitly evidenced profile/service/ReadVin joins. Continue to keep `B9FBFrameCount=0` and
 replay disabled until real, authorized, read-only client evidence exists.
 No `main`, J2534 runtime or binary releases changed in this step.
+
+### Optional HMAC comparison gate (2026-11-10)
+
+When a pair of DiceTiming reports is generated with the same private
+`VIDA_DICETIMING_HMAC_KEY`, the comparator can classify a visible catalog
+fingerprint as matched, mismatched or not tested. The summary records this
+as a separate `dice_timing_visible_schema_hmac` stage; absent fingerprints
+leave it not tested. This does not prove source origin, complete metadata
+visibility, original timing parameters, ECU profile joins, D2 baud or
+actual diagnostic execution.
+
+**Local isolated validation:** 58/58 Python 3.13.5 synthetic tests PASS,
+`compileall` PASS. The locally tested production/test blobs match current
+GitHub sources for this change. Exact-head owner-only Windows VMware CI,
+real VIDA and physical J2534 are not verified. See
+[DiceTiming comparison](vida-dicetiming-count-comparison.md).
