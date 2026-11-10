@@ -286,5 +286,81 @@ class VidaSelectionTraceTests(unittest.TestCase):
                     main([str(private_path), "--output", str(output)])
 
 
+    def test_25_running_timestamp_before_fetch_is_not_executed_triplet(self):
+        request = get(t="31,544", script_type="ReadVin")
+        report = audit_lines([request, fetched(t="31,576"), running(t="31,550")])
+        events = report["events"]
+        self.assertEqual(events["out_of_order_running_script_events"], 1)
+        self.assertEqual(events["unmatched_running_script_events"], 1)
+        self.assertEqual(events["matched_get_fetch_run_triplets"], 0)
+        self.assertEqual(events["matched_read_vin_triplets"], 0)
+        self.assertFalse(report["script_selected_for_identify_vehicle_verified"])
+
+    def test_26_same_timestamp_fetch_run_still_correlation_only(self):
+        report = audit_lines([get(script_type="ReadVin"),
+                              fetched(t="31,576"), running(t="31,576")])
+        self.assertEqual(report["events"]["matched_read_vin_triplets"], 1)
+        self.assertEqual(report["events"]["out_of_order_running_script_events"], 0)
+        self.assertFalse(report["client_vin_accepted"]
+                         if "client_vin_accepted" in report
+                         else report["actual_vida_client_identity_verified"])
+
+    def test_27_unbound_emptyprofile_readvin_bootstrap_shape(self):
+        request = get(script_type="ReadVin").replace(
+            "Profile: 'PRIVATE'", "Profile: 'EMPTYPROFILE,'").replace(
+            "EcuType: '123'", "EcuType: '-1'")
+        result = audit_lines([request, fetched(), running()])
+        events = result["events"]
+        self.assertEqual(events["requests_read_vin_unbound_bootstrap_shape"], 1)
+        self.assertEqual(events["matched_read_vin_unbound_bootstrap_shape_triplets"], 1)
+        self.assertEqual(events["matched_read_vin_explicit_empty_profile_triplets"], 1)
+        self.assertTrue(result["empty_profile_unbound_ecu_type_is_only_request_shape"])
+        self.assertFalse(result["script_selected_for_identify_vehicle_verified"])
+        self.assertFalse(result["actual_vida_client_identity_verified"])
+
+    def test_28_bootstrap_requires_all_three_literal_request_fields(self):
+        base = get(script_type="ReadVin").replace(
+            "Profile: 'PRIVATE'", "Profile: 'EMPTYPROFILE,'").replace(
+            "EcuType: '123'", "EcuType: '-1'")
+        for request in (
+            base.replace("ScriptId: ''", "ScriptId: 'ID-ON-DISK'"),
+            base.replace("EcuType: '-1'", "EcuType: '0'"),
+            base.replace("Profile: 'EMPTYPROFILE,'", "Profile: 'PRIVATE'"),
+            base.replace("Type: 'ReadVin'", "Type: 'Other'"),
+        ):
+            with self.subTest(request=request):
+                result = audit_lines([request, fetched(), running()])
+                self.assertEqual(result["events"]["requests_read_vin_unbound_bootstrap_shape"], 0)
+                self.assertEqual(result["events"]["matched_read_vin_unbound_bootstrap_shape_triplets"], 0)
+
+    def test_29_out_of_order_bootstrap_never_promotes_match(self):
+        request = get(script_type="ReadVin").replace(
+            "Profile: 'PRIVATE'", "Profile: 'EMPTYPROFILE,'").replace(
+            "EcuType: '123'", "EcuType: '-1'")
+        result = audit_lines([request, fetched(t="31,700"), running(t="31,600")])
+        self.assertEqual(result["events"]["requests_read_vin_unbound_bootstrap_shape"], 1)
+        self.assertEqual(result["events"]["matched_read_vin_unbound_bootstrap_shape_triplets"], 0)
+        self.assertEqual(result["events"]["out_of_order_running_script_events"], 1)
+        self.assertFalse(result["replay_approved"])
+
+    def test_30_bootstrap_counters_stay_redacted_in_cli_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            private = Path(d) / "YV1SYNTHETIC_PRIVATE_ORIGINAL.log"
+            request = get(script_type="ReadVin").replace(
+                "Profile: 'PRIVATE'", "Profile: 'EMPTYPROFILE,'").replace(
+                "EcuType: '123'", "EcuType: '-1'")
+            script = "SYNTHETIC_PRIVATE_IDENTIFIER"
+            private.write_text(request + fetched(name=script) + running(name=script),
+                               encoding="utf-8")
+            output = Path(d) / "summary.json"
+            with contextlib.redirect_stdout(io.StringIO()):
+                main([str(private), "--output", str(output)])
+            text = output.read_text(encoding="utf-8")
+            self.assertEqual(json.loads(text)["events"]
+                             ["matched_read_vin_unbound_bootstrap_shape_triplets"], 1)
+            for secret in ("YV1SYNTHETIC", script, "EMPTYPROFILE,", str(private)):
+                self.assertNotIn(secret, text)
+
+
 if __name__ == "__main__":
     unittest.main()
