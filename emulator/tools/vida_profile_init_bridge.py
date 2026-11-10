@@ -19,12 +19,18 @@ SCHEMA = 'virtualcar-vida-profile-init-metadata-bridge-v1'
 _DIGEST = re.compile(r'[0-9a-f]{64}\Z')
 REQUIRED_EDGES = {
     'profile_init': tuple(HARDWARE_CANDIDATE_EDGES[:4]),
+    # Full static route from profile/default ECU variant through service and protocol.
+    'profile_service': tuple(CANDIDATE_EDGES),
     'service_protocol': (CANDIDATE_EDGES[0], *HARDWARE_CANDIDATE_EDGES[4:]),
 }
 REQUIRED_FIELDS = {
     'profile_init': (('T161_Profile', 'folderLevel'),
                      ('T131_InitValue', 'initValue'),
                      ('T132_InitValueType', 'name')),
+    'profile_service': (('T161_Profile', 'identifier'),
+                        ('T100_EcuVariant', 'identifier'),
+                        ('T111_Service', 'service'),
+                        ('T122_Protocol', 'identifier')),
     'service_protocol': (('T121_Config', 'busRate'),
                          ('T121_Config', 'addressSize')),
 }
@@ -107,6 +113,7 @@ def bridge(catalog, dice_timing, source_digests=None):
         'schema_version': SCHEMA,
         'status': 'static_metadata_hypotheses_only',
         'profile_init_shape': states['profile_init'],
+        'profile_service_shape': states['profile_service'],
         'service_protocol_shape': states['service_protocol'],
         'missing_public_hints': missing_count,
         'dicetiming_metadata_checked': True,
