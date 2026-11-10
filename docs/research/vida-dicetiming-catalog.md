@@ -180,3 +180,39 @@ Verified local Git blobs and committed GitHub blobs match exactly:
 
 No original VIDA, VMware runner, client VIN acceptance or J2534
 hardware was used for this change.
+
+### Referenced-index cardinality cross-check (2026-11-10)
+
+To detect an FK definition with a *missing trailing member*, the fixed
+SQL Server catalog-only FK query additionally counts visible key columns
+in `sys.index_columns` for
+`fk.referenced_object_id` and `fk.key_index_id`, filtering
+`key_ordinal > 0` to exclude included/non-key columns. This independent
+catalog cardinality is checked against the complete, contiguous set of
+`sys.foreign_key_columns.constraint_column_id` entries for each FK.
+A missing suffix, conflicting key-size declarations or a zero/inaccessible
+referenced-index key count **fails closed**.
+
+This check does not select from application/user tables, inspect actual
+timing values or expose object IDs, key names or the key cardinalities in
+the redacted JSON. The current `visible_fk_catalog` aggregate format is
+unchanged and existing redacted report consumers remain compatible.
+
+Microsoft documents `key_index_id` on `sys.foreign_keys` as the
+referenced key index and `key_ordinal` on `sys.index_columns` as
+the 1-based index-key column position. Both are subject to SQL Server
+metadata visibility. Agreement between the two catalog views is
+**not** proof of full visibility, cross-query transactional snapshot
+consistency, original DiceTiming/InitHw profile linkage, D2 baud,
+VIN acceptance or physical J2534.
+
+A local isolated Python 3.13.5 synthetic suite was executed:
+**82/82 PASS** across the focused VIDA modules with
+`python -m compileall -q emulator/tools emulator/tests` successful.
+The locally tested source and test files have exactly the same Git blob
+SHA as the current PR branch:
+- collector `1bf220b8ec2210973a68cee82d778a93f728df77`
+- FK tests `1e856aa83068e4e0f6e050d41fea082a1bceac55`
+
+The original VIDA 2015A SQL Server and VMware exact-head CI were
+not accessed during this change.
