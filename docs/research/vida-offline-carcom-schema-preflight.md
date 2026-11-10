@@ -41,13 +41,16 @@ py -3 .\emulator\tools\audit_vida_carcom_schema_links.py `
 
 The script opens exactly three immutable local SQLite **copies** with
 `mode=ro&immutable=1` and `PRAGMA query_only=ON`. Its SQL statements are
-limited to `_vida_meta`, `_vida_tables`, and `_vida_columns`.
+limited to `_vida_meta`, `_vida_tables`, and `_vida_columns`, including
+zero-row `SELECT * ... LIMIT 0` checks of their real exporter column schemas.
+This rejects malformed exports where SQLite would otherwise interpret a missing
+double-quoted column identifier as a string constant.
 It cannot access the raw CarCom/Script user rows, original XML/ZIP, VIN,
 CAN payloads or original SQL definitions.
 
 The output contains **only fixed allowlisted** table/column names,
 source row counts already present in export metadata, column counts and
-six *candidate* edge-shape booleans. Unknown source table/column identifiers
+six service and six optional hardware *candidate* edge-shape booleans. Unknown source table/column identifiers
 are never emitted. An ambiguous fixed name in multiple SQL schemas,
 repeated column, invalid exporter identity, or missing database fails closed.
 Report output is exclusive and cannot be written into the Git checkout.
@@ -59,7 +62,8 @@ copies are an atomic cross-database SQL snapshot.
 
 ## Verification and next gate
 
-Eight fully synthetic regression groups verify expected links, absent tables,
+Fifteen fully synthetic regression cases verify exporter metadata structure,
+expected links, absent tables,
 missing columns, duplicate schema names, duplicate columns/export identity,
 missing/incorrect DB, private-name redaction and exclusive output/no source
 modification. Run `python -m unittest discover -s emulator/tests -p
@@ -142,3 +146,26 @@ be categorized as a failed VIN read.
 **All work remains read-only, original outputs private, and
 `B9FBFrameCount=0` unchanged. No physical J2534, GUI VIDA,
 SecurityAccess, coding, ECU programming or Virtual Car Release.**
+
+## Hardened exporter catalog gates (2026-11-10)
+
+The older CarCom schema preflight now follows the same metadata-only safety
+boundary as the unified VIDA analyzer already on `development`:
+
+- Verify that each allowlisted `_vida_meta`, `_vida_tables` and
+  `_vida_columns` catalog object is an ordinary table in SQLite `main`.
+  A malicious or malformed `VIEW` or virtual/FTS table fails closed before
+  the first exporter catalog `SELECT`.
+- Verify actual zero-row cursor column names, not SQLite's permissive
+  double-quoted-string fallback when a referenced column does not exist.
+- Reject `-wal`, `-shm` and `-journal` sidecars before opening the
+  exported file with `immutable=1`. Incomplete, uncheckpointed single-file
+  exports must not be presented as a complete metadata inventory.
+
+19/19 synthetic tests passed locally on Linux/Python 3.13.5, including four
+new fail-closed tests. Combined with the current unified analyzer's 20 tests,
+39/39 passed and `compileall` succeeded on the exact reviewed Git blobs.
+This does **not** verify Windows Python 3.12, original VIDA 2015A SQL
+Server/SQLite contents, ReadVin selection, VIN acceptance, hardware
+J2534, or VMware CI against the eventual merged `development` SHA.
+
