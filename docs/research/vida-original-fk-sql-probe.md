@@ -270,3 +270,93 @@ unittest PASS**, `compileall` PASS. Из них 15 новых проверок
 
 Оригинальная VIDA/VMware, exact-head CI и физический J2534 на этом
 этапе не запускались.
+
+
+## Единый транзакционный снимок Profile и FK (необязательный режим)
+
+Ранее `--require-unique-target` проверял ровно одну запись
+целевого ECU Profile и затем выполнял FK `EXISTS` двумя независимыми
+SQL-запросами. Между ними реальные данные могли измениться.
+
+Новая опция **`--require-snapshot`** доступна только вместе с
+`--require-unique-target` и `--target-filters-json`.
+При её включении инструмент:
+
+1. Проверяет идентичность подключённой базы через `DB_NAME()`.
+2. Читает `sys.databases.snapshot_isolation_state` и принимает только
+   значение **1 = ON**. При OFF (0), переходных состояниях (2/3) или
+   недоступном метаданном поле завершается ошибкой.
+3. Устанавливает для **своего подключения**
+   `SET TRANSACTION ISOLATION LEVEL SNAPSHOT` и выполняет
+   `BEGIN TRANSACTION`; `SELECT @@TRANCOUNT` должен вернуть **1**.
+4. Внутри единственной явной транзакции подтверждает оригинальный
+   FK, проверяет источниковые и целевые фильтры по `sys.columns`,
+   требует ровно одну запись целевого профиля через
+   `SELECT TOP (2)` и выполняет нативный SQL `EXISTS`.
+5. Повторно сравнивает объявление FK, затем выполняет
+   `COMMIT TRANSACTION`. Если произошло исключение после начала
+   транзакции, пытается выполнить `ROLLBACK TRANSACTION`,
+   закрывает подключение и **не создаёт успешный JSON**.
+
+Режим **не выполняет ALTER DATABASE** и ничего не изменяет в
+исходных данных. Если SQL Server не разрешает SNAPSHOT, инструмент
+не переключает глобальные настройки и завершается с отказом.
+
+### Пример запуска в Windows VMware
+
+Используйте действительные имена из оригинальной VIDA SQL-схемы;
+следующие названия таблиц и FK приведены только для примера.
+
+~~~powershell
+$private = Join-Path $env:USERPROFILE 'VIDA-original-private'
+$target = Join-Path $private 'ecu-profile-target-original-001.json'
+$out = Join-Path $private 'CarCom-profile-FK-snapshot-001.json'
+
+py -3 emulator/tools/vida_original_fk_sql_probe.py --database CarCom --schema dbo --table T136_InitHw_Profile --foreign-key FK_НАСТОЯЩЕЕ_ИМЯ --target-filters-json "$target" --require-unique-target --require-snapshot --max-rows 1000 --output "$out"
+
+if ($LASTEXITCODE -ne 0) { throw 'Единый SQL SNAPSHOT не подтверждён' }
+~~~
+
+Если база допускает SNAPSHOT и все SQL-запросы транзакции успешно
+выполнены и зафиксированы, отчёт помечается:
+`transactional_snapshot_verified=true`,
+`sql_snapshot_isolation_required=true`,
+`sql_snapshot_transaction_committed=true`.
+
+Без новой опции поведение прежнего режима сохраняется,
+а `transactional_snapshot_verified=false`.
+Во всех режимах оригинальные имена таблиц, колонок, ключей,
+значения фильтров и ключи записываются **без обезличивания**
+в локальный JSON, вне GitHub и CI.
+
+### Что остаётся неподтверждённым
+
+Транзакционный уровень SNAPSHOT обеспечивает согласованность
+версий прикладных строк между запросами **в одной базе**.
+Но системные метаданные SQL Server не версионируются.
+Конкурентный DDL может привести к ошибке 3961, которая должна
+прервать проверку, а не считаться успехом. Также режим не доказывает
+полноту SQL-прав на просмотр каталога, активное выполнение
+ограничения FK, межбазовые отношения CarCom/DiceTiming,
+выбор профиля самой VIDA, реальные D2-тайминги, выполнение
+GetScript/ReadVin, принятие VIN или физический J2534.
+
+Документация Microsoft:
+- [SET TRANSACTION ISOLATION LEVEL: SNAPSHOT](https://learn.microsoft.com/en-us/sql/t-sql/statements/set-transaction-isolation-level-transact-sql)
+- [ALTER DATABASE: ALLOW_SNAPSHOT_ISOLATION](https://learn.microsoft.com/en-us/sql/t-sql/statements/alter-database-transact-sql-set-options)
+- [SQL Server row versioning and DDL metadata limitations](https://learn.microsoft.com/en-us/sql/relational-databases/sql-server-transaction-locking-and-row-versioning-guide)
+
+### Тестирование
+
+На локальном Python 3.13.5 выполнено **283/283 синтетических unittest
+PASS**, `python -m compileall -q emulator/tools emulator/tests` PASS.
+13 новых тестов проверяют успешный BEGIN/COMMIT, `@@TRANCOUNT`,
+отказ при выключенном/переходном SNAPSHOT, нулевом/неоднозначном
+профиле, SQL-ошибке, попытке ROLLBACK, старом режиме, исходных
+значениях Unicode, параметризации и CLI.
+
+Граничные реальные испытания с оригинальной VIDA 2015A,
+VMware exact-head CI и физическим J2534 **не выполнялись**.
+Тестовые Git blob SHA:
+- инструмент: `d5abdbae9d3002c94d6fdf1ce26ca5f248bf392a`
+- новые тесты: `5330c725235b5bad20057f9d38c627b3232f39be`
