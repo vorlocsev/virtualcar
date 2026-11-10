@@ -199,3 +199,74 @@ Git blob SHA исходников и тестов совпадают с лока
   `443ca1e6191e61dc296903746446948d92e00f0d`
 
 Оригинальная VIDA 2015A и VMware exact-head CI не запускались.
+
+
+## Однозначный исходный ECU Profile: строгая проверка целевого фильтра
+
+В обычном режиме `--target-filters-json` SQL `EXISTS` допускает
+несколько целевых строк, подходящих под одно условие. Наличие хотя бы
+одной подходящей записи **не доказывает**, что идентифицирован один
+конкретный ECU Profile.
+
+Для исследования исходного профиля без этой неоднозначности добавлен
+**необязательный** параметр `--require-unique-target`. Он допускается
+только совместно с `--target-filters-json` и выполняет отдельный
+параметризованный запрос `SELECT TOP (2)` по целевой таблице FK:
+
+- **0 строк**: отказ, целевая запись не найдена.
+- **2 строки**: отказ, фильтр не однозначен.
+- **1 строка**: продолжается прежняя проверка FK через SQL `EXISTS`,
+  а оригинальный составной ключ найденной записи включается в
+  `selected_target_original_key_values` без обезличивания. Бинарные
+  значения сохраняются в обратимом Base64.
+
+Невалидные колонки, неподдерживаемые типы, NULL в выбранном целевом
+ключе и неожиданная SQL-проекция приводят к ошибке. Фильтр
+проверяется по оригинальному `sys.columns`; значения остаются
+**ODBC-параметрами**, не вставляются в SQL-текст. Результаты
+`sql_exists_target_filter_matches`,
+`sql_exists_matches_outside_target_filter`,
+`sql_exists_unmatched` и `sql_null_key_rows` сохраняют прежнюю
+четырёхклассовую семантику.
+
+Пример из корня checkout, с **условными** именами FK и таблиц.
+Подставьте фактические значения из вашей собственной VIDA 2015A:
+
+~~~powershell
+$private = Join-Path $env:USERPROFILE 'VIDA-original-private'
+$targetFilter = Join-Path $private 'ecu-profile-target-original-001.json'
+$out = Join-Path $private 'InitHw-unique-profile-FK-003.json'
+
+py -3 emulator/tools/vida_original_fk_sql_probe.py --database CarCom --schema dbo --table T136_InitHw_Profile --foreign-key FK_НАСТОЯЩЕЕ_ИМЯ --target-filters-json "$targetFilter" --require-unique-target --max-rows 1000 --output "$out"
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось однозначно определить целевой профиль' }
+~~~
+
+Дополнительные поля результата:
+`target_unique_selector_checked=true`,
+`target_unique_row_count_at_probe=1`,
+`selected_target_original_key_values`,
+`target_key_selected_at_query_time_only=true`.
+`transactional_snapshot_verified=false` и
+`vida_runtime_selected_profile_verified=false` **не меняются**.
+
+**Ограничение:** поиск единственного целевого ключа и последующий
+`EXISTS` являются двумя отдельными SQL-запросами. Они используют
+одно подключение, но без единого транзакционного снимка между ними
+профиль может измениться. Такой результат подтверждает
+однозначность фильтра **на момент отдельного чтения**, но не факт
+выбора ECU профиля приложением VIDA, не значения D2 baud и не
+выполнение GetScript/ReadVin.
+
+**Локальная проверка:** Python 3.13.5, **270/270 синтетических
+unittest PASS**, `compileall` PASS. Из них 15 новых проверок
+охватывают 0/1/2 найденных профиля, составной ключ, NULL,
+бинарные значения, Unicode, порядок ODBC-параметров,
+совместимость старого режима, CLI и отказ при ложных входных
+данных. Точные протестированные Git blobs:
+- `emulator/tools/vida_original_fk_sql_probe.py`:
+  `8e91d06f4536683cc006f71f18fe271df8f6ac58`
+- `emulator/tests/test_vida_original_fk_sql_unique_target.py`:
+  `24040dae1c77e75665268889d98117b251c24e1b`
+
+Оригинальная VIDA/VMware, exact-head CI и физический J2534 на этом
+этапе не запускались.
