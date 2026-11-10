@@ -100,7 +100,8 @@ class VidaAggregateTests(unittest.TestCase):
         self.assertEqual(len(self.conn.queries), 4)
         sql = self.conn.queries[-1]
         self.assertIn("TOP (1000)", sql)
-        self.assertIn("EXISTS", sql)
+        self.assertIn("OUTER APPLY", sql)
+        self.assertIn("SELECT TOP (1) p.[id]", sql)
         self.assertNotIn("SELECT *", sql)
         self.assertNotIn("PRIVATE", json.dumps(report))
 
