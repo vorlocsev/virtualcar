@@ -122,10 +122,10 @@ the failure's root cause is not established. The temporary hosted workflow
 was removed to retain the repository's owner-only Windows runner policy
 and avoid repeated zero-step runs.
 
-The 20 Python PR tests and Python compileall are still **not verified on exact
-head**. A separate local SQLite-only reproduction previously passed 9/9
-checks; these are not the actual PR suite and cannot prove SQL Server or VIDA
-runtime correctness. Do not merge or claim completion based on this run.
+At the time of this failed hosted workflow, the full PR suite was not
+verified. A separate local SQLite-only reproduction had passed 9/9; those
+probes were not the actual PR suite. The later independent local run is
+recorded below, and does not convert the failed hosted workflow to success.
 
 ### Ordinary catalog-table type preflight (2026-11-10)
 
@@ -138,6 +138,27 @@ Two new synthetic test cases cover these alternate object types. An isolated
 local five-case Python reproduction passed; it is **not** the full PR suite.
 A Python SQLite build lacking `PRAGMA table_list` fails closed and must be
 upgraded rather than bypassing the check.
+
+## Verified local synthetic test run (2026-11-10)
+
+Exact source and test file contents were transferred from GitHub at PR #307
+commit `568e9bdfcb84ef905d1652bb5049fe0a3e56e149`, with all three Git
+blob SHA-1 hashes verified locally. The first actual unittest invocation
+reported 19 PASS and 1 ERROR: the mocked SQL Server supplied an unrealistic
+zero-column `ScriptContent` table. The synthetic fixture was corrected
+without relaxing the SQL Server fail-closed catalog guard. The revised
+test file's blob SHA matches the GitHub version in commit
+`9aa2db92307de9d10813ac74bf332d88145138f4`.
+
+On Linux with Python **3.13.5** and SQLite **3.46.1**, the updated exact
+three-file set ran **20/20 PASS** with `unittest discover`, plus successful
+`compileall` on the analyzer, its hint module and test file. All tests use
+synthetic data and a mocked SQL Server connection; no private VIDA or hardware
+was accessed.
+
+**Evidence boundary:** this is a verified local code-level test pass, **not**
+Windows/Python 3.12 VMware CI, original VIDA SQL Server connectivity,
+ReadVin execution, vehicle acceptance or physical J2534 testing.
 
 ## Still not established
 
