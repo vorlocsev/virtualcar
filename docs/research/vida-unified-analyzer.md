@@ -105,6 +105,21 @@ Eighteen unit tests cover these behaviors synthetically; run them on a reviewed 
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
+## Isolated PR-head test automation
+
+`.github/workflows/vida-unified-analyzer-pr-tests.yml` adds a narrowly
+scoped GitHub-hosted `pull_request` check for PR #307 only. It checks out
+`github.event.pull_request.head.sha`, asserts that exact Git commit, compiles
+the two analyzer modules and test file, and runs the synthetic unittest file
+with Python 3.12. The job has read-only repository permissions and an
+eight-minute limit; it has **no** private VIDA sources, J2534 adapter or VM
+access. The authoritative Windows VMware workflow still runs exclusively
+on trusted development pushes or main-controlled manual dispatch.
+
+This is merely the **automation definition** until GitHub supplies an
+actual successful workflow run against an exact SHA. Neither a YAML file
+nor local SQLite probes qualify as a passing 18/18 test run or VMware gate.
+
 ## Still not established
 
 * Whether the exact original 2015A SQL Server instance is reachable with
