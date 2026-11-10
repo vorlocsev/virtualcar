@@ -78,6 +78,32 @@ Run:
 py -3 emulator/tools/vida_evidence_summary.py --readvin-report "E:\VIDA-private\readvin-consistency.redacted.json" --bundle-manifest "E:\VIDA-private\bundle-manifest.json" --output "E:\VIDA-private\summary-bound-001.redacted.json"
 ~~~
 
+### Generate the SHA-256 manifest automatically
+
+For owner-reviewed reports, the optional helper
+`emulator/tools/build_vida_redacted_manifest.py` generates the fixed
+`virtualcar-vida-redacted-report-bundle-v1` manifest from **the exact
+bytes also parsed by this analyzer**. It rejects malformed or forged
+source evidence before creating the manifest, and its output is created
+exclusively outside Git.
+
+Example for an already-redacted DiceTiming SQL Server report:
+
+~~~powershell
+py -3 emulator/tools/build_vida_redacted_manifest.py --dicetiming-report "E:\VIDA-private\dicetiming-sql.redacted.json" --output "E:\VIDA-private\dicetiming-sha-001.json"
+py -3 emulator/tools/vida_evidence_summary.py --dicetiming-report "E:\VIDA-private\dicetiming-sql.redacted.json" --bundle-manifest "E:\VIDA-private\dicetiming-sha-001.json" --output "E:\VIDA-private\summary-bound-002.redacted.json"
+~~~
+
+Add `--catalog-report`, `--compare-report`, `--readvin-report`
+and `--dicetiming-compare-report` consistently to **both commands**
+when those sources are available. The SHA-256 manifest contains no source
+paths or original report content and is **not a source attestation**.
+See the [Windows VMware owner-local runbook](vida-owner-dicetiming-evidence-capture.md).
+An isolated local Python 3.13.5 run completed **110/110 synthetic
+tests PASS** (12 new tests plus 98 existing), `compileall` PASS.
+Exact Git blob match was verified for the manifest tool and tests.
+No actual VIDA or VMware run is implied by these results.
+
 The manifest must be owner-controlled and separate from the generated
 output. Inputs are read once for **both** SHA-256 and JSON parsing.
 Mismatched digests, forged positive provenance/runtime flags, invalid
