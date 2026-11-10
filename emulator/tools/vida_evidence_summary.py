@@ -46,7 +46,8 @@ STAGES = (
     "dice_timing_visible_fk_catalog",
     "catalog_shape_comparison", "dice_timing_count_comparison",
     "dice_timing_visible_schema_hmac",
-    "carcom_profile_init_shape", "carcom_service_protocol_shape",
+    "carcom_profile_init_shape", "carcom_profile_service_shape",
+    "carcom_service_protocol_shape",
     "dicetiming_to_carcom_row_join",
     "readvin_static_graph",
     "profile_to_readvin_join", "getscript_runtime_selection",
@@ -258,10 +259,12 @@ def _profile_bridge(report, report_digests, source_catalog=None, source_dice_tim
     if report.get('dicetiming_metadata_checked') is not True:
         raise EvidenceError('profile bridge did not check DiceTiming')
     counts = report.get('missing_public_hints')
-    if type(counts) is not dict or set(counts) != {'profile_init', 'service_protocol'}:
+    if type(counts) is not dict or set(counts) != {'profile_init', 'profile_service',
+                                                    'service_protocol'}:
         raise EvidenceError('invalid profile bridge hint summary')
     out = {}
     for name, field in (('profile_init', 'profile_init_shape'),
+                        ('profile_service', 'profile_service_shape'),
                         ('service_protocol', 'service_protocol_shape')):
         count = _uint(counts[name], 32)
         status = report.get(field)
@@ -284,6 +287,7 @@ def _profile_bridge(report, report_digests, source_catalog=None, source_dice_tim
             json.dumps(expected, sort_keys=True, separators=(',', ':'))):
         raise EvidenceError('profile bridge differs from source metadata')
     return {'profile_init_shape': out['profile_init'],
+            'profile_service_shape': out['profile_service'],
             'service_protocol_shape': out['service_protocol'],
             'dicetiming_to_carcom_row_join_verified': False,
             'redacted_report_byte_binding_verified': True}
@@ -366,6 +370,9 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
         "dice_timing_visible_schema_hmac": hmac_status,
         "carcom_profile_init_shape": ("not_tested" if accepted_profile_bridge is None else
             "passed" if accepted_profile_bridge["profile_init_shape"] == "candidate_shape"
+            else "failed"),
+        "carcom_profile_service_shape": ("not_tested" if accepted_profile_bridge is None else
+            "passed" if accepted_profile_bridge["profile_service_shape"] == "candidate_shape"
             else "failed"),
         "carcom_service_protocol_shape": ("not_tested" if accepted_profile_bridge is None else
             "passed" if accepted_profile_bridge["service_protocol_shape"] == "candidate_shape"
