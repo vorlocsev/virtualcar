@@ -49,7 +49,7 @@ STAGES = (
     "carcom_profile_init_shape", "carcom_profile_service_shape",
     "carcom_service_protocol_shape",
     "dicetiming_to_carcom_row_join",
-    "readvin_static_graph",
+    "readvin_static_graph", "profile_readvin_static_prerequisites",
     "profile_to_readvin_join", "getscript_runtime_selection",
     "j2534_correlated_exchange", "client_vin_acceptance",
 )
@@ -292,6 +292,29 @@ def _profile_bridge(report, report_digests, source_catalog=None, source_dice_tim
             'dicetiming_to_carcom_row_join_verified': False,
             'redacted_report_byte_binding_verified': True}
 
+def _static_coverage(report, catalog, dice_timing, profile_bridge,
+                     readvin, source_digests):
+    """Recompute all published coverage claims from exact redacted sources."""
+    if (catalog is None or dice_timing is None or profile_bridge is None
+            or readvin is None or type(source_digests) is not dict or
+            not {'catalog', 'dicetiming', 'profile_init', 'readvin'}.issubset(source_digests)):
+        raise EvidenceError('static-coverage source reports missing')
+    from vida_profile_readvin_static_coverage import analyze as recompute
+    required = ('catalog', 'dicetiming', 'profile_init', 'readvin')
+    expected = recompute(catalog, dice_timing, profile_bridge, readvin,
+                         {key: source_digests[key] for key in required})
+    if (type(report) is not dict or
+            json.dumps(report, sort_keys=True, separators=(',', ':')) !=
+            json.dumps(expected, sort_keys=True, separators=(',', ':'))):
+        raise EvidenceError('static coverage differs from source metadata')
+    return {
+        'static_prerequisites': expected['static_prerequisites'],
+        'static_coverage': expected['static_coverage'],
+        'getscript_handoff_verified': False,
+        'readvin_runtime_verified': False,
+        'source_report_bytes_bound': True,
+    }
+
 
 def _comparison(report):
     if (type(report) is not dict or
@@ -332,11 +355,12 @@ def _readvin(report):
 
 def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
              report_bytes_bound=False, dice_timing_comparison=None,
-             profile_bridge=None, input_digests=None):
+             profile_bridge=None, input_digests=None, static_coverage=None):
     if type(report_bytes_bound) is not bool:
         raise EvidenceError("invalid byte-binding status")
     if all(item is None for item in (catalog, comparison, readvin, dice_timing,
-                                    dice_timing_comparison, profile_bridge)):
+                                    dice_timing_comparison, profile_bridge,
+                                    static_coverage)):
         raise EvidenceError("no evidence reports supplied")
     accepted_catalog = _catalog(catalog) if catalog is not None else None
     accepted_dice_timing = _dice_timing(dice_timing) if dice_timing is not None else None
@@ -345,6 +369,10 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
     accepted_profile_bridge = (_profile_bridge(profile_bridge, input_digests,
                                                 catalog, dice_timing)
                                if profile_bridge is not None else None)
+    accepted_static_coverage = (
+        _static_coverage(static_coverage, catalog, dice_timing, profile_bridge,
+                         readvin, input_digests)
+        if static_coverage is not None else None)
     accepted_comparison = _comparison(comparison) if comparison is not None else None
     accepted_readvin = _readvin(readvin) if readvin is not None else None
     if accepted_comparison is not None:
@@ -379,6 +407,10 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
             else "failed"),
         "dicetiming_to_carcom_row_join": "not_tested",
         "readvin_static_graph": "passed" if accepted_readvin else "not_tested",
+        "profile_readvin_static_prerequisites": (
+            "not_tested" if accepted_static_coverage is None else
+            "passed" if accepted_static_coverage['static_coverage'] == 'present'
+            else "failed"),
         "profile_to_readvin_join": "not_tested",
         "getscript_runtime_selection": "not_tested",
         "j2534_correlated_exchange": "not_tested",
@@ -394,6 +426,7 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
         "dice_timing_catalog": accepted_dice_timing,
         "dice_timing_count_comparison": accepted_dice_comparison,
         "profile_init_metadata_bridge": accepted_profile_bridge,
+        "profile_readvin_static_coverage": accepted_static_coverage,
         "comparison_disagreement_counts": accepted_comparison,
         "readvin_graph": accepted_readvin,
         "open_blockers": [name for name in STAGES if statuses[name] != "passed"],
@@ -417,6 +450,7 @@ def main(argv=None):
     parser.add_argument("--dicetiming-report", type=Path)
     parser.add_argument("--dicetiming-compare-report", type=Path)
     parser.add_argument("--profile-init-report", type=Path)
+    parser.add_argument("--profile-readvin-coverage-report", type=Path)
     parser.add_argument("--bundle-manifest", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -424,7 +458,8 @@ def main(argv=None):
         paths = {"catalog": args.catalog_report, "comparison": args.compare_report,
                  "readvin": args.readvin_report, "dicetiming": args.dicetiming_report,
                  "dicetiming_compare": args.dicetiming_compare_report,
-                 "profile_init": args.profile_init_report}
+                 "profile_init": args.profile_init_report,
+                 "profile_readvin": args.profile_readvin_coverage_report}
         sources = [p for p in paths.values() if p is not None]
         if args.bundle_manifest is not None:
             sources.append(args.bundle_manifest)
@@ -449,6 +484,8 @@ def main(argv=None):
             dice_timing_comparison=(loaded["dicetiming_compare"][0]
                                     if "dicetiming_compare" in loaded else None),
             profile_bridge=loaded["profile_init"][0] if "profile_init" in loaded else None,
+            static_coverage=(loaded["profile_readvin"][0]
+                             if "profile_readvin" in loaded else None),
             input_digests={key: pair[1] for key, pair in loaded.items()},
             report_bytes_bound=args.bundle_manifest is not None,
         )
