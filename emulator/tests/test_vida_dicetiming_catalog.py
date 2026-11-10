@@ -215,7 +215,6 @@ class DiceTimingTests(unittest.TestCase):
                                       '--output', str(target)]), 2)
         self.assertEqual(src.read_bytes(), after)
 
-
     def test_13_bundle_manifest_with_dicetiming_hash(self):
         self.create()
         source = self.folder / 'dicetiming.json'
