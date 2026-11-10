@@ -11,8 +11,11 @@ One command-line analyzer supports two schema metadata backends:
 * `sqlite-export`: reads **only** `_vida_meta`, `_vida_tables` and
   `_vida_columns` from the existing `CarCom.sqlite`,
   `DiagSwdlRepository.sqlite` and `BaseData.sqlite` *metadata-only exports*.
-  It opens immutable, read-only files. It cannot reconstruct missing original
-  user rows or SQL Server foreign-key constraints that the exporter omitted.
+  It opens immutable, read-only files only after rejecting any adjacent
+  `-wal`, `-shm` or `-journal` file. These sidecars may indicate that a
+  single-file SQLite snapshot was not checkpointed. It cannot reconstruct
+  missing original user rows or SQL Server foreign-key constraints that the
+  exporter omitted.
 * `sqlserver`: uses the `pyodbc` ODBC DSN configured locally in the owner VM.
   It connects individually to the three known VIDA database names and issues
   only fixed queries against `sys.tables`, `sys.columns`,
@@ -92,12 +95,13 @@ before sharing even aggregate results.
    TLS and trusted connection shape.
 7. Declared FK evidence distinguished from unverified row joins; hidden
    original table/column names do not escape to JSON.
-8. Exclusive output file and no SQLite source modification.
+8. Exclusive output file, no SQLite source modification, and rejection of
+   active SQLite WAL or rollback-journal sidecars.
 9. Empty or metadata-invisible SQL Server table or column catalogs rejected,
    including one table with zero visible columns. A nonempty catalog still does
    not prove that its visibility is complete.
 
-Sixteen unit tests cover these behaviors synthetically; run them on a reviewed exact
+Eighteen unit tests cover these behaviors synthetically; run them on a reviewed exact
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
