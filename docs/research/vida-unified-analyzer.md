@@ -54,7 +54,9 @@ Server and Python `pyodbc`, and a **Windows-integrated-authentication**
 read-only account with permission to view the required metadata. Configure
 an ODBC **System DSN** locally; no username or password is accepted as a
 command-line argument. DNS and TLS must be set up for certificate validation;
-the tool enforces `Encrypt=Yes;TrustServerCertificate=No`. The
+the tool enforces `Encrypt=Yes;TrustServerCertificate=No`. It also
+limits SQL Server login and each catalog query independently to eight seconds;
+a failed query-timeout configuration aborts before discovery. The
 `ApplicationIntent=ReadOnly` connection-string option is advisory, **not**
 access control: enforce permissions on the SQL Server itself.
 
@@ -93,7 +95,7 @@ before sharing even aggregate results.
 9. Empty or metadata-invisible SQL Server catalog rejected without claiming
    complete catalog visibility from a nonempty list.
 
-Thirteen unit tests cover these behaviors synthetically; run them on a reviewed exact
+Fourteen unit tests cover these behaviors synthetically; run them on a reviewed exact
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
