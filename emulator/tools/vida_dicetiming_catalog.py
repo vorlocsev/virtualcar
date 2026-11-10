@@ -37,8 +37,10 @@ SQL_TABLES = 'SELECT s.name, t.name FROM sys.tables AS t JOIN sys.schemas AS s O
 SQL_COLUMNS = ('SELECT s.name, t.name, c.name FROM sys.columns AS c '
                'JOIN sys.tables AS t ON c.object_id = t.object_id '
                'JOIN sys.schemas AS s ON s.schema_id = t.schema_id')
-SQL_KEYS = ('SELECT ss.name, st.name, sc.name, ts.name, tt.name, tc.name '
+SQL_KEYS = ('SELECT fk.object_id, ss.name, st.name, sc.name, ts.name, tt.name, tc.name, '
+            'fk.is_disabled, fk.is_not_trusted '
             'FROM sys.foreign_key_columns AS fkc '
+            'JOIN sys.foreign_keys AS fk ON fk.object_id = fkc.constraint_object_id '
             'JOIN sys.tables AS st ON st.object_id = fkc.parent_object_id '
             'JOIN sys.schemas AS ss ON ss.schema_id = st.schema_id '
             'JOIN sys.columns AS sc ON sc.object_id = st.object_id '
@@ -90,7 +92,46 @@ def _shape_hmac(tables, shape_key):
     return hmac.new(bytes.fromhex(shape_key), canonical, hashlib.sha256).hexdigest()
 
 
-def _finish(tables, foreign_key_count, backend, shape_key=None):
+def _foreign_key_summary(rows, tables):
+    """Count visible FK constraints once, not once per composite-key column."""
+    identities = {}
+    members = {}
+    for row in rows:
+        if len(row) != 9:
+            raise DiceTimingError('invalid FK catalog row')
+        fk_id, ss, st, sc, ts, tt, tc, disabled, untrusted = row
+        if type(fk_id) is not int or fk_id <= 0:
+            raise DiceTimingError('invalid FK catalog identifier')
+        if not all(isinstance(x, str) and x for x in (ss, st, sc, ts, tt, tc)):
+            raise DiceTimingError('invalid FK metadata')
+        # pyodbc maps SQL BIT to Python bool; accept canonical 0/1 ints too.
+        if (type(disabled) not in (bool, int) or disabled not in (0, 1) or
+                type(untrusted) not in (bool, int) or untrusted not in (0, 1)):
+            raise DiceTimingError('invalid FK trust status')
+        source, target = (ss.casefold(), st.casefold()), (ts.casefold(), tt.casefold())
+        source_col, target_col = sc.casefold(), tc.casefold()
+        if (source not in tables or target not in tables or
+                source_col not in tables[source] or target_col not in tables[target]):
+            raise DiceTimingError('unresolved FK metadata')
+        identity = (source, target, bool(disabled), bool(untrusted))
+        if fk_id in identities and identities[fk_id] != identity:
+            raise DiceTimingError('conflicting FK catalog identity')
+        identities[fk_id] = identity
+        key = (source_col, target_col)
+        pair_set = members.setdefault(fk_id, set())
+        if key in pair_set:
+            raise DiceTimingError('duplicate FK catalog column pair')
+        pair_set.add(key)
+    return {
+        'constraint_count': len(identities),
+        'disabled_constraint_count': sum(flags[2] for flags in identities.values()),
+        'untrusted_constraint_count': sum(flags[3] for flags in identities.values()),
+        'self_referencing_constraint_count': sum(flags[0] == flags[1]
+                                                  for flags in identities.values()),
+    }
+
+
+def _finish(tables, foreign_key_count, backend, shape_key=None, fk_stats=None):
     if not tables or any(not columns for columns in tables.values()):
         raise DiceTimingError('incomplete metadata inventory')
     result = {
@@ -112,6 +153,24 @@ def _finish(tables, foreign_key_count, backend, shape_key=None):
         'physical_j2534_verified': False,
         'replay_approved': False,
     }
+    if fk_stats is not None:
+        if backend != 'sqlserver':
+            raise DiceTimingError('incompatible FK catalog source')
+        if (type(fk_stats) is not dict or
+                set(fk_stats) != {'constraint_count', 'disabled_constraint_count',
+                                  'untrusted_constraint_count',
+                                  'self_referencing_constraint_count'}):
+            raise DiceTimingError('invalid FK catalog summary')
+        n = fk_stats['constraint_count']
+        if (type(n) is not int or n < 0 or n > foreign_key_count or
+                any(type(v) is not int or v < 0 or v > n for v in fk_stats.values())):
+            raise DiceTimingError('inconsistent FK catalog summary')
+        result['visible_fk_catalog'] = {
+            'scope': 'sqlserver_visible_constraints_only',
+            **fk_stats,
+            'complete_metadata_visibility_verified': False,
+            'referential_rows_verified': False,
+        }
     if shape_key is not None:
         result['visible_schema_hmac_scope'] = SHAPE_SCOPE
         result['visible_schema_hmac_sha256'] = _shape_hmac(tables, shape_key)
@@ -209,15 +268,8 @@ def load_sqlserver(dsn: str, connector=None, *, shape_key=None):
         _remember_table(tables, schema, name)
     for schema, name, column in column_rows:
         _remember_column(tables, schema, name, column)
-    for ss, st, sc, ts, tt, tc in fk_rows:
-        if not all(isinstance(x, str) and x for x in (ss, st, sc, ts, tt, tc)):
-            raise DiceTimingError('invalid FK metadata')
-        source, target = (ss.casefold(), st.casefold()), (ts.casefold(), tt.casefold())
-        if (source not in tables or target not in tables
-                or sc.casefold() not in tables[source]
-                or tc.casefold() not in tables[target]):
-            raise DiceTimingError('unresolved FK metadata')
-    return _finish(tables, len(fk_rows), 'sqlserver', shape_key)
+    fk_stats = _foreign_key_summary(fk_rows, tables)
+    return _finish(tables, len(fk_rows), 'sqlserver', shape_key, fk_stats=fk_stats)
 
 
 def main(argv=None):
