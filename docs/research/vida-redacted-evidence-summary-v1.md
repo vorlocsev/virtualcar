@@ -6,6 +6,12 @@ open original VIDA databases, XML, trace files, or a vehicle adapter.
 
 ## Inputs
 
+The optional `--profile-readvin-coverage-report` consumes a derived
+`virtualcar-vida-profile-readvin-static-coverage-v1` report, itself
+bound to the original `catalog`, `dicetiming`, `profile_init` and
+`readvin` redacted inputs. See the
+[static prerequisite coverage runbook](vida-profile-readvin-static-coverage.md).
+
 Optional inputs (at least one required):
 
 - `--catalog-report`: output of
@@ -114,7 +120,7 @@ Mismatched digests, forged positive provenance/runtime flags, invalid
 keys, duplicate file aliases and overlong manifest files fail closed.
 A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 
-## Sixteen evidence gates
+## Seventeen evidence gates
 
 | Stage | Meaning of `passed` |
 | --- | --- |
@@ -130,6 +136,7 @@ A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 | `dicetiming_to_carcom_row_join` | Always Not tested; the independent DiceTiming catalog contains no verified cross-database row relationship |
 | `catalog_shape_comparison` | A supplied comparison report declares no table/column/edge shape disagreement; it is not a verified same-installation join |
 | `readvin_static_graph` | A supplied redacted v2/v3 crosscheck declares seven consistent counters, nonempty ReadVin/identity nodes and identity calls |
+| `profile_readvin_static_prerequisites` | Four independently redacted CarCom/Profile/Service and ReadVin structural prerequisites are present and SHA-256-bound; actual GetScript handoff and VIN remain unverified |
 | `profile_to_readvin_join` | Always `not_tested` until independently proven |
 | `getscript_runtime_selection` | Always `not_tested` |
 | `j2534_correlated_exchange` | Always `not_tested` |
@@ -293,3 +300,24 @@ or client VIN acceptance.
 Local focused regression suite: **141/141 synthetic PASS**, Python
 `compileall` PASS. Original VIDA 2015A, exact-head Windows VMware CI
 and physical J2534 are not tested.
+
+### Independent Profile-to-ReadVin static prerequisite coverage (2026-11-10)
+
+The additional stage `profile_readvin_static_prerequisites` checks that
+four **independent static evidence prerequisites** exist and remain
+unchanged: CarCom Profile/InitHw, Profile/Service, Service/Protocol
+column-shape hypotheses, and ReadVin declared identity-output nodes.
+It does **not** assert any Profile → GetScript → ReadVin handoff.
+The new coverage report includes SHA-256 digests of all four sources;
+the master summary recomputes its entire content and rejects forged
+statuses, omitted sources or mismatched bytes.
+
+There are now **17 gates**. Even when this new gate passes,
+`profile_to_readvin_join`, `getscript_runtime_selection`,
+`j2534_correlated_exchange` and `client_vin_acceptance` remain
+`not_tested`. The optional manifest binds the fifth (derived) report
+alongside its four independently redacted sources.
+
+Focused isolated Python 3.13.5 suite: **157/157 synthetic PASS**,
+`compileall` PASS. Original VIDA 2015A, live VMware, exact-head CI,
+GetScript execution and physical J2534 remain untested.
