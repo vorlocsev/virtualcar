@@ -215,7 +215,7 @@ class VidaCarcomSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.PreflightError,
                                     'invalid exporter metadata schema'):
             mod.audit(self.folder)
- 
+
     def test_16_view_replacing_exporter_catalog_rejected(self):
         def inject(db):
             db.execute('ALTER TABLE _vida_meta RENAME TO _saved_meta')
