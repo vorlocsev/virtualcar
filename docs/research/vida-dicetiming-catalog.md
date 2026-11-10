@@ -148,3 +148,35 @@ were compared against the locally tested files:
 
 No source-original VIDA 2015A tables, actual `DiceTiming` MDF, VMware
 exact-head CI, D2 baud or physical J2534 were inspected.
+
+### Composite-key ordinal validation (2026-11-10)
+
+The SQL Server FK metadata query now also reads the documented
+`sys.foreign_key_columns.constraint_column_id` ordinal (1 through n)
+for each column of a foreign-key constraint. The collector rejects:
+
+- ordinal zero, negative, boolean, noninteger and values above SQL
+  Server's 32-column FK limit;
+- duplicated ordinal positions for one FK;
+- a missing initial ordinal or an interior gap;
+- repeated source or repeated referenced columns in one FK;
+- noncanonical row widths and inconsistent constraint identities.
+
+Rows from the fixed query may arrive in any order. Accepted ordinals must
+form the set `1..N` per FK even when returned out of order. The redacted
+output remains unchanged: it contains only counts and negative evidence
+flags, never FK IDs, ordinals, private table/column names or SQL definitions.
+
+**Limit:** a truncated *suffix* can still look like `1..N` if the
+expected total number of members is not independently available. This
+preflight therefore does not establish complete metadata visibility or
+correct database-level referential integrity.
+
+Six new regression methods extend the isolated focused suite to
+**76/76 PASS** on Linux Python 3.13.5; `compileall` PASS.
+Verified local Git blobs and committed GitHub blobs match exactly:
+- collector: `eb2f7fa27d0480ad9b6fb849179a8c624735c493`
+- FK tests: `06c7e34785a944a208527daae8f330e5c71421ca`
+
+No original VIDA, VMware runner, client VIN acceptance or J2534
+hardware was used for this change.
