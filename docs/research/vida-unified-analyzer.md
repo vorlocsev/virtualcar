@@ -17,7 +17,7 @@ One command-line analyzer supports two schema metadata backends:
   It connects individually to the three known VIDA database names and issues
   only fixed queries against \`sys.tables\`, \`sys.columns\`,
   \`sys.schemas\`, \`sys.foreign_keys\` and \`sys.foreign_key_columns\`.
-  It never selects from application/user tables.
+  It verifies `SELECT DB_NAME()` matches the intended database before any catalog discovery. It never selects from application/user tables.
 
 Both backends use the same source of known research hints in
 \`audit_vida_carcom_schema_links.py\`; they do not duplicate assumptions
@@ -79,12 +79,13 @@ before sharing even aggregate results.
 3. Malformed exporter metadata schema is rejected before any data SELECT.
 4. Invalid identity, orphan columns or duplicated catalog identity fail.
 5. SQL Server DSN injection and connection error redaction.
-6. SQL Server metadata-only query contract, TLS and trusted connection shape.
+6. SQL Server metadata-only query contract, exact `DB_NAME()` identity,
+   TLS and trusted connection shape.
 7. Declared FK evidence distinguished from unverified row joins; hidden
    original table/column names do not escape to JSON.
 8. Exclusive output file and no SQLite source modification.
 
-Unit tests cover these behaviors synthetically; run them on a reviewed exact
+Twelve unit tests cover these behaviors synthetically; run them on a reviewed exact
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
