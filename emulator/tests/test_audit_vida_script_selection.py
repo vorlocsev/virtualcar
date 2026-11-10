@@ -301,9 +301,7 @@ class VidaSelectionTraceTests(unittest.TestCase):
                               fetched(t="31,576"), running(t="31,576")])
         self.assertEqual(report["events"]["matched_read_vin_triplets"], 1)
         self.assertEqual(report["events"]["out_of_order_running_script_events"], 0)
-        self.assertFalse(report["client_vin_accepted"]
-                         if "client_vin_accepted" in report
-                         else report["actual_vida_client_identity_verified"])
+        self.assertFalse(report["actual_vida_client_identity_verified"])
 
     def test_27_unbound_emptyprofile_readvin_bootstrap_shape(self):
         request = get(script_type="ReadVin").replace(
@@ -324,6 +322,7 @@ class VidaSelectionTraceTests(unittest.TestCase):
             "EcuType: '123'", "EcuType: '-1'")
         for request in (
             base.replace("ScriptId: ''", "ScriptId: 'ID-ON-DISK'"),
+            base.replace("ScriptId: ''", ""),
             base.replace("EcuType: '-1'", "EcuType: '0'"),
             base.replace("Profile: 'EMPTYPROFILE,'", "Profile: 'PRIVATE'"),
             base.replace("Type: 'ReadVin'", "Type: 'Other'"),
