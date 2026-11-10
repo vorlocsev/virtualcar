@@ -169,5 +169,38 @@ class SafeCrosscheckTests(unittest.TestCase):
             self.assertFalse(out.exists())
 
 
+    def test_12_duplicate_json_keys_rejected_before_analysis(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td)
+            a, b = fixtures()
+            source = folder / 'v2.json'
+            reference = folder / 'v3.json'
+            result = folder / 'result.json'
+            # A later false flag must not silently erase an earlier true flag.
+            source.write_text(json.dumps(a).replace(
+                '"vin_accepted_by_client": false',
+                '"vin_accepted_by_client": true, "vin_accepted_by_client": false'
+            ), encoding='utf-8')
+            reference.write_text(json.dumps(b), encoding='utf-8')
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main([str(source), str(reference), '--output', str(result)])
+            self.assertFalse(result.exists())
+
+    def test_13_nonfinite_json_numbers_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td)
+            a, b = fixtures()
+            source = folder / 'v2.json'
+            reference = folder / 'v3.json'
+            result = folder / 'result.json'
+            source.write_text(json.dumps(a), encoding='utf-8')
+            reference.write_text(json.dumps(b).replace(
+                '"node_count": 3', '"node_count": NaN'
+            ), encoding='utf-8')
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main([str(source), str(reference), '--output', str(result)])
+            self.assertFalse(result.exists())
+
+
 if __name__ == '__main__':
     unittest.main()
