@@ -20,9 +20,9 @@ COLUMNS = [
     ('dbo', 'PrivateConfig', 'id_alt'),
 ]
 KEYS = [
-    (100, 'dbo', 'PrivateTimings', 'cfg', 'dbo', 'PrivateConfig', 'id', False, True),
-    (100, 'dbo', 'PrivateTimings', 'cfg_alt', 'dbo', 'PrivateConfig', 'id_alt', False, True),
-    (101, 'dbo', 'PrivateTimings', 'parent', 'dbo', 'PrivateTimings', 'id', True, False),
+    (100, 1, 'dbo', 'PrivateTimings', 'cfg', 'dbo', 'PrivateConfig', 'id', False, True),
+    (100, 2, 'dbo', 'PrivateTimings', 'cfg_alt', 'dbo', 'PrivateConfig', 'id_alt', False, True),
+    (101, 1, 'dbo', 'PrivateTimings', 'parent', 'dbo', 'PrivateTimings', 'id', True, False),
 ]
 
 
@@ -72,6 +72,7 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
         self.assertEqual(db.timeout, 8)
         self.assertEqual(len(db.cursor_obj.queries), 4)
         self.assertIn('JOIN sys.foreign_keys', db.cursor_obj.queries[-1])
+        self.assertIn('fkc.constraint_column_id', db.cursor_obj.queries[-1])
         self.assertTrue(all('sys.' in q or q == 'SELECT DB_NAME()'
                             for q in db.cursor_obj.queries))
         return result
@@ -115,7 +116,7 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
     def test_05_duplicate_component_and_orphan_rejected(self):
         with self.assertRaises(dt.DiceTimingError):
             dt._foreign_key_summary(KEYS + [KEYS[0]], self._tables())
-        broken = [KEYS[0][:3] + ('unknown_column',) + KEYS[0][4:]]
+        broken = [KEYS[0][:4] + ('unknown_column',) + KEYS[0][5:]]
         with self.assertRaises(dt.DiceTimingError):
             dt._foreign_key_summary(broken, self._tables())
 
@@ -180,6 +181,42 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
             bad['visible_fk_catalog'][field] = value
             with self.subTest(field=field), self.assertRaises(summary.EvidenceError):
                 summary.assemble(dice_timing=bad)
+
+    def test_13_missing_first_ordinal_rejected(self):
+        bad = [KEYS[0][:1] + (2,) + KEYS[0][2:]]
+        with self.assertRaisesRegex(dt.DiceTimingError, 'noncontiguous FK ordinals'):
+            dt._foreign_key_summary(bad, self._tables())
+
+    def test_14_duplicate_ordinal_rejected(self):
+        bad = [KEYS[0], KEYS[1][:1] + (1,) + KEYS[1][2:]]
+        with self.assertRaisesRegex(dt.DiceTimingError, 'duplicate FK ordinal'):
+            dt._foreign_key_summary(bad, self._tables())
+
+    def test_15_interior_gap_rejected(self):
+        bad = [KEYS[0], KEYS[1][:1] + (3,) + KEYS[1][2:]]
+        with self.assertRaisesRegex(dt.DiceTimingError, 'noncontiguous FK ordinals'):
+            dt._foreign_key_summary(bad, self._tables())
+
+    def test_16_noncanonical_ordinals_rejected(self):
+        for value in (True, '1', 0, -1, 33):
+            bad = [KEYS[0][:1] + (value,) + KEYS[0][2:]]
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    dt.DiceTimingError, 'invalid FK ordinal'):
+                dt._foreign_key_summary(bad, self._tables())
+
+    def test_17_duplicate_source_or_target_member_rejected(self):
+        same_source = [KEYS[0], KEYS[1][:4] + ('cfg',) + KEYS[1][5:]]
+        same_target = [KEYS[0], KEYS[1][:7] + ('id',) + KEYS[1][8:]]
+        for bad in (same_source, same_target):
+            with self.assertRaisesRegex(dt.DiceTimingError, 'duplicate FK member column'):
+                dt._foreign_key_summary(bad, self._tables())
+
+    def test_18_out_of_order_but_complete_ordinals_accepted(self):
+        data = [KEYS[1], KEYS[2], KEYS[0]]
+        report = self.collect(data)
+        self.assertEqual(report['visible_fk_catalog']['constraint_count'], 2)
+        self.assertEqual(report['declared_fk_column_count'], 3)
+        self.assertFalse(report['visible_fk_catalog']['complete_metadata_visibility_verified'])
 
     @staticmethod
     def _tables():
