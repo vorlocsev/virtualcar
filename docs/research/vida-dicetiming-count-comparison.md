@@ -113,3 +113,19 @@ GitHub blob SHA matching the locally executed files:
 `f70daf59daa568f27afeab18b8a9ca66b12d18c7`,
 `52bae7aef49cdbec45b3b8f1f61c72dadf066d20`.
 Exact-HEAD Windows VMware CI and actual VIDA databases remain untested.
+
+## Independent SQL Server FK metadata coverage
+
+The DiceTiming source collector now optionally reports counts of visible
+SQL Server FK **constraints**, including disabled, untrusted and
+self-referencing constraints. Composite foreign keys are grouped as one
+constraint while the legacy `declared_fk_column_count` still counts
+individual FK column pairs. The SQLite exporter contains no corresponding
+constraint metadata. Therefore neither the table/column count comparison
+nor the HMAC visible-table/column signature can prove FK equivalence.
+These optional FK aggregates are reviewed only in the separate unified
+summary gate `dice_timing_visible_fk_catalog`, not in this comparator.
+
+Even if the SQL Server FK catalog contains zero visible entries, metadata
+visibility is not proved complete; neither SQL cross-database references
+nor runtime timing/profile associations are established by these counts.
