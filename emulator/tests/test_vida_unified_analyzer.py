@@ -36,7 +36,8 @@ class FakeCursor:
                             if self.dbname == "CarCom" else [])
         elif "FROM sys.columns" in sql:
             self.current = [
-                ("dbo", t, c) for t, cols in names.items() for c in cols
+                ("dbo", t, c) for t, cols in names.items()
+                for c in (cols or ("SECRET_INTERNAL_COLUMN",))
             ] + [("dbo", "SECRET_USER", "SECRET_VIN_1234567890"),
                  ("dbo", "SECRET_USER", "secret_ref")]
         elif "FROM sys.tables" in sql:
