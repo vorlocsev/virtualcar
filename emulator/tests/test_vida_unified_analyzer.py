@@ -61,6 +61,7 @@ class FakeConnection:
         self.database = database
         self.queries = queries
         self.closed = False
+        self.timeout = 0
 
     def cursor(self):
         return FakeCursor(self.database, self.queries)
@@ -204,6 +205,7 @@ class UnifiedVidaTests(unittest.TestCase):
         self.assertNotIn("SECRET_USER", json.dumps(report))
         self.assertEqual(len(connections), 3)
         self.assertTrue(all(c.closed for c in connections))
+        self.assertTrue(all(c.timeout == 8 for c in connections))
         self.assertEqual(len(queries), 12)
         self.assertEqual(queries.count("SELECT DB_NAME()"), 3)
 
@@ -294,6 +296,28 @@ class UnifiedVidaTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.AnalyzerError,
                                     "empty or inaccessible SQL Server catalog"):
             mod.load_sqlserver("VIDA_LOCAL", connect)
+        self.assertEqual(len(connections), 1)
+        self.assertTrue(connections[0].closed)
+
+    def test_14_sql_server_query_timeout_failure_closes_connection(self):
+        connections = []
+
+        class RejectQueryTimeout(FakeConnection):
+            def __setattr__(self, name, value):
+                if name == "timeout" and value == 8:
+                    raise RuntimeError("PRIVATE_CONNECTION_DETAIL")
+                super().__setattr__(name, value)
+
+        def connect(string, autocommit, timeout):
+            database = string.split("DATABASE=")[1].split(";")[0]
+            connection = RejectQueryTimeout(database, [])
+            connections.append(connection)
+            return connection
+
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "SQL Server metadata read failed") as caught:
+            mod.load_sqlserver("VIDA_LOCAL", connect)
+        self.assertNotIn("PRIVATE_CONNECTION_DETAIL", str(caught.exception))
         self.assertEqual(len(connections), 1)
         self.assertTrue(connections[0].closed)
 
