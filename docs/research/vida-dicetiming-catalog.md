@@ -216,3 +216,40 @@ SHA as the current PR branch:
 
 The original VIDA 2015A SQL Server and VMware exact-head CI were
 not accessed during this change.
+
+### Complete bounded cursor consumption (2026-11-10)
+
+The SQL Server mode previously used a single
+`fetchmany(MAX+1)` call for each of `sys.tables`,
+`sys.columns`, and `sys.foreign_key_columns`. A DB-API
+cursor can return a short batch before reaching end of results.
+Assuming one short batch is exhaustive could silently undercount
+catalog metadata and incorrectly treat the partial result as valid.
+
+The updated collector uses `_consume_bounded` to drain each
+metadata-only cursor until `fetchmany` indicates end of results.
+It requests at most 256 rows per call, never retains more than
+the respective `MAX_TABLES`, `MAX_COLUMNS`, or `MAX_KEYS` limit,
+and rejects both over-cap catalogs and cursor batches larger than
+the requested size. The SQL commands, DSN, read-only semantics and
+redacted report schema remain unchanged.
+
+Two existing SQL Server mock cursors now model consuming DB-API
+reads rather than repeating the same buffer. Six new synthetic
+tests exercise short one-row batches, overflow across multiple
+batches for each catalog, incomplete column inventory, and a
+cursor violating the requested batch limit.
+
+**Verified local:** Python 3.13.5 **88/88 tests PASS** and
+`compileall` PASS. Exact tested Git blob SHA-1:
+- `emulator/tools/vida_dicetiming_catalog.py`: `552eb8d834f579a751a53bca0681026ffc9054b8`
+- `emulator/tests/test_vida_dicetiming_catalog.py`: `dcd6e74e71d34e0f779c9605dbc1954d9fdd3cb3`
+- `emulator/tests/test_vida_dicetiming_fk_catalog.py`: `16a5fdadbd56bcb510921d63b744dd484226debe`
+- `emulator/tests/test_vida_dicetiming_cursor_paging.py`: `8bc96b814c1a0953c7ff3d77886a0989dbd807d1`
+
+**Evidence limit:** successful draining still cannot prove that the
+SQL Server principal can see every table or constraint, or that
+multiple system-catalog queries reflect one atomic schema snapshot.
+Original VIDA 2015A DiceTiming, InitHw, D2 timing values, ReadVin
+runtime, physical J2534 and exact-head Windows VMware CI remain
+unverified.
