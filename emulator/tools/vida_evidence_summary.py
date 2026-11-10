@@ -44,6 +44,7 @@ READVIN_NEGATIVE = (
 STAGES = (
     "report_bytes_binding", "catalog_metadata", "dice_timing_metadata",
     "catalog_shape_comparison", "dice_timing_count_comparison",
+    "dice_timing_visible_schema_hmac",
     "readvin_static_graph",
     "profile_to_readvin_join", "getscript_runtime_selection",
     "j2534_correlated_exchange", "client_vin_acceptance",
@@ -186,7 +187,17 @@ def _dice_timing_count_comparison(report):
                            ("aggregate_counts_equal", matches_tables and matches_columns)):
         if report.get(name) is not expected:
             raise EvidenceError("inconsistent DiceTiming count comparison")
-    return {"table_counts_equal": matches_tables,
+    fingerprint = report.get("visible_schema_hmac_comparison", "not_tested")
+    match = report.get("visible_schema_hmac_equal", None)
+    if fingerprint not in ("matched", "mismatched", "not_tested"):
+        raise EvidenceError("invalid DiceTiming fingerprint result")
+    if (fingerprint == "not_tested" and match is not None or
+            fingerprint == "matched" and match is not True or
+            fingerprint == "mismatched" and match is not False or
+            fingerprint == "matched" and not (matches_tables and matches_columns)):
+        raise EvidenceError("inconsistent DiceTiming fingerprint result")
+    return {"visible_schema_hmac_comparison": fingerprint,
+            "table_counts_equal": matches_tables,
             "column_counts_equal": matches_columns,
             "aggregate_counts_equal": matches_tables and matches_columns,
             "schema_equivalence_verified": False}
@@ -250,12 +261,17 @@ def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
     dice_comparison_status = ("not_tested" if accepted_dice_comparison is None else
                               "passed" if accepted_dice_comparison["aggregate_counts_equal"]
                               else "failed")
+    hmac_status = ("not_tested" if accepted_dice_comparison is None else
+                   {"matched": "passed", "mismatched": "failed",
+                    "not_tested": "not_tested"}[
+                        accepted_dice_comparison["visible_schema_hmac_comparison"]])
     statuses = {
         "report_bytes_binding": "passed" if report_bytes_bound else "not_tested",
         "catalog_metadata": "passed" if accepted_catalog else "not_tested",
         "dice_timing_metadata": "passed" if accepted_dice_timing else "not_tested",
         "catalog_shape_comparison": comparison_status,
         "dice_timing_count_comparison": dice_comparison_status,
+        "dice_timing_visible_schema_hmac": hmac_status,
         "readvin_static_graph": "passed" if accepted_readvin else "not_tested",
         "profile_to_readvin_join": "not_tested",
         "getscript_runtime_selection": "not_tested",
