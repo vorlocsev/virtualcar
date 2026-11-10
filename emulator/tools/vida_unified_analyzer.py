@@ -171,6 +171,11 @@ def load_sqlserver(dsn: str, connector=None):
                         or db_rows[0][0].casefold() != database.casefold()):
                     raise AnalyzerError("unexpected SQL Server database identity")
                 table_rows = _rows(cursor, SQL_TABLES, MAX_TABLES)
+                # SQL Server catalog views filter objects by metadata visibility.
+                # An empty result must not masquerade as evidence that VIDA
+                # genuinely has zero tables or that the schema is verified.
+                if not table_rows:
+                    raise AnalyzerError("empty or inaccessible SQL Server catalog")
                 column_rows = _rows(cursor, SQL_COLUMNS, MAX_COLUMNS)
                 key_rows = _rows(cursor, SQL_KEYS, MAX_KEYS)
             finally:
@@ -211,6 +216,7 @@ def render(inventories, backend: str):
         "schema_version": SCHEMA, "backend": backend, "status": "metadata_only",
         "source_rows_read": False, "original_xml_sql_read": False,
         "cross_database_snapshot_verified": False, "record_joins_verified": False,
+        "catalog_visibility_complete_verified": False,
         "selected_vehicle_profile_verified": False, "d2_baud_verified": False,
         "readvin_execution_verified": False, "client_vin_accepted": False,
         "replay_approved": False, "databases": {}, "edges": []
