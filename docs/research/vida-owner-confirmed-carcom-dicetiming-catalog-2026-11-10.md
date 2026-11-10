@@ -150,11 +150,11 @@ Read the original DiceTiming values separately:
 
 ~~~sql
 SELECT TOP (100) MessageTimingID, P1max, P3min, P4min,
-       RTRIM(Comment) AS Comment
+       Comment
 FROM dbo.MessageTiming ORDER BY MessageTimingID;
 
 SELECT TOP (100) TimeoutAndResendId, Timeout, Resend,
-       RTRIM(Comment) AS Comment
+       Comment
 FROM dbo.TimeoutAndResend ORDER BY TimeoutAndResendId;
 ~~~
 
