@@ -21,6 +21,10 @@ Optional inputs (at least one required):
   output of `emulator/tools/vida_dicetiming_catalog.py`
   (`virtualcar-vida-dicetiming-metadata-v1`), see
   [DiceTiming scope](vida-dicetiming-catalog.md).
+- `--dicetiming-compare-report`: optional aggregate-only comparison of
+  two redacted DiceTiming SQL Server/SQLite catalogs
+  (`virtualcar-vida-dicetiming-count-compare-v1`), see
+  [DiceTiming count comparison](vida-dicetiming-count-comparison.md).
 
 Use only owner-controlled, redacted reports. Source reports may originate
 from **different machines or installations**; supplying multiple reports
@@ -64,7 +68,8 @@ An owner-only manifest example for one report is:
 
 Replace the placeholder with the exact SHA-256 digest of the redacted
 input JSON **including its original whitespace/newlines**. Use the
-`catalog`, `comparison`, `readvin` and optional `dicetiming` keys
+`catalog`, `comparison`, `readvin`, optional `dicetiming`, and
+`dicetiming_compare` keys
 for inputs actually supplied, no others. A digest is never included in the aggregate output.
 
 Run:
@@ -79,13 +84,14 @@ Mismatched digests, forged positive provenance/runtime flags, invalid
 keys, duplicate file aliases and overlong manifest files fail closed.
 A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 
-## Nine evidence gates
+## Ten evidence gates
 
 | Stage | Meaning of `passed` |
 | --- | --- |
 | `report_bytes_binding` | Optional manifest proves only supplied redacted file bytes match their declared SHA-256; no origin/trust proof |
 | `catalog_metadata` | A supplied metadata-only catalog report passed the summary's structural preflight; original catalog provenance is not verified |
 | `dice_timing_metadata` | A supplied fourth database metadata report passed DiceTiming identity and aggregate shape preflight; no timing values or mapping verified |
+| `dice_timing_count_comparison` | Two already-redacted reports agree on table and column totals only; no schema equivalence or same-origin proof |
 | `catalog_shape_comparison` | A supplied comparison report declares no table/column/edge shape disagreement; it is not a verified same-installation join |
 | `readvin_static_graph` | A supplied redacted v2/v3 crosscheck declares seven consistent counters, nonempty ReadVin/identity nodes and identity calls |
 | `profile_to_readvin_join` | Always `not_tested` until independently proven |
@@ -152,7 +158,23 @@ VIDA GetScript selection, client VIN acceptance, physical J2534, or full
 repository CI. The fourth report cannot establish cross-installation
 provenance or rewrite previously unverified gates.
 
-Next: cross-report source provenance and bounded, explicitly evidenced
-profile/service/ReadVin joins. Continue to keep `B9FBFrameCount=0` and
+### DiceTiming count comparison extension
+
+An independent, optional read-only comparator now accepts paired redacted
+SQLite and SQL Server `DiceTiming` metadata reports. Differences between
+aggregate table and column counts yield a `failed` summary gate; matching
+counts yield a `passed` **counts-only** gate. Both reports remain
+unattributed to a common installation and no source timing rows are read.
+The SQL Server FK count is informational only, since the SQLite export has
+no declared FK metadata.
+
+On the local isolated Python 3.13.5 research workspace, **46/46**
+synthetic tests passed, zero failures/errors; `compileall` PASS across
+the four tool and three test modules, including the comparator and summary
+integration. The full repo suite and exact-HEAD VMware CI are still
+unverified.
+
+Next: owner-local original DiceTiming schema evidence and source provenance,
+then bounded, explicitly evidenced profile/service/ReadVin joins. Continue to keep `B9FBFrameCount=0` and
 replay disabled until real, authorized, read-only client evidence exists.
 No `main`, J2534 runtime or binary releases changed in this step.
