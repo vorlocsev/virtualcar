@@ -1,5 +1,6 @@
 """Synthetic-only coverage of DiceTiming metadata scope and summary integration."""
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -213,6 +214,39 @@ class DiceTimingTests(unittest.TestCase):
             self.assertEqual(dt.main(['--backend', 'sqlite-export', '--folder', str(self.folder),
                                       '--output', str(target)]), 2)
         self.assertEqual(src.read_bytes(), after)
+
+
+    def test_13_bundle_manifest_with_dicetiming_hash(self):
+        self.create()
+        source = self.folder / 'dicetiming.json'
+        source.write_text(json.dumps(dt.load_sqlite_export(self.folder)), encoding='utf-8')
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        manifest = self.folder / 'manifest.json'
+        manifest.write_text(json.dumps({
+            'schema_version': summary.BUNDLE_SCHEMA,
+            'scope': 'redacted_report_bytes_only',
+            'reports': {'dicetiming': digest},
+            'same_installation_provenance_verified': False,
+            'runtime_evidence_verified': False,
+        }), encoding='utf-8')
+        out = self.folder / 'summary.json'
+        args = ['--dicetiming-report', str(source), '--bundle-manifest', str(manifest),
+                '--output', str(out)]
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(summary.main(args), 0)
+        result = json.loads(out.read_text())
+        self.assertTrue(result['redacted_report_bytes_bound'])
+        self.assertFalse(result['same_installation_provenance_verified'])
+        self.assertNotIn(digest, out.read_text())
+        bad = self.folder / 'wrong.json'
+        bad.write_text(source.read_text() + '\n', encoding='utf-8')
+        failed_output = self.folder / 'failed-summary.json'
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(summary.main(['--dicetiming-report', str(bad),
+                                           '--bundle-manifest', str(manifest),
+                                           '--output', str(failed_output)]), 2)
+        self.assertFalse(failed_output.exists())
+
 
 
 if __name__ == '__main__':
