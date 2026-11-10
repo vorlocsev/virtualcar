@@ -94,3 +94,11 @@ D2 B9FB / GGD 22 F190, on-wire CAN, VIDA runtime acceptance,
 J2534 MS-CAN probing, physical J2534 and exact-head VMware CI.
 
 PR remains Draft, no merge or release.
+
+
+## Corrected empty-profile semantics from original Core / ScriptProvider IL
+- Follow-up static analysis of the already owner-provided original `Core.DLL` found `VehicleProfile::.cctor` (MethodDef **648**): constructs the static `_empty` instance with a **single-element string[] containing literal `EMPTYPROFILE`** and condensed string **`EMPTYPROFILE`**. `VehicleProfile.get_Empty` (MethodDef **643**) returns that non-null singleton; `VehicleProfile.get_Profiles` (MethodDef **640**) returns its string array.
+- Previously inspected original `AppServices.Scripting.DLL` `RunScriptService.RunIdentifyVehicleScript` (#113) passes **`VehicleProfile.get_Empty`** into `getScriptEngineNoEcuContext`. Original `BizServices.ScriptRepository.DLL` `ScriptProvider.GetFromDb` (#30), IL_00b9-00e4, sets `@profileList = DBNull.Value` **only when the profile argument is null**; otherwise it passes `VehicleProfile.get_Profiles()` through `Vcc.Vida.DiagSwdl.Util.Strings.CommaSeparate()` as `@profileList`.
+- Therefore, the `ReadVin` call **does not use the null-profile branch merely because the application labels the profile "Empty"**. It supplies a non-null special profile, and likely `@profileList='EMPTYPROFILE'` (dependent on the exact `CommaSeparate` implementation). The original SQL procedure's profile-list branch invokes `GetValidProfilesForSelected(@profileList)`. Previous suspicion that null-profile SQL branch (3) was used for ReadVin was **an unproven hypothesis and should not be relied upon**.
+- Next owner read-only SELECT explicitly checks original `ScriptProfileMap` for `fkProfile='EMPTYPROFILE'`, alongside all ReadVin mappings and the original function definition. No stored procedure/function execution, raw vendor bytes publication or runtime acceptance inferred.
+
