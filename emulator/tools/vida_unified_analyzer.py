@@ -163,6 +163,13 @@ def load_sqlserver(dsn: str, connector=None):
             db = connector(connection_string, autocommit=True, timeout=8)
             try:
                 cursor = db.cursor()
+                # A DSN may contain a default database or routing settings.
+                # Verify the *effective* database before using any schema.
+                # Only a built-in identity function is called; no user rows.
+                db_rows = _rows(cursor, "SELECT DB_NAME()", 1)
+                if (len(db_rows) != 1 or not isinstance(db_rows[0][0], str)
+                        or db_rows[0][0].casefold() != database.casefold()):
+                    raise AnalyzerError("unexpected SQL Server database identity")
                 table_rows = _rows(cursor, SQL_TABLES, MAX_TABLES)
                 column_rows = _rows(cursor, SQL_COLUMNS, MAX_COLUMNS)
                 key_rows = _rows(cursor, SQL_KEYS, MAX_KEYS)
