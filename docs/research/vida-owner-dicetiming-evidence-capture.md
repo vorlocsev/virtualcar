@@ -112,3 +112,20 @@ and the focused research suite completed **110/110 PASS** with
 not original VIDA. They did **not** run owner-only VMware, actual SQL Server
 or real automotive hardware. Exact-head CI and full repository tests remain
 separate acceptance requirements.
+
+## Optional independent static Profile/Service → ReadVin coverage
+
+When the owner also has a reviewed redacted static ReadVin crosscheck,
+run `vida_profile_readvin_static_coverage.py` against the redacted
+`catalog`, `dicetiming`, `profile_init` and `readvin` inputs.
+Then include its `--profile-readvin-coverage-report` in **both**
+the manifest generator and the master evidence summary.
+
+The output is a source-byte-bound coverage inventory, **not** evidence
+that a GetScript selection corresponds to the profiled ECU. For exact
+PowerShell commands and status definitions, see
+[Profile-to-ReadVin static coverage](vida-profile-readvin-static-coverage.md).
+The `profile_to_readvin_join`, `getscript_runtime_selection` and
+`client_vin_acceptance` gates remain Not tested without new runtime
+and row-level evidence. Synthetic suite: 157/157 PASS;
+actual VMware/original VIDA not run for this extension.
