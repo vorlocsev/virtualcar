@@ -48,10 +48,11 @@ Run locally from the exact reviewed checkout:
 & $python -m compileall -q emulator/tools/compare_vida_catalog_reports.py emulator/tests/test_compare_vida_catalog_reports.py
 ~~~
 
-Eight synthetic test cases cover matching/different shapes, redaction,
+Nine synthetic test cases cover matching/different shapes, redaction,
 forged verification, duplicate/missing edges, invalid known columns,
-duplicate JSON keys, and exclusive output. In an isolated Linux Python
-3.13 environment, 8/8 new tests and 39/39 existing VIDA tests passed
+duplicate JSON keys, internally inconsistent edge claims, and exclusive output.
+In an isolated Linux Python
+3.13 environment, 9/9 new tests and 39/39 existing VIDA tests passed
 with no skipped cases; compileall passed. The actual owner-private
 VIDA source reports and VMware Windows Python 3.12 have NOT been tested.
 
