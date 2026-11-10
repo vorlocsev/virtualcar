@@ -322,5 +322,51 @@ class UnifiedVidaTests(unittest.TestCase):
         self.assertTrue(connections[0].closed)
 
 
+    def _load_sqlserver_with_column_visibility(self, scenario):
+        connections = []
+
+        class HiddenColumns(FakeConnection):
+            def cursor(self):
+                cursor = FakeCursor(self.database, self.queries)
+                original = cursor.execute
+
+                def partial(sql):
+                    result = original(sql)
+                    if "FROM sys.columns" in sql:
+                        if scenario == "empty":
+                            cursor.current = []
+                        elif scenario == "one_missing":
+                            cursor.current = [
+                                row for row in cursor.current
+                                if row[1] != "T111_Service"
+                            ]
+                    return result
+
+                cursor.execute = partial
+                return cursor
+
+        def connect(string, autocommit, timeout):
+            database = string.split("DATABASE=")[1].split(";")[0]
+            connection = HiddenColumns(database, [])
+            connections.append(connection)
+            return connection
+
+        try:
+            mod.load_sqlserver("VIDA_LOCAL", connect)
+        finally:
+            self.assertEqual(len(connections), 1)
+            self.assertTrue(connections[0].closed)
+
+    def test_15_sql_server_empty_column_catalog_rejected(self):
+        with self.assertRaisesRegex(
+                mod.AnalyzerError, "empty or inaccessible SQL Server column catalog"):
+            self._load_sqlserver_with_column_visibility("empty")
+
+    def test_16_sql_server_partially_hidden_columns_rejected(self):
+        with self.assertRaisesRegex(
+                mod.AnalyzerError, "SQL Server table has no visible columns"):
+            self._load_sqlserver_with_column_visibility("one_missing")
+
+
 if __name__ == "__main__":
     unittest.main()
