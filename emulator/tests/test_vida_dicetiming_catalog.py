@@ -36,7 +36,9 @@ class FakeCursor:
         return self
 
     def fetchmany(self, n):
-        return self.current[:n]
+        # DB-API cursors consume rows; successive fetchmany calls do not repeat.
+        batch, self.current = self.current[:n], self.current[n:]
+        return batch
 
 
 class FakeDb:
