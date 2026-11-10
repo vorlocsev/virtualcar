@@ -13,6 +13,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import vida_evidence_summary as mod
+import compare_vida_dicetiming_catalog as dice_comparator
+import vida_dicetiming_catalog as dice_catalog
 
 
 def catalog():
@@ -278,6 +280,63 @@ class VidaEvidenceSummaryTests(unittest.TestCase):
                                "--output", str(output)])
         self.assertEqual(status, 2)
         self.assertFalse(output.exists())
+
+
+    def test_18_dice_count_comparison_gate_match_without_provenance(self):
+        source = dice_catalog._finish({('x', 'a'): {'one'}}, 0, 'sqlite-export')
+        other = dice_catalog._finish({('x', 'b'): {'two'}}, 0, 'sqlserver')
+        cmp = dice_comparator.compare(source, other)
+        result = mod.assemble(dice_timing_comparison=cmp)
+        statuses = {item['id']: item['status'] for item in result['stages']}
+        self.assertEqual(statuses['dice_timing_count_comparison'], 'passed')
+        self.assertEqual(statuses['dice_timing_metadata'], 'not_tested')
+        self.assertFalse(result['same_installation_provenance_verified'])
+        self.assertFalse(result['dice_timing_profile_mapping_verified'])
+
+    def test_19_dice_count_difference_is_a_failed_gate(self):
+        source = dice_catalog._finish({('x', 'a'): {'one'}}, 0, 'sqlite-export')
+        other = dice_catalog._finish({('x', 'b'): {'one', 'two'}}, 0, 'sqlserver')
+        cmp = dice_comparator.compare(source, other)
+        result = mod.assemble(dice_timing_comparison=cmp)
+        self.assertIn('dice_timing_count_comparison', result['open_blockers'])
+        self.assertEqual({item['id']: item['status'] for item in result['stages']}
+                         ['dice_timing_count_comparison'], 'failed')
+
+    def test_20_reject_forged_dice_count_match_or_schema_proof(self):
+        source = dice_catalog._finish({('x', 'a'): {'one'}}, 0, 'sqlite-export')
+        other = dice_catalog._finish({('x', 'b'): {'one', 'two'}}, 0, 'sqlserver')
+        cmp = dice_comparator.compare(source, other)
+        cmp['aggregate_counts_equal'] = True
+        with self.assertRaises(mod.EvidenceError):
+            mod.assemble(dice_timing_comparison=cmp)
+        cmp['aggregate_counts_equal'] = False
+        cmp['schema_equivalence_verified'] = True
+        with self.assertRaises(mod.EvidenceError):
+            mod.assemble(dice_timing_comparison=cmp)
+
+    def test_21_cli_dice_compare_report_manifest_binding(self):
+        source = dice_catalog._finish({('x', 'a'): {'one'}}, 0, 'sqlite-export')
+        other = dice_catalog._finish({('x', 'b'): {'two'}}, 0, 'sqlserver')
+        content = dice_comparator.compare(source, other)
+        input_file = self.folder / 'counts.json'
+        input_file.write_text(json.dumps(content), encoding='utf-8')
+        manifest = self.folder / 'manifest.json'
+        manifest.write_text(json.dumps({
+            'schema_version': mod.BUNDLE_SCHEMA,
+            'scope': 'redacted_report_bytes_only',
+            'reports': {'dicetiming_compare': hashlib.sha256(input_file.read_bytes()).hexdigest()},
+            'same_installation_provenance_verified': False,
+            'runtime_evidence_verified': False,
+        }), encoding='utf-8')
+        output_file = self.folder / 'out.json'
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(mod.main(['--dicetiming-compare-report', str(input_file),
+                                       '--bundle-manifest', str(manifest),
+                                       '--output', str(output_file)]), 0)
+        result = json.loads(output_file.read_text())
+        self.assertTrue(result['redacted_report_bytes_bound'])
+        self.assertFalse(result['replay_approved'])
+        self.assertEqual(result['stages'][4]['id'], 'dice_timing_count_comparison')
 
 
 if __name__ == "__main__":
