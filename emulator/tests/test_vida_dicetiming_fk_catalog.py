@@ -72,7 +72,7 @@ class DiceTimingFKCatalogTests(unittest.TestCase):
         result = dt.load_sqlserver('DiceTimingReadOnly', connector=lambda *_a, **_kw: db)
         self.assertTrue(db.closed)
         self.assertEqual(db.timeout, 8)
-        self.assertEqual(len(db.cursor_obj.queries), 4)
+        self.assertEqual(len(db.cursor_obj.queries), 7)
         self.assertIn('JOIN sys.foreign_keys', db.cursor_obj.queries[-1])
         self.assertIn('fkc.constraint_column_id', db.cursor_obj.queries[-1])
         self.assertIn('FROM sys.index_columns', db.cursor_obj.queries[-1])
