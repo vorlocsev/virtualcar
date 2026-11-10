@@ -60,3 +60,56 @@ SQL Server/SQLite snapshot equivalence, selected XC90 V8 profile, D2
 timing and baud, physical adapter or client VIN, and full repository
 exact-HEAD Windows VMware CI. Do not change `B9FBFrameCount=0` or enable
 replay from these counts.
+
+## Optional private keyed visible-schema comparison (2026-11-10)
+
+For a stricter **opt-in** comparison, use the same privately held 256-bit
+random HMAC key when generating both DiceTiming reports. In the local
+PowerShell session, generate the key once and keep the same value for both
+collector executions:
+
+~~~powershell
+$env:VIDA_DICETIMING_HMAC_KEY = py -3 -c "import secrets; print(secrets.token_hex(32))"
+~~~
+
+Run the SQLite exporter and SQL Server catalog commands documented in
+[DiceTiming metadata scope](vida-dicetiming-catalog.md), without replacing
+or re-generating the key between them. The variable contains 64 lowercase
+hexadecimal characters encoding 32 random bytes. Keep it outside Git,
+terminal transcripts, reports and logs. Clearing the environment variable
+restores the legacy counts-only report format.
+
+The collector computes an HMAC-SHA-256 over a canonical sorted set of
+**visible case-folded** schema/table names and column names. The output
+contains the digest and fixed `visible_schema_hmac_scope`, but never the
+secret key, original identifiers or data values. The comparison rejects
+incorrectly formatted fingerprints, a partial one-sided digest pair,
+and claims that equal digests accompany contradictory table/column counts.
+
+The new comparison category `visible_schema_hmac_comparison` is:
+
+- `matched`: both HMACs match using the supplied key and normalization;
+  this is evidence only of agreement of the visible normalized inventory
+- `mismatched`: digests differ, potentially because of different keys,
+  metadata visibility, source schema differences, or nonmatching exports
+- `not_tested`: both reports omitted the optional digest
+
+The unified summary independently exposes the
+`dice_timing_visible_schema_hmac` gate as passed/failed/not_tested
+according to those categories. **Matched is not proof** of common
+installation origin, a complete SQL catalog, case-sensitive identifier
+equivalence, original row relationships, timing profile assignment, D2
+baud, ECU response, client VIN or successful VIDA diagnostics. For these
+reasons `schema_equivalence_verified=false` and all runtime acceptance
+flags remain false. Without the original data and actual SQL metadata
+permissions, even a valid HMAC comparison is not a final acceptance gate.
+
+The isolated local Python 3.13.5 suite passed **58/58 synthetic tests**
+(46 earlier plus 12 keyed HMAC regressions) with `compileall` PASS.
+All three changed production files and the added test source have exact
+GitHub blob SHA matching the locally executed files:
+`218557bdbea6aa808699b4a2016a792aa3c463ad`,
+`b80b213175328b0fb1d28d2919d855b802536f0a`,
+`f70daf59daa568f27afeab18b8a9ca66b12d18c7`,
+`52bae7aef49cdbec45b3b8f1f61c72dadf066d20`.
+Exact-HEAD Windows VMware CI and actual VIDA databases remain untested.
