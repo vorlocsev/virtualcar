@@ -37,7 +37,8 @@ SQL_TABLES = 'SELECT s.name, t.name FROM sys.tables AS t JOIN sys.schemas AS s O
 SQL_COLUMNS = ('SELECT s.name, t.name, c.name FROM sys.columns AS c '
                'JOIN sys.tables AS t ON c.object_id = t.object_id '
                'JOIN sys.schemas AS s ON s.schema_id = t.schema_id')
-SQL_KEYS = ('SELECT fk.object_id, ss.name, st.name, sc.name, ts.name, tt.name, tc.name, '
+SQL_KEYS = ('SELECT fk.object_id, fkc.constraint_column_id, '
+            'ss.name, st.name, sc.name, ts.name, tt.name, tc.name, '
             'fk.is_disabled, fk.is_not_trusted '
             'FROM sys.foreign_key_columns AS fkc '
             'JOIN sys.foreign_keys AS fk ON fk.object_id = fkc.constraint_object_id '
@@ -96,12 +97,17 @@ def _foreign_key_summary(rows, tables):
     """Count visible FK constraints once, not once per composite-key column."""
     identities = {}
     members = {}
+    ordinals = {}
     for row in rows:
-        if len(row) != 9:
+        if len(row) != 10:
             raise DiceTimingError('invalid FK catalog row')
-        fk_id, ss, st, sc, ts, tt, tc, disabled, untrusted = row
+        fk_id, ordinal, ss, st, sc, ts, tt, tc, disabled, untrusted = row
         if type(fk_id) is not int or fk_id <= 0:
             raise DiceTimingError('invalid FK catalog identifier')
+        # SQL Server sys.foreign_key_columns.constraint_column_id is 1..n.
+        # A missing prefix or interior ordinal indicates partial metadata.
+        if type(ordinal) is not int or not 1 <= ordinal <= 32:
+            raise DiceTimingError('invalid FK ordinal')
         if not all(isinstance(x, str) and x for x in (ss, st, sc, ts, tt, tc)):
             raise DiceTimingError('invalid FK metadata')
         # pyodbc maps SQL BIT to Python bool; accept canonical 0/1 ints too.
@@ -122,6 +128,17 @@ def _foreign_key_summary(rows, tables):
         if key in pair_set:
             raise DiceTimingError('duplicate FK catalog column pair')
         pair_set.add(key)
+        position_set = ordinals.setdefault(fk_id, set())
+        if ordinal in position_set:
+            raise DiceTimingError('duplicate FK ordinal')
+        position_set.add(ordinal)
+        # Each source/target column must occur once per constraint.
+        if (len({src for src, _ in pair_set}) != len(pair_set) or
+                len({dst for _, dst in pair_set}) != len(pair_set)):
+            raise DiceTimingError('duplicate FK member column')
+    for positions in ordinals.values():
+        if positions != set(range(1, len(positions) + 1)):
+            raise DiceTimingError('noncontiguous FK ordinals')
     return {
         'constraint_count': len(identities),
         'disabled_constraint_count': sum(flags[2] for flags in identities.values()),
