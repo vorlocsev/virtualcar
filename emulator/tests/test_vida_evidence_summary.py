@@ -71,11 +71,11 @@ class VidaEvidenceSummaryTests(unittest.TestCase):
 
     def test_03_comparison_pass_only_for_zero_shape_disagreements(self):
         report = mod.assemble(comparison=comparison())
-        self.assertEqual(report["stages"][1]["status"], "passed")
+        self.assertEqual({v["id"]: v["status"] for v in report["stages"]}["catalog_shape_comparison"], "passed")
         changed = comparison()
         changed["column_disagreements"].append({"PRIVATE_VIN": "SECRET"})
         report = mod.assemble(comparison=changed)
-        self.assertEqual(report["stages"][1]["status"], "failed")
+        self.assertEqual({v["id"]: v["status"] for v in report["stages"]}["catalog_shape_comparison"], "failed")
         self.assertIn("catalog_shape_comparison", report["open_blockers"])
         self.assertNotIn("PRIVATE", json.dumps(report))
 
@@ -87,7 +87,7 @@ class VidaEvidenceSummaryTests(unittest.TestCase):
         for key in ("client_vin_accepted", "profile_script_link_verified",
                     "actual_getscript_selected", "physical_j2534_verified"):
             self.assertIs(result[key], False)
-        self.assertEqual(len(result["stages"]), 7)
+        self.assertEqual(len(result["stages"]), len(mod.STAGES))
 
     def test_05_reject_forged_runtime_flags_in_each_source(self):
         for index, flag in ((0, "record_joins_verified"),
