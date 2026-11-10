@@ -106,13 +106,19 @@ class CompareVidaReportsTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.CompareError, "unexpected table inventory"):
             mod.compare(self.sqlite, self.sqlserver)
 
-    def test_07_fail_closed_on_duplicate_json_keys(self):
+    def test_07_reject_candidate_edge_shape_inconsistent_with_tables(self):
+        edge = self.sqlite["edges"][0]
+        edge["column_shape_present"] = False
+        with self.assertRaisesRegex(mod.CompareError, "inconsistent candidate edge shape"):
+            mod.compare(self.sqlite, self.sqlserver)
+
+    def test_08_fail_closed_on_duplicate_json_keys(self):
         path = self.folder / "bad.json"
         path.write_text('{"backend":"sqlserver", "backend":"sqlite-export"}', encoding="utf-8")
         with self.assertRaisesRegex(mod.CompareError, "duplicate JSON key"):
             mod.read_redacted_report(path)
 
-    def test_08_cli_exclusive_output_and_no_secret_echo(self):
+    def test_09_cli_exclusive_output_and_no_secret_echo(self):
         s = self.folder / "s.json"
         t = self.folder / "t.json"
         out = self.folder / "result.json"
