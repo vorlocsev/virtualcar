@@ -110,6 +110,14 @@ def load_sqlite_export(folder: Path):
         path = folder / (database + ".sqlite")
         if not path.is_file() or path.is_symlink():
             raise AnalyzerError("invalid export database")
+        # immutable=1 ignores changes in an active SQLite WAL. Fail closed
+        # instead of treating a partial copy as a complete VIDA catalog.
+        # A rollback journal or leftover shared-memory file likewise means
+        # this is not a clean single-file snapshot for immutable inspection.
+        if any(path.with_name(path.name + suffix).exists()
+               or path.with_name(path.name + suffix).is_symlink()
+               for suffix in ("-wal", "-shm", "-journal")):
+            raise AnalyzerError("uncheckpointed SQLite export sidecar")
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1",
                                      uri=True, timeout=5)) as db:
             db.execute("PRAGMA query_only=ON")
