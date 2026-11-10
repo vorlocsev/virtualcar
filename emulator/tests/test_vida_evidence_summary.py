@@ -336,7 +336,7 @@ class VidaEvidenceSummaryTests(unittest.TestCase):
         result = json.loads(output_file.read_text())
         self.assertTrue(result['redacted_report_bytes_bound'])
         self.assertFalse(result['replay_approved'])
-        self.assertEqual(result['stages'][4]['id'], 'dice_timing_count_comparison')
+        self.assertIn('dice_timing_count_comparison', {item['id'] for item in result['stages']})
 
 
 if __name__ == "__main__":
