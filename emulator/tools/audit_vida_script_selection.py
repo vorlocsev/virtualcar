@@ -84,6 +84,8 @@ def audit_lines(lines):
         "matched_get_fetch_run_triplets": 0,
         "matched_veh_comm_specification_triplets": 0,
         "matched_read_vin_triplets": 0,
+        "matched_midnight_rollover_triplets": 0,
+        "matched_read_vin_midnight_rollover_triplets": 0,
         "matched_read_vin_explicit_empty_profile_triplets": 0,
         "matched_read_vin_unbound_bootstrap_shape_triplets": 0,
         "orphan_fetched_script_events": 0,
@@ -197,6 +199,12 @@ def audit_lines(lines):
                     counts["different_script_running_events"] += 1
                 else:
                     counts["matched_get_fetch_run_triplets"] += 1
+                    crossed_midnight = (current["fetched_time"] < current["time"]
+                                        or time_ms < current["time"])
+                    if crossed_midnight:
+                        counts["matched_midnight_rollover_triplets"] += 1
+                        if current["kind"] == "read_vin":
+                            counts["matched_read_vin_midnight_rollover_triplets"] += 1
                     if current["kind"] == "veh_comm_specification":
                         counts["matched_veh_comm_specification_triplets"] += 1
                     elif current["kind"] == "read_vin":
@@ -216,7 +224,7 @@ def audit_lines(lines):
         "input_kind": "private_vida_trace_read_only",
         "parsed_line_count": observed,
         "events": counts,
-        "matching_scope": "same_thread_30_second_window_with_bounded_midnight_rollover_and_same_declared_log_session",
+        "matching_scope": "same_thread_30_second_window_and_same_declared_log_session",
         "midnight_rollover_is_clock_only_inference": True,
         "release_declarations_are_per_supplied_log_not_original_dll_version": True,
         "literal_release_marker_does_not_prove_incompatible_diagnostic_engine": True,
