@@ -106,7 +106,7 @@ before sharing even aggregate results.
    including one table with zero visible columns. A nonempty catalog still does
    not prove that its visibility is complete.
 
-Twenty unit tests cover these behaviors synthetically; run them on a reviewed exact
+Twenty-two unit tests now cover these behaviors synthetically; run them on a reviewed exact
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
@@ -159,6 +159,15 @@ was accessed.
 **Evidence boundary:** this is a verified local code-level test pass, **not**
 Windows/Python 3.12 VMware CI, original VIDA SQL Server connectivity,
 ReadVin execution, vehicle acceptance or physical J2534 testing.
+
+### Integrity gate for offline all-user-table exports (2026-11-10)
+
+The SQLite backend now rejects an empty `_vida_tables` catalog even when
+the exporter identity claims `scope=all_user_tables`. Every listed user
+table must also have at least one entry in `_vida_columns`. A partial
+export is not evidence that T111/T122 or other ECU metadata is absent.
+Two new negative synthetic cases pass. See the combined catalog integrity
+review for 73-test local coverage; the original VIDA data remain unverified.
 
 ## Still not established
 

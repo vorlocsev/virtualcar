@@ -143,6 +143,16 @@ the original VIDA client selected that profile. Initial
 target-profile `ScriptProfileMap` linkage must not on its own
 be categorized as a failed VIN read.
 
+### Empty-column exporter inventory gate (2026-11-10)
+
+The legacy preflight now rejects any listed user table with zero catalog
+columns, including unknown/private table names. A valid source table cannot
+be silently represented as present with no column metadata. Synthetic test
+20 exercises one missing T111_Service column inventory. The synthetic
+fixture gives otherwise-hintless tables a private placeholder column so
+source metadata is structurally realistic. The full cross-tool suite
+passed 73/73 locally; original 2015A VIDA SQL Server remains untested.
+
 **All work remains read-only, original outputs private, and
 `B9FBFrameCount=0` unchanged. No physical J2534, GUI VIDA,
 SecurityAccess, coding, ECU programming or Virtual Car Release.**

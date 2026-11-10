@@ -21,7 +21,7 @@ SPEC.loader.exec_module(mod)
 
 
 def sample(backend):
-    inventories = {db: {"tables": {("dbo", name.casefold()): {c.casefold() for c in cols}
+    inventories = {db: {"tables": {("dbo", name.casefold()): {c.casefold() for c in (cols or ("SECRET_INTERNAL_COLUMN",))}
                                   for name, cols in fixed.items()}, "keys": []}
                    for db, fixed in unified.TABLES.items()}
     return unified.render(inventories, backend)
@@ -47,6 +47,8 @@ class CompareVidaReportsTests(unittest.TestCase):
     def test_02_known_table_column_and_candidate_edge_diff(self):
         entry = self.sqlserver["databases"]["CarCom"]["known_tables"]["T122_Protocol"]
         entry["present"] = False
+        entry["column_count"] = 0
+        self.sqlserver["databases"]["CarCom"]["column_count"] -= 2
         entry["known_columns_present"] = []
         entry["known_columns_missing"] = list(unified.TABLES["CarCom"]["T122_Protocol"])
         for edge in self.sqlserver["edges"]:
@@ -117,6 +119,38 @@ class CompareVidaReportsTests(unittest.TestCase):
         path.write_text('{"backend":"sqlserver", "backend":"sqlite-export"}', encoding="utf-8")
         with self.assertRaisesRegex(mod.CompareError, "duplicate JSON key"):
             mod.read_redacted_report(path)
+
+    def test_10_reject_absent_table_with_positive_columns(self):
+        entry = self.sqlserver["databases"]["CarCom"]["known_tables"]["T122_Protocol"]
+        entry["present"] = False
+        entry["known_columns_present"] = []
+        entry["known_columns_missing"] = list(unified.TABLES["CarCom"]["T122_Protocol"])
+        with self.assertRaisesRegex(mod.CompareError, "inconsistent known-table column count"):
+            mod.compare(self.sqlite, self.sqlserver)
+
+    def test_11_reject_known_columns_exceeding_declared_count(self):
+        entry = self.sqlite["databases"]["CarCom"]["known_tables"]["T111_Service"]
+        entry["column_count"] = 1
+        with self.assertRaisesRegex(mod.CompareError, "inconsistent known-table column count"):
+            mod.compare(self.sqlite, self.sqlserver)
+
+    def test_12_reject_invalid_aggregate_and_metadata_count_types(self):
+        self.sqlite["databases"]["CarCom"]["table_count"] = False
+        with self.assertRaisesRegex(mod.CompareError, "invalid catalog count"):
+            mod.compare(self.sqlite, self.sqlserver)
+        self.sqlite["databases"]["CarCom"]["table_count"] = 1
+        with self.assertRaisesRegex(mod.CompareError, "inconsistent aggregate catalog count"):
+            mod.compare(self.sqlite, self.sqlserver)
+
+    def test_13_reject_zero_column_present_table_and_fake_sqlite_fks(self):
+        entry = self.sqlite["databases"]["DiagSwdlRepository"]["known_tables"]["ScriptContent"]
+        entry["column_count"] = 0
+        with self.assertRaisesRegex(mod.CompareError, "inconsistent known-table column count"):
+            mod.compare(self.sqlite, self.sqlserver)
+        entry["column_count"] = 1
+        self.sqlite["databases"]["CarCom"]["declared_fk_column_count"] = 2
+        with self.assertRaisesRegex(mod.CompareError, "unexpected SQLite declared FK count"):
+            mod.compare(self.sqlite, self.sqlserver)
 
     def test_09_cli_exclusive_output_and_no_secret_echo(self):
         s = self.folder / "s.json"

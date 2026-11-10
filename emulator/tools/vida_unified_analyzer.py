@@ -148,6 +148,10 @@ def load_sqlite_export(folder: Path):
             column_rows = _rows(
                 db, 'SELECT "schema_name", "table_name", "column_name", "system_type_id" '
                     'FROM "_vida_columns"', MAX_COLUMNS)
+            # An export claiming all_user_tables cannot silently report zero
+            # tables: that could reflect an incomplete or wrong-source copy.
+            if not table_rows:
+                raise AnalyzerError("empty SQLite exporter table catalog")
             tables = {}
             for schema, name, count in table_rows:
                 if not isinstance(count, int) or count < 0:
@@ -157,6 +161,10 @@ def load_sqlite_export(folder: Path):
                 if not isinstance(type_id, int):
                     raise AnalyzerError("invalid exporter column type")
                 _insert_column(tables, schema, table, column)
+            # SQL Server tables cannot have zero columns. An incomplete
+            # exporter column catalog must not become a credible negative.
+            if any(not cols for cols in tables.values()):
+                raise AnalyzerError("SQLite exporter table has no columns")
             inventories[database] = {"tables": tables, "keys": []}
     return inventories
 
