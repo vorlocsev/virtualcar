@@ -368,5 +368,25 @@ class UnifiedVidaTests(unittest.TestCase):
             self._load_sqlserver_with_column_visibility("one_missing")
 
 
+    def test_17_active_sqlite_wal_export_rejected(self):
+        source = self.folder / "CarCom.sqlite"
+        with contextlib.closing(sqlite3.connect(source)) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("INSERT INTO _vida_meta VALUES (?,?)",
+                       ("owner_private_uncommitted_snapshot_probe", "synthetic"))
+            db.commit()
+            self.assertTrue((self.folder / "CarCom.sqlite-wal").exists())
+            with self.assertRaisesRegex(mod.AnalyzerError,
+                                        "uncheckpointed SQLite export sidecar"):
+                mod.load_sqlite_export(self.folder)
+
+    def test_18_rollback_journal_sidecar_rejected(self):
+        journal = self.folder / "CarCom.sqlite-journal"
+        journal.write_bytes(b"synthetic pending rollback marker")
+        with self.assertRaisesRegex(mod.AnalyzerError,
+                                    "uncheckpointed SQLite export sidecar"):
+            mod.load_sqlite_export(self.folder)
+
+
 if __name__ == "__main__":
     unittest.main()
