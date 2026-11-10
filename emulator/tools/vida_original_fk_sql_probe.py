@@ -22,6 +22,11 @@ DSN_RE = re.compile(r'[A-Za-z0-9_.-]{1,128}\Z')
 MAX_ROWS = 5000
 MAX_OUTPUT_BYTES = 50 * 1024 * 1024
 MAX_SOURCE_COLUMNS = 1024
+# SQL Server reports 1 only when ALLOW_SNAPSHOT_ISOLATION is fully ON.
+SNAPSHOT_STATE_SQL = (
+    'SELECT snapshot_isolation_state FROM sys.databases WHERE database_id = DB_ID()'
+)
+SNAPSHOT_TRANCOUNT_SQL = 'SELECT @@TRANCOUNT'
 STATUS_ALIAS = '__vida_fk_exists_result__'
 FILTER_COLUMNS_SQL = (
     'SELECT c.name FROM sys.columns AS c '
@@ -209,12 +214,14 @@ def _unique_target_sql(metadata, checked_target_filters):
 
 def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
             connector=None, filters=None, target_filters=None,
-            require_unique_target=False):
+            require_unique_target=False, require_snapshot=False):
     if (type(database) is not str or not DATABASE_RE.fullmatch(database) or
             type(dsn) is not str or not DSN_RE.fullmatch(dsn) or
             type(max_rows) is not int or not 1 <= max_rows <= MAX_ROWS or
             type(require_unique_target) is not bool or
-            (require_unique_target and target_filters is None)):
+            (require_unique_target and target_filters is None) or
+            type(require_snapshot) is not bool or
+            (require_snapshot and not require_unique_target)):
         raise OriginalFKSQLProbeError('invalid database, DSN or row limit')
     schema, table, fk_name = _name(schema), _name(table), _name(fk_name)
     if connector is None:
@@ -227,12 +234,28 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
                   'Encrypt=Yes;TrustServerCertificate=No;ApplicationIntent=ReadOnly;')
     try:
         db = connector(connection, autocommit=True, timeout=8)
+        snapshot_active = False
+        snapshot_committed = False
         try:
             db.timeout = 15
             cur = db.cursor()
             identity = _drain(cur.execute('SELECT DB_NAME()'), 1)
             if len(identity) != 1 or identity[0][0] != database:
                 raise OriginalFKSQLProbeError('SQL database identity mismatch')
+            if require_snapshot:
+                state = _drain(cur.execute(SNAPSHOT_STATE_SQL), 1)
+                if (len(state) != 1 or len(state[0]) != 1 or
+                        type(state[0][0]) is not int or state[0][0] != 1):
+                    raise OriginalFKSQLProbeError('SQL SNAPSHOT isolation unavailable')
+                cur.execute('SET TRANSACTION ISOLATION LEVEL SNAPSHOT')
+                cur.execute('BEGIN TRANSACTION')
+                snapshot_active = True
+                # Verify that the explicit transaction survived ODBC autocommit.
+                transaction_count = _drain(cur.execute(SNAPSHOT_TRANCOUNT_SQL), 1)
+                if (len(transaction_count) != 1 or len(transaction_count[0]) != 1 or
+                        type(transaction_count[0][0]) is not int or
+                        transaction_count[0][0] != 1):
+                    raise OriginalFKSQLProbeError('SQL SNAPSHOT transaction not active')
             initial = _drain(cur.execute(FK_SQL, schema, table, fk_name), 32)
             metadata = _metadata(initial, schema, table, fk_name)
             checked_filters = (_validated_source_filters(cur, metadata, filters)
@@ -244,7 +267,8 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
             if require_unique_target:
                 # This extra bounded SQL query ensures the original selector
                 # identifies exactly one target row *at the time of this query*.
-                # It is not a transactional proof of the subsequent EXISTS.
+                # Only require_snapshot ties this query and EXISTS to one
+                # transaction-level row-version snapshot; otherwise not atomic.
                 target_params = [bound for clause, bound in checked_target_filters
                                  if clause['operator'] == 'eq']
                 cur.execute(_unique_target_sql(metadata, checked_target_filters),
@@ -275,8 +299,25 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
             current = _drain(cur.execute(FK_SQL, schema, table, fk_name), 32)
             if _metadata(current, schema, table, fk_name) != metadata:
                 raise OriginalFKSQLProbeError('FK catalog changed during query')
+            if require_snapshot:
+                cur.execute('COMMIT TRANSACTION')
+                snapshot_active = False
+                snapshot_committed = True
         finally:
-            db.close()
+            # Explicit transactions are needed because the connection uses
+            # autocommit for its legacy (single-statement) read-only path.
+            # Never leak a transaction after an unsuccessful strict probe.
+            rollback_failed = False
+            try:
+                if snapshot_active:
+                    try:
+                        cur.execute('ROLLBACK TRANSACTION')
+                    except Exception:
+                        rollback_failed = True
+            finally:
+                db.close()
+            if rollback_failed:
+                raise OriginalFKSQLProbeError('SQL SNAPSHOT rollback failed')
     except OriginalFKSQLProbeError:
         raise
     except Exception:
@@ -314,7 +355,9 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
             'source_complete_within_row_limit': not bool(checked_filters),
             'same_connection_database_identity_checked': True,
             'full_catalog_visibility_verified': False,
-            'transactional_snapshot_verified': False,
+            'transactional_snapshot_verified': snapshot_committed,
+            'sql_snapshot_transaction_committed': snapshot_committed,
+            'sql_snapshot_isolation_required': require_snapshot,
             'fk_constraint_enforcement_verified': False,
             'getscript_readvin_runtime_verified': False,
             'client_vin_accepted': False,
@@ -354,6 +397,7 @@ def main(argv=None):
     p.add_argument('--filters-json', type=Path)
     p.add_argument('--target-filters-json', type=Path)
     p.add_argument('--require-unique-target', action='store_true')
+    p.add_argument('--require-snapshot', action='store_true')
     p.add_argument('--output', required=True, type=Path)
     args = p.parse_args(argv)
     try:
@@ -386,7 +430,8 @@ def main(argv=None):
                          dsn=os.environ.get('VIDA_SQLSERVER_DSN', ''),
                          max_rows=args.max_rows, filters=filters,
                          target_filters=target_filters,
-                         require_unique_target=args.require_unique_target)
+                         require_unique_target=args.require_unique_target,
+                         require_snapshot=args.require_snapshot)
         encoded = (json.dumps(result, ensure_ascii=False, sort_keys=True,
                               indent=2, allow_nan=False) + '\n').encode('utf-8')
         if len(encoded) > MAX_OUTPUT_BYTES:
