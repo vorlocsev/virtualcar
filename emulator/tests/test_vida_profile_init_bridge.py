@@ -58,6 +58,7 @@ class ProfileBridgeTests(unittest.TestCase):
     def test_01_profile_init_route_candidate_is_not_actual_value_or_join(self):
         report = bridge.bridge(catalog(), timing())
         self.assertEqual(report['profile_init_shape'], 'candidate_shape')
+        self.assertEqual(report['profile_service_shape'], 'candidate_shape')
         self.assertEqual(report['service_protocol_shape'], 'candidate_shape')
         self.assertTrue(report['dicetiming_metadata_checked'])
         self.assertFalse(report['dicetiming_to_carcom_join_verified'])
@@ -135,6 +136,7 @@ class ProfileBridgeTests(unittest.TestCase):
         result = bridge.bridge(src, timing())
         self.assertNotIn('VIN_SECRET', json.dumps(result))
         self.assertEqual(result['missing_public_hints'], {'profile_init': 0,
+                                                           'profile_service': 0,
                                                            'service_protocol': 0})
 
     def test_10_cli_works_on_redacted_files_with_new_exclusive_output(self):
@@ -201,6 +203,7 @@ class ProfileBridgeTests(unittest.TestCase):
         result = json.loads(output.read_text())
         gates = {item['id']: item['status'] for item in result['stages']}
         self.assertEqual(gates['carcom_profile_init_shape'], 'passed')
+        self.assertEqual(gates['carcom_profile_service_shape'], 'passed')
         self.assertEqual(gates['carcom_service_protocol_shape'], 'passed')
         self.assertEqual(gates['dicetiming_to_carcom_row_join'], 'not_tested')
         self.assertTrue(result['profile_init_metadata_bridge']['redacted_report_byte_binding_verified'])
@@ -242,6 +245,7 @@ class ProfileBridgeTests(unittest.TestCase):
             report = dict(valid)
             if field == 'profile_init_shape':
                 report['missing_public_hints'] = {'profile_init': 1,
+                                                   'profile_service': 0,
                                                    'service_protocol': 0}
             else:
                 report[field] = value
@@ -354,6 +358,84 @@ class ProfileBridgeTests(unittest.TestCase):
             self.assertEqual(summary.main(inputs), 2)
             self.assertEqual(manifest_builder.main(inputs), 2)
         self.assertFalse(output.exists())
+
+
+    def test_25_full_profile_to_service_shape_is_only_a_hypothesis(self):
+        report = bridge.bridge(catalog(), timing())
+        self.assertEqual(report['profile_service_shape'], 'candidate_shape')
+        self.assertEqual(report['missing_public_hints']['profile_service'], 0)
+        self.assertFalse(report['selected_ecu_profile_verified'])
+        self.assertFalse(report['getscript_readvin_runtime_verified'])
+
+    def test_26_broken_ecu_variant_to_service_edge_fails_profile_service_only(self):
+        src = catalog()
+        table = src['databases']['CarCom']['known_tables']['T110_Service_EcuVariant']
+        table['known_columns_present'].remove('fkT111_Service')
+        table['known_columns_missing'].append('fkT111_Service')
+        edge = next(x for x in src['edges'] if x['source'] == 'T110_Service_EcuVariant'
+                    and x['target'] == 'T111_Service')
+        edge['column_shape_present'] = False
+        report = bridge.bridge(src, timing())
+        self.assertEqual(report['profile_service_shape'], 'incomplete_shape')
+        self.assertEqual(report['profile_init_shape'], 'candidate_shape')
+        self.assertEqual(report['service_protocol_shape'], 'candidate_shape')
+
+    def test_27_broken_profile_to_default_variant_edge_fails_profile_service(self):
+        src = catalog()
+        table = src['databases']['CarCom']['known_tables']['T160_DefaultEcuVariant']
+        table['known_columns_present'].remove('fkT161_Profile')
+        table['known_columns_missing'].append('fkT161_Profile')
+        edge = next(x for x in src['edges'] if x['source'] == 'T160_DefaultEcuVariant'
+                    and x['target'] == 'T161_Profile')
+        edge['column_shape_present'] = False
+        report = bridge.bridge(src, timing())
+        self.assertEqual(report['profile_service_shape'], 'incomplete_shape')
+        self.assertEqual(report['profile_init_shape'], 'candidate_shape')
+
+    def test_28_forged_profile_service_passed_is_rejected_even_with_valid_hashes(self):
+        src = catalog()
+        table = src['databases']['CarCom']['known_tables']['T110_Service_EcuVariant']
+        table['known_columns_present'].remove('fkT111_Service')
+        table['known_columns_missing'].append('fkT111_Service')
+        edge = next(x for x in src['edges'] if x['source'] == 'T110_Service_EcuVariant'
+                    and x['target'] == 'T111_Service')
+        edge['column_shape_present'] = False
+        digests = {'catalog': 'a'*64, 'dicetiming': 'b'*64}
+        forged = bridge.bridge(src, timing(), digests)
+        forged['profile_service_shape'] = 'candidate_shape'
+        forged['missing_public_hints']['profile_service'] = 0
+        with self.assertRaisesRegex(summary.EvidenceError, 'differs from source'):
+            summary.assemble(catalog=src, dice_timing=timing(),
+                             profile_bridge=forged, input_digests=digests)
+
+    def test_29_missing_middle_profile_service_candidate_edge_fails_closed(self):
+        src = catalog()
+        src['edges'] = [e for e in src['edges']
+                        if not (e['source'] == 'T110_Service_EcuVariant'
+                                and e['target'] == 'T111_Service')]
+        with self.assertRaisesRegex(summary.EvidenceError, 'missing CarCom candidate'):
+            bridge.bridge(src, timing())
+
+    def test_30_profile_service_gate_not_tested_without_bridge(self):
+        out = summary.assemble(catalog=catalog(), dice_timing=timing())
+        gates = {x['id']: x['status'] for x in out['stages']}
+        self.assertEqual(gates['carcom_profile_service_shape'], 'not_tested')
+        self.assertEqual(gates['profile_to_readvin_join'], 'not_tested')
+
+    def test_31_genuine_incomplete_profile_service_gate_failed_not_runtime(self):
+        src = catalog()
+        table = src['databases']['CarCom']['known_tables']['T111_Service']
+        table['known_columns_present'].remove('service')
+        table['known_columns_missing'].append('service')
+        digests = {'catalog': 'a'*64, 'dicetiming': 'b'*64}
+        report = bridge.bridge(src, timing(), digests)
+        result = summary.assemble(catalog=src, dice_timing=timing(),
+                                  profile_bridge=report, input_digests=digests)
+        gates = {x['id']: x['status'] for x in result['stages']}
+        self.assertEqual(gates['carcom_profile_service_shape'], 'failed')
+        self.assertEqual(gates['profile_to_readvin_join'], 'not_tested')
+        self.assertFalse(result['profile_script_link_verified'])
+
 
 
 if __name__ == '__main__':
