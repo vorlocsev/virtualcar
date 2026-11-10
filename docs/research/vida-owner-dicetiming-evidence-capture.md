@@ -69,6 +69,27 @@ that should be identical across two catalog captures when comparing visible
 normalized table and column names. It is not included in any redacted file.
 The SHA-256 manifest is not a signature or installation attestation.
 
+
+## Optional CarCom Profile / InitHw evidence bridge
+
+If the same owner-controlled environment also produced the separate
+metadata-only `vida_unified_analyzer.py` catalog report for
+CarCom/DiagSwdlRepository/BaseData, use the research-only
+[Profile/InitHw shape bridge](vida-profile-init-metadata-bridge.md).
+Run its script locally, then pass **all three** redacted reports
+(`--catalog-report`, `--dicetiming-report`, and
+`--profile-init-report`) to the manifest builder and evidence summary.
+The bridge report's SHA-256 fields must correspond exactly to the two
+source report bytes. This prevents accidental reuse of old source files;
+it cannot authenticate the original SQL Server installation or imply
+a true `InitHw` row association.
+
+The three additional master gates distinguish passing **column-shape**
+hypotheses from `dicetiming_to_carcom_row_join=Not tested`.
+Even when CarCom contains all known profile/init columns, the owner still
+must verify actual profile selection, priority/inheritance, read-only
+source rows and VIN acceptance separately before using any timing value.
+
 ## Required acceptance interpretation
 
 The generated summary may pass `dice_timing_metadata`,
