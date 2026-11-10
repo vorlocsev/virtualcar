@@ -8,6 +8,7 @@ no original table, column, identifier or connection string is emitted.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import hmac
 from contextlib import closing
@@ -79,6 +80,26 @@ def _consume_bounded(cursor, maximum):
         rows.extend(batch)
         if len(rows) > maximum:
             raise DiceTimingError('catalog too large')
+
+def _catalog_multiset(rows, width):
+    """Compare visible catalog rows, independent of server-returned row order."""
+    converted = []
+    for row in rows:
+        if len(row) != width:
+            raise DiceTimingError('invalid SQL catalog row width')
+        converted.append(tuple(row))
+    try:
+        return Counter(converted)
+    except TypeError:
+        raise DiceTimingError('invalid SQL catalog row types') from None
+
+
+def _verify_catalog_stability(cursor, baseline):
+    """Detect metadata drift across two scans; not a transactional snapshot."""
+    for sql, maximum, width, original in baseline:
+        repeated = _consume_bounded(cursor.execute(sql), maximum)
+        if _catalog_multiset(original, width) != _catalog_multiset(repeated, width):
+            raise DiceTimingError('SQL metadata changed between scans')
 
 
 def _remember_table(tables, schema, name):
@@ -305,6 +326,11 @@ def load_sqlserver(dsn: str, connector=None, *, shape_key=None):
             table_rows = _consume_bounded(cursor.execute(SQL_TABLES), MAX_TABLES)
             column_rows = _consume_bounded(cursor.execute(SQL_COLUMNS), MAX_COLUMNS)
             fk_rows = _consume_bounded(cursor.execute(SQL_KEYS), MAX_KEYS)
+            _verify_catalog_stability(cursor, (
+                (SQL_TABLES, MAX_TABLES, 2, table_rows),
+                (SQL_COLUMNS, MAX_COLUMNS, 3, column_rows),
+                (SQL_KEYS, MAX_KEYS, 11, fk_rows),
+            ))
         finally:
             db.close()
     except DiceTimingError:
