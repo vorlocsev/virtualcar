@@ -146,7 +146,7 @@ class DiceTimingTests(unittest.TestCase):
         self.assertEqual(result['table_count'], 1)
         self.assertTrue(connections[0].closed)
         self.assertEqual(connections[0].timeout, 8)
-        self.assertEqual(len(connections[0].cursor_obj.queries), 4)
+        self.assertEqual(len(connections[0].cursor_obj.queries), 7)
         self.assertTrue(all(q == 'SELECT DB_NAME()' or 'sys.' in q
                             for q in connections[0].cursor_obj.queries))
         self.assertNotIn('PROPRIETARY', json.dumps(result))
