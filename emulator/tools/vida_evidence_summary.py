@@ -31,12 +31,19 @@ COMPARE_NEGATIVE = (
     "record_joins_verified", "selected_vehicle_profile_verified", "d2_baud_verified",
     "readvin_execution_verified", "client_vin_accepted",
 )
+DICETIMING_NEGATIVE = (
+    "source_rows_read", "sql_definitions_read", "original_timing_values_read",
+    "timing_profile_link_verified", "cross_database_snapshot_verified",
+    "d2_baud_verified", "readvin_execution_verified", "client_vin_accepted",
+    "physical_j2534_verified", "replay_approved",
+)
 READVIN_NEGATIVE = (
     "original_xml_included", "runtime_readvin_selected", "vin_accepted_by_client",
     "xc90_v8_my2009_verified", "replay_approved",
 )
 STAGES = (
-    "report_bytes_binding", "catalog_metadata", "catalog_shape_comparison", "readvin_static_graph",
+    "report_bytes_binding", "catalog_metadata", "dice_timing_metadata",
+    "catalog_shape_comparison", "readvin_static_graph",
     "profile_to_readvin_join", "getscript_runtime_selection",
     "j2534_correlated_exchange", "client_vin_acceptance",
 )
@@ -133,6 +140,25 @@ def _catalog(report):
     return {"backend": report["backend"], "report_shape_accepted": True}
 
 
+def _dice_timing(report):
+    if (type(report) is not dict or
+            report.get("schema_version") != "virtualcar-vida-dicetiming-metadata-v1" or
+            report.get("status") != "metadata_only" or
+            report.get("database") != "DiceTiming" or
+            report.get("backend") not in ("sqlite-export", "sqlserver")):
+        raise EvidenceError("unexpected DiceTiming schema")
+    _negative(report, DICETIMING_NEGATIVE)
+    tables = _uint(report.get("table_count"), 2000)
+    columns = _uint(report.get("column_count"), 30000)
+    keys = _uint(report.get("declared_fk_column_count"), 30000)
+    if (tables < 1 or columns < tables or
+            (report["backend"] == "sqlite-export" and keys != 0)):
+        raise EvidenceError("incomplete DiceTiming metadata")
+    return {"backend": report["backend"], "table_count": tables,
+            "column_count": columns, "declared_fk_column_count": keys,
+            "timing_values_verified": False}
+
+
 def _comparison(report):
     if (type(report) is not dict or
             report.get("schema_version") != "virtualcar-vida-catalog-compare-v1" or
@@ -170,12 +196,14 @@ def _readvin(report):
             "identity_output_nodes": outputs, "identity_call_declarations": declared}
 
 
-def assemble(catalog=None, comparison=None, readvin=None, report_bytes_bound=False):
+def assemble(catalog=None, comparison=None, readvin=None, dice_timing=None,
+             report_bytes_bound=False):
     if type(report_bytes_bound) is not bool:
         raise EvidenceError("invalid byte-binding status")
-    if catalog is None and comparison is None and readvin is None:
+    if all(item is None for item in (catalog, comparison, readvin, dice_timing)):
         raise EvidenceError("no evidence reports supplied")
     accepted_catalog = _catalog(catalog) if catalog is not None else None
+    accepted_dice_timing = _dice_timing(dice_timing) if dice_timing is not None else None
     accepted_comparison = _comparison(comparison) if comparison is not None else None
     accepted_readvin = _readvin(readvin) if readvin is not None else None
     if accepted_comparison is not None:
@@ -186,6 +214,7 @@ def assemble(catalog=None, comparison=None, readvin=None, report_bytes_bound=Fal
     statuses = {
         "report_bytes_binding": "passed" if report_bytes_bound else "not_tested",
         "catalog_metadata": "passed" if accepted_catalog else "not_tested",
+        "dice_timing_metadata": "passed" if accepted_dice_timing else "not_tested",
         "catalog_shape_comparison": comparison_status,
         "readvin_static_graph": "passed" if accepted_readvin else "not_tested",
         "profile_to_readvin_join": "not_tested",
@@ -200,12 +229,14 @@ def assemble(catalog=None, comparison=None, readvin=None, report_bytes_bound=Fal
         "gate_semantics": "report_structure_not_runtime_acceptance",
         "stages": [{"id": name, "status": statuses[name]} for name in STAGES],
         "catalog": accepted_catalog,
+        "dice_timing_catalog": accepted_dice_timing,
         "comparison_disagreement_counts": accepted_comparison,
         "readvin_graph": accepted_readvin,
         "open_blockers": [name for name in STAGES if statuses[name] != "passed"],
         "redacted_report_bytes_bound": report_bytes_bound,
         "same_installation_provenance_verified": False,
         "original_vida_data_verified": False,
+        "dice_timing_profile_mapping_verified": False,
         "profile_script_link_verified": False,
         "actual_getscript_selected": False,
         "physical_j2534_verified": False,
@@ -219,12 +250,13 @@ def main(argv=None):
     parser.add_argument("--catalog-report", type=Path)
     parser.add_argument("--compare-report", type=Path)
     parser.add_argument("--readvin-report", type=Path)
+    parser.add_argument("--dicetiming-report", type=Path)
     parser.add_argument("--bundle-manifest", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         paths = {"catalog": args.catalog_report, "comparison": args.compare_report,
-                 "readvin": args.readvin_report}
+                 "readvin": args.readvin_report, "dicetiming": args.dicetiming_report}
         sources = [p for p in paths.values() if p is not None]
         if args.bundle_manifest is not None:
             sources.append(args.bundle_manifest)
@@ -245,6 +277,7 @@ def main(argv=None):
             catalog=loaded["catalog"][0] if "catalog" in loaded else None,
             comparison=loaded["comparison"][0] if "comparison" in loaded else None,
             readvin=loaded["readvin"][0] if "readvin" in loaded else None,
+            dice_timing=loaded["dicetiming"][0] if "dicetiming" in loaded else None,
             report_bytes_bound=args.bundle_manifest is not None,
         )
         with args.output.open("x", encoding="utf-8") as stream:
