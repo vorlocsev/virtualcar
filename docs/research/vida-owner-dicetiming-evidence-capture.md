@@ -129,3 +129,17 @@ The `profile_to_readvin_join`, `getscript_runtime_selection` and
 `client_vin_acceptance` gates remain Not tested without new runtime
 and row-level evidence. Synthetic suite: 157/157 PASS;
 actual VMware/original VIDA not run for this extension.
+
+## Основной режим исследования: исходные данные без обезличивания
+
+По решению владельца проекта оригинальные поля и значения VIDA **не
+обезличиваются при техническом анализе**. Приведённый выше процесс
+создания редуцированных отчётов оставлен для совместимости с ранними
+статическими acceptance-gates, но не является обязательной заменой
+оригинальных данных.
+
+Для чтения настоящих строк и идентификаторов из выбранной таблицы
+SQL Server используйте [новый локальный инструмент для оригинальных
+данных](vida-original-data-no-anonymization.md). Он не отправляет
+исходные строки в GitHub или CI. Источники, тайминги, VIN и содержимое
+таблиц в локальном JSON не маскируются.
