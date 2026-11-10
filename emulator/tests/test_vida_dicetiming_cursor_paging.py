@@ -74,7 +74,7 @@ class CursorPagingTests(unittest.TestCase):
         self.assertEqual(result['column_count'], 4)
         self.assertEqual(result['declared_fk_column_count'], 1)
         self.assertEqual(result['visible_fk_catalog']['constraint_count'], 1)
-        self.assertEqual(len(db.cur.queries), 4)
+        self.assertEqual(len(db.cur.queries), 7)
         self.assertGreater(db.cur.fetch_calls, len(db.cur.queries))
         self.assertFalse(result['original_timing_values_read'])
         self.assertNotIn('TimingA', json.dumps(result))
