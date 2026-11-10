@@ -17,6 +17,10 @@ Optional inputs (at least one required):
 - `--readvin-report`: output of
   `emulator/tools/audit_vida_redacted_consistency.py`
   (`virtualcar-vida-redacted-readvin-crosscheck-v1`).
+- `--dicetiming-report`: optional independent `DiceTiming` metadata-only
+  output of `emulator/tools/vida_dicetiming_catalog.py`
+  (`virtualcar-vida-dicetiming-metadata-v1`), see
+  [DiceTiming scope](vida-dicetiming-catalog.md).
 
 Use only owner-controlled, redacted reports. Source reports may originate
 from **different machines or installations**; supplying multiple reports
@@ -60,8 +64,8 @@ An owner-only manifest example for one report is:
 
 Replace the placeholder with the exact SHA-256 digest of the redacted
 input JSON **including its original whitespace/newlines**. Use the
-`catalog`, `comparison`, and `readvin` keys for inputs actually
-supplied, no others. A digest is never included in the aggregate output.
+`catalog`, `comparison`, `readvin` and optional `dicetiming` keys
+for inputs actually supplied, no others. A digest is never included in the aggregate output.
 
 Run:
 
@@ -75,12 +79,13 @@ Mismatched digests, forged positive provenance/runtime flags, invalid
 keys, duplicate file aliases and overlong manifest files fail closed.
 A manifest cannot promote `profile_to_readvin_join` or any runtime gate.
 
-## Eight evidence gates
+## Nine evidence gates
 
 | Stage | Meaning of `passed` |
 | --- | --- |
 | `report_bytes_binding` | Optional manifest proves only supplied redacted file bytes match their declared SHA-256; no origin/trust proof |
 | `catalog_metadata` | A supplied metadata-only catalog report passed the summary's structural preflight; original catalog provenance is not verified |
+| `dice_timing_metadata` | A supplied fourth database metadata report passed DiceTiming identity and aggregate shape preflight; no timing values or mapping verified |
 | `catalog_shape_comparison` | A supplied comparison report declares no table/column/edge shape disagreement; it is not a verified same-installation join |
 | `readvin_static_graph` | A supplied redacted v2/v3 crosscheck declares seven consistent counters, nonempty ReadVin/identity nodes and identity calls |
 | `profile_to_readvin_join` | Always `not_tested` until independently proven |
@@ -120,6 +125,32 @@ original VIDA data remain untested** for this PR. This does not certify the enti
 repository, the exact GitHub PR HEAD on Windows, original VIDA SQL Server,
 T111/T122/InitHw rows, effective GetScript, VIDA/SectorV VIN acceptance,
 or physical J2534.
+
+### DiceTiming extension (2026-11-10)
+
+A separate opt-in SQL Server / SQLite metadata scope now inventories
+`DiceTiming` without altering legacy three-database reports. The new
+aggregator gate is `dice_timing_metadata`; it is a **schema evidence**
+classification, not a D2, ignition, timing, ECU or VIN acceptance gate.
+The bundle SHA-256 manifest also supports exact `dicetiming` report bytes.
+
+The owner-local isolated synthetic suite passed **30/30 tests** across
+`test_vida_evidence_summary.py` and `test_vida_dicetiming_catalog.py`,
+zero failures/errors; `compileall` PASS. These are not original VIDA
+or exact-head VMware CI tests. The exact locally tested GitHub blobs are:
+- DiceTiming tool: `45f8748d4ebb2ebeed2edb377b97f64955898ca7`
+- DiceTiming tests: `0a29b236750aa84c75c2d9eae8da1ecdd2695f44`
+- Updated summary tool: `814218507ebd645f0babe53126904944e00e6bb6`
+
+For a fourth input, add `--dicetiming-report` and an owner-local
+redacted JSON path to the existing summary command. If a hash manifest is
+provided, include `dicetiming` in its exact report-key set.
+
+**Still not confirmed:** original DiceTiming SQL Server metadata, matching
+original SQLite exporter, selected profile timing rows, actual D2 baud,
+VIDA GetScript selection, client VIN acceptance, physical J2534, or full
+repository CI. The fourth report cannot establish cross-installation
+provenance or rewrite previously unverified gates.
 
 Next: cross-report source provenance and bounded, explicitly evidenced
 profile/service/ReadVin joins. Continue to keep `B9FBFrameCount=0` and
