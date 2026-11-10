@@ -1,0 +1,63 @@
+name: VIDA Unified Analyzer synthetic PR validation
+
+# Isolated GitHub-hosted Python validation. Never run PR code on the owner's
+# persistent self-hosted VMware runner. The private VIDA dataset is not present.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [development]
+    paths:
+      - .github/workflows/vida-unified-analyzer-pr-tests.yml
+      - emulator/tools/vida_unified_analyzer.py
+      - emulator/tests/test_vida_unified_analyzer.py
+      - emulator/tools/audit_vida_carcom_schema_links.py
+      - docs/research/vida-unified-analyzer.md
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-analyzer-tests:
+    if: >-
+      github.repository == 'vorlocsev/virtualcar' &&
+      github.event.pull_request.number == 307 &&
+      github.event.pull_request.head.repo.full_name == 'vorlocsev/virtualcar' &&
+      github.event.pull_request.head.ref == 'feature/vida-analyzer-unified-catalog-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact reviewed PR HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify actual checked-out commit matches event HEAD
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'Verified PR HEAD: %s\n' "$EXPECTED_SHA"
+
+      - name: Configure Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile analyzer and synthetic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q \
+            emulator/tools/vida_unified_analyzer.py \
+            emulator/tools/audit_vida_carcom_schema_links.py \
+            emulator/tests/test_vida_unified_analyzer.py
+
+      - name: Run 18 synthetic SQLite and mocked SQL Server tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s emulator/tests \
+            -p 'test_vida_unified_analyzer.py' -v
