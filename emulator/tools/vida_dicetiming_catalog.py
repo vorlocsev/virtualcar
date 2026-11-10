@@ -65,6 +65,22 @@ def _bounded(rows, maximum):
     return rows
 
 
+def _consume_bounded(cursor, maximum):
+    """Drain a metadata cursor; fetchmany may legally return short batches."""
+    rows = []
+    while True:
+        # One extra row is sufficient to detect overflow without unbounded reads.
+        take = min(256, maximum + 1 - len(rows))
+        batch = cursor.fetchmany(take)
+        if not batch:
+            return rows
+        if len(batch) > take:
+            raise DiceTimingError('invalid metadata cursor batch')
+        rows.extend(batch)
+        if len(rows) > maximum:
+            raise DiceTimingError('catalog too large')
+
+
 def _remember_table(tables, schema, name):
     if not isinstance(schema, str) or not isinstance(name, str) or not schema or not name:
         raise DiceTimingError('invalid catalog identity')
@@ -286,9 +302,9 @@ def load_sqlserver(dsn: str, connector=None, *, shape_key=None):
             identity = cursor.execute('SELECT DB_NAME()').fetchmany(2)
             if len(identity) != 1 or identity[0][0] != DATABASE:
                 raise DiceTimingError('wrong SQL database')
-            table_rows = _bounded(cursor.execute(SQL_TABLES).fetchmany(MAX_TABLES + 1), MAX_TABLES)
-            column_rows = _bounded(cursor.execute(SQL_COLUMNS).fetchmany(MAX_COLUMNS + 1), MAX_COLUMNS)
-            fk_rows = _bounded(cursor.execute(SQL_KEYS).fetchmany(MAX_KEYS + 1), MAX_KEYS)
+            table_rows = _consume_bounded(cursor.execute(SQL_TABLES), MAX_TABLES)
+            column_rows = _consume_bounded(cursor.execute(SQL_COLUMNS), MAX_COLUMNS)
+            fk_rows = _consume_bounded(cursor.execute(SQL_KEYS), MAX_KEYS)
         finally:
             db.close()
     except DiceTimingError:
