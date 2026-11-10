@@ -7,13 +7,17 @@ profile timing, SQL FK coverage, D2 baud, J2534, or ReadVin execution.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
+import re
 from pathlib import Path
 import sys
 
 INPUT_SCHEMA = 'virtualcar-vida-dicetiming-metadata-v1'
 SCHEMA = 'virtualcar-vida-dicetiming-count-compare-v1'
 MAX_BYTES = 128 * 1024
+HMAC_SCOPE = 'visible_normalized_catalog_identifiers_v1'
+HMAC_RE = re.compile(r'[0-9a-f]{64}\Z')
 NEGATIVE = (
     'source_rows_read', 'sql_definitions_read', 'original_timing_values_read',
     'timing_profile_link_verified', 'cross_database_snapshot_verified',
@@ -71,14 +75,31 @@ def _validate(report, backend):
     fks = _count(report.get('declared_fk_column_count'), 30000)
     if tables < 1 or columns < tables or (backend == 'sqlite-export' and fks != 0):
         raise CompareError('inconsistent catalog totals')
-    return tables, columns, fks
+    fingerprint = report.get('visible_schema_hmac_sha256')
+    scope = report.get('visible_schema_hmac_scope')
+    if fingerprint is None and scope is None:
+        pass
+    elif (type(fingerprint) is not str or not HMAC_RE.fullmatch(fingerprint)
+          or scope != HMAC_SCOPE):
+        raise CompareError('invalid optional DiceTiming schema HMAC')
+    return tables, columns, fks, fingerprint
 
 
 def compare(sqlite_report, sqlserver_report):
-    sqlite_tables, sqlite_columns, _ = _validate(sqlite_report, 'sqlite-export')
-    sql_tables, sql_columns, sql_fk_count = _validate(sqlserver_report, 'sqlserver')
+    sqlite_tables, sqlite_columns, _, left_hmac = _validate(sqlite_report, 'sqlite-export')
+    sql_tables, sql_columns, sql_fk_count, right_hmac = _validate(sqlserver_report, 'sqlserver')
     same_tables = sqlite_tables == sql_tables
     same_columns = sqlite_columns == sql_columns
+    if (left_hmac is None) != (right_hmac is None):
+        raise CompareError('incomplete optional HMAC source pair')
+    if left_hmac is None:
+        fingerprint = 'not_tested'
+        fingerprint_equal = None
+    else:
+        fingerprint_equal = hmac.compare_digest(left_hmac, right_hmac)
+        if fingerprint_equal and not (same_tables and same_columns):
+            raise CompareError('contradictory DiceTiming digest and count claims')
+        fingerprint = 'matched' if fingerprint_equal else 'mismatched'
     return {
         'schema_version': SCHEMA,
         'status': 'aggregate_count_comparison_only',
@@ -86,6 +107,8 @@ def compare(sqlite_report, sqlserver_report):
         'table_counts_equal': same_tables,
         'column_counts_equal': same_columns,
         'aggregate_counts_equal': same_tables and same_columns,
+        'visible_schema_hmac_comparison': fingerprint,
+        'visible_schema_hmac_equal': fingerprint_equal,
         'sqlite_table_count': sqlite_tables,
         'sqlserver_table_count': sql_tables,
         'sqlite_column_count': sqlite_columns,
