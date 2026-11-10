@@ -37,7 +37,8 @@ explicit evidence classes:
   source-row association.
 
 SQL Server catalog queries are subject to metadata visibility permissions:
-an empty visible table catalog is rejected, but a nonempty result does **not**
+empty table and column catalogs, or any visible table with zero visible
+columns, are rejected; a nonempty result still does **not**
 prove that every table or foreign key is visible. The JSON field
 `catalog_visibility_complete_verified=false` explicitly records this
 limitation, even when the connection and declared FK discovery succeed.
@@ -92,10 +93,11 @@ before sharing even aggregate results.
 7. Declared FK evidence distinguished from unverified row joins; hidden
    original table/column names do not escape to JSON.
 8. Exclusive output file and no SQLite source modification.
-9. Empty or metadata-invisible SQL Server catalog rejected without claiming
-   complete catalog visibility from a nonempty list.
+9. Empty or metadata-invisible SQL Server table or column catalogs rejected,
+   including one table with zero visible columns. A nonempty catalog still does
+   not prove that its visibility is complete.
 
-Fourteen unit tests cover these behaviors synthetically; run them on a reviewed exact
+Sixteen unit tests cover these behaviors synthetically; run them on a reviewed exact
 commit before connecting to real data. **No exact-head VMware CI or live SQL
 Server result is claimed by this document.**
 
