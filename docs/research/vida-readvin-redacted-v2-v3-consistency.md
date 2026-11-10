@@ -35,7 +35,7 @@ attributes in both v2 and v3. No call has an explicit enabled
 literal. Absence of disabled is NOT equivalent to successful
 callback execution, VIN propagation or even proven enabled
 status. The new cross-check reports only fixed-category counts,
-not parameter names or values. It passed 11 synthetic cases,
+not parameter names or values. It passed 11 earlier synthetic cases; two more JSON integrity checks were added,
 and an owner-original source v2/v3 run with 7/7 shared counts.
 
 F114 was present as a lexical token in the original XML; B9FB
@@ -53,10 +53,10 @@ bytes, and are not committed to this PR.
   acceptance flags. Writes a NEW categorically redacted JSON
   outside the repository. No source data passthrough.
 - emulator/tests/test_audit_vida_redacted_consistency.py contains
-  eleven synthetic-only regression groups for agreement,
+  thirteen synthetic-only regression groups for agreement,
   contradiction, forged success, boolean/count type mismatch,
   invalid path partitions, partial graphs, privacy/exclusivity,
-  schema and oversized-file rejection.
+  schema and oversized-file rejection, plus duplicate-key and nonfinite-JSON rejection.
 
 Usage if new v2/v3 reports exist (already done for prior reports):
 
@@ -66,7 +66,10 @@ py -3 .\emulator\tools\audit_vida_redacted_consistency.py C:\VIDA-private\readvi
 
 This tool does not run VIDA, SQL queries, CEM, J2534 or ECU
 programming. No original XML/ZIP, VIN, source paths or private
-metadata are published.
+metadata are published. Duplicate JSON keys at any depth and nonfinite
+numbers are rejected rather than allowing a later key to shadow an earlier
+runtime-acceptance flag. The new checks are source-integrity safeguards,
+not evidence of the original script executing.
 
 ## Next evidence gate
 
