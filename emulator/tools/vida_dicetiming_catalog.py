@@ -8,6 +8,8 @@ no original table, column, identifier or connection string is emitted.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 from contextlib import closing
 import json
 import os
@@ -23,6 +25,9 @@ MAX_TABLES = 2000
 MAX_COLUMNS = 30000
 MAX_KEYS = 30000
 DSN_RE = re.compile(r'[A-Za-z0-9_.-]{1,128}\Z')
+SHAPE_KEY_ENV = 'VIDA_DICETIMING_HMAC_KEY'
+SHAPE_KEY_RE = re.compile(r'[0-9a-f]{64}\Z')
+SHAPE_SCOPE = 'visible_normalized_catalog_identifiers_v1'
 META = {
     '_vida_meta': ('key', 'value'),
     '_vida_tables': ('schema_name', 'table_name', 'rows_exported'),
@@ -72,10 +77,23 @@ def _remember_column(tables, schema, name, column):
     tables[key].add(column.casefold())
 
 
-def _finish(tables, foreign_key_count, backend):
+def _shape_hmac(tables, shape_key):
+    # A private, 256-bit random HMAC key makes dictionary guessing of original
+    # metadata identifiers impractical when the redacted report is shared.
+    # Neither the key nor original names are included in the report.
+    if type(shape_key) is not str or not SHAPE_KEY_RE.fullmatch(shape_key):
+        raise DiceTimingError('invalid private schema HMAC key')
+    rows = [[schema, table, sorted(columns)]
+            for (schema, table), columns in sorted(tables.items())]
+    canonical = json.dumps(['DiceTiming', SHAPE_SCOPE, rows],
+                           ensure_ascii=True, separators=(',', ':')).encode('utf-8')
+    return hmac.new(bytes.fromhex(shape_key), canonical, hashlib.sha256).hexdigest()
+
+
+def _finish(tables, foreign_key_count, backend, shape_key=None):
     if not tables or any(not columns for columns in tables.values()):
         raise DiceTimingError('incomplete metadata inventory')
-    return {
+    result = {
         'schema_version': SCHEMA,
         'status': 'metadata_only',
         'backend': backend,
@@ -94,9 +112,15 @@ def _finish(tables, foreign_key_count, backend):
         'physical_j2534_verified': False,
         'replay_approved': False,
     }
+    if shape_key is not None:
+        result['visible_schema_hmac_scope'] = SHAPE_SCOPE
+        result['visible_schema_hmac_sha256'] = _shape_hmac(tables, shape_key)
+    return result
 
 
-def load_sqlite_export(folder: Path):
+def load_sqlite_export(folder: Path, *, shape_key=None):
+    if shape_key is not None and (type(shape_key) is not str or not SHAPE_KEY_RE.fullmatch(shape_key)):
+        raise DiceTimingError('invalid private schema HMAC key')
     if not folder.is_dir() or folder.is_symlink():
         raise DiceTimingError('invalid export folder')
     path = folder / (DATABASE + '.sqlite')
@@ -147,10 +171,12 @@ def load_sqlite_export(folder: Path):
             raise DiceTimingError('invalid exporter column type')
         _remember_column(tables, schema, name, column)
     # Exporter does not record original FK metadata; zero means *unavailable*.
-    return _finish(tables, 0, 'sqlite-export')
+    return _finish(tables, 0, 'sqlite-export', shape_key)
 
 
-def load_sqlserver(dsn: str, connector=None):
+def load_sqlserver(dsn: str, connector=None, *, shape_key=None):
+    if shape_key is not None and (type(shape_key) is not str or not SHAPE_KEY_RE.fullmatch(shape_key)):
+        raise DiceTimingError('invalid private schema HMAC key')
     if not isinstance(dsn, str) or not DSN_RE.fullmatch(dsn):
         raise DiceTimingError('invalid DSN')
     if connector is None:
@@ -191,7 +217,7 @@ def load_sqlserver(dsn: str, connector=None):
                 or sc.casefold() not in tables[source]
                 or tc.casefold() not in tables[target]):
             raise DiceTimingError('unresolved FK metadata')
-    return _finish(tables, len(fk_rows), 'sqlserver')
+    return _finish(tables, len(fk_rows), 'sqlserver', shape_key)
 
 
 def main(argv=None):
@@ -209,11 +235,12 @@ def main(argv=None):
         if args.backend == 'sqlite-export':
             if args.folder is None or output == (args.folder / (DATABASE + '.sqlite')).resolve():
                 raise DiceTimingError('unsafe input/output')
-            result = load_sqlite_export(args.folder)
+            result = load_sqlite_export(args.folder, shape_key=os.environ.get(SHAPE_KEY_ENV))
         else:
             if args.folder is not None:
                 raise DiceTimingError('SQL Server cannot use folder')
-            result = load_sqlserver(os.environ.get('VIDA_SQLSERVER_DSN', ''))
+            result = load_sqlserver(os.environ.get('VIDA_SQLSERVER_DSN', ''),
+                                    shape_key=os.environ.get(SHAPE_KEY_ENV))
         with args.output.open('x', encoding='utf-8') as out:
             json.dump(result, out, sort_keys=True, indent=2)
             out.write('\n')
