@@ -74,6 +74,14 @@ optional SHA-256 bundle manifest, include the exact supplied
 `"dicetiming": "<lowercase 64-digit SHA-256>"` digest in
 `reports`. A hash matches bytes only, **not same-installation provenance**.
 
+## Optional SQL/SQLite redacted count comparison
+
+After generating both independent, already-redacted `DiceTiming` metadata
+reports, use [the aggregate-only comparison](vida-dicetiming-count-comparison.md)
+to compare table and column totals without reading original data. The
+`--dicetiming-compare-report` input adds a separate gate to the evidence
+summary; matching totals are not a verified identical schema or timing link.
+
 ## Evidence boundary
 
 The aggregate gate `dice_timing_metadata` is `passed` only for accepted
