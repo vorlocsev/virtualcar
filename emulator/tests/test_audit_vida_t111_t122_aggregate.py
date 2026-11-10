@@ -27,6 +27,24 @@ class Cursor:
         self.connection.queries.append(sql)
         if sql == "SELECT DB_NAME()":
             self.current = [(self.connection.database,)]
+        elif "c.system_type_id" in sql and "FROM sys.columns" in sql:
+            self.current = [
+                (self.connection.source_schema, self.connection.source_table,
+                 self.connection.source_id, 56, 4, 10, 0),
+                (self.connection.source_schema, self.connection.source_table,
+                 self.connection.source_ref, 56, 4, 10, 0),
+                (self.connection.target_schema, self.connection.target_table,
+                 self.connection.target_id,
+                 36 if self.connection.incompatible_types else 56,
+                 16 if self.connection.incompatible_types else 4,
+                 0 if self.connection.incompatible_types else 10, 0),
+                ("dbo", "PRIVATE_CLIENT_VIN_123456", "PRIVATE_SECRET", 167, 50, 0, 0),
+            ]
+            if self.connection.missing_type:
+                self.current = [r for r in self.current
+                                if r[2] != self.connection.source_ref]
+            if self.connection.bad_type:
+                self.current[1] = (*self.current[1][:3], "PRIVATE_BAD", 4, 10, 0)
         elif "FROM sys.columns" in sql:
             self.current = [
                 (self.connection.source_schema, self.connection.source_table, self.connection.source_id),
@@ -68,6 +86,9 @@ class Connection:
         self.aggregate = [(10, 2, 7, 1)]
         self.omit_column = False
         self.duplicate = False
+        self.incompatible_types = False
+        self.missing_type = False
+        self.bad_type = False
         self.closed = False
         self.timeout = 0
 
@@ -102,7 +123,8 @@ class VidaAggregateTests(unittest.TestCase):
         self.assertIn("DATABASE=CarCom", string)
         self.assertEqual((autocommit, timeout, self.conn.timeout), (True, 8, 8))
         self.assertTrue(self.conn.closed)
-        self.assertEqual(len(self.conn.queries), 4)
+        self.assertEqual(len(self.conn.queries), 5)
+        self.assertIn("c.system_type_id", self.conn.queries[3])
         sql = self.conn.queries[-1]
         self.assertIn("TOP (1000)", sql)
         self.assertIn("OUTER APPLY", sql)
@@ -232,6 +254,38 @@ class VidaAggregateTests(unittest.TestCase):
                     self.assertEqual(mod.main(["--output", str(output)]), 2)
             self.assertEqual(output.read_text(), "DO_NOT_OVERWRITE")
 
+
+
+    def test_15_different_reference_types_fail_before_row_aggregate(self):
+        self.conn.incompatible_types = True
+        with self.assertRaisesRegex(mod.ProbeError, "preflight failed"):
+            mod.probe("VIDA_RESTRICTED", self.connect)
+        self.assertFalse(any("OUTER APPLY" in sql for sql in self.conn.queries))
+        self.assertTrue(self.conn.closed)
+
+    def test_16_missing_reference_type_fails_before_row_aggregate(self):
+        self.conn.missing_type = True
+        with self.assertRaisesRegex(mod.ProbeError, "preflight failed"):
+            mod.probe("VIDA_RESTRICTED", self.connect)
+        self.assertFalse(any("OUTER APPLY" in sql for sql in self.conn.queries))
+
+    def test_17_malformed_reference_type_fails_closed_and_redacted(self):
+        self.conn.bad_type = True
+        with self.assertRaises(mod.ProbeError) as err:
+            mod.probe("VIDA_RESTRICTED", self.connect)
+        self.assertNotIn("PRIVATE_BAD", str(err.exception))
+        self.assertFalse(any("OUTER APPLY" in sql for sql in self.conn.queries))
+
+    def test_18_catalog_type_check_preserves_case_and_ignores_unknowns(self):
+        self.conn.source_schema = "CaRComMixed"
+        self.conn.source_table = "t111_service"
+        self.conn.source_ref = "FKt122_PROTOCOL"
+        self.conn.target_table = "t122_protocol"
+        self.conn.target_id = "ID"
+        result = mod.probe("VIDA_RESTRICTED", self.connect)
+        self.assertEqual(result["matching_reference_rows"], 7)
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        self.assertIn("c.system_type_id", self.conn.queries[3])
 
 
 if __name__ == "__main__":
