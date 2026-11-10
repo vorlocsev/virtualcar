@@ -181,6 +181,8 @@ def load_sqlserver(dsn: str, connector=None):
                 if not table_rows:
                     raise AnalyzerError("empty or inaccessible SQL Server catalog")
                 column_rows = _rows(cursor, SQL_COLUMNS, MAX_COLUMNS)
+                if not column_rows:
+                    raise AnalyzerError("empty or inaccessible SQL Server column catalog")
                 key_rows = _rows(cursor, SQL_KEYS, MAX_KEYS)
             finally:
                 db.close()
@@ -193,6 +195,11 @@ def load_sqlserver(dsn: str, connector=None):
             _insert_table(tables, schema, table)
         for schema, table, column in column_rows:
             _insert_column(tables, schema, table, column)
+        # A SQL Server user table cannot have zero columns. A nonempty table
+        # catalog with no visible columns for one table is an incomplete or
+        # inconsistent snapshot, never a verified absent schema.
+        if any(not columns for columns in tables.values()):
+            raise AnalyzerError("SQL Server table has no visible columns")
         keys = []
         for ss, st, sc, ts, tt, tc, disabled, untrusted in key_rows:
             if not all(isinstance(x, str) and x for x in (ss, st, sc, ts, tt, tc)):
