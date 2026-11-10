@@ -146,3 +146,26 @@ be categorized as a failed VIN read.
 **All work remains read-only, original outputs private, and
 `B9FBFrameCount=0` unchanged. No physical J2534, GUI VIDA,
 SecurityAccess, coding, ECU programming or Virtual Car Release.**
+
+## Hardened exporter catalog gates (2026-11-10)
+
+The older CarCom schema preflight now follows the same metadata-only safety
+boundary as the unified VIDA analyzer already on `development`:
+
+- Verify that each allowlisted `_vida_meta`, `_vida_tables` and
+  `_vida_columns` catalog object is an ordinary table in SQLite `main`.
+  A malicious or malformed `VIEW` or virtual/FTS table fails closed before
+  the first exporter catalog `SELECT`.
+- Verify actual zero-row cursor column names, not SQLite's permissive
+  double-quoted-string fallback when a referenced column does not exist.
+- Reject `-wal`, `-shm` and `-journal` sidecars before opening the
+  exported file with `immutable=1`. Incomplete, uncheckpointed single-file
+  exports must not be presented as a complete metadata inventory.
+
+19/19 synthetic tests passed locally on Linux/Python 3.13.5, including four
+new fail-closed tests. Combined with the current unified analyzer's 20 tests,
+39/39 passed and `compileall` succeeded on the exact reviewed Git blobs.
+This does **not** verify Windows Python 3.12, original VIDA 2015A SQL
+Server/SQLite contents, ReadVin selection, VIN acceptance, hardware
+J2534, or VMware CI against the eventual merged `development` SHA.
+
