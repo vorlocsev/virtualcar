@@ -253,3 +253,50 @@ multiple system-catalog queries reflect one atomic schema snapshot.
 Original VIDA 2015A DiceTiming, InitHw, D2 timing values, ReadVin
 runtime, physical J2534 and exact-head Windows VMware CI remain
 unverified.
+
+### Repeated bounded SQL catalog scan (2026-11-10)
+
+The SQL Server DiceTiming collector now **re-queries** the three fixed
+system catalogs (`sys.tables`, `sys.columns`, and visible
+`sys.foreign_key_columns` with related FK/key-index metadata)
+after completing the first bounded read. Each second scan uses the same
+bounded, draining `fetchmany` routine and limits.
+
+For each catalog, a multiset of the full returned metadata rows
+(including multiplicities) must match between the two passes. Ordering
+differences are allowed. A schema/constraint change, duplicated or missing
+row, malformed row width or second-pass overflow is treated as a
+**fail-closed error**, not a successful metadata report. Private table,
+column and constraint identities are not emitted.
+
+This is a **best-effort drift detector**, *not* a database transaction:
+DDL could change and return to the same structure between scans, or
+several catalog queries could observe different instantaneous schemas
+without an observable drift at the second read. The redacted report
+continues to state `cross_database_snapshot_verified=false` and does
+not claim a snapshot-isolation guarantee or full metadata visibility.
+
+#### Verified isolated synthetic regression run
+
+A local focused checkout containing the current GitHub file contents was
+validated on Python 3.13.5. All **98/98 tests PASS** across six existing
+research test modules plus the new stability module (10 new cases);
+`compileall` passed. New cases cover:
+
+- stable and reordered catalog results;
+- changes to table, column and FK metadata;
+- duplicate entries and unequal row multiplicities;
+- malformed row widths;
+- second-pass catalog overflow;
+- unchanged privacy and negative runtime acceptance flags.
+
+Exact Git blob SHA verified locally against GitHub:
+- collector `f9a617cea9c0cd46d2fc0b33405fa8fee22f17bb`
+- new tests `4f7a7536ea95148be690894125dab2d5e04588bf`
+- updated SQL catalog fixture `b7857f8e455fafbe94c6afabd549fef44ff36b27`
+- updated FK fixture `40957ac3b2749a77600cab53547633b040e781b1`
+- updated paged cursor fixture `2efd2ebc0c8b09c5e309988afe1f43559d8ee9e0`
+
+The full project suite, original VIDA 2015A SQL Server, owner-only
+Windows VMware CI, D2 baud, ReadVin execution and physical J2534
+have **not** been tested in this change.
