@@ -170,6 +170,13 @@ class OriginalSchemaReaderTests(unittest.TestCase):
             original.parse('CarCom', TABLES, COLUMNS, INDEXES, wrong)
         self.assertNotIn('SECRET_ORIGINAL_NAME', str(caught.exception))
 
+    def test_13_database_name_rejects_connection_string_property_injection(self):
+        for bad in ('CarCom;PWD=secret', 'CarCom}UID=sa', 'CarCom\\TrustServerCertificate=Yes',
+                    'CarCom\nInjected', 'X'*129):
+            with self.subTest(value=bad[:15]), self.assertRaises(original.OriginalSchemaError):
+                original.capture(bad, dsn='VIDA_RO',
+                                 connector=lambda *_a, **_kw: self.fail('connector invoked'))
+
 
 if __name__ == '__main__':
     unittest.main()
