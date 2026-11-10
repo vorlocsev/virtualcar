@@ -118,3 +118,84 @@ if ($LASTEXITCODE -ne 0) { throw 'Проверка FK для выбранных 
 
 Оригинальная VIDA 2015A, настоящий SQL Server, VMware exact-head CI
 и физический J2534 здесь не запускались.
+
+
+## Проверка исходного FK по полям целевого ECU Profile
+
+Новая опция `--target-filters-json` позволяет выбирать связанный
+профиль **по оригинальным колонкам целевой таблицы FK**.
+Это особенно важно, когда `InitHw` или таблица связи хранит
+внешний ключ на `ECU Profile`, а имя/идентификатор нужного профиля
+находится только в целевой таблице. В отличие от
+`--filters-json`, которая ограничивает строки **источника**,
+новая опция проверяет поля **цели**. Оба фильтра можно использовать
+вместе; до четырёх условий допускаются с каждой стороны.
+
+Сначала прочитайте реальную схему своей VIDA и найдите
+конкретный FK, его исходную и целевую таблицы. Затем подготовьте
+локальный UTF-8 JSON с оригинальным значением профиля:
+
+~~~json
+{
+  "schema_version": "virtualcar-vida-original-table-filters-v1",
+  "clauses": [
+    {"column": "РЕАЛЬНАЯ_КОЛОНКА_ПРОФИЛЯ", "operator": "eq",
+     "value": "РЕАЛЬНОЕ_ЗНАЧЕНИЕ_ИЗ_VIDA"}
+  ]
+}
+~~~
+
+Имена выше служат исключительно заполнителями и **не являются
+подтверждёнными объектами VIDA 2015A**. Данные фильтра не
+обезличиваются, а хранятся только в локальном файле.
+
+~~~powershell
+$private = Join-Path $env:USERPROFILE 'VIDA-original-private'
+$targetFilters = Join-Path $private 'ecu-profile-target-original-001.json'
+$output = Join-Path $private 'InitHw-profile-FK-target-001.json'
+
+py -3 emulator/tools/vida_original_fk_sql_probe.py --database CarCom --schema dbo --table T136_InitHw_Profile --foreign-key FK_НАСТОЯЩЕЕ_ИМЯ --target-filters-json "$targetFilters" --max-rows 1000 --output "$output"
+if ($LASTEXITCODE -ne 0) { throw 'Проверка исходного FK для целевого профиля не выполнена' }
+~~~
+
+В этой команде таблица и FK условные. Подставьте реальные имена,
+полученные в исходной базе. Выход хранит настоящие названия и
+значения ключей без маскирования.
+
+Внутри выполняются **два независимых нативных EXISTS**:
+первый проверяет FK вместе с целевым фильтром, второй проверяет
+FK без фильтра. Это исключает ложный вывод «сломанный FK»,
+если ссылка ведёт на другой допустимый профиль.
+
+Результат разделяется на четыре категории:
+
+- `sql_exists_target_filter_matches`: совпадает FK и целевой профиль
+- `sql_exists_matches_outside_target_filter`: FK существует, но целевой
+  профиль не удовлетворяет условию
+- `sql_exists_unmatched`: отсутствует совпадение для самого FK
+- `sql_null_key_rows`: хотя бы один компонент исходного FK равен NULL
+
+Общее поле `sql_exists_matches` содержит **обе категории
+корректного совпадения FK**, независимо от фильтра.
+Оригинальные значения фильтра находятся в
+`target_filter_clauses_original_values` без обезличивания.
+Флаг `vida_runtime_selected_profile_verified` всегда `false`.
+При наличии отдельного фильтра источника порядок ODBC-параметров
+проверен: значения целевой части запроса идут первыми.
+
+SQL-семантика проверки `EXISTS` подтверждается документацией
+Microsoft, однако отсутствие транзакционного снимка, полнота
+прав на метаданные, реальные связи CarCom и DiceTiming,
+выбор VIDA GetScript/ReadVin и физический J2534 требуют отдельных
+доказательств. <https://learn.microsoft.com/en-us/sql/t-sql/language-elements/exists-transact-sql>
+
+Локально выполнено **255/255 синтетических тестов PASS**
+(239 прежних и 16 новых), `compileall` PASS, Python 3.13.5.
+Git blob SHA исходников и тестов совпадают с локально
+протестированными:
+- `emulator/tools/vida_original_fk_sql_probe.py`
+  `30ffbedf531b04f54afe9ec24597eaafc47d11f4`
+- `emulator/tests/test_vida_original_fk_sql_target_filtered.py`
+  `443ca1e6191e61dc296903746446948d92e00f0d`
+
+Оригинальная VIDA 2015A и VMware exact-head CI не запускались.
