@@ -48,13 +48,20 @@ Run locally from the exact reviewed checkout:
 & $python -m compileall -q emulator/tools/compare_vida_catalog_reports.py emulator/tests/test_compare_vida_catalog_reports.py
 ~~~
 
-Nine synthetic test cases cover matching/different shapes, redaction,
+Thirteen synthetic test cases cover matching/different shapes, redaction,
 forged verification, duplicate/missing edges, invalid known columns,
 duplicate JSON keys, internally inconsistent edge claims, and exclusive output.
 In an isolated Linux Python
-3.13 environment, 9/9 new tests and 39/39 existing VIDA tests passed
+3.13 environment, 13/13 comparison tests and 60/60 other VIDA tests passed
 with no skipped cases; compileall passed. The actual owner-private
 VIDA source reports and VMware Windows Python 3.12 have NOT been tested.
+
+The comparator additionally checks integer catalog totals, disallows
+absent tables with nonzero column counts and present tables with zero
+columns, ensures known columns fit their declared counts, and rejects
+impossible totals and forged SQLite FK counts. Four negative tests cover
+these contradictions. The combined offline synthetic suite passed 73/73,
+but that does not establish completeness of original SQL Server visibility.
 
 Never upload original VIDA databases, raw reports, VIN, CAN/J2534 logs,
 credentials or vehicle configuration. Keep B9FBFrameCount=0; this tool
