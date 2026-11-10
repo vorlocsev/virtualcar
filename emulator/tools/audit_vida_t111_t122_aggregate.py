@@ -20,6 +20,16 @@ from vida_unified_analyzer import (
 SCHEMA = "virtualcar-vida-t111-t122-sampled-join-v1"
 SAMPLE_LIMIT = 1000
 
+# Query fixed system metadata only. The existing name inventory cannot prove
+# that a T111 protocol reference and its T122 target use compatible SQL types.
+SQL_TYPED_COLUMNS = """
+SELECT s.name, t.name, c.name, c.system_type_id,
+       c.max_length, c.precision, c.scale
+FROM sys.columns AS c
+JOIN sys.tables AS t ON t.object_id = c.object_id
+JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+"""
+
 
 class ProbeError(Exception):
     """Messages must never contain private identifiers or connection strings."""
@@ -79,6 +89,38 @@ OUTER APPLY (
 """
 
 
+
+def _check_reference_types(rows, source, target):
+    source_schema, source_table, _source_id, source_ref = source
+    target_schema, target_table, target_id = target
+    keys = (
+        (source_schema.casefold(), source_table.casefold(), source_ref.casefold()),
+        (target_schema.casefold(), target_table.casefold(), target_id.casefold()),
+    )
+    if keys[0] == keys[1]:
+        raise ProbeError("invalid protocol reference identity")
+    expected = set(keys)
+    types = {}
+    for row in rows:
+        if len(row) != 7 or any(not isinstance(x, str) or not x for x in row[:3]):
+            raise ProbeError("invalid SQL Server column-type metadata")
+        key = tuple(x.casefold() for x in row[:3])
+        if key not in expected:
+            continue  # Never emit unknown catalog names or their SQL type data.
+        signature = tuple(row[3:])
+        if (len(signature) != 4 or any(type(x) is not int for x in signature)
+                or not 0 < signature[0] < 256 or signature[1] < -1
+                or signature[2] < 0 or signature[3] < 0):
+            raise ProbeError("invalid reference-column type metadata")
+        if key in types:
+            raise ProbeError("ambiguous reference-column type")
+        types[key] = signature
+    if set(types) != expected:
+        raise ProbeError("reference-column type metadata missing")
+    if types[keys[0]] != types[keys[1]]:
+        raise ProbeError("incompatible protocol-reference metadata types")
+
+
 def _validate_counts(result):
     if len(result) != 1 or len(result[0]) != 4:
         raise ProbeError("unexpected aggregate result")
@@ -123,6 +165,11 @@ def probe(dsn: str, connector=None):
                               "T111_Service", ("id", "fkT122_Protocol"))
             target = _resolve(tables, table_rows, column_rows,
                               "T122_Protocol", ("id",))
+            # Fail closed on basic incompatible SQL types before accessing any
+            # CarCom application rows. This does not prove real referential
+            # integrity, collation compatibility, or ReadVin acceptance.
+            type_rows = _rows(cursor, SQL_TYPED_COLUMNS, MAX_COLUMNS)
+            _check_reference_types(type_rows, source, target)
             rows = _rows(cursor, _aggregate_sql(source, target), 1)
         finally:
             db.close()
