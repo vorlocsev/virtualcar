@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 
 from audit_vida_carcom_schema_links import CANDIDATE_EDGES, HARDWARE_CANDIDATE_EDGES, TABLES
-from vida_unified_analyzer import SCHEMA as INPUT_SCHEMA
+from vida_unified_analyzer import (SCHEMA as INPUT_SCHEMA, MAX_TABLES,
+                                   MAX_COLUMNS, MAX_KEYS)
 
 MAX_INPUT_BYTES = 1024 * 1024
 OUTPUT_SCHEMA = "virtualcar-vida-catalog-compare-v1"
@@ -64,6 +65,16 @@ def _check(report, backend):
         fixed = entry["known_tables"]
         if set(fixed) != set(hints):
             raise CompareError("unexpected table inventory")
+        for label, maximum in (("table_count", MAX_TABLES),
+                               ("column_count", MAX_COLUMNS),
+                               ("declared_fk_column_count", MAX_KEYS)):
+            value = entry.get(label)
+            if type(value) is not int or not 0 <= value <= maximum:
+                raise CompareError("invalid catalog count")
+        if backend == "sqlite-export" and entry["declared_fk_column_count"] != 0:
+            raise CompareError("unexpected SQLite declared FK count")
+        present_count = 0
+        known_column_count = 0
         for table, columns in hints.items():
             item = fixed[table]
             if not isinstance(item, dict) or type(item.get("present")) is not bool:
@@ -74,6 +85,16 @@ def _check(report, backend):
             if (any(type(x) is not str for x in yes + no) or len(yes + no) != len(set(yes + no))
                     or set(yes + no) != set(columns) or (not item["present"] and yes)):
                 raise CompareError("ambiguous column shapes")
+            count = item.get("column_count")
+            if (type(count) is not int or count < len(yes)
+                    or (item["present"] and count == 0)
+                    or (not item["present"] and count != 0)):
+                raise CompareError("inconsistent known-table column count")
+            present_count += int(item["present"])
+            known_column_count += count
+        if (present_count > entry["table_count"]
+                or known_column_count > entry["column_count"]):
+            raise CompareError("inconsistent aggregate catalog count")
     edges = report.get("edges")
     if not isinstance(edges, list) or len(edges) > 256:
         raise CompareError("invalid report edges")
