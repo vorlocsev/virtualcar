@@ -105,3 +105,46 @@ or a CEM response from `DiceTiming` catalog presence.
 This step does **not** change J2534 runtime, B9FB frame behavior, main,
 releases or ECU coding. No original VIDA data, exact-HEAD VMware CI,
 or physical hardware has been tested in this change.
+
+## Visible SQL Server foreign-key catalog (2026-11-10)
+
+SQL Server mode now reads additional fixed **system catalog metadata** only:
+`sys.foreign_keys.object_id`, `is_disabled` and `is_not_trusted`,
+joined to existing `sys.foreign_key_columns`. No original application
+records, source SQL definitions or timing values are retrieved. The analyzer
+groups composite FK column pairs by constraint ID before counting, avoiding
+the error of treating a two-column FK as two distinct constraints.
+
+The additional optional `visible_fk_catalog` object includes only fixed
+scope and aggregated counts:
+
+- `constraint_count`
+- `disabled_constraint_count`
+- `untrusted_constraint_count`
+- `self_referencing_constraint_count`
+
+`complete_metadata_visibility_verified=false` and
+`referential_rows_verified=false` are unconditional. FK constraint IDs,
+source/target table names, column names and actual timing values never leave
+the local analysis process. Contradictory composite-FK metadata, duplicate
+column pairs, invalid bit flags and missing referenced catalog columns fail
+closed.
+
+SQLite metadata exports **do not include this object**, because their
+exporter does not retain SQL Server FK definitions. Legacy SQL Server
+redacted reports without this optional object remain compatible.
+In the unified summary, `dice_timing_visible_fk_catalog` is **passed**
+only if a supplied SQL Server report has structurally valid visible FK
+metadata; otherwise it is `not_tested`. Passed here is not a claim that
+any FK is trusted/enabled or that the catalog is complete.
+
+An isolated local Python 3.13.5 focused suite passed **70/70 synthetic
+tests**, `compileall` PASS (12 new FK-specific tests). Exact Git blobs
+were compared against the locally tested files:
+- catalog `1168a9d5df9a03e7cd6c04ff1eb87aec4beead0c`
+- summary `bb7884dfaaf6e09e0219ad55f73a42a8512af5ed`
+- FK tests `57662f5ab8e5d13392513ab747a8c741e98ac458`
+- summary tests `5f97880c6eb15a8a59b2d43a64a854851eaf6039`
+
+No source-original VIDA 2015A tables, actual `DiceTiming` MDF, VMware
+exact-head CI, D2 baud or physical J2534 were inspected.
