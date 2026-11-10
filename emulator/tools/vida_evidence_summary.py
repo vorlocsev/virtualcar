@@ -7,12 +7,18 @@ It cannot establish provenance or runtime causality between input reports.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import re
 from pathlib import Path
 import sys
 
 SCHEMA = "virtualcar-vida-evidence-summary-v1"
+BUNDLE_SCHEMA = "virtualcar-vida-redacted-report-bundle-v1"
 MAX_REPORT_BYTES = 1024 * 1024
+MAX_MANIFEST_BYTES = 8192
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 DATABASES = frozenset(("CarCom", "DiagSwdlRepository", "BaseData"))
 CATALOG_NEGATIVE = (
     "source_rows_read", "original_xml_sql_read", "cross_database_snapshot_verified",
@@ -30,7 +36,7 @@ READVIN_NEGATIVE = (
     "xc90_v8_my2009_verified", "replay_approved",
 )
 STAGES = (
-    "catalog_metadata", "catalog_shape_comparison", "readvin_static_graph",
+    "report_bytes_binding", "catalog_metadata", "catalog_shape_comparison", "readvin_static_graph",
     "profile_to_readvin_join", "getscript_runtime_selection",
     "j2534_correlated_exchange", "client_vin_acceptance",
 )
@@ -53,16 +59,47 @@ def _reject_nonfinite(_):
     raise EvidenceError("nonfinite JSON number")
 
 
-def read_report(path: Path):
+def read_report_with_digest(path: Path, max_bytes=MAX_REPORT_BYTES):
+    """Hash precisely the bytes that are parsed, so there is no read/hash race."""
     if (path.is_symlink() or not path.is_file()
-            or path.stat().st_size > MAX_REPORT_BYTES):
+            or path.stat().st_size > max_bytes):
         raise EvidenceError("unsafe report source")
     try:
-        return json.loads(path.read_bytes().decode("utf-8"),
-                          object_pairs_hook=_object_unique,
-                          parse_constant=_reject_nonfinite)
+        data = path.read_bytes()
+        if len(data) > max_bytes:
+            raise EvidenceError("oversized report source")
+        obj = json.loads(data.decode("utf-8"),
+                         object_pairs_hook=_object_unique,
+                         parse_constant=_reject_nonfinite)
+        return obj, hashlib.sha256(data).hexdigest()
     except (OSError, UnicodeError, ValueError, RecursionError):
         raise EvidenceError("invalid redacted report") from None
+
+
+def read_report(path: Path):
+    return read_report_with_digest(path)[0]
+
+
+def verify_bundle_manifest(manifest, report_digests):
+    """Verify report-byte equality only, never common origin or authenticity."""
+    if (type(manifest) is not dict or
+            set(manifest) != {"schema_version", "scope", "reports",
+                              "same_installation_provenance_verified",
+                              "runtime_evidence_verified"} or
+            manifest["schema_version"] != BUNDLE_SCHEMA or
+            manifest["scope"] != "redacted_report_bytes_only" or
+            manifest["same_installation_provenance_verified"] is not False or
+            manifest["runtime_evidence_verified"] is not False):
+        raise EvidenceError("unsupported bundle manifest")
+    listed = manifest["reports"]
+    if (type(listed) is not dict or not listed or
+            set(listed) != set(report_digests)):
+        raise EvidenceError("manifest report set mismatch")
+    for kind, wanted in listed.items():
+        if (type(wanted) is not str or not _SHA256.fullmatch(wanted) or
+                not hmac.compare_digest(wanted, report_digests[kind])):
+            raise EvidenceError("redacted report digest mismatch")
+    return True
 
 
 def _uint(value, limit=100000):
@@ -133,7 +170,9 @@ def _readvin(report):
             "identity_output_nodes": outputs, "identity_call_declarations": declared}
 
 
-def assemble(catalog=None, comparison=None, readvin=None):
+def assemble(catalog=None, comparison=None, readvin=None, report_bytes_bound=False):
+    if type(report_bytes_bound) is not bool:
+        raise EvidenceError("invalid byte-binding status")
     if catalog is None and comparison is None and readvin is None:
         raise EvidenceError("no evidence reports supplied")
     accepted_catalog = _catalog(catalog) if catalog is not None else None
@@ -145,6 +184,7 @@ def assemble(catalog=None, comparison=None, readvin=None):
     else:
         comparison_status = "not_tested"
     statuses = {
+        "report_bytes_binding": "passed" if report_bytes_bound else "not_tested",
         "catalog_metadata": "passed" if accepted_catalog else "not_tested",
         "catalog_shape_comparison": comparison_status,
         "readvin_static_graph": "passed" if accepted_readvin else "not_tested",
@@ -163,6 +203,7 @@ def assemble(catalog=None, comparison=None, readvin=None):
         "comparison_disagreement_counts": accepted_comparison,
         "readvin_graph": accepted_readvin,
         "open_blockers": [name for name in STAGES if statuses[name] != "passed"],
+        "redacted_report_bytes_bound": report_bytes_bound,
         "same_installation_provenance_verified": False,
         "original_vida_data_verified": False,
         "profile_script_link_verified": False,
@@ -178,21 +219,33 @@ def main(argv=None):
     parser.add_argument("--catalog-report", type=Path)
     parser.add_argument("--compare-report", type=Path)
     parser.add_argument("--readvin-report", type=Path)
+    parser.add_argument("--bundle-manifest", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        sources = [p for p in (args.catalog_report, args.compare_report, args.readvin_report)
-                   if p is not None]
+        paths = {"catalog": args.catalog_report, "comparison": args.compare_report,
+                 "readvin": args.readvin_report}
+        sources = [p for p in paths.values() if p is not None]
+        if args.bundle_manifest is not None:
+            sources.append(args.bundle_manifest)
         checkout = Path(__file__).resolve().parents[2]
         target = args.output.resolve()
-        if (not sources or not args.output.parent.is_dir() or args.output.parent.is_symlink()
+        resolved = [p.resolve() for p in sources]
+        if (not any(p is not None for p in paths.values())
+                or not args.output.parent.is_dir() or args.output.parent.is_symlink()
                 or target == checkout or checkout in target.parents
-                or target in {source.resolve() for source in sources}):
+                or target in resolved or len(set(resolved)) != len(resolved)):
             raise EvidenceError("unsafe output or empty inputs")
+        loaded = {key: read_report_with_digest(path) for key, path in paths.items()
+                  if path is not None}
+        if args.bundle_manifest is not None:
+            manifest, _ = read_report_with_digest(args.bundle_manifest, MAX_MANIFEST_BYTES)
+            verify_bundle_manifest(manifest, {key: pair[1] for key, pair in loaded.items()})
         result = assemble(
-            catalog=read_report(args.catalog_report) if args.catalog_report else None,
-            comparison=read_report(args.compare_report) if args.compare_report else None,
-            readvin=read_report(args.readvin_report) if args.readvin_report else None,
+            catalog=loaded["catalog"][0] if "catalog" in loaded else None,
+            comparison=loaded["comparison"][0] if "comparison" in loaded else None,
+            readvin=loaded["readvin"][0] if "readvin" in loaded else None,
+            report_bytes_bound=args.bundle_manifest is not None,
         )
         with args.output.open("x", encoding="utf-8") as stream:
             json.dump(result, stream, ensure_ascii=False, indent=2, sort_keys=True)
