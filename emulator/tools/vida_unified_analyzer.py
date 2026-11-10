@@ -162,6 +162,10 @@ def load_sqlserver(dsn: str, connector=None):
         try:
             db = connector(connection_string, autocommit=True, timeout=8)
             try:
+                # pyodbc connect(timeout=...) limits LOGIN only. Connection.timeout
+                # separately limits all SQL statements issued by its cursors.
+                # Keep both bounded for the owner-private SQL Server VM.
+                db.timeout = 8
                 cursor = db.cursor()
                 # A DSN may contain a default database or routing settings.
                 # Verify the *effective* database before using any schema.
