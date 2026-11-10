@@ -191,11 +191,30 @@ def _select_sql(metadata, max_rows, checked_filters=(), target_filters=()):
     return sql
 
 
+def _unique_target_sql(metadata, checked_target_filters):
+    """Select at most two real target keys to reject ambiguous selectors."""
+    projection = ', '.join('t.' + _identifier(c['referenced'])
+                           for c in metadata['columns'])
+    target_table = (_identifier(metadata['target_schema']) + '.' +
+                    _identifier(metadata['target_table']))
+    predicates = []
+    for clause, _ in checked_target_filters:
+        field = 't.' + _identifier(clause['column'])
+        predicates.append(field + (' IS NULL' if clause['operator'] == 'is_null'
+                                   else ' = ?'))
+    if not predicates:
+        raise OriginalFKSQLProbeError('unique target requires an original target filter')
+    return f'SELECT TOP (2) {projection} FROM {target_table} AS t WHERE ' + ' AND '.join(predicates)
+
+
 def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
-            connector=None, filters=None, target_filters=None):
+            connector=None, filters=None, target_filters=None,
+            require_unique_target=False):
     if (type(database) is not str or not DATABASE_RE.fullmatch(database) or
             type(dsn) is not str or not DSN_RE.fullmatch(dsn) or
-            type(max_rows) is not int or not 1 <= max_rows <= MAX_ROWS):
+            type(max_rows) is not int or not 1 <= max_rows <= MAX_ROWS or
+            type(require_unique_target) is not bool or
+            (require_unique_target and target_filters is None)):
         raise OriginalFKSQLProbeError('invalid database, DSN or row limit')
     schema, table, fk_name = _name(schema), _name(table), _name(fk_name)
     if connector is None:
@@ -221,6 +240,24 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
             checked_target_filters = (
                 _validated_target_filters(cur, metadata, target_filters)
                 if target_filters is not None else [])
+            selected_target_original_key_values = None
+            if require_unique_target:
+                # This extra bounded SQL query ensures the original selector
+                # identifies exactly one target row *at the time of this query*.
+                # It is not a transactional proof of the subsequent EXISTS.
+                target_params = [bound for clause, bound in checked_target_filters
+                                 if clause['operator'] == 'eq']
+                cur.execute(_unique_target_sql(metadata, checked_target_filters),
+                            *target_params)
+                projected = [field[0] for field in cur.description]
+                if projected != [member['referenced'] for member in metadata['columns']]:
+                    raise OriginalFKSQLProbeError('unique target projection changed')
+                selected = _drain(cur, 2)
+                if len(selected) != 1 or len(selected[0]) != len(metadata['columns']):
+                    raise OriginalFKSQLProbeError('target filter must select exactly one row')
+                if any(v is None for v in selected[0]):
+                    raise OriginalFKSQLProbeError('selected target key contains NULL')
+                selected_target_original_key_values = [_encode(v) for v in selected[0]]
             # SQL placeholders in the SELECT CASE occur before placeholders
             # in outer WHERE, so target-bound values must come first.
             params = ([bound for clause, bound in checked_target_filters
@@ -282,6 +319,13 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
             'getscript_readvin_runtime_verified': False,
             'client_vin_accepted': False,
             'physical_j2534_verified': False,
+            **({'target_unique_selector_checked': True,
+                'target_unique_row_count_at_probe': 1,
+                'selected_target_original_key_values':
+                    selected_target_original_key_values,
+                'target_key_selected_at_query_time_only': True,
+                'vida_runtime_selected_profile_verified': False}
+               if require_unique_target else {}),
             **({'target_filter_scope': 'referenced_rows_matching_original_filters',
                 'target_filter_clauses_original_values':
                     [clause for clause, _ in checked_target_filters],
@@ -309,6 +353,7 @@ def main(argv=None):
     p.add_argument('--max-rows', type=int, default=1000)
     p.add_argument('--filters-json', type=Path)
     p.add_argument('--target-filters-json', type=Path)
+    p.add_argument('--require-unique-target', action='store_true')
     p.add_argument('--output', required=True, type=Path)
     args = p.parse_args(argv)
     try:
@@ -340,7 +385,8 @@ def main(argv=None):
         result = capture(args.database, args.schema, args.table, args.foreign_key,
                          dsn=os.environ.get('VIDA_SQLSERVER_DSN', ''),
                          max_rows=args.max_rows, filters=filters,
-                         target_filters=target_filters)
+                         target_filters=target_filters,
+                         require_unique_target=args.require_unique_target)
         encoded = (json.dumps(result, ensure_ascii=False, sort_keys=True,
                               indent=2, allow_nan=False) + '\n').encode('utf-8')
         if len(encoded) > MAX_OUTPUT_BYTES:
