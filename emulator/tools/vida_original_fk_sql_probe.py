@@ -114,31 +114,46 @@ def _metadata(rows, expected_schema, expected_table, expected_fk):
                         for pos, src, dst in entries]}
 
 
-def _validated_source_filters(cursor, metadata, filters):
-    """Allowlist actual source columns before interpolating quoted identifiers."""
+def _validated_table_filters(cursor, metadata, filters, *, target):
+    """Confirm a filter's identifiers in the actual named side of the FK."""
     try:
         checked = _validate_filters(filters)
     except OriginalCaptureError:
         raise OriginalFKSQLProbeError('invalid original FK filter') from None
-    rows = _drain(cursor.execute(FILTER_COLUMNS_SQL, metadata['source_schema'],
-                                 metadata['source_table']), MAX_SOURCE_COLUMNS)
+    side = 'target' if target else 'source'
+    schema_name = metadata['target_schema' if target else 'source_schema']
+    table_name = metadata['target_table' if target else 'source_table']
+    rows = _drain(cursor.execute(FILTER_COLUMNS_SQL, schema_name, table_name),
+                  MAX_SOURCE_COLUMNS)
     if not rows or any(len(row) != 1 for row in rows):
-        raise OriginalFKSQLProbeError('incomplete source column inventory')
+        raise OriginalFKSQLProbeError('incomplete target column inventory' if target
+                                      else 'incomplete source column inventory')
     names = [row[0] for row in rows]
     try:
         names = [_name(name) for name in names]
     except OriginalCaptureError:
-        raise OriginalFKSQLProbeError('invalid source column name') from None
-    if (len(set(names)) != len(names) or
-            not {entry['source'] for entry in metadata['columns']}.issubset(names)):
-        raise OriginalFKSQLProbeError('inconsistent source column inventory')
+        raise OriginalFKSQLProbeError('invalid target column name' if target
+                                      else 'invalid source column name') from None
+    required = {entry['referenced' if target else 'source']
+                for entry in metadata['columns']}
+    if len(set(names)) != len(names) or not required.issubset(names):
+        raise OriginalFKSQLProbeError('inconsistent target column inventory' if target
+                                      else 'inconsistent source column inventory')
     for clause, _ in checked:
         if clause['column'] not in names:
             raise OriginalFKSQLProbeError('filter column absent from SQL catalog')
     return checked
 
 
-def _select_sql(metadata, max_rows, checked_filters=()):
+def _validated_source_filters(cursor, metadata, filters):
+    return _validated_table_filters(cursor, metadata, filters, target=False)
+
+
+def _validated_target_filters(cursor, metadata, filters):
+    return _validated_table_filters(cursor, metadata, filters, target=True)
+
+
+def _select_sql(metadata, max_rows, checked_filters=(), target_filters=()):
     src = metadata['columns']
     projection = ', '.join('s.' + _identifier(x['source']) for x in src)
     null_test = ' OR '.join('s.' + _identifier(x['source']) + ' IS NULL' for x in src)
@@ -148,10 +163,24 @@ def _select_sql(metadata, max_rows, checked_filters=()):
                     _identifier(metadata['source_table']))
     target_table = (_identifier(metadata['target_schema']) + '.' +
                     _identifier(metadata['target_table']))
+    native_exists = f'EXISTS (SELECT 1 FROM {target_table} AS t WHERE {equality})'
+    if target_filters:
+        conditions = []
+        for clause, _ in target_filters:
+            field = 't.' + _identifier(clause['column'])
+            conditions.append(field + (' IS NULL' if clause['operator'] == 'is_null'
+                                       else ' = ?'))
+        selected_exists = (f'EXISTS (SELECT 1 FROM {target_table} AS t '
+                           f'WHERE {equality} AND ' + ' AND '.join(conditions) + ')')
+        # 2: matched selected target; 1: valid FK to a *different* target;
+        # 0: no FK match at all; -1: source FK has NULL components.
+        status_case = (f'WHEN {selected_exists} THEN 2 '
+                       f'WHEN {native_exists} THEN 1 ')
+    else:
+        status_case = f'WHEN {native_exists} THEN 1 '
     sql = (f'SELECT TOP ({max_rows + 1}) {projection}, '
            f'CASE WHEN ({null_test}) THEN -1 '
-           f'WHEN EXISTS (SELECT 1 FROM {target_table} AS t WHERE {equality}) '
-           f'THEN 1 ELSE 0 END AS [{STATUS_ALIAS}] FROM {source_table} AS s')
+           f'{status_case}ELSE 0 END AS [{STATUS_ALIAS}] FROM {source_table} AS s')
     if checked_filters:
         clauses = []
         for clause, _ in checked_filters:
@@ -162,7 +191,8 @@ def _select_sql(metadata, max_rows, checked_filters=()):
     return sql
 
 
-def capture(database, schema, table, fk_name, *, dsn, max_rows=1000, connector=None, filters=None):
+def capture(database, schema, table, fk_name, *, dsn, max_rows=1000,
+            connector=None, filters=None, target_filters=None):
     if (type(database) is not str or not DATABASE_RE.fullmatch(database) or
             type(dsn) is not str or not DSN_RE.fullmatch(dsn) or
             type(max_rows) is not int or not 1 <= max_rows <= MAX_ROWS):
@@ -188,9 +218,17 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000, connector=N
             metadata = _metadata(initial, schema, table, fk_name)
             checked_filters = (_validated_source_filters(cur, metadata, filters)
                                if filters is not None else [])
-            params = [bound for clause, bound in checked_filters
-                      if clause['operator'] == 'eq']
-            cur.execute(_select_sql(metadata, max_rows, checked_filters), *params)
+            checked_target_filters = (
+                _validated_target_filters(cur, metadata, target_filters)
+                if target_filters is not None else [])
+            # SQL placeholders in the SELECT CASE occur before placeholders
+            # in outer WHERE, so target-bound values must come first.
+            params = ([bound for clause, bound in checked_target_filters
+                       if clause['operator'] == 'eq'] +
+                      [bound for clause, bound in checked_filters
+                       if clause['operator'] == 'eq'])
+            cur.execute(_select_sql(metadata, max_rows, checked_filters,
+                                    checked_target_filters), *params)
             names = [field[0] for field in cur.description]
             if names != [x['source'] for x in metadata['columns']] + [STATUS_ALIAS]:
                 raise OriginalFKSQLProbeError('live SQL projection changed')
@@ -207,16 +245,27 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000, connector=N
     except Exception:
         raise OriginalFKSQLProbeError('original SQL read failed') from None
     matched, unmatched, null_keys = [], [], []
+    selected_target, outside_target = [], []
     for index, row in enumerate(rows):
         if len(row) != len(metadata['columns']) + 1:
             raise OriginalFKSQLProbeError('unexpected original SQL row width')
         values = [_encode(value) for value in row[:-1]]
         status = row[-1]
-        if type(status) is not int or status not in (-1, 0, 1):
+        allowed = (-1, 0, 1, 2) if checked_target_filters else (-1, 0, 1)
+        if type(status) is not int or status not in allowed:
             raise OriginalFKSQLProbeError('invalid SQL FK status')
         item = {'source_result_row_index': index,
                 'original_source_key_values': values}
-        (null_keys if status == -1 else matched if status == 1 else unmatched).append(item)
+        if status == -1:
+            null_keys.append(item)
+        elif status == 0:
+            unmatched.append(item)
+        else:
+            # Both status=1 and status=2 prove native FK-key existence;
+            # only status=2 additionally satisfies the user's target filter.
+            matched.append(item)
+            if checked_target_filters:
+                (selected_target if status == 2 else outside_target).append(item)
     return {'schema_version': SCHEMA, 'source_database': database,
             'original_fk_metadata': metadata,
             'source_rows_examined': len(rows),
@@ -233,6 +282,15 @@ def capture(database, schema, table, fk_name, *, dsn, max_rows=1000, connector=N
             'getscript_readvin_runtime_verified': False,
             'client_vin_accepted': False,
             'physical_j2534_verified': False,
+            **({'target_filter_scope': 'referenced_rows_matching_original_filters',
+                'target_filter_clauses_original_values':
+                    [clause for clause, _ in checked_target_filters],
+                'target_filter_parameters_bound': True,
+                'sql_exists_target_filter_matches': selected_target,
+                'sql_exists_matches_outside_target_filter': outside_target,
+                'target_filter_does_not_redefine_fk_integrity': True,
+                'vida_runtime_selected_profile_verified': False}
+               if checked_target_filters else {}),
             **({'source_selection_scope': 'filtered_subset_only',
                 'original_filter_clauses': [clause for clause, _ in checked_filters],
                 'source_filter_parameters_bound': True,
@@ -250,6 +308,7 @@ def main(argv=None):
     p.add_argument('--foreign-key', required=True)
     p.add_argument('--max-rows', type=int, default=1000)
     p.add_argument('--filters-json', type=Path)
+    p.add_argument('--target-filters-json', type=Path)
     p.add_argument('--output', required=True, type=Path)
     args = p.parse_args(argv)
     try:
@@ -267,9 +326,21 @@ def main(argv=None):
                 filters = [clause for clause, _ in _load_filters(args.filters_json)]
             except OriginalCaptureError:
                 raise OriginalFKSQLProbeError('invalid original filter input') from None
+        target_filters = None
+        if args.target_filters_json is not None:
+            target_path = args.target_filters_json.resolve()
+            source_path = args.filters_json.resolve() if args.filters_json else None
+            if (target_path in (out, root, source_path) or root in target_path.parents):
+                raise OriginalFKSQLProbeError('unsafe target filter file')
+            try:
+                target_filters = [clause for clause, _ in
+                                  _load_filters(args.target_filters_json)]
+            except OriginalCaptureError:
+                raise OriginalFKSQLProbeError('invalid original target filter') from None
         result = capture(args.database, args.schema, args.table, args.foreign_key,
                          dsn=os.environ.get('VIDA_SQLSERVER_DSN', ''),
-                         max_rows=args.max_rows, filters=filters)
+                         max_rows=args.max_rows, filters=filters,
+                         target_filters=target_filters)
         encoded = (json.dumps(result, ensure_ascii=False, sort_keys=True,
                               indent=2, allow_nan=False) + '\n').encode('utf-8')
         if len(encoded) > MAX_OUTPUT_BYTES:
