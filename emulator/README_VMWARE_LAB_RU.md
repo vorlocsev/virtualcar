@@ -295,3 +295,17 @@ Read-only статический IL-отчёт оператора `VIDA-KLine-St
 - Сразу вызывается `J2534Channel::PeriodicSend()` и `PassThruStartPeriodicMsg` возвращает **`ERR_INVALID_MSG`**. Повторные подключения K-Line/фильтры 6–8 заканчиваются тем же кодом. Оригинальный стек: `D2onKApplication.StartKeepDiagSession` → `D2onKApplication.Connect` → `ReadVinComponent.Execute`; конечная ошибка `J2534 hardware could not start periodic send`. **FIVE_BAUD_INIT пока НЕ достигнут**.
 
 **Следующий точный gate:** изучить IL оригинальной `D2onKApplication.StartKeepDiagSession` (`0x060001E4`), `StopKeepDiagSession` (`0x060001E5`), `J2534ChannelManager.PeriodicSend`, `J2534Channel.PeriodicSend` и `J2534Proxy.PassThruStartPeriodicMsg`; извлечь точный формат `PASSTHRU_MSG`, `DataSize`, `TxFlags`, период и тело. Нельзя наугад разрешать все ISO9141 periodic сообщения или декодировать их как CAN: источник текущего `ERR_INVALID_MSG` в `virtualcar.c` связан с `DataSize>=5` и CAN-ориентированным `validate_tx_message`. До анализа Stage B2 не менять K-Line Periodic TX, не эмулировать `FIVE_BAUD_INIT`/ECU keywords и не заявлять ReadVIN. Оригинальная VIDA/DLL/XML/SQL остаётся неизменной; нет физического J2534.
+
+### Original VIDA periodic K-Line B2: exact length/interval proven
+
+Операторский read-only IL `VIDA-KLine-Periodic-report.txt` из исходной оригинальной `VehCom2.DLL` SHA256 `3A08F5FF5819396E676EAC8751FDB57475E8F76E20488926259993674EC97E82` подтверждает, что `D2onKApplication.StartKeepDiagSession` (`0x060001E4`):
+
+- создает массив `byte[4]` через `RuntimeHelpers.InitializeArray` из **FieldRVA `0x040003DD`** (не `0x040003DE` для DiCE2 и не `0x040003DF` для RS2000/DiCE);
+- формирует `PASSTHRU_MSG` с текущим K-Line `ProtocolID=0x03`, `RxStatus=0`, `TxFlags=0`, `Timestamp=0`, `ExtraDataIndex=0`, **`DataSize=4`**;
+- вызывает `J2534Channel.PeriodicSend` с интервалом **3000 мс**;
+- `StopKeepDiagSession` (`0x060001E5`) вызывает `J2534PeriodicSend.Close`, а через `J2534ChannelManager.ClosePeriodicSend` и `J2534Proxy.PassThruStopPeriodicMsg` очищает периодическую операцию;
+- полный runtime оригинальной VIDA на Stage B1 (09:51:52) подтверждает именно `ERR_INVALID_MSG` для `PassThruStartPeriodicMsg`, а не K-Line фильтра/Connect/init. `virtualcar.c` сейчас отклоняет `DataSize<5` до проверки `ISO9141`.
+
+**Пока не извлечены исходные ЧЕТЫРЕ байта `0x040003DD`**, они не представлены в текущем IL-отчете. Подготовлен offline скрипт `Inspect-VIDA-KLine-KeepAlive-Bytes-Offline.py`, который при совпадении исходного SHA извлечёт только `FieldRVA` и покажет оригинальные значения (дополнительно отделяет DiCE2 и RS2000). После получения точной строки `RAW_HEX` допустимо добавить строгую проверку 4-байтного K-Line periodic и нужной частоты в отдельном LAB режиме, сохранить периодический lifecycle и при этом не генерировать непроверенные ответы/keywords. **Не подменять оригинальную VIDA или активную DLL до нового exact-head native и оригинального VIDA испытания.**
+
+**Точная привязка B1 DLL на машине оператора** дополнительно подтверждена `Get-FileHash SHA256=9992373F43A81B11CA0408FB5CA7B632D6D7814367E6D11AF0DDD52C6E007005` по `C:\Users\vorloc\Downloads\VirtualCar-VIDA-KLine-B1-Isolated-PR319\VirtualCarJ2534.dll`; это отдельно от runtime-лога. Stage B2 **ещё не реализован**. Original VIDA VIN/ECU identification **FAILED/NOT ACCEPTED**.
