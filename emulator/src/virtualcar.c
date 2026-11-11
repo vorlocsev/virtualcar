@@ -2169,13 +2169,12 @@ EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
     }
     unlock_state();return error(ERR_INVALID_FILTER_ID);
 }
-/* Stage B3A3 is *observation only*: original VIDA B3A2 passed its
-   ISO9141 BLOCK_FILTER but twice failed the next periodic relay opener on
-   a separate CAN channel with ERR_INVALID_TIME_INTERVAL. The VIDA log
-   does not expose the Period or PASSTHRU_MSG. Record exact ABI inputs
-   BEFORE the legacy interval guard, without changing that guard,
-   creating a periodic slot, writing to the bus, or synthesizing ECU RX.
-   Enabled only for the explicitly opted-in ISO9141 laboratory profile. */
+/* Stage B3A3 observer (not a J2534 behavior change). B3A2 original
+   VIDA showed two 'periodic relay opener' failures after a secondary
+   CAN channel was opened. The B3A3 trace resolved both calls to actual
+   ISO9141 ChannelId=1 / 2000ms / 84 40 13 B2 F0 03. Retain this raw
+   ABI observer for all opted-in lab channel calls, before legacy guards.
+   It never allocates a slot, transmits or fabricates ECU RX itself. */
 static void vida_b3a3_log_periodic(U32 channel_id,const PASSTHRU_MSG *msg,U32 interval){
     U8 header[32];
     U32 payload_size;
