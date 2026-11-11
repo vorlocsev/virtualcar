@@ -215,3 +215,15 @@ EnableVidaCanPsLab=1
 Хостовый регрессионный тест: `test_vida_can_ps_lab` в `emulator/tests/virtualcar_test.c`. Он проверяет протоколы, pins, отказ до конфигурации, сохранение wire ProtocolID в RX, фильтры, read-only UDS, очистку каналов и default-off поведение. **Добавление теста в Git не означает его прохождение:** до запуска и проверки CI результат не подтверждён.
 
 Приёмка VIDA: точное сравнение DLL SHA256 и загруженного модуля, оба успешных PS `PassThruConnect`, `SET_CONFIG` и `PassThruDisconnect`, `IsCanMsSupported=True` по оригинальному журналу, затем отдельно фактический `IdentifyVehicle` и получение VIN. Без новых журналов эти критерии имеют статус **Not tested**.
+
+### VIDA 2014D: подтверждённый следующий блокер — ISO9141 K-Line
+
+Оригинальный `VIDA.log` от **2026-11-11 08:44:47** на лабораторном `J2534 VIDA CANMS PR319 (LAB)` подтверждает успешные `PassThruConnect` для `CAN_PS = 0x8004` / `ISO15765_PS = 0x8005` при 125000 и сообщение `Device supports J2534-2`. Оригинальный `commToolInformation.xml` содержит `HasMsBusSupport=True` и именно лабораторное отображаемое имя. Это **подтверждённый успешный gate VIDA CAN-MS**, но не успешная идентификация VIN.
+
+Следующая фактическая попытка `ReadVinComponent.Execute` содержит запросы `Ecu '51', Message 'B9F0'` и `Ecu '51', Message 'A53201'`. Для них VIDA вызывает `PassThruConnect(1, 0x03, 0x1000, 10400, ...)` и получает `ERR_INVALID_PROTOCOL_ID`, затем исключение `J2534 hardware could not create ISO9141 channel`. `0x03` = ISO9141 и `0x1000` = `ISO9141_K_LINE_ONLY` по J2534 v04.04; это не CAN ID, не PS, не ошибка проверки CAN-MS. Примечание: VIDA повторяет открытие на новых device/channel ID в рамках обработки запросов. Запрет идёт из нашей реализации, не из оригинальной VIDA.
+
+**Ограничения реализации:** в текущем `virtualcar.c` `PassThruConnect` допускает только CAN/ISO15765 и лабораторные PS, `validate_tx_message` и `process_request` разбирают сообщение как CAN ID + данные, а `PassThruIoctl` не реализует `FIVE_BAUD_INIT`/`FAST_INIT`. Нельзя просто добавить `protocol==0x03` к условию `Connect` и передать K-Line через CAN: это породит ложноположительное доказательство.
+
+**Следующий acceptance-gate:** офлайн разобрать `VehCom2.DLL` `ChannelList.CreateIso9141Channel` и связанные вызовы, зафиксировать точные `Ioctl` / фильтры / формат сообщений / ожидания K-Line. Затем на отдельной экспериментальной ветке и только для синтетического профиля реализовать изолированный **read-only** K-Line транспорт с корректными стандартными проверками, init и таймингами, тестами на ошибочные флаги, изоляцию каналов, запрет непроверенных ответов и отсутствие аппаратного I/O. Не переносить текущие CAN D2-фреймы в K-Line без подтверждённой трассы и не выдумывать B9F0/A53201 response. Проверить исходный VIDA E2E отдельно от host/native smoke.
+
+**Статусы на 2026-11-11:** original VIDA J2534-2 CAN-MS probe **PASS**, J2534 ISO9141 connect **FAIL**, ReadVin **FAIL**, ECU identification **NOT ACCEPTED**. Имена и содержимое оригинального VIDA не обезличиваются; original XML/SQL/DLL не модифицируются.
