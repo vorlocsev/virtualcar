@@ -2011,35 +2011,66 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     vida_b3_log_filter(id,type,c,mask,pattern,flow);
     if(c->protocol==PROTO_ISO9141){
-        /* Original VIDA2014D D2-on-K: one PASS filter, 2-byte mask
-           [00 FF], pattern [00 13] (VehCom2.DLL method 0x060001E8).
-           Accept this exact laboratory filter only.  No K-Line RX,
-           five-baud keyword fabrication or CAN-ID reinterpretation. */
-        U32 j;
+        /* B3A2 original VIDA2014D D2-on-K (same B3A1 source-PID):
+           First PASS type=1 len=2: mask [00 FF], pattern [00 13].
+           Then BLOCK type=2 len=5: mask [00 00 00 FF FF],
+           pattern [00 00 00 F2 F0], Flow=NULL, flags=0.
+           Keep ISO9141 fail-closed for any other pattern or type.
+           There is NO K-Line ECU RX or five-baud keyword simulation. */
+        static const U8 block_mask[5]={0u,0u,0u,0xFFu,0xFFu};
+        static const U8 block_pattern[5]={0u,0u,0u,0xF2u,0xF0u};
+        U32 j,length,has_pass=0u;
         FILTER *kf;
-        if(type!=1u || flow){
+        if(flow || (type!=1u && type!=2u) ||
+           (type==2u && (mask->DataSize!=5u || pattern->DataSize!=5u))){
             if(g_vida_iso9141_lab)logline("VIDA B3 ISO9141 REJECT type-or-flow: ERR_INVALID_FLAGS",0,0);
-            unlock_state();return error(ERR_INVALID_FLAGS);}
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
         if(mask->ProtocolID!=PROTO_ISO9141 || pattern->ProtocolID!=PROTO_ISO9141){
             unlock_state();return error(ERR_MSG_PROTOCOL_ID);
         }
         if(mask->TxFlags || pattern->TxFlags){
             if(g_vida_iso9141_lab)logline("VIDA B3 ISO9141 REJECT TxFlags: ERR_INVALID_FLAGS",0,0);
-            unlock_state();return error(ERR_INVALID_FLAGS);}
-        if(mask->DataSize!=2u || pattern->DataSize!=2u){
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
+        if(type==2u && (mask->RxStatus || pattern->RxStatus ||
+           mask->Timestamp || pattern->Timestamp ||
+           mask->ExtraDataIndex || pattern->ExtraDataIndex)){
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
+        length=(type==2u)?5u:2u;
+        if(mask->DataSize!=length || pattern->DataSize!=length){
             unlock_state();return error(ERR_INVALID_MSG);
         }
-        if(mask->Data[0]!=0u || mask->Data[1]!=0xFFu ||
-           pattern->Data[0]!=0u || pattern->Data[1]!=0x13u){
-            unlock_state();return error(ERR_NOT_SUPPORTED);
+        if(type==1u){
+            if(mask->Data[0]!=0u || mask->Data[1]!=0xFFu ||
+               pattern->Data[0]!=0u || pattern->Data[1]!=0x13u){
+                unlock_state();return error(ERR_NOT_SUPPORTED);
+            }
+        }else{
+            for(j=0;j<5u;j++){
+                if(mask->Data[j]!=block_mask[j] ||
+                   pattern->Data[j]!=block_pattern[j]){
+                    unlock_state();return error(ERR_NOT_SUPPORTED);
+                }
+            }
         }
         for(j=0;j<c->filters_count;j++){
             const FILTER *prior=&c->filters[j];
-            if(prior->type==type && prior->length==2u &&
+            if(prior->type==1u && prior->length==2u &&
                prior->mask[0]==0u && prior->mask[1]==0xFFu &&
-               prior->pattern[0]==0u && prior->pattern[1]==0x13u){
+               prior->pattern[0]==0u && prior->pattern[1]==0x13u)
+                has_pass=1u;
+            if(prior->type==type && prior->length==length &&
+               !bytes_compare(prior->mask,mask->Data,length) &&
+               !bytes_compare(prior->pattern,pattern->Data,length)){
                 unlock_state();return error(ERR_NOT_UNIQUE);
             }
+        }
+        if(type==2u && !has_pass){
+            /* Observe exact VIDA order; do not install a standalone
+               K-Line block filter before the corresponding PASS filter. */
+            unlock_state();return error(ERR_NOT_SUPPORTED);
         }
         if(c->filters_count>=MAX_FILTERS){
             unlock_state();return error(ERR_EXCEEDED_LIMIT);
@@ -2047,10 +2078,12 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
         *filter_id=g_filter_counter++;
         kf=&c->filters[c->filters_count++];
         bytes_zero(kf,sizeof(*kf));
-        kf->id=*filter_id;kf->type=type;kf->length=2u;
-        bytes_copy(kf->mask,mask->Data,2u);
-        bytes_copy(kf->pattern,pattern->Data,2u);
-        logline("ISO9141 LAB VIDA D2-on-K PASS filter [00 FF]/[00 13]",0,0);
+        kf->id=*filter_id;kf->type=type;kf->length=length;
+        bytes_copy(kf->mask,mask->Data,length);
+        bytes_copy(kf->pattern,pattern->Data,length);
+        logline(type==1u?
+            "ISO9141 LAB VIDA D2-on-K PASS filter [00 FF]/[00 13]":
+            "ISO9141 LAB VIDA D2-on-K BLOCK filter [00 00 00 FF FF]/[00 00 00 F2 F0]",0,0);
         unlock_state();return error(ERR_OK);
     }
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
