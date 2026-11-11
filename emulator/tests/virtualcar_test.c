@@ -2971,6 +2971,49 @@ static void test_vida_can_ps_lab(U32 dev){
  puts("PASS VIDA CAN_PS LAB: 0x8004/0x8005, J1962 pins, RX, strict filters and read-only");
 }
 
+/* VIDA2014D ISO9141 stage A. No verified K-Line ECU RX: deliberately inert. */
+static void test_vida_iso9141_lab(U32 dev){
+ U32 ch=0,peer=0,n=1,period=0,old_enabled=g_vida_iso9141_lab;
+ SCONFIG expected[4]={{KLINE_PARITY,0},{KLINE_W0,60},{KLINE_W1,600},{KLINE_P4_MIN,0}};
+ SCONFIG_LIST cfg={4,expected};
+ SCONFIG values[4]={{KLINE_PARITY,99},{KLINE_W0,99},{KLINE_W1,99},{KLINE_P4_MIN,99}};
+ SCONFIG_LIST get={4,values};
+ PASSTHRU_MSG m=frame(PROTO_ISO9141,0x7E0,0,0),rx;
+ PASSTHRU_MSG mask=frame(PROTO_ISO9141,0xFFFFFFFFu,0,0),pat=frame(PROTO_ISO9141,0x7E8,0,0);
+ REQUIRE(g_vida_iso9141_lab==0);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&ch)==ERR_INVALID_PROTOCOL_ID);
+ g_vida_iso9141_lab=1;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,0,10400,&ch)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY|CAN_29BIT_ID,10400,&ch)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,9600,&ch)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&ch)==ERR_OK);
+ REQUIRE(channel(ch)->protocol==PROTO_ISO9141);
+ REQUIRE(channel(ch)->kline_config[1]==300 && channel(ch)->kline_config[2]==300);
+ REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_GET_CONFIG,&get,0)==ERR_OK);
+ REQUIRE(values[0].Value==0 && values[1].Value==60 && values[2].Value==600 && values[3].Value==0);
+ expected[0].Value=3;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&cfg,0)==ERR_INVALID_IOCTL_VALUE);
+ REQUIRE(channel(ch)->kline_config[1]==60);
+ expected[0].Value=0;
+ expected[2].Value=65536;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&cfg,0)==ERR_INVALID_IOCTL_VALUE);
+ REQUIRE(channel(ch)->kline_config[2]==600);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->kline_config[1]==300 && channel(peer)->kline_config[3]==10);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ m.DataSize=8;REQUIRE(PassThruWriteMsgs(ch,&m,&n,10)==ERR_NOT_SUPPORTED && n==0);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&period,100)==ERR_NOT_SUPPORTED);
+ REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&period)==ERR_NOT_SUPPORTED);
+ n=1;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
+ REQUIRE(PassThruIoctl(ch,4,0,0)==ERR_INVALID_IOCTL_ID); /* FIVE_BAUD_INIT not claimed */
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->kline_config[1]==300);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ g_vida_iso9141_lab=old_enabled;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_INVALID_PROTOCOL_ID);
+ puts("PASS VIDA ISO9141 LAB stage A: isolated Connect/SET_CONFIG; data/init not implemented");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3000,6 +3043,7 @@ int main(){
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
  test_vida_can_ps_lab(dev);
+ test_vida_iso9141_lab(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
