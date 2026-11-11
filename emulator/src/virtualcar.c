@@ -89,6 +89,8 @@ typedef void *HANDLE;
 #define KLINE_W0 0x19u
 #define KLINE_W1 0x0Eu
 #define KLINE_P4_MIN 0x0Cu
+#define KLINE_FIVE_BAUD_MOD 0x21u /* Original VIDA sends 0 before Ioctl 4 */
+#define IO_FIVE_BAUD_INIT 4u
 /* VIDA J2534-2 pin-switched protocols; isolated LAB opt-in only. */
 #define PROTO_CAN_PS 0x8004u
 #define PROTO_ISO15765_PS 0x8005u
@@ -191,7 +193,7 @@ typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,wire_protocol,baud,flags,ms_pins;
     /* Channel-local ISO9141 settings: [PARITY,W0,W1,P4_MIN]. No ECU RX simulation. */
-    U32 kline_config[4];
+    U32 kline_config[5]; /* fifth slot: FIVE_BAUD_MOD=0 */
     /* protocol is internal 5/6 routing; wire_protocol retains 0x8004/0x8005
        for J2534 messages and filters. Pin state is local to the channel. */
     /* Monotonic private connection lifetime. Reused numeric channel IDs
@@ -236,6 +238,7 @@ static int kline_config_index(U32 parameter){
         case KLINE_W0: return 1;
         case KLINE_W1: return 2;
         case KLINE_P4_MIN: return 3;
+        case KLINE_FIVE_BAUD_MOD: return 4;
         default: return -1;
     }
 }
@@ -1781,6 +1784,7 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
         g_ch[i].kline_config[1]=300u;
         g_ch[i].kline_config[2]=300u;
         g_ch[i].kline_config[3]=10u;
+        g_ch[i].kline_config[4]=0u;
         logline("ISO9141 LAB channel opened; ECU transport not implemented",0,0);
     }
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
@@ -2124,6 +2128,13 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         logline("J2534 CLEAR_RX_BUFFER: queued D2/raw ISO-TP and staged CF dropped",0,0);
         unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
+    if(ioctl==IO_FIVE_BAUD_INIT && c->protocol==PROTO_ISO9141){
+        /* The original VIDA requests ECU key words via ioctl 4, but no
+           verified OEM keywords are available to replay. Do not claim
+           physical/synthetic 5-baud success or modify OutputPtr. */
+        logline("ISO9141 LAB FIVE_BAUD_INIT: no verified ECU keywords; unsupported",0,0);
+        unlock_state();return error(ERR_NOT_SUPPORTED);
+    }
     if(ioctl==IO_CLEAR_PERIODIC_MSGS){bytes_zero(c->periodic,sizeof(c->periodic));unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
@@ -2150,7 +2161,8 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
                         unlock_state();return error(ERR_INVALID_BAUDRATE);
                     }
                     if(opt->Parameter!=1u && (slot<0 || (slot==0 && opt->Value>2u) ||
-                       (slot>0 && opt->Value>65535u))){
+                       (slot>0 && opt->Value>65535u) ||
+                       (slot==4 && opt->Value!=0u))){
                         unlock_state();return error(ERR_INVALID_IOCTL_VALUE);
                     }
                 }
