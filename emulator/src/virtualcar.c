@@ -81,6 +81,10 @@ typedef void *HANDLE;
 #define ERR_INVALID_BAUDRATE 25u
 #define ERR_INVALID_DEVICE_ID 26u
 #define PROTO_ISO9141 3u
+/* Exact 4-byte periodic keep-session payload from original VIDA2014D
+   VehCom2.DLL FieldRVA 0x040003DD. Ordinary J2534 D2-on-K path only. */
+#define VIDA_KLINE_KEEPALIVE_SIZE 4u
+#define VIDA_KLINE_KEEPALIVE_PERIOD_MS 3000u
 #define PROTO_CAN 5u
 #define PROTO_ISO15765 6u
 #define ISO9141_K_LINE_ONLY 0x00001000u
@@ -1703,6 +1707,13 @@ static void pump_periodic(CHANNEL *c){
          u32_be(meta+16,(U32)now);
          logline("Periodic TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 periodic TX (read-only simulator)",p->msg.Data,p->msg.DataSize);
+        if(c->protocol==PROTO_ISO9141){
+            /* Stage B2: record exact scheduled original VIDA keep-alive.
+               There is no physical K-Line bus or initialized virtual ECU.
+               Never enter CAN observer or synthesize CEM responses. */
+            logline("ISO9141 LAB scheduled D2-on-K keep-session (NO ECU TX/RX)",0,0);
+            continue;
+        }
         /* Periodic D2 reads previously replayed frames with RID=0, so no
            tx_received/probe/terminal evidence could be attributed to them.
            Keep the distinct periodic log marker: this is a scheduler tick,
@@ -1862,8 +1873,11 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
             unlock_state();*count=0;return error(ERR_INVALID_CHANNEL_ID);
         }
         if(!original_session)original_session=c->session_serial;
-        /* Do not synthesize CAN frames while waiting on an ISO9141 channel. */
-        if(c->protocol!=PROTO_ISO9141){
+        /* The original K-Line periodic can advance while a J2534 client
+           polls ReadMsgs; no synthetic ECU RX is generated on K-Line. */
+        if(c->protocol==PROTO_ISO9141){
+            pump_periodic(c);
+        }else{
             maybe_passive_frame(c);
             pump_recorded_trace(c);
             pump_periodic(c);
@@ -2060,11 +2074,39 @@ EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
 EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *period_id,U32 interval){
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
     if(interval<5 || interval>60000)return error(ERR_INVALID_TIME_INTERVAL);
-    if(msg->DataSize<5 || msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
+    if(msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
-    /* Validate before reserving a slot or incrementing the periodic ID. */
-    {U32 validity=validate_tx_message(c,msg);
-     if(validity!=ERR_OK){unlock_state();return error(validity);}}
+    /* Validate all LAB K-Line fields before allocating any periodic slot.
+       Original ordinary J2534 D2-on-K keep session is precisely:
+       Protocol 3 / TxFlags 0 / DataSize 4 / 82 33 13 D0 / 3000 ms.
+       Never treat it as a CAN identifier or general-purpose K-Line TX. */
+    if(c->protocol==PROTO_ISO9141){
+        static const U8 keepalive[VIDA_KLINE_KEEPALIVE_SIZE]={0x82u,0x33u,0x13u,0xD0u};
+        U32 j;
+        if(interval!=VIDA_KLINE_KEEPALIVE_PERIOD_MS){
+            unlock_state();return error(ERR_INVALID_TIME_INTERVAL);
+        }
+        if(msg->ProtocolID!=PROTO_ISO9141){
+            unlock_state();return error(ERR_MSG_PROTOCOL_ID);
+        }
+        if(msg->TxFlags!=0u || msg->RxStatus!=0u ||
+           msg->ExtraDataIndex!=0u || msg->Timestamp!=0u){
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
+        if(msg->DataSize!=VIDA_KLINE_KEEPALIVE_SIZE){
+            unlock_state();return error(ERR_INVALID_MSG);
+        }
+        for(j=0;j<VIDA_KLINE_KEEPALIVE_SIZE;j++){
+            if(msg->Data[j]!=keepalive[j]){
+                unlock_state();return error(ERR_NOT_SUPPORTED);
+            }
+        }
+    }else{
+        if(msg->DataSize<5u){unlock_state();return error(ERR_INVALID_MSG);}
+        /* Preserve the preexisting CAN/ISO15765/PS validation path. */
+        {U32 validity=validate_tx_message(c,msg);
+         if(validity!=ERR_OK){unlock_state();return error(validity);}}
+    }
     for(i=0;i<MAX_PERIODIC;i++)if(!c->periodic[i].used)break;
     if(i==MAX_PERIODIC){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     PERIODIC *p=&c->periodic[i];bytes_zero(p,sizeof(*p));
