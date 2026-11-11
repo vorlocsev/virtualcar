@@ -166,6 +166,9 @@ static U32 g_strict_j2534_filters=0;
 static U32 g_vida_can_ps_lab=0;
 /* Independent, default-off ISO9141 Connect+SET_CONFIG laboratory gate. */
 static U32 g_vida_iso9141_lab=0;
+/* Separate default-off opt-in for exact source-backed virtual K-Line TX ACK.
+   This acknowledges ONLY local J2534 message submission; no bus/ECU RX. */
+static U32 g_vida_kline_tx_ack_lab=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -762,6 +765,8 @@ static void load_config(void) {
     g_vida_can_ps_lab=parse_num(v,0)==1u?1u:0u;
     GetPrivateProfileStringA("Diagnostics","EnableVidaIso9141Lab","0",v,sizeof(v),g_profile_path);
     g_vida_iso9141_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaKlineTxAckLab","0",v,sizeof(v),g_profile_path);
+    g_vida_kline_tx_ack_lab=parse_num(v,0)==1u?1u:0u;
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -1863,6 +1868,33 @@ static void vida_b3a5_log_kline_write(U32 id,const CHANNEL *c,const PASSTHRU_MSG
     len=msg->DataSize;if(len>16u)len=16u;
     logline("VIDA B3A5 KLINE WRITE original data (max 16 bytes)",msg->Data,len);
 }
+/* Stage B3A6 source-backed J2534 LOCAL ACK ONLY. Original VIDA B3A5
+   PID 000033E4, 2026-11-11 17:15-17:16 proved all 5 direct ISO9141
+   calls use Channel 1 / 10400 / message-protocol 3 / all flags,
+   timestamp, extra zero / batch count 1, timeout=2000:
+     three relay-close: 84 40 13 B2 F0 00
+     one ReadVIN B9F0: 83 51 13 B9 F0
+     one teardown: 82 51 13 A0
+   B3A6 requires BOTH explicit LAB flags; default B3A5 behavior remains
+   ERR_NOT_SUPPORTED. Acceptance means "stored by the virtual J2534
+   transport" only, never a claim that a physical line carried bytes or
+   an ECU acknowledged/answered them. No ReadMsgs injection and no init. */
+static int vida_b3a6_exact_kline_tx_ack(const CHANNEL *c,
+                                       const PASSTHRU_MSG *m,U32 n,U32 i,U32 timeout){
+    static const U8 relay_close[6]={0x84u,0x40u,0x13u,0xB2u,0xF0u,0x00u};
+    static const U8 b9f0[5]={0x83u,0x51u,0x13u,0xB9u,0xF0u};
+    static const U8 teardown[4]={0x82u,0x51u,0x13u,0xA0u};
+    if(!g_vida_iso9141_lab || !g_vida_kline_tx_ack_lab ||
+       c->protocol!=PROTO_ISO9141 || c->baud!=10400u ||
+       n!=1u || i!=0u || timeout!=2000u ||
+       m->ProtocolID!=PROTO_ISO9141 || m->TxFlags!=0u ||
+       m->RxStatus!=0u || m->Timestamp!=0u ||
+       m->ExtraDataIndex!=0u)return 0;
+    if(m->DataSize==6u)return bytes_same(m->Data,relay_close,6u);
+    if(m->DataSize==5u)return bytes_same(m->Data,b9f0,5u);
+    if(m->DataSize==4u)return bytes_same(m->Data,teardown,4u);
+    return 0;
+}
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
     U32 i,n;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
@@ -1870,6 +1902,13 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
     for(i=0;i<n;i++){
         U32 validity;
         vida_b3a5_log_kline_write(id,c,&msgs[i],i,n,timeout);
+        if(vida_b3a6_exact_kline_tx_ack(c,&msgs[i],n,i,timeout)){
+            /* ACK is local, not physical bus success; no process_request,
+               no CAN bridge, no ECU queue and no synthesized VIN. */
+            logline("VIDA B3A6 KLINE exact original write LOCAL ACK ONLY (NO BUS/ECU TX/RX)",
+                    msgs[i].Data,msgs[i].DataSize);
+            continue;
+        }
         validity=validate_tx_message(c,&msgs[i]);
         if(validity!=ERR_OK){
             if(g_vida_iso9141_lab && c->protocol==PROTO_ISO9141)
