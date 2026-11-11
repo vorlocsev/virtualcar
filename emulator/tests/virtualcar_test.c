@@ -3637,6 +3637,73 @@ static void test_vida_b3a6_exact_kline_local_ack(U32 dev){
  puts("PASS VIDA B3A6 8: explicit opt-out restores B3A5 and clean channel state");
 }
 
+
+/* B3A7 native J2534 ABI observer, never an ECU/init acknowledgement. */
+static void test_vida_b3a7_five_baud_observer(U32 dev){
+ U32 iso=g_vida_iso9141_lab,obs=g_vida_five_baud_observer_lab;
+ U32 cap=capture_connect_log,ch=0,peer=0,can=0,n=1,at;
+ U8 address=0x51u,keyword[2]={0xA5u,0x5Au};
+ SBYTE_ARRAY in={1u,&address},out={2u,keyword};
+ PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;g_vida_five_baud_observer_lab=0u;capture_connect_log=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT")==0);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 1: default-off and prior unsupported return preserved");
+ g_vida_five_baud_observer_lab=1u;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT ABI")!=0);
+ REQUIRE(strstr(connect_log_lines+at,"original target (1 byte) 51")!=0);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 2: exact original address and output capacity observed");
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,0,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"no validated input byte")!=0);
+ REQUIRE(strstr(connect_log_lines+at,"original target (1 byte)")==0);
+ puts("PASS VIDA B3A7 3: NULL input safely observed with no ECU reply");
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,0)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT ABI")!=0);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 4: NULL output preserves client-owned memory");
+ in.NumOfBytes=2u;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"no validated input byte")!=0);
+ in.NumOfBytes=1u;in.BytePtr=0;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"no validated input byte")!=0);
+ in.BytePtr=&address;out.NumOfBytes=1u;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(out.NumOfBytes==1u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ out.NumOfBytes=2u;
+ puts("PASS VIDA B3A7 5: malformed lengths do not synthesize keywords");
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000u,&can)==ERR_OK);
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(can,IO_FIVE_BAUD_INIT,&in,&out)!=ERR_OK);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT")==0);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(PassThruIoctl(peer,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(channel(ch)->count==0u && channel(peer)->count==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA B3A7 6: CAN rejection and separate channel isolation");
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(channel(ch)->count==0u && !channel(ch)->periodic[0].used);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 7: no fake ECU RX/keywords/periodic side effects");
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ g_vida_five_baud_observer_lab=0u;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT")==0);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ capture_connect_log=cap;g_vida_five_baud_observer_lab=obs;g_vida_iso9141_lab=iso;
+ puts("PASS VIDA B3A7 8: reconnect and opt-out retain B3A6 behavior");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3676,6 +3743,7 @@ int main(){
  test_vida_b3a4_kline_relay_periodic(dev);
  test_vida_b3a5_kline_write_observer(dev);
  test_vida_b3a6_exact_kline_local_ack(dev);
+ test_vida_b3a7_five_baud_observer(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);

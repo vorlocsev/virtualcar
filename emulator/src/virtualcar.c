@@ -117,6 +117,8 @@ typedef struct {
 } PASSTHRU_MSG;
 typedef struct { U32 Parameter, Value; } SCONFIG;
 typedef struct { U32 NumOfParams; SCONFIG *ConfigPtr; } SCONFIG_LIST;
+/* J2534 SBYTE_ARRAY: input target address, output ECU keyword capacity. */
+typedef struct { U32 NumOfBytes; U8 *BytePtr; } SBYTE_ARRAY;
 
 IMPORT void WINCALL Sleep(U32 ms) ALIAS(Sleep);
 IMPORT U32 WINCALL GetTickCount(void) ALIAS(GetTickCount);
@@ -132,6 +134,12 @@ IMPORT HANDLE WINCALL CreateFileA(const char *path,U32 access,U32 sharing,PTR se
 IMPORT U32 WINCALL SetFilePointer(HANDLE file,U32 low,PTR high,U32 method) ALIAS(SetFilePointer);
 IMPORT int WINCALL WriteFile(HANDLE file,const void *buf,U32 count,U32 *written,PTR overlap) ALIAS(WriteFile);
 IMPORT int WINCALL CloseHandle(HANDLE file) ALIAS(CloseHandle);
+#ifndef HOST_TEST
+/* Probe caller-owned pointers safely; never blindly dereference a J2534 ABI
+   argument from a potentially malformed external client. */
+IMPORT int WINCALL ReadProcessMemory(HANDLE process,const void *base,void *out,
+                                    U32 len,U32 *read) ALIAS(ReadProcessMemory);
+#endif
 IMPORT long WINCALL InterlockedCompareExchange(volatile long *dst,long exchange,long compare) ALIAS(InterlockedCompareExchange);
 IMPORT long WINCALL InterlockedExchange(volatile long *dst,long val) ALIAS(InterlockedExchange);
 
@@ -169,6 +177,8 @@ static U32 g_vida_iso9141_lab=0;
 /* Separate default-off opt-in for exact source-backed virtual K-Line TX ACK.
    This acknowledges ONLY local J2534 message submission; no bus/ECU RX. */
 static U32 g_vida_kline_tx_ack_lab=0;
+/* B3A7 read-only, independently enabled five-baud ABI observer. */
+static U32 g_vida_five_baud_observer_lab=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -767,6 +777,8 @@ static void load_config(void) {
     g_vida_iso9141_lab=parse_num(v,0)==1u?1u:0u;
     GetPrivateProfileStringA("Diagnostics","EnableVidaKlineTxAckLab","0",v,sizeof(v),g_profile_path);
     g_vida_kline_tx_ack_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaFiveBaudObserverLab","0",v,sizeof(v),g_profile_path);
+    g_vida_five_baud_observer_lab=parse_num(v,0)==1u?1u:0u;
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -2340,6 +2352,50 @@ EXPORT U32 WINCALL PassThruGetLastError(char *description){
     if(!description)return ERR_NULL_PARAMETER;
     str_copy(description,g_last<=26?names[g_last]:"UNKNOWN",80);return ERR_OK;
 }
+/* B3A7 observer: B3A6 original VIDA continued to send B9F0 after
+   unsupported FIVE_BAUD_INIT. Observe exact ABI without asserting ECU RX.
+   Native caller memory is read only via ReadProcessMemory. HOST_TEST uses
+   well-formed fixtures or NULL, never unmapped pointers. */
+static int vida_b3a7_safe_read(void *dst,const void *src,U32 len){
+    if(!src || !dst || !len)return 0;
+#ifdef HOST_TEST
+    bytes_copy(dst,src,len);return 1;
+#else
+    U32 got=0u;
+    return ReadProcessMemory((HANDLE)(-1),src,dst,len,&got)!=0 && got==len;
+#endif
+}
+static void vida_b3a7_observe_init(const CHANNEL *c,const void *input,const void *output){
+    SBYTE_ARRAY in_arr,out_arr;
+    U8 values[48],target=0u;
+    U32 fields[12],i;
+    int input_ok,output_ok;
+    if(!g_vida_iso9141_lab || !g_vida_five_baud_observer_lab)return;
+    bytes_zero(&in_arr,sizeof(in_arr));bytes_zero(&out_arr,sizeof(out_arr));
+    input_ok=vida_b3a7_safe_read(&in_arr,input,sizeof(in_arr));
+    output_ok=vida_b3a7_safe_read(&out_arr,output,sizeof(out_arr));
+    fields[0]=c->id;
+    fields[1]=channel_wire_protocol(c);
+    fields[2]=c->baud;
+    fields[3]=c->kline_config[4]; /* FIVE_BAUD_MOD */
+    fields[4]=input!=0;fields[5]=output!=0;
+    fields[6]=(U32)input_ok;fields[7]=(U32)output_ok;
+    fields[8]=input_ok?in_arr.NumOfBytes:0xFFFFFFFFu;
+    fields[9]=output_ok?out_arr.NumOfBytes:0xFFFFFFFFu;
+    fields[10]=input_ok && in_arr.BytePtr!=0;
+    fields[11]=output_ok && out_arr.BytePtr!=0;
+    for(i=0u;i<12u;i++)u32_be(values+i*4u,fields[i]);
+    logline("VIDA B3A7 FIVE_BAUD_INIT ABI channel/proto/baud/mod/pointers/lengths (BE)",
+            values,sizeof(values));
+    /* Only read the known one-byte input address; never inspect the caller's
+       potentially uninitialized ECU keyword output BytePtr. */
+    if(input_ok && in_arr.NumOfBytes==1u && in_arr.BytePtr &&
+       vida_b3a7_safe_read(&target,in_arr.BytePtr,1u))
+        logline("VIDA B3A7 FIVE_BAUD_INIT original target (1 byte)",&target,1u);
+    else
+        logline("VIDA B3A7 FIVE_BAUD_INIT no validated input byte",0,0);
+    logline("VIDA B3A7 FIVE_BAUD_INIT OBSERVE ONLY: no output/ECU RX",0,0);
+}
 EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     U32 i;
     if(ioctl==IO_READ_VBATT){
@@ -2376,6 +2432,7 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
     if(ioctl==IO_FIVE_BAUD_INIT && c->protocol==PROTO_ISO9141){
+        vida_b3a7_observe_init(c,input,output);
         /* The original VIDA requests ECU key words via ioctl 4, but no
            verified OEM keywords are available to replay. Do not claim
            physical/synthetic 5-baud success or modify OutputPtr. */
