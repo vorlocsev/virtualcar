@@ -227,3 +227,16 @@ EnableVidaCanPsLab=1
 **Следующий acceptance-gate:** офлайн разобрать `VehCom2.DLL` `ChannelList.CreateIso9141Channel` и связанные вызовы, зафиксировать точные `Ioctl` / фильтры / формат сообщений / ожидания K-Line. Затем на отдельной экспериментальной ветке и только для синтетического профиля реализовать изолированный **read-only** K-Line транспорт с корректными стандартными проверками, init и таймингами, тестами на ошибочные флаги, изоляцию каналов, запрет непроверенных ответов и отсутствие аппаратного I/O. Не переносить текущие CAN D2-фреймы в K-Line без подтверждённой трассы и не выдумывать B9F0/A53201 response. Проверить исходный VIDA E2E отдельно от host/native smoke.
 
 **Статусы на 2026-11-11:** original VIDA J2534-2 CAN-MS probe **PASS**, J2534 ISO9141 connect **FAIL**, ReadVin **FAIL**, ECU identification **NOT ACCEPTED**. Имена и содержимое оригинального VIDA не обезличиваются; original XML/SQL/DLL не модифицируются.
+
+
+### Оригинальный IL ISO9141: конфигурационные массивы, подлежащие извлечению
+
+Подтверждено локальным офлайн-разбором пользователя оригинальной `VehCom2.DLL` (SHA256 `3A08F5FF5819396E676EAC8751FDB57475E8F76E20488926259993674EC97E82`):
+
+- `ChannelList::CreateIso9141Channel` (`0x06000310`) выполняет `PassThruConnect(deviceId, 3, 0x1000, baudRate, &channel)`, где в оригинальном runtime `baudRate=10400`. При неуспехе создаёт `CommToolException("J2534 hardware could not create ISO9141 channel")`.
+- После успешного открытия создаётся матрица `Int32[4,2]` (`ldc.i4.4; ldc.i4.2; newobj .ctor; RuntimeHelpers.InitializeArray`) из исходного поля `0x040003ED` (`$$method0x6000305-1`), которая передаётся в `J2534Proxy::PassThruIoctl_SET_CONFIG` (`0x060003B4`). При неудаче канал закрывается и генерируется отдельное исключение `J2534 hardware could not configure ISO9141 channel`.
+- В альтернативном `CreateIso9141ChannelDiCE` (`0x06000312`) строится матрица `Int32[9,2]` из `0x040003EF` (`$$method0x6000307-1`). Это другой путь; значения нельзя без проверки переносить в J2534-лабораторию.
+- `J2534Proxy::PassThruIoctl_SET_CONFIG` (`0x060003B4`) создаёт `SCONFIG_LIST` из массива и вызывает перегрузку `0x060003B5`.
+- В DLL присутствуют `PassThruIoctl_FIVE_BAUD_INIT` (`0x060003B9`), `J2534ChannelManager::ConfigureIso9141` (`0x060002EC`), `J2534Channel::ConfigureIso9141` (`0x0600029F`), `D2onKApplicationDICE2::{K_LineRead,K_LineWrite}` (`0x060001F8/0x060001F9`), но из одного наличия методов **нельзя** заключить, что именно они вызваны текущим ReadVin.
+
+**Следующая проверка:** прочитать только `FieldRVA` и исходные 32/72 байта данных `0x040003ED`/`0x040003EF` и ключевые IL-цепочки. Интерпретировать `[Parameter, Value]` как `uint32` little-endian, документировать реальные числовые значения, не подставлять угаданные тайминги. До завершения этой проверки не считать K-Line-channel implementation готовой и не выдавать ложных синтетических ответов.
