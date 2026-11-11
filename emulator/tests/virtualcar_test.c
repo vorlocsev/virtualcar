@@ -3001,7 +3001,7 @@ static void test_vida_iso9141_lab(U32 dev){
  REQUIRE(channel(peer)->kline_config[1]==300 && channel(peer)->kline_config[3]==10);
  REQUIRE(PassThruDisconnect(peer)==ERR_OK);
  m.DataSize=8;REQUIRE(PassThruWriteMsgs(ch,&m,&n,10)==ERR_NOT_SUPPORTED && n==0);
- REQUIRE(PassThruStartPeriodicMsg(ch,&m,&period,100)==ERR_NOT_SUPPORTED);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&period,3000)==ERR_INVALID_MSG); /* K-Line 8-byte periodic is not original VIDA 4-byte keepalive */
  REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&period)==ERR_INVALID_MSG); /* 4-byte CAN style is invalid on ISO9141 */
  n=1;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
  REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,0,0)==ERR_NOT_SUPPORTED); /* ECU keywords absent */
