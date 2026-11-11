@@ -3080,6 +3080,76 @@ static void test_vida_kline_filter_lab(U32 dev){
  puts("PASS VIDA KLINE B1 8: stop/clear, no invented TX/RX, clean close");
 }
 
+/* Stage B2: original unmodified VIDA2014D ordinary J2534 D2-on-K
+   FieldRVA 0x040003DD = 82 33 13 D0, DataSize=4, period=3000ms,
+   RxStatus/TxFlags/Timestamp/ExtraDataIndex=0. No K-Line ECU wire RX. */
+static void test_vida_kline_periodic_b2(U32 dev){
+ U32 old=g_vida_iso9141_lab,ch=0,peer=0,pid=0,id2=0,n=1;
+ PASSTHRU_MSG m=frame(PROTO_ISO9141,0u,0,0),rx;
+ PERIODIC *p;
+ g_vida_iso9141_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ m.ProtocolID=PROTO_ISO9141;m.RxStatus=0;m.TxFlags=0;
+ m.Timestamp=0;m.ExtraDataIndex=0;m.DataSize=4u;
+ m.Data[0]=0x82u;m.Data[1]=0x33u;m.Data[2]=0x13u;m.Data[3]=0xD0u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&pid,3000u)==ERR_OK&&pid!=0u);
+ REQUIRE(channel(ch)->periodic[0].used && channel(ch)->periodic[0].interval_ms==3000u);
+ REQUIRE(channel(ch)->periodic[0].msg.DataSize==4u);
+ REQUIRE(channel(ch)->periodic[0].msg.Data[0]==0x82u &&
+         channel(ch)->periodic[0].msg.Data[1]==0x33u &&
+         channel(ch)->periodic[0].msg.Data[2]==0x13u &&
+         channel(ch)->periodic[0].msg.Data[3]==0xD0u);
+ puts("PASS VIDA KLINE B2 1: original four bytes and 3000 ms accepted");
+ m.DataSize=3u;REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_MSG);
+ m.DataSize=5u;REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_MSG);
+ m.DataSize=4u;
+ puts("PASS VIDA KLINE B2 2: short and CAN-sized periodic refused");
+ m.Data[3]=0x3Eu;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_NOT_SUPPORTED);
+ m.Data[3]=0xD0u;m.Data[0]=0x81u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_NOT_SUPPORTED);
+ m.Data[0]=0x82u;
+ puts("PASS VIDA KLINE B2 3: RS2000 and unverified payloads refused");
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,2000u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,4000u)==ERR_INVALID_TIME_INTERVAL);
+ puts("PASS VIDA KLINE B2 4: wrong DiCE/CAN periodic intervals refused");
+ m.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_MSG_PROTOCOL_ID);
+ m.ProtocolID=PROTO_ISO9141;m.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_FLAGS);
+ m.TxFlags=0;m.ExtraDataIndex=4u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_FLAGS);
+ m.ExtraDataIndex=0;m.RxStatus=START_OF_MESSAGE;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_FLAGS);
+ m.RxStatus=0;
+ puts("PASS VIDA KLINE B2 5: exact J2534 metadata and protocol enforced");
+ REQUIRE(channel(ch)->periodic[0].used && channel(ch)->periodic[0].id==pid);
+ REQUIRE(!channel(ch)->periodic[1].used);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(!channel(peer)->periodic[0].used);
+ REQUIRE(PassThruStopPeriodicMsg(peer,pid)==ERR_INVALID_MSG_ID);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA KLINE B2 6: bad requests are atomic; peer isolation");
+ p=&channel(ch)->periodic[0];
+ p->next_us=0u; /* force one simulator scheduler tick */
+ pump_periodic(channel(ch));
+ REQUIRE(p->used && p->next_us>0u && channel(ch)->count==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruStopPeriodicMsg(ch,pid)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(ch,pid)==ERR_INVALID_MSG_ID);
+ puts("PASS VIDA KLINE B2 7: scheduled event cannot synthesize CAN/ECU RX");
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_PERIODIC_MSGS,0,0)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);ch=0;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);ch=0;
+ g_vida_iso9141_lab=old;
+ puts("PASS VIDA KLINE B2 8: stop, clear and channel reopen leave no periodic");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3111,6 +3181,7 @@ int main(){
  test_vida_can_ps_lab(dev);
  test_vida_iso9141_lab(dev);
  test_vida_kline_filter_lab(dev);
+ test_vida_kline_periodic_b2(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
