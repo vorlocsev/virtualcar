@@ -1836,13 +1836,44 @@ static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
        (m->TxFlags&ISO15765_ADDR_TYPE))return ERR_NOT_SUPPORTED;
     return ERR_OK;
 }
+/* Stage B3A5: original VIDA B3A4 runtime established actual D2-on-K
+   WriteMsgs returns ERR_NOT_SUPPORTED for observed ReadVIN request and
+   relay-close. Capture the caller's exact PASSTHRU_MSG ABI fields, byte
+   lengths, payload (up to 16 bytes), channel and batch index before the
+   existing *unchanged* K-Line TX rejection. The original VIDA.log gives
+   payload but not J2534 ProtocolID/TxFlags/RxStatus/Timestamp/ExtraDataIndex.
+   Observation only. No TX admission, synthesized ECU reply or keywords. */
+static void vida_b3a5_log_kline_write(U32 id,const CHANNEL *c,const PASSTHRU_MSG *msg,
+                                     U32 batch_index,U32 batch_count,U32 timeout){
+    U8 header[44];U32 len;
+    if(!g_vida_iso9141_lab || c->protocol!=PROTO_ISO9141)return;
+    u32_be(header,id);u32_be(header+4,c->baud);
+    u32_be(header+8,channel_wire_protocol(c));
+    u32_be(header+12,msg->ProtocolID);
+    u32_be(header+16,msg->RxStatus);
+    u32_be(header+20,msg->TxFlags);
+    u32_be(header+24,msg->Timestamp);
+    u32_be(header+28,msg->DataSize);
+    u32_be(header+32,msg->ExtraDataIndex);
+    u32_be(header+36,batch_index);
+    u32_be(header+40,timeout);
+    logline("VIDA B3A5 KLINE WRITE channel/baud/wire-proto/msg-proto/rx/tx/timestamp/size/extra/index/timeout (BE)",header,44);
+    {U8 info[4];u32_be(info,batch_count);
+     logline("VIDA B3A5 KLINE WRITE original batch-count (BE)",info,4);}
+    len=msg->DataSize;if(len>16u)len=16u;
+    logline("VIDA B3A5 KLINE WRITE original data (max 16 bytes)",msg->Data,len);
+}
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
-    U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
+    U32 i,n;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
-        U32 validity=validate_tx_message(c,&msgs[i]);
+        U32 validity;
+        vida_b3a5_log_kline_write(id,c,&msgs[i],i,n,timeout);
+        validity=validate_tx_message(c,&msgs[i]);
         if(validity!=ERR_OK){
+            if(g_vida_iso9141_lab && c->protocol==PROTO_ISO9141)
+                logline("VIDA B3A5 KLINE WRITE refused; no K-Line ECU transport or RX",0,0);
             *count=i;unlock_state();return error(validity);
         }
         {U8 meta[20];u32_be(meta,id);u32_be(meta+4,channel_wire_protocol(c));
