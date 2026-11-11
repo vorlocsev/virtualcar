@@ -274,6 +274,7 @@ static void append_hex64(char *out,U32 cap,U64 value){
 }
 static U32 str_len(const char *s) { U32 i=0;if(!s)return 0;while(s[i] && i<4096)i++;return i; }
 static void bytes_copy(void *out,const void *src,U32 n) {U8 *d=(U8*)out;const U8 *s=(const U8*)src;U32 i;for(i=0;i<n;i++)d[i]=s[i];}
+static int bytes_same(const U8 *a,const U8 *b,U32 n) {U32 i;for(i=0;i<n;i++)if(a[i]!=b[i])return 0;return 1;}
 static void bytes_zero(void *out,U32 n) {U8 *d=(U8*)out;U32 i;for(i=0;i<n;i++)d[i]=0;}
 static void str_copy(char *out,const char *src,U32 cap) {U32 i=0;if(!cap)return;while(src && src[i] && i+1<cap){out[i]=src[i];i++;}out[i]=0;}
 static void str_append(char *out,const char *s,U32 cap) {U32 i=str_len(out),j=0;while(s&&s[j]&&i+1<cap)out[i++]=s[j++];out[i]=0;}
@@ -2062,8 +2063,8 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
                prior->pattern[0]==0u && prior->pattern[1]==0x13u)
                 has_pass=1u;
             if(prior->type==type && prior->length==length &&
-               !bytes_compare(prior->mask,mask->Data,length) &&
-               !bytes_compare(prior->pattern,pattern->Data,length)){
+               bytes_same(prior->mask,mask->Data,length) &&
+               bytes_same(prior->pattern,pattern->Data,length)){
                 unlock_state();return error(ERR_NOT_UNIQUE);
             }
         }
