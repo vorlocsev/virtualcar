@@ -1950,9 +1950,55 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         Sleep(1);
     }
 }
+/* Capture the *real* arguments of an original VIDA CAN filter call before
+   deciding on support. This is telemetry only, limited to explicitly enabled
+   K-Line LAB mode: never alter filter IDs, type semantics or ECU responses.
+   Dynamic-size payloads are clipped at the wire buffer and capped at 12 bytes
+   of evidence; the original metadata is preserved even for invalid types. */
+static void vida_b3_log_can_filter(U32 channel_id,U32 type,const CHANNEL *c,
+        const PASSTHRU_MSG *mask,const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow){
+    U8 meta[24];
+    const PASSTHRU_MSG *parts[3];
+    const char *labels[3]={
+        "VIDA B3 CAN filter mask bytes",
+        "VIDA B3 CAN filter pattern bytes",
+        "VIDA B3 CAN filter flow bytes"
+    };
+    U32 j;
+    if(!g_vida_iso9141_lab || c->protocol!=PROTO_CAN)return;
+    u32_be(meta,channel_id);
+    u32_be(meta+4,type);
+    u32_be(meta+8,c->baud);
+    u32_be(meta+12,c->flags);
+    u32_be(meta+16,g_strict_j2534_filters);
+    u32_be(meta+20,c->filters_count);
+    logline("VIDA B3 CAN filter channel/type/baud/connect-flags/strict/count (BE)",meta,24);
+    parts[0]=mask;parts[1]=pattern;parts[2]=flow;
+    for(j=0;j<3u;j++){
+        const PASSTHRU_MSG *p=parts[j];
+        U8 header[20];
+        U32 len;
+        if(!p){
+            logline("VIDA B3 CAN filter part absent",0,0);
+            continue;
+        }
+        u32_be(header,p->ProtocolID);
+        u32_be(header+4,p->RxStatus);
+        u32_be(header+8,p->TxFlags);
+        u32_be(header+12,p->DataSize);
+        u32_be(header+16,p->ExtraDataIndex);
+        logline(j==0u?"VIDA B3 CAN filter MASK proto/rx/tx/size/extra (BE)":
+                j==1u?"VIDA B3 CAN filter PATTERN proto/rx/tx/size/extra (BE)":
+                      "VIDA B3 CAN filter FLOW proto/rx/tx/size/extra (BE)",header,20);
+        len=p->DataSize;
+        if(len>12u)len=12u;
+        logline(labels[j],p->Data,len);
+    }
+}
 EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *mask,const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow,U32 *filter_id){
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    vida_b3_log_can_filter(id,type,c,mask,pattern,flow);
     if(c->protocol==PROTO_ISO9141){
         /* Original VIDA2014D D2-on-K: one PASS filter, 2-byte mask
            [00 FF], pattern [00 13] (VehCom2.DLL method 0x060001E8).
