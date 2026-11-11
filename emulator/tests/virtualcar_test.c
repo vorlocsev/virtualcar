@@ -3488,6 +3488,7 @@ static void test_vida_b3a5_kline_write_observer(U32 dev){
  PASSTHRU_MSG unknown=frame(PROTO_ISO9141,0u,0,0);
  PASSTHRU_MSG cm=frame(PROTO_CAN,0u,0,0);
  PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG batch[2];
  g_vida_iso9141_lab=1u;capture_connect_log=1u;
  REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
  REQUIRE(channel(ch)->count==0u);
@@ -3523,7 +3524,8 @@ static void test_vida_b3a5_kline_write_observer(U32 dev){
  unknown.TxFlags=CAN_29BIT_ID;
  n=1u;REQUIRE(PassThruWriteMsgs(ch,&unknown,&n,2000u)==ERR_NOT_SUPPORTED);
  REQUIRE(n==0u);
- n=2u;REQUIRE(PassThruWriteMsgs(ch,&unknown,&n,1000u)==ERR_NOT_SUPPORTED);
+ batch[0]=unknown;batch[1]=end;
+ n=2u;REQUIRE(PassThruWriteMsgs(ch,batch,&n,1000u)==ERR_NOT_SUPPORTED);
  REQUIRE(n==0u);
  REQUIRE(g_periodic_counter==periods);
  puts("PASS VIDA B3A5 5: unknown bytes/metadata/batch still cannot transmit");
