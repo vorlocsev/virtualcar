@@ -3150,6 +3150,58 @@ static void test_vida_kline_periodic_b2(U32 dev){
  puts("PASS VIDA KLINE B2 8: stop, clear and channel reopen leave no periodic");
 }
 
+
+/* Stage B3 observer-only capture. Original VIDA B2 10:56:36 called a
+   CAN 0x05 250k filter after ISO9141 periodic; its FilterType was not
+   present in VIDA.log. Do not alter FilterType acceptance to guess it. */
+static void test_vida_b3_can_filter_observer(U32 dev){
+ U32 old_lab=g_vida_iso9141_lab,old_strict=g_strict_j2534_filters;
+ U32 can=0,peer=0,kline=0,fid=0,n=1;U32 before=0;
+ PASSTHRU_MSG mask=frame(PROTO_CAN,0u,0,0),pat=frame(PROTO_CAN,0u,0,0),rx;
+ g_vida_iso9141_lab=1u;g_strict_j2534_filters=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&can)==ERR_OK);
+ REQUIRE(channel(can)->filters_count==0u);
+ puts("PASS VIDA B3 CAN OBS 1: original secondary 0x05/250000 channel opens");
+ mask.DataSize=pat.DataSize=4u;
+ mask.Data[0]=0xFFu;mask.Data[1]=0xFFu;mask.Data[2]=0xFFu;mask.Data[3]=0xFFu;
+ pat.Data[0]=0x00u;pat.Data[1]=0x00u;pat.Data[2]=0x00u;pat.Data[3]=0x51u;
+ before=channel(can)->filters_count;
+ REQUIRE(PassThruStartMsgFilter(can,0u,&mask,&pat,0,&fid)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 2: unknown filter type 0 is logged and rejected");
+ REQUIRE(PassThruStartMsgFilter(can,4u,&mask,&pat,0,&fid)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(can,0xFFFFFFFFu,&mask,&pat,0,&fid)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 3: out-of-range types cannot allocate state");
+ pat.ProtocolID=PROTO_ISO15765;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pat,0,&fid)==ERR_MSG_PROTOCOL_ID);
+ pat.ProtocolID=PROTO_CAN;
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 4: wrong wire protocol rejected");
+ mask.DataSize=3u;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pat,0,&fid)==ERR_INVALID_MSG);
+ mask.DataSize=4u;
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 5: short mask rejected");
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pat,0,&fid)==ERR_OK && fid!=0u);
+ REQUIRE(channel(can)->filters_count==1u);
+ REQUIRE(channel(can)->filters[0].type==1u);
+ puts("PASS VIDA B3 CAN OBS 6: valid CAN PASS filter behavior unchanged");
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->filters_count==0u);
+ REQUIRE(PassThruStopMsgFilter(peer,fid)==ERR_INVALID_FILTER_ID);
+ REQUIRE(channel(can)->filters_count==1u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA B3 CAN OBS 7: observer has no cross-channel filter effects");
+ n=1u;
+ REQUIRE(PassThruReadMsgs(can,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruStopMsgFilter(can,fid)==ERR_OK);
+ REQUIRE(channel(can)->filters_count==0u);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ g_vida_iso9141_lab=old_lab;g_strict_j2534_filters=old_strict;
+ puts("PASS VIDA B3 CAN OBS 8: no synthetic RX, filter stop and cleanup");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3182,6 +3234,7 @@ int main(){
  test_vida_iso9141_lab(dev);
  test_vida_kline_filter_lab(dev);
  test_vida_kline_periodic_b2(dev);
+ test_vida_b3_can_filter_observer(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
