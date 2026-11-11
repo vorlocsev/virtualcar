@@ -3205,6 +3205,58 @@ static void test_vida_b3_can_filter_observer(U32 dev){
  puts("PASS VIDA B3 CAN OBS 8: no synthetic RX, filter stop and cleanup");
 }
 
+/* Stage B3A.1: original VIDA 11:19 capture exposed valid CAN PASS_FILTER=1,
+   but later K-Line+CAN errors were absent from CAN-only telemetry. This test
+   asserts both channels' existing behavior while B3 tracing is expanded. */
+static void test_vida_b3a1_kline_filter_evidence(U32 dev){
+ U32 prior=g_vida_iso9141_lab,strict=g_strict_j2534_filters;
+ U32 kline=0,can=0,kfilter=0,cf=0,bad=0,pid=0;
+ PASSTHRU_MSG km=frame(PROTO_ISO9141,0u,0,0),kp=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG cm=frame(PROTO_CAN,0u,0,0),cp=frame(PROTO_CAN,0u,0,0);
+ PASSTHRU_MSG period=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;g_strict_j2534_filters=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&kline)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&can)==ERR_OK);
+ REQUIRE(kline!=can && channel(kline)->filters_count==0u && channel(can)->filters_count==0u);
+ puts("PASS VIDA B3A1 1: original concurrent K-Line/CAN channels isolated");
+ km.DataSize=kp.DataSize=2u;km.Data[0]=0u;km.Data[1]=0xFFu;
+ kp.Data[0]=0u;kp.Data[1]=0x13u;
+ REQUIRE(PassThruStartMsgFilter(kline,1u,&km,&kp,0,&kfilter)==ERR_OK);
+ REQUIRE(channel(kline)->filters_count==1u && channel(can)->filters_count==0u);
+ puts("PASS VIDA B3A1 2: original D2-on-K PASS filter unaffected");
+ period.DataSize=4u;period.Data[0]=0x82u;period.Data[1]=0x33u;
+ period.Data[2]=0x13u;period.Data[3]=0xD0u;
+ REQUIRE(PassThruStartPeriodicMsg(kline,&period,&pid,3000u)==ERR_OK);
+ puts("PASS VIDA B3A1 3: original B2 keep-session still works with dual channels");
+ REQUIRE(PassThruStartMsgFilter(kline,2u,&km,&kp,0,&bad)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(kline,3u,&km,&kp,0,&bad)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 4: K-Line non-PASS types still fail closed");
+ REQUIRE(PassThruStartMsgFilter(kline,1u,&km,&kp,&period,&bad)==ERR_INVALID_FLAGS);
+ kp.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartMsgFilter(kline,1u,&km,&kp,0,&bad)==ERR_INVALID_FLAGS);
+ kp.TxFlags=0u;
+ REQUIRE(channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 5: flow/flags rejected on K-Line with no side effects");
+ cm.DataSize=cp.DataSize=4u;
+ cm.Data[0]=0u;cm.Data[1]=0u;cm.Data[2]=0u;cm.Data[3]=1u;
+ cp.Data[0]=0u;cp.Data[1]=0u;cp.Data[2]=0u;cp.Data[3]=1u;
+ cm.TxFlags=cp.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&cm,&cp,0,&cf)==ERR_OK);
+ REQUIRE(channel(can)->filters_count==1u && channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 6: exact observed CAN PASS_FILTER mask/pattern accepted");
+ REQUIRE(PassThruStartMsgFilter(can,4u,&cm,&cp,0,&bad)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(can)->filters_count==1u && channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 7: bad CAN type still rejected, no filter leak");
+ REQUIRE(PassThruStopPeriodicMsg(kline,pid)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(kline,kfilter)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(can,cf)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(PassThruDisconnect(kline)==ERR_OK);
+ g_vida_iso9141_lab=prior;g_strict_j2534_filters=strict;
+ puts("PASS VIDA B3A1 8: no fabricated ECU RX or stale filter state");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3238,6 +3290,7 @@ int main(){
  test_vida_kline_filter_lab(dev);
  test_vida_kline_periodic_b2(dev);
  test_vida_b3_can_filter_observer(dev);
+ test_vida_b3a1_kline_filter_evidence(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
