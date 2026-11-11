@@ -3004,7 +3004,7 @@ static void test_vida_iso9141_lab(U32 dev){
  REQUIRE(PassThruStartPeriodicMsg(ch,&m,&period,100)==ERR_NOT_SUPPORTED);
  REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&period)==ERR_INVALID_MSG); /* 4-byte CAN style is invalid on ISO9141 */
  n=1;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
- REQUIRE(PassThruIoctl(ch,4,0,0)==ERR_INVALID_IOCTL_ID); /* FIVE_BAUD_INIT not claimed */
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,0,0)==ERR_NOT_SUPPORTED); /* ECU keywords absent */
  REQUIRE(PassThruDisconnect(ch)==ERR_OK);
  REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_OK);
  REQUIRE(channel(peer)->kline_config[1]==300);
@@ -3049,11 +3049,21 @@ static void test_vida_kline_filter_lab(U32 dev){
  REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_NOT_SUPPORTED);
  pat.Data[1]=0x13u;
  puts("PASS VIDA KLINE B1 5: no CAN flags or unverified D2 patterns");
+ {
+  SCONFIG kmod={KLINE_FIVE_BAUD_MOD,0u};SCONFIG_LIST modlist={1u,&kmod};
+  REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&modlist,0)==ERR_OK);
+  kmod.Value=99u;REQUIRE(PassThruIoctl(ch,IO_GET_CONFIG,&modlist,0)==ERR_OK&&kmod.Value==0u);
+  kmod.Value=1u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&modlist,0)==ERR_INVALID_IOCTL_VALUE);
+  REQUIRE(channel(ch)->kline_config[4]==0u);
+  REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,0,0)==ERR_NOT_SUPPORTED);
+  puts("PASS VIDA KLINE B1 5b: original FIVE_BAUD_MOD=0 and no fabricated init keywords");
+ }
  REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_NOT_UNIQUE);
  REQUIRE(channel(ch)->filters_count==1u);
  puts("PASS VIDA KLINE B1 6: duplicate preserves filter state");
  REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
  REQUIRE(channel(peer)->filters_count==0u);
+ REQUIRE(channel(peer)->kline_config[4]==0u);
  REQUIRE(PassThruStopMsgFilter(peer,filter)==ERR_INVALID_FILTER_ID);
  REQUIRE(PassThruDisconnect(peer)==ERR_OK);
  puts("PASS VIDA KLINE B1 7: peer channel isolation");
