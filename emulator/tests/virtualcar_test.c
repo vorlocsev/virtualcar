@@ -3388,6 +3388,93 @@ static void test_vida_b3a3_periodic_relay_observer(U32 dev){
  puts("PASS VIDA B3A3 8: default-off trace, no synthetic RX, clean close");
 }
 
+
+/* Stage B3A4: unredacted original VIDA B3A3 IEXPLORE.EXE PID=000007EC
+   captured exact ISO9141 period=2000, size=6, bytes 84 40 13 B2 F0 03
+   twice after a 3000-ms D2-on-K keep-session. This is only J2534
+   scheduler acceptance; no physical K-Line ECU/keywords or reply. */
+static void test_vida_b3a4_kline_relay_periodic(U32 dev){
+ U32 old_lab=g_vida_iso9141_lab,old_capture=capture_connect_log;
+ U32 ch=0,peer=0,keep_id=0,relay_id=0,bad=0,n=1,offset=0;
+ U32 old_counter=g_periodic_counter;
+ PASSTHRU_MSG keep=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG relay=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ const U8 original_relay[6]={0x84u,0x40u,0x13u,0xB2u,0xF0u,0x03u};
+ U32 i;
+ g_vida_iso9141_lab=1u;capture_connect_log=1;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ keep.DataSize=4u;keep.Data[0]=0x82u;keep.Data[1]=0x33u;
+ keep.Data[2]=0x13u;keep.Data[3]=0xD0u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&keep,&keep_id,3000u)==ERR_OK);
+ REQUIRE(keep_id!=0u&&channel(ch)->periodic[0].interval_ms==3000u);
+ puts("PASS VIDA B3A4 1: original 3000-ms keep-session unchanged");
+ relay.DataSize=6u;
+ for(i=0;i<6u;i++)relay.Data[i]=original_relay[i];
+ offset=connect_log_len;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&relay_id,2000u)==ERR_OK);
+ REQUIRE(relay_id!=0u && relay_id!=keep_id);
+ REQUIRE(channel(ch)->periodic[1].used &&
+         channel(ch)->periodic[1].interval_ms==2000u);
+ REQUIRE(channel(ch)->periodic[1].msg.DataSize==6u);
+ for(i=0;i<6u;i++)REQUIRE(channel(ch)->periodic[1].msg.Data[i]==original_relay[i]);
+ REQUIRE(strstr(connect_log_lines+offset,"relay opener 84 40 13 B2 F0 03 at 2000ms accepted")!=0);
+ puts("PASS VIDA B3A4 2: exact original six-byte 2000-ms relay accepted");
+ REQUIRE(PassThruStartPeriodicMsg(ch,&keep,&bad,2000u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,1999u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2001u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,4000u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(g_periodic_counter==old_counter+2u);
+ puts("PASS VIDA B3A4 3: mismatched K-Line intervals still rejected");
+ relay.Data[5]=0x04u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_NOT_SUPPORTED);
+ relay.Data[5]=0x03u;relay.Data[0]=0x85u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_NOT_SUPPORTED);
+ relay.Data[0]=0x84u;relay.DataSize=5u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_TIME_INTERVAL);
+ relay.DataSize=6u;
+ REQUIRE(g_periodic_counter==old_counter+2u && !channel(ch)->periodic[2].used);
+ puts("PASS VIDA B3A4 4: unknown bytes and sizes cannot allocate slots");
+ relay.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_MSG_PROTOCOL_ID);
+ relay.ProtocolID=PROTO_ISO9141;relay.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.TxFlags=0u;relay.RxStatus=START_OF_MESSAGE;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.RxStatus=0u;relay.ExtraDataIndex=6u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.ExtraDataIndex=0u;relay.Timestamp=1u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.Timestamp=0u;
+ puts("PASS VIDA B3A4 5: J2534 protocol and metadata remain strict");
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(peer,relay_id)==ERR_INVALID_MSG_ID);
+ REQUIRE(PassThruStopPeriodicMsg(peer,keep_id)==ERR_INVALID_MSG_ID);
+ REQUIRE(!channel(peer)->periodic[0].used &&
+         channel(ch)->periodic[0].used && channel(ch)->periodic[1].used);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA B3A4 6: peer cannot see or cancel relay periodic");
+ channel(ch)->periodic[0].next_us=0u;channel(ch)->periodic[1].next_us=0u;
+ offset=connect_log_len;
+ pump_periodic(channel(ch));
+ REQUIRE(channel(ch)->periodic[0].used && channel(ch)->periodic[1].used);
+ REQUIRE(channel(ch)->count==0u);
+ REQUIRE(strstr(connect_log_lines+offset,"scheduled D2-on-K keep-session (NO ECU TX/RX)")!=0);
+ REQUIRE(strstr(connect_log_lines+offset,"scheduled VIDA D2-on-K relay opener (NO ECU TX/RX)")!=0);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ puts("PASS VIDA B3A4 7: both scheduler jobs have no fabricated RX");
+ REQUIRE(PassThruStopPeriodicMsg(ch,relay_id)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(ch,relay_id)==ERR_INVALID_MSG_ID);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_PERIODIC_MSGS,0,0)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used && !channel(ch)->periodic[1].used);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ capture_connect_log=old_capture;g_vida_iso9141_lab=old_lab;
+ puts("PASS VIDA B3A4 8: stop/clear/reconnect leave no stale periodic");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3424,6 +3511,7 @@ int main(){
  test_vida_b3a1_kline_filter_evidence(dev);
  test_vida_b3a2_kline_block_filter(dev);
  test_vida_b3a3_periodic_relay_observer(dev);
+ test_vida_b3a4_kline_relay_periodic(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
