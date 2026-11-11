@@ -80,8 +80,15 @@ typedef void *HANDLE;
 #define ERR_NOT_UNIQUE 24u
 #define ERR_INVALID_BAUDRATE 25u
 #define ERR_INVALID_DEVICE_ID 26u
+#define PROTO_ISO9141 3u
 #define PROTO_CAN 5u
 #define PROTO_ISO15765 6u
+#define ISO9141_K_LINE_ONLY 0x00001000u
+/* J2534-1 v04.04 parameter IDs; original VIDA2014D IL confirms 4 items. */
+#define KLINE_PARITY 0x16u
+#define KLINE_W0 0x19u
+#define KLINE_W1 0x0Eu
+#define KLINE_P4_MIN 0x0Cu
 /* VIDA J2534-2 pin-switched protocols; isolated LAB opt-in only. */
 #define PROTO_CAN_PS 0x8004u
 #define PROTO_ISO15765_PS 0x8005u
@@ -151,6 +158,8 @@ static U32 g_iso_rx_start=0;
 static U32 g_strict_j2534_filters=0;
 /* Disabled by default. Only an explicit synthetic LAB profile enables PS. */
 static U32 g_vida_can_ps_lab=0;
+/* Independent, default-off ISO9141 Connect+SET_CONFIG laboratory gate. */
+static U32 g_vida_iso9141_lab=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -181,6 +190,8 @@ typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,wire_protocol,baud,flags,ms_pins;
+    /* Channel-local ISO9141 settings: [PARITY,W0,W1,P4_MIN]. No ECU RX simulation. */
+    U32 kline_config[4];
     /* protocol is internal 5/6 routing; wire_protocol retains 0x8004/0x8005
        for J2534 messages and filters. Pin state is local to the channel. */
     /* Monotonic private connection lifetime. Reused numeric channel IDs
@@ -218,6 +229,15 @@ static U32 channel_wire_protocol(const CHANNEL *c){return c->wire_protocol?c->wi
 static int channel_is_ps(const CHANNEL *c){
     U32 p=channel_wire_protocol(c);
     return p==PROTO_CAN_PS||p==PROTO_ISO15765_PS;
+}
+static int kline_config_index(U32 parameter){
+    switch(parameter){
+        case KLINE_PARITY: return 0;
+        case KLINE_W0: return 1;
+        case KLINE_W1: return 2;
+        case KLINE_P4_MIN: return 3;
+        default: return -1;
+    }
 }
 /* Never reset on Open/Close: even a device reopen can reuse channel ID 1. */
 static U64 g_next_channel_serial;
@@ -732,6 +752,8 @@ static void load_config(void) {
     g_strict_j2534_filters=parse_num(v,0)==1u?1u:0u;
     GetPrivateProfileStringA("Diagnostics","EnableVidaCanPsLab","0",v,sizeof(v),g_profile_path);
     g_vida_can_ps_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaIso9141Lab","0",v,sizeof(v),g_profile_path);
+    g_vida_iso9141_lab=parse_num(v,0)==1u?1u:0u;
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -1727,7 +1749,14 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(!g_open){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);}
     /* J2534-2 opt-in is limited to virtual 125 kbit/s P2 lab channels;
        other private/vendor IDs stay rejected rather than being aliased. */
-    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765){
+    if(protocol==PROTO_ISO9141){
+        /* Deliberately separate from CAN_PS; never alias K-Line frames to CAN.
+           This gate supports only opening/configuring a synthetic channel.
+           INIT, filters, TX and ECU replies remain explicitly unsupported. */
+        if(!g_vida_iso9141_lab){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);}
+        if(flags!=ISO9141_K_LINE_ONLY){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_FLAGS);}
+        if(baud!=10400u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);}
+    }else if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765){
         if(!g_vida_can_ps_lab || (protocol!=PROTO_CAN_PS&&protocol!=PROTO_ISO15765_PS)){
             unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
         }
@@ -1746,6 +1775,14 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     g_ch[i].protocol=protocol==PROTO_CAN_PS?PROTO_CAN:
                      protocol==PROTO_ISO15765_PS?PROTO_ISO15765:protocol;
     g_ch[i].flags=flags;g_ch[i].baud=baud;
+    if(protocol==PROTO_ISO9141){
+        /* J2534 04.04 defaults, overridden by VIDA's actual 4-item list. */
+        g_ch[i].kline_config[0]=0u;
+        g_ch[i].kline_config[1]=300u;
+        g_ch[i].kline_config[2]=300u;
+        g_ch[i].kline_config[3]=10u;
+        logline("ISO9141 LAB channel opened; ECU transport not implemented",0,0);
+    }
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
@@ -1767,6 +1804,8 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
    must not bypass protocol, classic CAN DLC, physical ID and addressing
    guards by entering through a different scheduling API. */
 static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
+    /* This initial gate does not implement K-Line framing or auto-checksum. */
+    if(c->protocol==PROTO_ISO9141)return ERR_NOT_SUPPORTED;
     if(m->ProtocolID!=channel_wire_protocol(c))return ERR_MSG_PROTOCOL_ID;
     if(channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS)return ERR_PIN_INVALID;
     if(m->DataSize>MAX_DATA||m->DataSize<5u||
@@ -1891,6 +1930,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
 EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *mask,const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow,U32 *filter_id){
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    if(c->protocol==PROTO_ISO9141){unlock_state();return error(ERR_NOT_SUPPORTED);}
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
     if(channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS){unlock_state();return error(ERR_PIN_INVALID);}
     if(g_strict_j2534_filters){
@@ -2061,18 +2101,40 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
                 if(channel_is_ps(c)&&opt->Parameter==J2534_PINS&&opt->Value!=VOLVO_MS_PINS){
                     unlock_state();return error(ERR_PIN_INVALID);
                 }
+                if(c->protocol==PROTO_ISO9141){
+                    int slot=kline_config_index(opt->Parameter);
+                    if((opt->Parameter==1u && opt->Value!=10400u)){
+                        unlock_state();return error(ERR_INVALID_BAUDRATE);
+                    }
+                    if(opt->Parameter!=1u && (slot<0 || (slot==0 && opt->Value>2u) ||
+                       (slot>0 && opt->Value>65535u))){
+                        unlock_state();return error(ERR_INVALID_IOCTL_VALUE);
+                    }
+                }
             }
         }
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
-            if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
-                if(channel_is_ps(c)&&s->Parameter==J2534_PINS)c->ms_pins=s->Value;
-                log_set_config(id,s->Parameter,s->Value,
-                               s->Parameter==1u || (channel_is_ps(c)&&s->Parameter==J2534_PINS));
+            if(c->protocol==PROTO_ISO9141){
+                int slot=kline_config_index(s->Parameter);
+                if(s->Parameter!=1u && slot<0){
+                    unlock_state();return error(ERR_INVALID_IOCTL_VALUE);
+                }
+                if(ioctl==IO_SET_CONFIG){
+                    if(s->Parameter==1u)c->baud=s->Value;
+                    else c->kline_config[slot]=s->Value;
+                    log_set_config(id,s->Parameter,s->Value,1);
+                }else s->Value=s->Parameter==1u?c->baud:c->kline_config[slot];
+            }else{
+                if(ioctl==IO_SET_CONFIG){
+                    if(s->Parameter==1)c->baud=s->Value;
+                    if(channel_is_ps(c)&&s->Parameter==J2534_PINS)c->ms_pins=s->Value;
+                    log_set_config(id,s->Parameter,s->Value,
+                                   s->Parameter==1u || (channel_is_ps(c)&&s->Parameter==J2534_PINS));
+                }
+                if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1u?c->baud:
+                    (channel_is_ps(c)&&s->Parameter==J2534_PINS?c->ms_pins:0u);
             }
-            if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1u?c->baud:
-                (channel_is_ps(c)&&s->Parameter==J2534_PINS?c->ms_pins:0u);
         }
         /* A staged or queued D2 reply belongs to the baud of the original
            B9 request. Re-tuning this channel must not release those frames
