@@ -3332,11 +3332,11 @@ static void test_vida_b3a2_kline_block_filter(U32 dev){
  puts("PASS VIDA B3A2 8: no synthetic RX and clean STOP/DISCONNECT");
 }
 
-/* B3A3 only observes: 2026-11-11 original VIDA B3A2 passed both K-Line
-   filters, then the secondary 250k CAN periodic relay opener returned
-   ERR_INVALID_TIME_INTERVAL twice. The actual period and message are
-   unknown until B3A3 DLL runs inside original VIDA. No arbitrary
-   interval is granted; require full legacy error-code parity. */
+/* B3A3 observer regression is still valuable for secondary CAN
+   calls, but the subsequent original B3A3 VIDA evidence located the
+   two failing relay-opener calls on ISO9141 ChannelId=1, not CAN.
+   B3A4 below tests that exact six-byte 2000-ms K-Line source data.
+   Preserve full legacy CAN interval validation and output parity. */
 static void test_vida_b3a3_periodic_relay_observer(U32 dev){
  U32 old_lab=g_vida_iso9141_lab,old_capture=capture_connect_log;
  U32 can=0,kline=0,period=0,seq=g_periodic_counter,offset;
