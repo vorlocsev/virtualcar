@@ -1935,7 +1935,45 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
 EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *mask,const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow,U32 *filter_id){
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
-    if(c->protocol==PROTO_ISO9141){unlock_state();return error(ERR_NOT_SUPPORTED);}
+    if(c->protocol==PROTO_ISO9141){
+        /* Original VIDA2014D D2-on-K: one PASS filter, 2-byte mask
+           [00 FF], pattern [00 13] (VehCom2.DLL method 0x060001E8).
+           Accept this exact laboratory filter only.  No K-Line RX,
+           five-baud keyword fabrication or CAN-ID reinterpretation. */
+        U32 j;
+        FILTER *kf;
+        if(type!=1u || flow){unlock_state();return error(ERR_INVALID_FLAGS);}
+        if(mask->ProtocolID!=PROTO_ISO9141 || pattern->ProtocolID!=PROTO_ISO9141){
+            unlock_state();return error(ERR_MSG_PROTOCOL_ID);
+        }
+        if(mask->TxFlags || pattern->TxFlags){unlock_state();return error(ERR_INVALID_FLAGS);}
+        if(mask->DataSize!=2u || pattern->DataSize!=2u){
+            unlock_state();return error(ERR_INVALID_MSG);
+        }
+        if(mask->Data[0]!=0u || mask->Data[1]!=0xFFu ||
+           pattern->Data[0]!=0u || pattern->Data[1]!=0x13u){
+            unlock_state();return error(ERR_NOT_SUPPORTED);
+        }
+        for(j=0;j<c->filters_count;j++){
+            const FILTER *prior=&c->filters[j];
+            if(prior->type==type && prior->length==2u &&
+               prior->mask[0]==0u && prior->mask[1]==0xFFu &&
+               prior->pattern[0]==0u && prior->pattern[1]==0x13u){
+                unlock_state();return error(ERR_NOT_UNIQUE);
+            }
+        }
+        if(c->filters_count>=MAX_FILTERS){
+            unlock_state();return error(ERR_EXCEEDED_LIMIT);
+        }
+        *filter_id=g_filter_counter++;
+        kf=&c->filters[c->filters_count++];
+        bytes_zero(kf,sizeof(*kf));
+        kf->id=*filter_id;kf->type=type;kf->length=2u;
+        bytes_copy(kf->mask,mask->Data,2u);
+        bytes_copy(kf->pattern,pattern->Data,2u);
+        logline("ISO9141 LAB VIDA D2-on-K PASS filter [00 FF]/[00 13]",0,0);
+        unlock_state();return error(ERR_OK);
+    }
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
     if(channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS){unlock_state();return error(ERR_PIN_INVALID);}
     if(g_strict_j2534_filters){
