@@ -1787,7 +1787,9 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
     *channel_id=i+1;
-    p2_bridge_connect(&g_vehicle_bridge,i+1,g_ch[i].protocol,baud);
+    /* K-Line has no CAN bridge or synthetic ECU RX in this stage. */
+    if(protocol!=PROTO_ISO9141)
+        p2_bridge_connect(&g_vehicle_bridge,i+1,g_ch[i].protocol,baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
@@ -1856,11 +1858,14 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
             unlock_state();*count=0;return error(ERR_INVALID_CHANNEL_ID);
         }
         if(!original_session)original_session=c->session_serial;
-        maybe_passive_frame(c);
-        pump_recorded_trace(c);
-        pump_periodic(c);
-        pump_d2(c);
-        pump_can_cf(c);
+        /* Do not synthesize CAN frames while waiting on an ISO9141 channel. */
+        if(c->protocol!=PROTO_ISO9141){
+            maybe_passive_frame(c);
+            pump_recorded_trace(c);
+            pump_periodic(c);
+            pump_d2(c);
+            pump_can_cf(c);
+        }
         while(c->count&&actual<want){
             if(c->queue_ready_us[c->r] && now_us()<c->queue_ready_us[c->r])break;
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
