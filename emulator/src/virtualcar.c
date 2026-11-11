@@ -1709,10 +1709,13 @@ static void pump_periodic(CHANNEL *c){
          logline("Periodic TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 periodic TX (read-only simulator)",p->msg.Data,p->msg.DataSize);
         if(c->protocol==PROTO_ISO9141){
-            /* Stage B2: record exact scheduled original VIDA keep-alive.
-               There is no physical K-Line bus or initialized virtual ECU.
-               Never enter CAN observer or synthesize CEM responses. */
-            logline("ISO9141 LAB scheduled D2-on-K keep-session (NO ECU TX/RX)",0,0);
+            /* These J2534 periodic jobs are only synthetic scheduled
+               evidence. The emulator has no initialized K-Line ECU and
+               performs NO physical K-Line TX, CAN bridging, or ECU RX. */
+            if(p->msg.DataSize==6u && p->interval_ms==2000u)
+                logline("ISO9141 LAB scheduled VIDA D2-on-K relay opener (NO ECU TX/RX)",0,0);
+            else
+                logline("ISO9141 LAB scheduled D2-on-K keep-session (NO ECU TX/RX)",0,0);
             continue;
         }
         /* Periodic D2 reads previously replayed frames with RID=0, so no
@@ -2199,14 +2202,22 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
     }
     if(msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
-    /* Validate all LAB K-Line fields before allocating any periodic slot.
-       Original ordinary J2534 D2-on-K keep session is precisely:
-       Protocol 3 / TxFlags 0 / DataSize 4 / 82 33 13 D0 / 3000 ms.
-       Never treat it as a CAN identifier or general-purpose K-Line TX. */
+    /* Stage B3A4: source-backed *two* exact original VIDA D2-on-K
+       periodic jobs from IEXPLORE.EXE PID 000007EC, 2026-11-11 12:53:
+         keep-session  : 3000 ms, len 4, 82 33 13 D0
+         relay opener  : 2000 ms, len 6, 84 40 13 B2 F0 03
+       Both are ProtocolID=3, TxFlags/RxStatus/Timestamp/Extra=0,
+       ChannelId=1, ISO9141 10400. No general ISO9141 interval
+       relaxation, fake physical TX, ECU keywords or RX. */
     if(c->protocol==PROTO_ISO9141){
         static const U8 keepalive[VIDA_KLINE_KEEPALIVE_SIZE]={0x82u,0x33u,0x13u,0xD0u};
-        U32 j;
-        if(interval!=VIDA_KLINE_KEEPALIVE_PERIOD_MS){
+        static const U8 relay_opener[6]={0x84u,0x40u,0x13u,0xB2u,0xF0u,0x03u};
+        const U8 *expected=keepalive;
+        U32 j,expected_size=VIDA_KLINE_KEEPALIVE_SIZE,is_relay=0u;
+        if(interval==2000u && msg->DataSize==6u){
+            expected=relay_opener;expected_size=6u;is_relay=1u;
+        }else if(interval!=VIDA_KLINE_KEEPALIVE_PERIOD_MS){
+            /* Preserve B2: a keepalive at 2000 ms is invalid time. */
             unlock_state();return error(ERR_INVALID_TIME_INTERVAL);
         }
         if(msg->ProtocolID!=PROTO_ISO9141){
@@ -2216,14 +2227,16 @@ EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *
            msg->ExtraDataIndex!=0u || msg->Timestamp!=0u){
             unlock_state();return error(ERR_INVALID_FLAGS);
         }
-        if(msg->DataSize!=VIDA_KLINE_KEEPALIVE_SIZE){
+        if(msg->DataSize!=expected_size){
             unlock_state();return error(ERR_INVALID_MSG);
         }
-        for(j=0;j<VIDA_KLINE_KEEPALIVE_SIZE;j++){
-            if(msg->Data[j]!=keepalive[j]){
+        for(j=0;j<expected_size;j++){
+            if(msg->Data[j]!=expected[j]){
                 unlock_state();return error(ERR_NOT_SUPPORTED);
             }
         }
+        if(is_relay)
+            logline("ISO9141 LAB VIDA D2-on-K relay opener 84 40 13 B2 F0 03 at 2000ms accepted (NO ECU TX/RX)",0,0);
     }else{
         if(msg->DataSize<5u){unlock_state();return error(ERR_INVALID_MSG);}
         /* Preserve the preexisting CAN/ISO15765/PS validation path. */
