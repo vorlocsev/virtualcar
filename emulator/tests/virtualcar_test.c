@@ -3002,7 +3002,7 @@ static void test_vida_iso9141_lab(U32 dev){
  REQUIRE(PassThruDisconnect(peer)==ERR_OK);
  m.DataSize=8;REQUIRE(PassThruWriteMsgs(ch,&m,&n,10)==ERR_NOT_SUPPORTED && n==0);
  REQUIRE(PassThruStartPeriodicMsg(ch,&m,&period,100)==ERR_NOT_SUPPORTED);
- REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&period)==ERR_NOT_SUPPORTED);
+ REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&period)==ERR_INVALID_MSG); /* 4-byte CAN style is invalid on ISO9141 */
  n=1;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
  REQUIRE(PassThruIoctl(ch,4,0,0)==ERR_INVALID_IOCTL_ID); /* FIVE_BAUD_INIT not claimed */
  REQUIRE(PassThruDisconnect(ch)==ERR_OK);
@@ -3012,6 +3012,62 @@ static void test_vida_iso9141_lab(U32 dev){
  g_vida_iso9141_lab=old_enabled;
  REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_INVALID_PROTOCOL_ID);
  puts("PASS VIDA ISO9141 LAB stage A: isolated Connect/SET_CONFIG; data/init not implemented");
+}
+
+/* Original VIDA2014D J2534D2onKFilter::StartD2onKFilter,
+   VehCom2.DLL 0x060001E8. Capture/silent LAB, NOT a K-Line ECU. */
+static void test_vida_kline_filter_lab(U32 dev){
+ U32 old=g_vida_iso9141_lab,ch=0,peer=0,filter=0,id2=0,n=1;
+ PASSTHRU_MSG mask=frame(PROTO_ISO9141,0u,0,0),pat=frame(PROTO_ISO9141,0u,0,0),rx;
+ PASSTHRU_MSG tx=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ mask.DataSize=pat.DataSize=2u;
+ mask.Data[0]=0u;mask.Data[1]=0xFFu;
+ pat.Data[0]=0u;pat.Data[1]=0x13u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&filter)==ERR_OK && filter!=0);
+ REQUIRE(channel(ch)->filters_count==1u && channel(ch)->filters[0].length==2u);
+ puts("PASS VIDA KLINE B1 1: exact original two-byte D2-on-K PASS filter");
+ REQUIRE(PassThruStartMsgFilter(ch,2u,&mask,&pat,0,&id2)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(ch,3u,&mask,&pat,0,&id2)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,&tx,&id2)==ERR_INVALID_FLAGS);
+ puts("PASS VIDA KLINE B1 2: reject unsupported filter types/flow");
+ pat.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_MSG_PROTOCOL_ID);
+ pat.ProtocolID=PROTO_ISO9141;
+ puts("PASS VIDA KLINE B1 3: wire protocol isolation");
+ mask.DataSize=4u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_INVALID_MSG);
+ mask.DataSize=2u;
+ pat.DataSize=1u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_INVALID_MSG);
+ pat.DataSize=2u;
+ puts("PASS VIDA KLINE B1 4: reject CAN-sized or short filter");
+ pat.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_INVALID_FLAGS);
+ pat.TxFlags=0u;pat.Data[1]=0x12u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_NOT_SUPPORTED);
+ pat.Data[1]=0x13u;
+ puts("PASS VIDA KLINE B1 5: no CAN flags or unverified D2 patterns");
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_NOT_UNIQUE);
+ REQUIRE(channel(ch)->filters_count==1u);
+ puts("PASS VIDA KLINE B1 6: duplicate preserves filter state");
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->filters_count==0u);
+ REQUIRE(PassThruStopMsgFilter(peer,filter)==ERR_INVALID_FILTER_ID);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA KLINE B1 7: peer channel isolation");
+ REQUIRE(PassThruStopMsgFilter(ch,filter)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(ch,filter)==ERR_INVALID_FILTER_ID);
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ REQUIRE(channel(ch)->filters_count==0u);
+ n=1u;tx.DataSize=5u;
+ REQUIRE(PassThruWriteMsgs(ch,&tx,&n,5u)==ERR_NOT_SUPPORTED && n==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_vida_iso9141_lab=old;
+ puts("PASS VIDA KLINE B1 8: stop/clear, no invented TX/RX, clean close");
 }
 
 int main(){
@@ -3044,6 +3100,7 @@ int main(){
  test_p3tool_j2534_preflight(dev);
  test_vida_can_ps_lab(dev);
  test_vida_iso9141_lab(dev);
+ test_vida_kline_filter_lab(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
