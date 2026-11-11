@@ -3156,9 +3156,11 @@ static void test_vida_kline_periodic_b2(U32 dev){
    present in VIDA.log. Do not alter FilterType acceptance to guess it. */
 static void test_vida_b3_can_filter_observer(U32 dev){
  U32 old_lab=g_vida_iso9141_lab,old_strict=g_strict_j2534_filters;
- U32 can=0,peer=0,kline=0,fid=0,n=1;U32 before=0;
+ U32 old_passive=g_passive_enabled,old_trace_count=g_trace_count;
+ U32 can=0,peer=0,fid=0,n=1;U32 before=0;
  PASSTHRU_MSG mask=frame(PROTO_CAN,0u,0,0),pat=frame(PROTO_CAN,0u,0,0),rx;
  g_vida_iso9141_lab=1u;g_strict_j2534_filters=1u;
+ g_passive_enabled=0u;g_trace_count=0u;
  REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&can)==ERR_OK);
  REQUIRE(channel(can)->filters_count==0u);
  puts("PASS VIDA B3 CAN OBS 1: original secondary 0x05/250000 channel opens");
@@ -3199,6 +3201,7 @@ static void test_vida_b3_can_filter_observer(U32 dev){
  REQUIRE(channel(can)->filters_count==0u);
  REQUIRE(PassThruDisconnect(can)==ERR_OK);
  g_vida_iso9141_lab=old_lab;g_strict_j2534_filters=old_strict;
+ g_passive_enabled=old_passive;g_trace_count=old_trace_count;
  puts("PASS VIDA B3 CAN OBS 8: no synthetic RX, filter stop and cleanup");
 }
 
