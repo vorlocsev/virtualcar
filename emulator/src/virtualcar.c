@@ -2166,9 +2166,37 @@ EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
     }
     unlock_state();return error(ERR_INVALID_FILTER_ID);
 }
+/* Stage B3A3 is *observation only*: original VIDA B3A2 passed its
+   ISO9141 BLOCK_FILTER but twice failed the next periodic relay opener on
+   a separate CAN channel with ERR_INVALID_TIME_INTERVAL. The VIDA log
+   does not expose the Period or PASSTHRU_MSG. Record exact ABI inputs
+   BEFORE the legacy interval guard, without changing that guard,
+   creating a periodic slot, writing to the bus, or synthesizing ECU RX.
+   Enabled only for the explicitly opted-in ISO9141 laboratory profile. */
+static void vida_b3a3_log_periodic(U32 channel_id,const PASSTHRU_MSG *msg,U32 interval){
+    U8 header[32];
+    U32 payload_size;
+    if(!g_vida_iso9141_lab || !msg)return;
+    u32_be(header,channel_id);
+    u32_be(header+4,interval);
+    u32_be(header+8,msg->ProtocolID);
+    u32_be(header+12,msg->RxStatus);
+    u32_be(header+16,msg->TxFlags);
+    u32_be(header+20,msg->Timestamp);
+    u32_be(header+24,msg->DataSize);
+    u32_be(header+28,msg->ExtraDataIndex);
+    logline("VIDA B3A3 PERIODIC channel/interval/protocol/rx/tx/timestamp/size/extra (BE)",header,32);
+    payload_size=msg->DataSize;
+    if(payload_size>16u)payload_size=16u;
+    logline("VIDA B3A3 PERIODIC original data (max 16 bytes)",msg->Data,payload_size);
+}
 EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *period_id,U32 interval){
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
-    if(interval<5 || interval>60000)return error(ERR_INVALID_TIME_INTERVAL);
+    vida_b3a3_log_periodic(id,msg,interval);
+    if(interval<5 || interval>60000){
+        if(g_vida_iso9141_lab)logline("VIDA B3A3 PERIODIC reject interval out-of-range (no state)",0,0);
+        return error(ERR_INVALID_TIME_INTERVAL);
+    }
     if(msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     /* Validate all LAB K-Line fields before allocating any periodic slot.
