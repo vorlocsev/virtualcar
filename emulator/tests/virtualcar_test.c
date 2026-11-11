@@ -2892,6 +2892,85 @@ static void test_clear_rx_raw_iso_lifetime(U32 dev){
  puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
 }
 
+/* VIDA2014D J2534-2 CAN_MS LAB only. Deterministic synthetic ECU,
+   not a physical J2534 device, proprietary VIDA or a genuine vehicle. */
+static void test_vida_can_ps_lab(U32 dev){
+ U32 can=0,iso=0,other=0,count,filter=0,old_strict=g_strict_j2534_filters;
+ U32 old_enabled=g_vida_can_ps_lab;
+ const U8 raw_vin[8]={3u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 iso_vin[3]={0x22u,0xF1u,0x90u};
+ const U8 protected_req[4]={0x2Eu,0xF1u,0x90u,0};
+ SCONFIG values[3]={{J2534_PINS,VOLVO_MS_PINS},{1u,125000u},{23u,68u}};
+ SCONFIG_LIST cfg={3u,values},single={1u,values};
+ PASSTHRU_MSG m,rx,mask,pattern;
+ REQUIRE(g_vida_can_ps_lab==0u);
+ g_vida_can_ps_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,500000u,&other)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0x800u,125000u,&other)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(dev,0x10000001u,0,125000u,&other)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(other==0u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,125000u,&can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,125000u,&iso)==ERR_OK);
+ REQUIRE(can!=iso);
+ REQUIRE(channel(can)->protocol==PROTO_CAN&&channel_wire_protocol(channel(can))==PROTO_CAN_PS);
+ REQUIRE(channel(iso)->protocol==PROTO_ISO15765&&channel_wire_protocol(channel(iso))==PROTO_ISO15765_PS);
+ REQUIRE(channel(can)->ms_pins==0&&channel(iso)->ms_pins==0);
+ /* Before pins3/11 are configured, neither write nor filter may succeed. */
+ m=frame(PROTO_CAN_PS,0x7E0u,raw_vin,8);
+ count=1u;
+ REQUIRE(PassThruWriteMsgs(can,&m,&count,10u)==ERR_PIN_INVALID&&count==0u);
+ mask=frame(PROTO_CAN_PS,0xFFFFFFFFu,0,0);
+ pattern=frame(PROTO_CAN_PS,0x7E8u,0,0);
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pattern,0,&filter)==ERR_PIN_INVALID);
+ values[0].Value=0x060Eu;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&single,0)==ERR_PIN_INVALID);
+ REQUIRE(channel(can)->ms_pins==0u);
+ values[0].Value=VOLVO_MS_PINS;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(channel(can)->ms_pins==VOLVO_MS_PINS&&channel(can)->baud==125000u);
+ values[0].Value=0u;
+ REQUIRE(PassThruIoctl(can,IO_GET_CONFIG,&single,0)==ERR_OK);
+ REQUIRE(values[0].Value==VOLVO_MS_PINS);
+ values[0].Value=VOLVO_MS_PINS;
+ values[1].Value=500000u;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&cfg,0)==ERR_INVALID_BAUDRATE);
+ REQUIRE(channel(can)->baud==125000u&&channel(can)->ms_pins==VOLVO_MS_PINS);
+ values[1].Value=125000u;
+ REQUIRE(PassThruIoctl(iso,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(channel(iso)->ms_pins==VOLVO_MS_PINS);
+ /* J2534 RX must use PS IDs, with strict per-channel filter enforcement. */
+ g_strict_j2534_filters=1u;
+ pattern.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pattern,0,&filter)==ERR_MSG_PROTOCOL_ID);
+ pattern.ProtocolID=PROTO_CAN_PS;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pattern,0,&filter)==ERR_OK);
+ send(can,&m);
+ rx=readmsg(can);
+ REQUIRE(rx.ProtocolID==PROTO_CAN_PS&&rx.DataSize==12u&&rx.Data[4]==0x10u);
+ REQUIRE(PassThruStopMsgFilter(can,filter)==ERR_OK);
+ REQUIRE(PassThruIoctl(can,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ g_strict_j2534_filters=0u;
+ m=frame(PROTO_ISO15765_PS,0x7E0u,iso_vin,3u);
+ send(iso,&m);
+ rx=readmsg(iso);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765_PS&&rx.Data[4]==0x62u&&rx.Data[5]==0xF1u&&rx.Data[6]==0x90u);
+ /* Read-only guard must survive the canonical-protocol simulator bridge. */
+ m=frame(PROTO_ISO15765_PS,0x7E0u,protected_req,4u);
+ send(iso,&m);
+ rx=readmsg(iso);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765_PS&&rx.Data[4]==0x7Fu&&rx.Data[5]==0x2Eu&&rx.Data[6]==0x33u);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,125000u,&other)==ERR_OK);
+ REQUIRE(channel(other)->ms_pins==0u);
+ REQUIRE(PassThruDisconnect(other)==ERR_OK);
+ g_vida_can_ps_lab=old_enabled;
+ g_strict_j2534_filters=old_strict;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,125000u,&other)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,125000u,&other)==ERR_INVALID_PROTOCOL_ID);
+ puts("PASS VIDA CAN_PS LAB: 0x8004/0x8005, J1962 pins, RX, strict filters and read-only");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -2920,6 +2999,7 @@ int main(){
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
+ test_vida_can_ps_lab(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
