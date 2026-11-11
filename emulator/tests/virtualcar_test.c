@@ -3529,7 +3529,7 @@ static void test_vida_b3a5_kline_write_observer(U32 dev){
  puts("PASS VIDA B3A5 5: unknown bytes/metadata/batch still cannot transmit");
  REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
  REQUIRE(channel(peer)->count==0u);
- REQUIRE(PassThruReadMsgs(peer,&rx,&n,0u)==ERR_INVALID_MSG || n==0u);
+ n=0u;REQUIRE(PassThruReadMsgs(peer,&rx,&n,0u)==ERR_INVALID_MSG);
  n=1u;REQUIRE(PassThruReadMsgs(peer,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
  REQUIRE(channel(ch)->count==0u);
  REQUIRE(PassThruDisconnect(peer)==ERR_OK);
