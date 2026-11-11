@@ -3332,6 +3332,62 @@ static void test_vida_b3a2_kline_block_filter(U32 dev){
  puts("PASS VIDA B3A2 8: no synthetic RX and clean STOP/DISCONNECT");
 }
 
+/* B3A3 only observes: 2026-11-11 original VIDA B3A2 passed both K-Line
+   filters, then the secondary 250k CAN periodic relay opener returned
+   ERR_INVALID_TIME_INTERVAL twice. The actual period and message are
+   unknown until B3A3 DLL runs inside original VIDA. No arbitrary
+   interval is granted; require full legacy error-code parity. */
+static void test_vida_b3a3_periodic_relay_observer(U32 dev){
+ U32 old_lab=g_vida_iso9141_lab,old_capture=capture_connect_log;
+ U32 can=0,kline=0,period=0,seq=g_periodic_counter,offset;
+ const U8 can_payload[8]={0x53u,0x49u,0x4Du,0x2Du,0x54u,0x45u,0x53u,0x54u};
+ PASSTHRU_MSG cm=frame(PROTO_CAN,0x555u,can_payload,8u);
+ PASSTHRU_MSG km=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;capture_connect_log=1;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&can)==ERR_OK);
+ REQUIRE(channel(can)->protocol==PROTO_CAN && channel(can)->baud==250000u);
+ REQUIRE(g_periodic_counter==seq);
+ puts("PASS VIDA B3A3 1: source-backed secondary CAN relay observer isolated");
+ cm.TxFlags=CAN_29BIT_ID;
+ offset=connect_log_len;
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,0u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,4u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(strstr(connect_log_lines+offset,"VIDA B3A3 PERIODIC channel/interval/protocol")!=0);
+ puts("PASS VIDA B3A3 2: zero/short intervals remain rejected and traced");
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,60001u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,0xFFFFFFFFu)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(g_periodic_counter==seq);
+ puts("PASS VIDA B3A3 3: overlong and overflow intervals still rejected");
+ REQUIRE(strstr(connect_log_lines+offset,"VIDA B3A3 PERIODIC original data")!=0);
+ REQUIRE(strstr(connect_log_lines+offset,"53 49 4D 2D 54 45 53 54")!=0);
+ REQUIRE(strstr(connect_log_lines+offset,
+       "VIDA B3A3 PERIODIC reject interval out-of-range")!=0);
+ puts("PASS VIDA B3A3 4: original metadata and bytes logged unaltered");
+ REQUIRE(channel(can)->periodic[0].used==0 && channel(can)->count==0);
+ REQUIRE(PassThruStartPeriodicMsg(0xFFFFFFFFu,&cm,&period,4u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(g_periodic_counter==seq);
+ puts("PASS VIDA B3A3 5: failures allocate no periodic and preserve error ordering");
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,50u)==ERR_OK);
+ REQUIRE(period!=0 && channel(can)->periodic[0].used);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+ REQUIRE(!channel(can)->periodic[0].used);
+ puts("PASS VIDA B3A3 6: existing valid CAN periodic remains accepted");
+ km.DataSize=4u;km.Data[0]=0x82u;km.Data[1]=0x33u;
+ km.Data[2]=0x13u;km.Data[3]=0xD0u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&kline)==ERR_OK);
+ REQUIRE(PassThruStartPeriodicMsg(kline,&km,&period,3000u)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(kline,period)==ERR_OK);
+ REQUIRE(PassThruDisconnect(kline)==ERR_OK);
+ puts("PASS VIDA B3A3 7: original four-byte 3000-ms K-Line untouched");
+ g_vida_iso9141_lab=0u;
+ offset=connect_log_len;
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,4u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(strstr(connect_log_lines+offset,"VIDA B3A3 PERIODIC")==0);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ capture_connect_log=old_capture;g_vida_iso9141_lab=old_lab;
+ puts("PASS VIDA B3A3 8: default-off trace, no synthetic RX, clean close");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3367,6 +3423,7 @@ int main(){
  test_vida_b3_can_filter_observer(dev);
  test_vida_b3a1_kline_filter_evidence(dev);
  test_vida_b3a2_kline_block_filter(dev);
+ test_vida_b3a3_periodic_relay_observer(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
