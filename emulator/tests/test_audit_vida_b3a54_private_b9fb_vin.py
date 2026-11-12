@@ -95,6 +95,39 @@ class PrivateB9FBVinTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             audit.inspect_profiles("x" * (audit.MAX_FILE + 1))
 
+    def test_09_private_vehicle_identity_json_matches_existing_candidate(self):
+        identity = json.dumps({"Vehicle": {"VIN": LAB_VIN.decode(), "ModelYear": 2009}})
+        out = audit.inspect_profiles(profile(), identity_json_text=identity)
+        self.assertEqual(out["identity_json_state"], "valid_17_ascii_shape_not_oem_validated")
+        self.assertEqual(out["identity_json_model_year"], "declares_my2009")
+        self.assertEqual(out["identity_json_vs_private_ini_vin"], "equal")
+        self.assertEqual(out["b9fb_field_vs_identity_json_vin"], "equal")
+        self.assertFalse(out["replay_approved"])
+
+    def test_10_independent_private_json_mismatch_not_silently_corrected(self):
+        identity = json.dumps({"Vehicle": {"VIN": "YV1CZ0002A0000002",
+                                            "ModelYear": 2009}})
+        out = audit.inspect_profiles(profile(), identity_json_text=identity)
+        self.assertEqual(out["identity_json_vs_private_ini_vin"], "different")
+        self.assertEqual(out["b9fb_field_vs_identity_json_vin"], "different")
+        self.assertFalse(out["original_vida_vin_accepted"])
+        self.assertNotIn("YV1CZ0002A0000002", json.dumps(out))
+        self.assertNotIn(LAB_VIN.decode(), json.dumps(out))
+
+    def test_11_identity_json_schema_duplicate_keys_and_private_bytes(self):
+        out = audit.inspect_profiles(profile(), identity_json_text=json.dumps({
+            "Wrong": {"VIN": "SECRET_DONOT_PRINT"}}))
+        self.assertEqual(out["identity_json_state"], "unsupported_schema")
+        self.assertEqual(out["b9fb_field_vs_identity_json_vin"], "not_assessable")
+        self.assertNotIn("SECRET_DONOT_PRINT", json.dumps(out))
+        with self.assertRaises(ValueError):
+            audit.inspect_profiles(profile(), identity_json_text=(
+                '{"Vehicle":{"VIN":"YV1CZ0002A0000001",'
+                '"VIN":"YV1CZ0002A0000002"}}'))
+        with self.assertRaises(ValueError):
+            audit.inspect_profiles(profile(), identity_json_text="x" *
+                                   (audit.MAX_IDENTITY_JSON + 1))
+
 
 if __name__ == "__main__":
     unittest.main()
