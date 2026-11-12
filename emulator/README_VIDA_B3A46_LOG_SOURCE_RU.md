@@ -8,6 +8,14 @@
 
 Команда в той же гостевой Windows, где установлена оригинальная VIDA:
 
+Если Python-скрипт **скопирован отдельно в Downloads**, это не корень репозитория.
+Путь manifest внутри `%LOCALAPPDATA%\\VirtualCar\\OwnerPrivate` разрешён;
+проверка запрещает запись внутрь проекта только при распознанной структуре
+checkout `emulator/tools` с корневым `README.md`. Вывод приватных путей
+по-прежнему отсутствует. Для повторного запуска задайте новое имя manifest:
+существующие файлы не перезаписываются.
+
+
 ~~~powershell
 $private = Join-Path $env:LOCALAPPDATA 'VirtualCar\OwnerPrivate\B3A46'
 py -3 emulator\tools\audit_vida_b3a46_log_source.py --private-manifest (Join-Path $private 'candidate-paths.private.json')

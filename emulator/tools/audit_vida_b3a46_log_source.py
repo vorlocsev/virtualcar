@@ -7,7 +7,20 @@ from pathlib import Path
 import re
 
 NAME = 'SectorVVirtualCar.log'
-ROOT = Path(__file__).resolve().parents[2]
+
+
+def _repository_root(script_path):
+    """Recognize the actual repo layout, not a standalone Downloads copy."""
+    script = Path(script_path).resolve()
+    if script.parent.name != 'tools' or script.parent.parent.name != 'emulator':
+        return None
+    root = script.parent.parent.parent
+    if not (root / 'README.md').is_file():
+        return None
+    return root
+
+
+ROOT = _repository_root(__file__)
 LIMIT = 12
 MAX_BYTES = 2 * 1024**3
 TAIL = 65536
@@ -88,7 +101,7 @@ def main(argv=None):
     if not roots:
         parser.error('no candidate roots')
     output = args.private_manifest.resolve()
-    if output.is_relative_to(ROOT) or any(output == (r / NAME).resolve() for r in roots):
+    if (ROOT is not None and output.is_relative_to(ROOT)) or any(output == (r / NAME).resolve() for r in roots):
         parser.error('manifest must be outside repository and source logs')
     data = inventory(roots)
     output.parent.mkdir(parents=True, exist_ok=True)
