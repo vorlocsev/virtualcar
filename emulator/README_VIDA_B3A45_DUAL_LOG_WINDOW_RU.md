@@ -71,3 +71,35 @@ py -3 $tool delta --vida-log $vida --virtual-log $virtual --private-baseline $ba
 Не загружайте исходные логи и приватный baseline в GitHub.
 
 Связанные блокеры: Issues #4 и #326.
+
+## B3A47: безопасный выбор журнала по приватному manifest B3A46
+
+Если B3A46 уже создал `candidate-paths.private.json`, не нужно копировать
+сам путь `SectorVVirtualCar.log` в PowerShell. Локально проверьте manifest,
+найдите подходящий элемент массива `candidates` с
+`status=native_marker_in_tail` и выберите его **порядковый номер с 1**.
+Не выбирайте путь только по счётчику: наличие маркера не доказывает,
+что его создала оригинальная VIDA.
+
+~~~powershell
+$manifest = Join-Path $env:LOCALAPPDATA 'VirtualCar\OwnerPrivate\B3A46\candidate-paths.private.json'
+$private = Join-Path $env:LOCALAPPDATA 'VirtualCar\OwnerPrivate\B3A47'
+$vida = 'C:\Vida\System\Log\Diagnostics\VIDA.log'
+$tool = 'emulator\tools\audit_vida_j2534_session_window.py'
+$baseline = Join-Path $private 'baseline.private.json'
+$report = Join-Path $private 'delta-categorical.json'
+
+py -3 $tool baseline --vida-log $vida --candidate-manifest $manifest --candidate-index 1 --private-baseline $baseline
+# После отдельной разрешённой read-only проверки оригинальной VIDA:
+py -3 $tool delta --vida-log $vida --candidate-manifest $manifest --candidate-index 1 --private-baseline $baseline --output $report
+~~~
+
+Значение `1` здесь **пример**, а не рекомендация выбрать первый путь.
+Если найдено несколько кандидатов, выбирайте только после локальной проверки.
+При неверной схеме manifest, неподтверждённом маркере, подставленном имени
+файла, неверном индексе или попытке совместить `--virtual-log` с manifest
+аудитор откажет до создания baseline. Альтернативный режим
+`--virtual-log` с явным путём сохранён.
+
+Новый baseline создавайте для каждого независимого опыта; сам B3A47
+не запускает VIDA, не подтверждает загрузку DLL и не устанавливает VIN.
