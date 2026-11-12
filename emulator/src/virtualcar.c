@@ -185,7 +185,7 @@ static U32 g_vida_five_baud_observer_lab=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
-typedef struct {U32 req,resp;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
+typedef struct {U32 req,resp,observer_only;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
 static ECU g_ecu[MAX_ECUS];
 /* Optional read-only replay fixtures: user must supply verified, non-sensitive
    CAN frames. No invented B9 FB vehicle-configuration payloads. */
@@ -802,6 +802,10 @@ static void load_config(void) {
         g_ecu[i].req=parse_hex(v,i==1?0x726:0x7E0);
         GetPrivateProfileStringA(key,"ResponseId",i==1?"72E":"7E8",v,sizeof(v),g_profile_path);
         g_ecu[i].resp=parse_hex(v,i==1?0x72E:0x7E8);
+        /* B3A22: observe a known request address without pretending that
+           a response ID, DID value, or ECU identity has been verified. */
+        GetPrivateProfileStringA(key,"ObserverOnly","0",v,sizeof(v),g_profile_path);
+        g_ecu[i].observer_only=parse_num(v,0)==1u?1u:0u;
         GetPrivateProfileStringA(key,"PartNumber","VIRTUAL-ECU",g_ecu[i].part,sizeof(g_ecu[i].part),g_profile_path);
         GetPrivateProfileStringA(key,"Software","SIM-1.0",g_ecu[i].sw,sizeof(g_ecu[i].sw),g_profile_path);
         /* Opt-in read-only, synthetic laboratory replies. No assumption about
@@ -1651,6 +1655,18 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
               (ecu->req==0x726u?"CEM":(ecu->req==0x7E0u?"ECM":"ECU_OTHER"));
         if(!matched)backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
         matched=1;
+        /* B3A22: configured route only. Before any UDS response path,
+           suppress positive 0x62, negative 0x7F, session and VIN responses.
+           WriteMsgs still accepts the request locally; ECU RX stays empty. */
+        if(ecu->observer_only){
+            if(id!=0x7DFu){
+                backend_event(c,c->active_trace,"request_completed",route,
+                              "no_response","no_response");
+                return;
+            }
+            /* Functional requests may still reach other configured ECUs. */
+            continue;
+        }
         /* Never synthesize acknowledgments for protected functional requests:
            functional diagnostic resets and protected services are not supported.
            This also prevents the prior contradictory 'Unmatched' log line. */

@@ -4527,6 +4527,32 @@ int main(){
   REQUIRE(r.DataSize==24&&r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x14);
   require_route(p3_log,"CEM",1);
   REQUIRE(terminal_for(p3_log,last_tx_request(p3_log),"none","responded")==1);
+  /* B3A22: a configured 29-bit diagnostic target is OBSERVER ONLY.
+     Neither synthetic VIN nor default NRC 7F is an OEM response. */
+  {
+   const U8 did_d91a[]={0x22,0xD9,0x1A};
+   const U8 vin_f190[]={0x22,0xF1,0x90};
+   const U8 dtc_status[]={0x19,0x02,0xFF};
+   const U8 tester[]={0x3E,0x00};
+   const U8 session[]={0x10,0x03};
+   const U8 write_did[]={0x2E,0xF1,0x90,0x01};
+   const U8 *queries[]={did_d91a,vin_f190,dtc_status,tester,session,write_did};
+   const U32 lengths[]={3,3,3,2,2,4};
+   U32 z;
+   g_ecu[0].req=0x18DA10F1u;
+   g_ecu[0].observer_only=1u;
+   for(z=0;z<sizeof(queries)/sizeof(queries[0]);z++){
+    p3_log=backend_lines+backend_len;
+    m=frame(PROTO_ISO15765,0x18DA10F1u,queries[z],lengths[z]);
+    send(p3cid,&m);
+    require_route(p3_log,"ECU_OTHER",1);
+    REQUIRE(terminal_for(p3_log,last_tx_request(p3_log),"no_response","no_response")==1);
+    REQUIRE(event_count_since(p3_log,"\"kind\":\"rx_queued\"")==0);
+    n=1;REQUIRE(PassThruReadMsgs(p3cid,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+   }
+   g_ecu[0].observer_only=0u;
+   puts("PASS VIDA B3A22: six configured 29-bit observer-only routes, zero ECU RX");
+  }
   REQUIRE(PassThruDisconnect(p3cid)==ERR_OK);
   memcpy(g_ecu,saved_ecus,sizeof(saved_ecus));g_ecu_count=saved_count;
  }
