@@ -1,5 +1,32 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A52: историческая загрузка D2 B9FB в родной DLL, без доступа к VIN (2026-11-12)
+
+- Оригинальная VIDA вернула No response from vehicle, 10/10 J2534 Connect OK;
+  B3A50 строго сопоставил 6/6 B9FB: 0x40/125k x2 no_fixture,
+  0x50/250k x3 strict_route_rejected, 0x50/500k x1 no_fixture, RX=0.
+- B3A51 доказал источник в коде: [Vehicle] VIN доступен UDS/OBD
+  синтетическим обработчикам, но **не** формирует D2 B9FB.
+- В лабораторном PR #319 native source после Active INI: пишет 14
+  `P2 fixture target/opcode/response-id/frame-count (BE)` меток.
+  Новый `audit_vida_b3a52_loaded_fixtures.py` сопоставляет последнюю
+  историческую инициализацию с тем же текстовым PID, что и фактические
+  D2 B9FB запросы из замороженного B3A47 append-окна, и выдаёт только
+  категории zero_frames_loaded / frames_loaded_unverified / not_observed.
+  Восемь синтетических регрессионных тестов; ни VIN, ни путь, ни исходный
+  CAN/ECU ответ или идентификатор процесса не публикуется.
+- Отдельная owner-only версия для Downloads
+  `Invoke-VirtualCar-B3A52-LoadedFixtures.py` проверяет старый
+  приватный B3A46 manifest, исходный SHA256 B3A47 и читает не более
+  8 МиБ до baseline + точно прежний B3A47 append window.
+  Не требует запуска VIDA и никогда не переписывает INI.
+- Следующий gate: ревью PR, интеграция в development, точный
+  автоматический VMware CI, owner-only категориальный вывод B3A52.
+  Нет Active INI → статус not_observed, а не ложный PASS.
+  PID-совпадение не доказывает оригинальное DLL process binding.
+  #326/#4 OPEN, оригинальный VIN/ECU RX NOT_VERIFIED, main/release без изменений.
+
+
 ## B3A51: отделить наличие 17-символьного VIN от готовности D2 B9FB (2026-11-12)
 
 - В `virtualcar.c` `[Vehicle] VIN` используется в синтетических ответах UDS
