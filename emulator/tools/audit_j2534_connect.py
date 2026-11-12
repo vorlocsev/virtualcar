@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 
-FORMAT = "virtualcar-j2534-connect-audit-v1"
+FORMAT = "virtualcar-j2534-connect-audit-v2"
 CONNECT = "J2534 Connect result protocol/flags/baud/status (BE)"
 CONFIG = "J2534 SET_CONFIG channel/parameter/value/applied (BE)"
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} [^\]\r\n]{1,80}\] ")
