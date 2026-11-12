@@ -1,5 +1,35 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A53: Native B9FB loader gate: absent vs invalid frames (2026-11-13)
+
+- Owner B3A52 detected 14/14 historical `Active INI` native fixture records
+  from one text logger PID; both `CEM_40` / `CEM_50` B9FB base
+  frame counts `zero_frames_loaded`. Same frozen B3A47 runtime
+  showed six D2 B9FB requests, zero delivered RX and original VIDA
+  `No response from vehicle`. This does **not** identify whether
+  there were no configured frames or the loader rejected them.
+- Source inspection of `emulator/src/virtualcar.c` `load_config`,
+  `parse_num`, `parse_hex`, `parse_frame8` and
+  `validate_d2_fixture` shows possible causes of `frame_count=0`:
+  no/zero/invalid/out-of-range FrameCount, invalid response ID,
+  missing or malformed 8-byte frame, invalid D2 sequence.
+- Pure read-only `emulator/tools/audit_vida_b3a53_b9fb_loader.py`
+  audits an explicit **current** local `virtualcar.ini` and returns
+  only categories and bounded counts for `D2_40/D2_50`. Eight
+  synthetic regression tests; accepted *framing* remains not-OEM-verified.
+- Portable owner-only `Invoke-VirtualCar-B3A53-CurrentINI.py`
+  requires unchanged B3A52 script in Downloads (exact SHA pinned),
+  verifies prior B3A47 log SHA and historical same-prefix Active INI,
+  and then reads only the **current file at the previous source path**;
+  it never prints the path, VIN, PID, CAN or original fixtures.
+  Synthetic end-to-end private manifest/baseline/INI smoke PASS.
+- Next: review PR, exact-head trusted VMware CI; owner may run portable
+  and share **categorical** output to discriminate current INI issues.
+  Current file is not attested as identical to old loaded file.
+  No new VIDA run or ECU connection; no reply synthesis, no main/release.
+  #326/#4 OPEN; positive original VIDA VIN not verified.
+
+
 ## B3A52: историческая загрузка D2 B9FB в родной DLL, без доступа к VIN (2026-11-12)
 
 - Оригинальная VIDA вернула No response from vehicle, 10/10 J2534 Connect OK;
