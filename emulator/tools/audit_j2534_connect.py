@@ -11,20 +11,21 @@ import json
 from pathlib import Path
 import re
 
-FORMAT = "virtualcar-j2534-connect-audit-v1"
+FORMAT = "virtualcar-j2534-connect-audit-v2"
 CONNECT = "J2534 Connect result protocol/flags/baud/status (BE)"
 CONFIG = "J2534 SET_CONFIG channel/parameter/value/applied (BE)"
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} [^\]\r\n]{1,80}\] ")
 HEX_BYTE = re.compile(r"[0-9A-Fa-f]{2}\Z")
 PROTOCOLS = {5: "CAN", 6: "ISO15765", 0x8004: "CAN_PS",
              0x8005: "ISO15765_PS", 0x10000001: "CAN_XON_XOFF"}
-FLAGS = {0: "none", 0x20000000: "VOLVO_CH2", 0x600: "CAN_11BIT_ID_HS",
+FLAGS = {0: "none", 0x100: "CAN_29BIT_ID", 0x20000000: "VOLVO_CH2", 0x600: "CAN_11BIT_ID_HS",
          0x20000600: "CAN_11BIT_ID_LS"}
 BAUDS = {125000: "125000", 250000: "250000", 500000: "500000"}
 STATUS = {0: "ok", 3: "invalid_protocol", 4: "null_parameter",
           12: "channel_limit", 25: "invalid_baud", 26: "invalid_device"}
 PARAMS = {1: "DATA_RATE", 3: "LOOP_BACK", 23: "BIT_SAMPLE_POINT",
-          30: "ISO15765_BS", 31: "ISO15765_STMIN", 779: "J1962_PINS"}
+          30: "ISO15765_BS", 31: "ISO15765_STMIN", 779: "LEGACY_PARAMETER_779",
+          0x8001: "J2534_PINS"}
 MAX_LINES = 250000
 MAX_LINE = 512
 
@@ -68,14 +69,29 @@ def audit(lines):
             if words is None:
                 invalid_config += 1
                 continue
-            channel, parameter, _value, applied = words
-            # A configured channel must be nonzero. A label of applied=1
-            # is meaningful only for DATA_RATE in this Virtual Car build.
-            if channel == 0 or applied not in (0, 1) or (applied and parameter != 1):
+            channel, parameter, value, applied = words
+            if channel == 0 or applied not in (0, 1):
                 invalid_config += 1
                 continue
-            key = (PARAMS.get(parameter, "other"),
-                   "applied_baud" if applied else "accepted_no_effect")
+            if parameter == 1:
+                handling = "applied_baud" if applied else "accepted_no_effect"
+            elif parameter == 0x8001:
+                # The PS laboratory applies only 0x030B to a virtual channel.
+                # A local J2534 pin setting is NOT physical bus evidence.
+                if applied and value != 0x030B:
+                    invalid_config += 1
+                    continue
+                handling = "virtual_ms_pins_applied" if applied else "accepted_no_effect"
+            elif parameter == 0 and value == 0 and applied:
+                # PR #319 may redact an applied K-Line option to all zeros.
+                # The original parameter identity is not recoverable here.
+                handling = "redacted_applied_unidentified"
+            elif applied:
+                invalid_config += 1
+                continue
+            else:
+                handling = "accepted_no_effect"
+            key = (PARAMS.get(parameter, "other"), handling)
             configs[key] += 1
     statuses = Counter()
     for (_proto, _flags, _baud, status), count in connects.items():
@@ -89,8 +105,9 @@ def audit(lines):
         "limitations": [
             "Connect OK proves only virtual channel allocation, not ECU discovery",
             "VOLVO_CH2 is a recorded numeric flag, not a simulated physical LS bus",
-            "CAN_PS, ISO15765_PS and CAN_XON_XOFF remain unsupported in this build",
-            "SET_CONFIG accepted_no_effect means success was returned but no physical option was implemented",
+            "J2534-2 PS support depends on the exact build and explicit lab configuration; no physical pins are verified",
+            "SET_CONFIG virtual_ms_pins_applied is virtual channel state, not CAN wire or ECU RX",
+            "Redacted applied parameter cannot be attributed to ISO9141 setting by this audit",
             "No raw CAN, VIN, keys, host names, process IDs, source paths or arbitrary parameters are exported",
         ],
         "connect": {
