@@ -4472,8 +4472,10 @@ int main(){
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  g_iso_rx_start=0;
  /* P3 F114 evidence matrix using a MY2005-style profile without CEM.
-    Exact known P3 probes are classified CEM/unimplemented with zero RX;
-    nearby or malformed requests remain UNHANDLED. All bytes are synthetic. */
+    Known P3 probes retain CEM/unimplemented priority. Valid unconfigured
+    ISO15765 18DAxxF1 SID22/SID19 requests are request-only ECU_OTHER/
+    missing_profile after B3A19; invalid sizes, service and CAN mode stay
+    UNHANDLED. All requests are synthetic, with zero ECU RX. */
  {
   U32 saved_count=g_ecu_count,p3cid=0,canid=0,k;
   ECU saved_ecus[MAX_ECUS];
@@ -4483,6 +4485,8 @@ int main(){
   const U8 f190[]={0x22,0xF1,0x90};
   const U8 trailing[]={0x22,0xF1,0x14,0x00};
   const U8 short_req[]={0x22,0xF1};
+  const U8 dtc_req[]={0x19,0x02,0xFF};
+  const U8 write_req[]={0x2E,0xF1,0x14};
   const U8 can_sf[]={0x03,0x22,0xF1,0x14,0,0,0,0};
   struct p3_case {U32 proto,id;const U8 *data;U32 len;const char *route,*reason;} cases[]={
    /* 1 */ {PROTO_ISO15765,0x726,f114,3,"CEM","unimplemented_probe"},
@@ -4490,8 +4494,14 @@ int main(){
    /* 3 */ {PROTO_ISO15765,0x726,f190,3,"UNHANDLED","unhandled_request"},
    /* 4 */ {PROTO_ISO15765,0x726,trailing,4,"UNHANDLED","unhandled_request"},
    /* 5 */ {PROTO_ISO15765,0x726,short_req,2,"UNHANDLED","unhandled_request"},
-   /* 6 */ {PROTO_ISO15765,0x18DA51F1,f114,3,"UNHANDLED","unhandled_request"},
-   /* 7 */ {PROTO_CAN,0x726,can_sf,8,"UNHANDLED","unhandled_request"}
+   /* 6 */ {PROTO_ISO15765,0x18DA51F1,f114,3,"ECU_OTHER","missing_profile"},
+   /* 7 */ {PROTO_CAN,0x726,can_sf,8,"UNHANDLED","unhandled_request"},
+   /* 8 */ {PROTO_ISO15765,0x18DA51F1,short_req,2,"UNHANDLED","unhandled_request"},
+   /* 9 */ {PROTO_ISO15765,0x18DA51F1,trailing,4,"UNHANDLED","unhandled_request"},
+   /* 10 */ {PROTO_ISO15765,0x18DA51F1,f190,3,"ECU_OTHER","missing_profile"},
+   /* 11 */ {PROTO_ISO15765,0x18DA51F1,dtc_req,3,"ECU_OTHER","missing_profile"},
+   /* 12 */ {PROTO_ISO15765,0x18DA51F1,write_req,3,"UNHANDLED","unhandled_request"},
+   /* 13 */ {PROTO_CAN,0x18DA51F1,f114,3,"UNHANDLED","unhandled_request"}
   };
   g_ecu_count=1; /* MY2005 donor profile has ECM only; no CEM fixture. */
   g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;
