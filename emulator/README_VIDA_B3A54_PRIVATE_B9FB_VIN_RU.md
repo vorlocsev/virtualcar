@@ -21,7 +21,10 @@
   `[Vehicle] VIN` и кандидатом `[D2_50] B9FBFrame*`;
 - необязательный **текущий** активный `virtualcar.ini` для
   сравнения двух файлов по полному набору кадров и response-ID
-  **только в памяти**.
+  **только в памяти**;
+- необязательный приватный `vehicle-identity.json` из B3A12 со
+  структурой `Vehicle.VIN` и `Vehicle.ModelYear`. Значения
+  сравниваются исключительно в памяти, а JSON не публикуется.
 
 Сначала используются имеющиеся native-подобные ограничения
 FrameCount/ResponseId/восьмибайтовых кадров, затем уже существующий
@@ -50,17 +53,32 @@ FrameCount/ResponseId/восьмибайтовых кадров, затем уж
 В доверенном checkout `development` (не загружая профиль в GitHub):
 
 ```powershell
-py -3 .\emulator\tools\audit_vida_b3a54_private_b9fb_vin.py --private-profile "C:\PRIVATE-P2\my-lab-profile.ini" --active-ini "C:\VirtualCarVMware\virtualcar.ini"
+py -3 .\emulator\tools\audit_vida_b3a54_private_b9fb_vin.py --private-profile "C:\PRIVATE-P2\my-lab-profile.ini" --active-ini "C:\VirtualCarVMware\virtualcar.ini" --identity-json "$env:USERPROFILE\Downloads\VirtualCar-VIN-MY2009-Apply\vehicle-identity.json"
 ```
 
-**Оба пути условные**, их нужно заменить на реальные пути личных
-INI. Если активный файл отсутствует, допускается только
+Пути обоих INI условные и требуют локальной подстановки.
+Путь к JSON соответствует ранее использованной папке
+`VirtualCar-VIN-MY2009-Apply` в Downloads; исходный JSON
+должен существовать на этой машине. Если активный файл отсутствует, допускается только
 `--private-profile`, но сравнительный статус станет
 `not_supplied`. Скрипт не запускает VIDA и не включает воспроизведение.
 
 Не путать с публичным `emulator/virtualcar-p2-b9fb-lab-vin.ini`:
 это пример **на основе публичного донора с подставленным
 синтетическим VIN**. Его формат не удостоверяет XC90 V8 MY2009.
+
+## Корреляция с существующим приватным JSON
+
+При указании `--identity-json` программа проверяет только
+`Vehicle.VIN` и категорию `Vehicle.ModelYear`. Она сравнивает
+VIN из JSON с `[Vehicle] VIN` кандидата и, если структура B9FB
+является известным 88-байтным примером, с наблюдаемым
+17-байтным полем. Категории
+`identity_json_vs_private_ini_vin` и
+`b9fb_field_vs_identity_json_vin` равны `equal`,
+`different` или `not_assessable`; значения VIN не выводятся.
+`declares_my2009` означает лишь заявление конфигурации.
+Дубликаты JSON-ключей отклоняются.
 
 ## Следующий gate
 
