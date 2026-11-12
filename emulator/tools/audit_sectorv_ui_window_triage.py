@@ -383,9 +383,15 @@ def _check_window(report):
             parameter, handling = entry["parameter"], entry["handling"]
             if (type(parameter) is not str or parameter not in allowed_params
                     or type(handling) is not str
-                    or handling not in ("applied_baud", "accepted_no_effect")
+                    or handling not in ("applied_baud", "accepted_no_effect",
+                                        "virtual_ms_pins_applied",
+                                        "redacted_applied_unidentified")
                     or (parameter, handling) in config_seen
-                    or (handling == "applied_baud" and parameter != "DATA_RATE")):
+                    or (handling == "applied_baud" and parameter != "DATA_RATE")
+                    or (handling == "virtual_ms_pins_applied"
+                        and parameter != "J2534_PINS")
+                    or (handling == "redacted_applied_unidentified"
+                        and parameter != "other")):
                 raise ValueError("unverified SET_CONFIG semantics")
             config_seen.add((parameter, handling))
             count = _uint(entry["count"])
