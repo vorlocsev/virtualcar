@@ -82,7 +82,8 @@ class P3ToolJ2534PreflightTests(unittest.TestCase):
                               if x["parameter"] == "DATA_RATE"), "applied_baud")
         self.assertEqual(next(x["handling"] for x in result["set_config"]["parameters"]
                               if x["parameter"] == "LEGACY_PARAMETER_779"), "accepted_no_effect")
-        self.assertNotIn("779", json.dumps(result))
+        # 779 is now a fixed public metadata label, never a raw value.
+        self.assertIn("LEGACY_PARAMETER_779", json.dumps(result))
         self.assertNotIn("030B", json.dumps(result))
 
     def test_07_raw_can_and_host_metadata_are_never_exported(self):
