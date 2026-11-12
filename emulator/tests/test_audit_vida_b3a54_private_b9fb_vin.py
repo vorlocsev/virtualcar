@@ -129,5 +129,45 @@ class PrivateB9FBVinTests(unittest.TestCase):
                                    (audit.MAX_IDENTITY_JSON + 1))
 
 
+    def test_12_flat_private_json_vin_and_model_year(self):
+        obj = {"vin": LAB_VIN.decode(), "model_year": 2009}
+        out = audit.inspect_profiles(profile(), identity_json_text=json.dumps(obj))
+        self.assertEqual(out["identity_json_schema_location"], "root_vin")
+        self.assertEqual(out["identity_json_state"], "valid_17_ascii_shape_not_oem_validated")
+        self.assertEqual(out["identity_json_model_year"], "declares_my2009")
+        self.assertEqual(out["identity_json_vs_private_ini_vin"], "equal")
+        self.assertFalse(out["oem_my2009_origin_verified"])
+
+    def test_13_vehicle_identity_wrapped_json_aliases(self):
+        obj = {"vehicle_identity": {"Vin": LAB_VIN.decode(), "ModelYear": "2009"}}
+        out = audit.inspect_profiles(profile(), identity_json_text=json.dumps(obj))
+        self.assertEqual(out["identity_json_schema_location"], "nested_vehicleidentity")
+        self.assertEqual(out["b9fb_field_vs_identity_json_vin"], "equal")
+        self.assertFalse(out["original_vida_vin_accepted"])
+        case = {"vehicle": {"vin": LAB_VIN.decode(), "model_year": 2009}}
+        self.assertEqual(audit.inspect_profiles(
+            profile(), identity_json_text=json.dumps(case))["identity_json_schema_location"],
+            "nested_vehicle")
+
+    def test_14_ambiguous_root_and_nested_json_fail_closed(self):
+        obj = {"VIN": LAB_VIN.decode(), "Vehicle": {"VIN": LAB_VIN.decode()}}
+        with self.assertRaises(ValueError):
+            audit.inspect_profiles(profile(), identity_json_text=json.dumps(obj))
+        obj2 = {"vin": LAB_VIN.decode(), "VIN": "YV1CZ0002A0000002"}
+        with self.assertRaises(ValueError):
+            audit.inspect_profiles(profile(), identity_json_text=json.dumps(obj2))
+        obj3 = {"VIN": LAB_VIN.decode(), "ModelYear": 2009, "model_year": 2010}
+        with self.assertRaises(ValueError):
+            audit.inspect_profiles(profile(), identity_json_text=json.dumps(obj3))
+
+    def test_15_invalid_root_vin_not_exported(self):
+        obj = {"VIN": "PRIVATE IDENTIFIER NOT VALID", "ModelYear": 2009}
+        out = audit.inspect_profiles(profile(), identity_json_text=json.dumps(obj))
+        self.assertEqual(out["identity_json_state"], "missing_or_invalid_17_ascii_vin")
+        self.assertEqual(out["identity_json_schema_location"], "root_vin")
+        self.assertEqual(out["identity_json_vs_private_ini_vin"], "not_assessable")
+        self.assertNotIn("PRIVATE IDENTIFIER", json.dumps(out))
+
+
 if __name__ == "__main__":
     unittest.main()

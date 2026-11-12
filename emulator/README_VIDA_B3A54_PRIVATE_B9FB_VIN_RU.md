@@ -67,6 +67,35 @@ py -3 .\emulator\tools\audit_vida_b3a54_private_b9fb_vin.py --private-profile "C
 это пример **на основе публичного донора с подставленным
 синтетическим VIN**. Его формат не удостоверяет XC90 V8 MY2009.
 
+## B3A55: совместимость с фактическими вариантами приватного JSON
+
+Владелец запустил B3A54 на
+`C:\Users\vorloc\Desktop\virtualcar.ini` и получил:
+`private_vin_state=valid_17_ascii_shape_not_oem_validated`,
+`private_b9fb_declared_count=0`, `identity_json_state=unsupported_schema`.
+Это значит, что сам JSON читается, но прежний B3A54
+требовал **исключительно** `Vehicle.VIN`, что не было доказано
+исходным пакетом B3A12. Это дефект проверки, а не доказательство
+отсутствия приватного VIN в JSON.
+
+B3A55 разрешает безопасные **явные** схемы: корневые `VIN` и
+`ModelYear` (допустимы `vin`, `model_year`), либо те же
+поля в `Vehicle`, `Identity` или `VehicleIdentity`.
+В выводе есть только `identity_json_schema_location`
+(`root_vin`, `nested_vehicle`, `nested_identity`,
+`nested_vehicleidentity`, `unrecognized`).
+При нескольких расположениях или неоднозначных алиасах
+проверка завершается отказом; ни один VIN не выбирается
+автоматически. Неизвестные схемы остаются
+`unsupported_schema`. Происхождение и корректность исходного
+JSON не подтверждаются формой полей.
+
+Внимание: INI на рабочем столе содержит ноль кадров B9FB,
+поэтому `b9fb_field_vs_identity_json_vin` останется
+`not_assessable` даже при совпадении VIN в INI и JSON.
+Нужен **отдельный** приватный профиль с уже существующим
+13-кадровым кандидатом, который нельзя угадывать по имени.
+
 ## Корреляция с существующим приватным JSON
 
 При указании `--identity-json` программа проверяет только

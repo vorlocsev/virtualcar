@@ -115,29 +115,56 @@ def _unique_json_object(pairs):
 
 
 def _identity_json(text):
+    """Recognize bounded private JSON layouts without showing their contents.
+
+    B3A12's exact local JSON layout is not attested by repository code.
+    Accept only explicit root / Vehicle / Identity / VehicleIdentity
+    layouts; multiple candidate locations fail closed.
+    """
     if type(text) is not str or len(text.encode("utf-8")) > MAX_IDENTITY_JSON:
         raise ValueError("bounded_identity_json_required")
     root = json.loads(text, object_pairs_hook=_unique_json_object,
                       parse_constant=lambda _x: (_ for _ in ()).throw(
                           ValueError("nonfinite_identity_json")))
-    if type(root) is not dict or type(root.get("Vehicle")) is not dict:
-        return "unsupported_schema", None, "unknown"
-    vehicle = root["Vehicle"]
-    vin = vehicle.get("VIN")
-    year = vehicle.get("ModelYear")
+    if type(root) is not dict:
+        return "unsupported_schema", None, "unknown", "unrecognized"
+
+    def normalized(key):
+        return key.casefold().replace("_", "").replace("-", "")
+
+    def field(obj, wanted):
+        matches = [key for key in obj if normalized(key) == wanted]
+        if len(matches) > 1:
+            raise ValueError("ambiguous_identity_json_alias")
+        return obj[matches[0]] if matches else None
+
+    candidates = []
+    if field(root, "vin") is not None:
+        candidates.append(("root_vin", root))
+    for key in ("vehicle", "identity", "vehicleidentity"):
+        child = field(root, key)
+        if type(child) is dict and field(child, "vin") is not None:
+            candidates.append(("nested_" + key, child))
+    if len(candidates) > 1:
+        raise ValueError("ambiguous_identity_json_locations")
+    if not candidates:
+        return "unsupported_schema", None, "unknown", "unrecognized"
+
+    origin, obj = candidates[0]
+    vin = field(obj, "vin")
+    year = field(obj, "modelyear")
     year_class = ("declares_my2009" if type(year) in (int, str)
                   and str(year) == "2009" else "other_or_unknown")
     if type(vin) is not str or not VIN_SHAPE.fullmatch(vin):
-        return "missing_or_invalid_17_ascii_vin", None, year_class
-    return "valid_17_ascii_shape_not_oem_validated", vin, year_class
-
+        return "missing_or_invalid_17_ascii_vin", None, year_class, origin
+    return "valid_17_ascii_shape_not_oem_validated", vin, year_class, origin
 
 def inspect_profiles(private_ini_text, active_ini_text=None, identity_json_text=None):
     private = _ini(private_ini_text)
     active = _ini(active_ini_text) if active_ini_text is not None else None
-    identity_state, identity_vin, identity_year = (
+    identity_state, identity_vin, identity_year, identity_origin = (
         _identity_json(identity_json_text) if identity_json_text is not None
-        else ("not_supplied", None, "unknown"))
+        else ("not_supplied", None, "unknown", "not_supplied"))
     vin = _get(private, "Vehicle", "VIN", "")
     vin_state = ("valid_17_ascii_shape_not_oem_validated" if VIN_SHAPE.fullmatch(vin)
                  else "missing_or_invalid_17_ascii_shape")
@@ -147,6 +174,7 @@ def inspect_profiles(private_ini_text, active_ini_text=None, identity_json_text=
         "scope": "current_private_profile_read_only_not_historical_loaded_ini",
         "private_vin_state": vin_state,
         "identity_json_state": identity_state,
+        "identity_json_schema_location": identity_origin,
         "identity_json_model_year": identity_year,
         "identity_json_vs_private_ini_vin": "not_assessable",
         "b9fb_field_vs_identity_json_vin": "not_assessable",
