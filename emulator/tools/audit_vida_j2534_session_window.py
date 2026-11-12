@@ -19,7 +19,16 @@ REPORT = "virtualcar-vida-j2534-append-evidence-v1"
 MAX_SOURCE = 2 * 1024 ** 3
 MAX_APPEND = 16 * 1024 ** 2
 MAX_LINE = 512
-ROOT = Path(__file__).resolve().parents[2]
+def _repository_root(script_path):
+    """Protect a real checkout, not an arbitrary standalone Downloads copy."""
+    script = Path(script_path).resolve()
+    if script.parent.name != "tools" or script.parent.parent.name != "emulator":
+        return None
+    root = script.parent.parent.parent
+    return root if (root / "README.md").is_file() else None
+
+
+ROOT = _repository_root(__file__)
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} ([A-Za-z0-9_.-]{1,48})\] ")
 VIDA_TERMS = {
     "passthru_open": "PassThruOpen".lower(),
@@ -118,9 +127,43 @@ def _append(path, state):
     return lines, len(content), dropped
 
 
+def _candidate_log(manifest, index):
+    """Require explicit, validated 1-based selection; do not infer a VIDA host."""
+    if not manifest.is_file() or manifest.stat().st_size > 128 * 1024:
+        raise ValueError("invalid private candidate manifest")
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    if (type(data) is not dict or set(data) != {
+            "schema_version", "private_do_not_upload",
+            "paths_are_not_process_attribution", "candidates"}
+            or data["schema_version"] != "virtualcar-b3a46-source-inventory-v1"
+            or data["private_do_not_upload"] is not True
+            or data["paths_are_not_process_attribution"] is not True
+            or type(data["candidates"]) is not list
+            or not 1 <= len(data["candidates"]) <= 12):
+        raise ValueError("invalid private candidate manifest schema")
+    if type(index) is not int or not 1 <= index <= len(data["candidates"]):
+        raise ValueError("invalid candidate index")
+    record = data["candidates"][index - 1]
+    if (type(record) is not dict or set(record) !=
+            {"path", "status", "bytes", "markers_in_tail"}
+            or record["status"] != "native_marker_in_tail"
+            or type(record["markers_in_tail"]) is not int
+            or record["markers_in_tail"] < 1
+            or type(record["bytes"]) is not int or record["bytes"] < 0
+            or type(record["path"]) is not str or not record["path"]):
+        raise ValueError("candidate not backed by a native marker")
+    path = Path(record["path"])
+    if (not path.is_absolute()
+            or path.name.casefold() != "sectorvvirtualcar.log"
+            or path.is_symlink()):
+        raise ValueError("invalid candidate native log path")
+    return path
+
+
 def _external(path, sources):
     resolved = path.resolve()
-    if resolved.is_relative_to(ROOT) or any(resolved == s.resolve() for s in sources):
+    if ((ROOT is not None and resolved.is_relative_to(ROOT))
+            or any(resolved == s.resolve() for s in sources)):
         raise ValueError("private output must be outside source tree and logs")
 
 
@@ -176,14 +219,27 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("baseline", "delta"))
     parser.add_argument("--vida-log", required=True, type=Path)
-    parser.add_argument("--virtual-log", required=True, type=Path)
+    parser.add_argument("--virtual-log", type=Path,
+                        help="Explicit native log path; mutually exclusive with candidate manifest")
+    parser.add_argument("--candidate-manifest", type=Path,
+                        help="Private B3A46 manifest, not exported")
+    parser.add_argument("--candidate-index", type=int,
+                        help="Explicit 1-based native marker candidate from B3A46")
     parser.add_argument("--private-baseline", required=True, type=Path)
     parser.add_argument("--output", type=Path, help="New sanitized JSON; delta only")
     args = parser.parse_args(argv)
+    if args.candidate_manifest is not None:
+        if args.virtual_log is not None or args.candidate_index is None:
+            parser.error("choose either --virtual-log or candidate manifest plus index")
+        args.virtual_log = _candidate_log(args.candidate_manifest,
+                                          args.candidate_index)
+    elif args.virtual_log is None or args.candidate_index is not None:
+        parser.error("choose either --virtual-log or candidate manifest plus index")
     sources = (args.vida_log, args.virtual_log)
+    protected = (*sources, *((args.candidate_manifest,) if args.candidate_manifest else ()))
     if sources[0].resolve() == sources[1].resolve():
         parser.error("VIDA and virtual J2534 source files must differ")
-    _external(args.private_baseline, sources)
+    _external(args.private_baseline, protected)
     if args.mode == "baseline":
         if args.output is not None:
             parser.error("--output is valid only for delta")
@@ -197,7 +253,7 @@ def main(argv=None):
         return
     if args.output is None:
         parser.error("--output is required for delta")
-    _external(args.output, (*sources, args.private_baseline))
+    _external(args.output, (*protected, args.private_baseline))
     data = json.loads(args.private_baseline.read_text(encoding="utf-8"))
     if (type(data) is not dict or set(data) !=
             {"schema_version", "private_do_not_publish",
