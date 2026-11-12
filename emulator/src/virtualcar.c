@@ -29,6 +29,8 @@ typedef unsigned int U32;
 typedef unsigned long U32; /* Windows LLP64: 32-bit unsigned long */
 #endif
 #include "p2core/p2_j2534_bridge.h"
+/* B3A19: ISO15765 29-bit UDS route observer, never creates ECU RX. */
+/* Header is included after U32/U8 and PROTO_ISO15765 below. */
 typedef unsigned char U8;
 typedef unsigned long long U64;
 typedef long long I64;
@@ -119,6 +121,7 @@ typedef struct { U32 Parameter, Value; } SCONFIG;
 typedef struct { U32 NumOfParams; SCONFIG *ConfigPtr; } SCONFIG_LIST;
 /* J2534 SBYTE_ARRAY: input target address, output ECU keyword capacity. */
 typedef struct { U32 NumOfBytes; U8 *BytePtr; } SBYTE_ARRAY;
+#include "p2core/vida_uds29_route.h"
 
 IMPORT void WINCALL Sleep(U32 ms) ALIAS(Sleep);
 IMPORT U32 WINCALL GetTickCount(void) ALIAS(GetTickCount);
@@ -1686,6 +1689,29 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             backend_event(c,c->active_trace,"request_completed","CEM",
                           "unimplemented_probe","no_response");
             return;
+        }
+        /* B3A19: request-only visibility of VIDA 29-bit ISO15765
+           physical addressing. A successful shape classification is NOT
+           an ECU route registration, reply CAN ID, RX or VIN acceptance.
+           Configured ECU handlers and legacy P3 CEM F114 take priority. */
+        {
+            VIDA_UDS29_REQUEST probe;
+            if(vida_uds29_request_probe(id,c->protocol,msg->Data+4u,
+                                         msg->DataSize-4u,&probe)) {
+                U8 meta[16];
+                u32_be(meta,probe.request_id);
+                u32_be(meta+4,probe.target);
+                u32_be(meta+8,probe.sid);
+                u32_be(meta+12,probe.operand);
+                /* DID for SID 22; subfunction/operand for SID 19.
+                   Metadata contains no VIN or reply contents. */
+                logline("VIDA UDS29 unconfigured route id/target/SID/operand (BE)",meta,16);
+                backend_event(c,c->active_trace,"route_selected","ECU_OTHER",
+                              "none","unknown");
+                backend_event(c,c->active_trace,"request_completed","ECU_OTHER",
+                              "missing_profile","no_response");
+                return;
+            }
         }
         logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
         backend_event(c,c->active_trace,"route_selected","UNHANDLED","none","unknown");
