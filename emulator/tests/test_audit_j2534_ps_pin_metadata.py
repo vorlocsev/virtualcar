@@ -35,6 +35,7 @@ class EightPsPinMetadataGroups(unittest.TestCase):
         result = tool.audit([conn(5, 0, 500000, 0), conn(6, 0, 500000, 0)])
         self.assertEqual(result["connect"]["statuses"], {"ok": 2})
         self.assertFalse(result["vehicle_identity_verified"])
+        self.assertEqual(result["format"], "virtualcar-j2534-connect-audit-v2")
 
     def test_02_29bit_flag_is_not_physical_wire_proof(self):
         result = tool.audit([conn(5, 0x100, 125000, 0)])
