@@ -1,6 +1,10 @@
 """Eight bounded read-only tests, no native driver or private source logs."""
 import contextlib
 import io
+import os
+import runpy
+import shutil
+from unittest import mock
 from pathlib import Path
 import sys
 import tempfile
@@ -77,6 +81,38 @@ class B3A46Tests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             with contextlib.redirect_stdout(io.StringIO()):
                 tool.main(['--root', str(self.a), '--private-manifest', str(out)])
+
+
+    def test_09_downloads_copy_can_write_private_localappdata_manifest(self):
+        """Regression: old parents[2] treated C:/Users as repo root."""
+        user = self.root / 'Users' / 'vorloc'
+        download = user / 'Downloads'
+        download.mkdir(parents=True)
+        copy = download / 'Invoke-VirtualCar-B3A46-LogLocate-Fixed.py'
+        shutil.copyfile(Path(tool.__file__), copy)
+        standalone = runpy.run_path(str(copy), run_name='downloaded_module')
+        self.assertIsNone(standalone['ROOT'])
+        local = user / 'AppData' / 'Local'
+        manifest = local / 'VirtualCar' / 'OwnerPrivate' / 'B3A46' / 'private.json'
+        env = {'TEMP': str(self.a), 'TMP': str(self.a),
+               'LOCALAPPDATA': str(local), 'WINDIR': str(self.b)}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(io.StringIO()):
+                standalone['main'](['--private-manifest', str(manifest)])
+        self.assertTrue(manifest.is_file())
+        self.assertIn('"private_do_not_upload": true', manifest.read_text())
+
+    def test_10_repository_manifest_and_source_log_still_rejected(self):
+        """Only actual source checkout is protected, never the user directory."""
+        self.assertIsNotNone(tool.ROOT)
+        inside_repo = tool.ROOT / 'emulator' / 'tools' / 'private.json'
+        for blocked in (inside_repo, self.file):
+            with self.subTest(blocked=blocked.name):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        tool.main(['--root', str(self.a),
+                                   '--private-manifest', str(blocked)])
+        self.assertFalse(inside_repo.exists())
 
 
 if __name__ == '__main__':
