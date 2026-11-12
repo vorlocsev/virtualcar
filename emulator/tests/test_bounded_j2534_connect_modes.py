@@ -95,10 +95,51 @@ class P0ConnectModeEvidenceTests(unittest.TestCase):
             {(entry["parameter"], entry["handling"])
              for entry in evidence["set_config_parameters"]},
             {("DATA_RATE", "applied_baud"),
-             ("J1962_PINS", "accepted_no_effect")})
+             ("LEGACY_PARAMETER_779", "accepted_no_effect")})
         raw = json.dumps(item, ensure_ascii=False)
         self.assertNotIn("FADECAFE", raw)
         self.assertNotIn("030B", raw)
+
+    def test_09_virtual_ms_pins_applied_categorical_not_wire_evidence(self):
+        item = triaged([connect(0x8004, 0, 125000, 0),
+                        config(0x8001, 0x030B, 1)])
+        params = item["j2534_connect_mode_evidence"]["set_config_parameters"]
+        self.assertEqual(params, [{"parameter": "J2534_PINS",
+                                   "handling": "virtual_ms_pins_applied",
+                                   "count": 1}])
+        self.assertFalse(item["oem_vin_and_ecu_verified"])
+        self.assertNotIn("030B", json.dumps(item))
+
+    def test_10_applied_redacted_option_remains_unattributed(self):
+        item = triaged([connect(3, 0, 10400, 0),
+                        config(0, 0, 1)])
+        self.assertEqual(item["j2534_connect_mode_evidence"]["set_config_parameters"],
+                         [{"parameter": "other",
+                           "handling": "redacted_applied_unidentified",
+                           "count": 1}])
+        self.assertFalse(item["oem_vin_and_ecu_verified"])
+
+    def test_11_spoofed_ms_pin_or_redacted_category_pair_rejected(self):
+        variants = (
+            ("DATA_RATE", "virtual_ms_pins_applied"),
+            ("other", "virtual_ms_pins_applied"),
+            ("J2534_PINS", "redacted_applied_unidentified"),
+            ("LEGACY_PARAMETER_779", "redacted_applied_unidentified"),
+        )
+        for parameter, handling in variants:
+            with self.subTest(parameter=parameter, handling=handling):
+                report = bounded([connect(), config()])
+                report["connect"]["mode_evidence"]["set_config_parameters"][0].update(
+                    parameter=parameter, handling=handling)
+                with self.assertRaises(ValueError):
+                    triage.triage(report, ui())
+
+    def test_12_unknown_handling_fails_closed(self):
+        report = bounded([connect(), config()])
+        report["connect"]["mode_evidence"]["set_config_parameters"][0].update(
+            parameter="J2534_PINS", handling="physical_bus_verified")
+        with self.assertRaises(ValueError):
+            triage.triage(report, ui())
 
     def test_04_historical_window_without_mode_evidence_remains_supported(self):
         old = window()
