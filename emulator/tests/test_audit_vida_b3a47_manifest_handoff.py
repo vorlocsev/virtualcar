@@ -73,8 +73,7 @@ class B3A47PrivateHandoffTests(unittest.TestCase):
         self.assertNotIn("1234ABCD", json.dumps(report))
 
     def test_02_manual_candidate_index_two(self):
-        second = self.root / "second" / tool._candidate_log.__name__
-        second = second.parent / "SectorVVirtualCar.log"
+        second = self.root / "second" / "SectorVVirtualCar.log"
         second.parent.mkdir()
         second.write_text("old secondary\n", encoding="utf-8")
         self.write_manifest([self.candidate(self.native), self.candidate(second)])
