@@ -236,7 +236,7 @@ def main(argv=None):
     elif args.virtual_log is None or args.candidate_index is not None:
         parser.error("choose either --virtual-log or candidate manifest plus index")
     sources = (args.vida_log, args.virtual_log)
-    protected = (*sources, *((args.candidate_manifest,) if args.candidate_manifest else ()))
+    protected = (*sources, args.candidate_manifest) if args.candidate_manifest else sources
     if sources[0].resolve() == sources[1].resolve():
         parser.error("VIDA and virtual J2534 source files must differ")
     _external(args.private_baseline, protected)
