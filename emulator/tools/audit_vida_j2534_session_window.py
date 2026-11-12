@@ -22,22 +22,21 @@ MAX_LINE = 512
 ROOT = Path(__file__).resolve().parents[2]
 PREFIX = re.compile(r"^\[PID=[0-9a-fA-F]{8} ([A-Za-z0-9_.-]{1,48})\] ")
 VIDA_TERMS = {
-    "passthru_open": "passthruopen", "passthru_connect": "passthuconnect",
-    "passthru_write": "passthrwritemsgs", "passthru_read": "passthrureadmsgs",
-    "get_script": "getscript", "read_vin_literal": "readvin",
+    "passthru_open": "PassThruOpen".lower(),
+    "passthru_connect": "PassThruConnect".lower(),
+    "passthru_write": "PassThruWriteMsgs".lower(),
+    "passthru_read": "PassThruReadMsgs".lower(),
+    "get_script": "GetScript".lower(),
+    "read_vin_literal": "ReadVin".lower(),
     "tx_arrow": "--->", "rx_arrow": "<---",
 }
-# Keep exact public J2534 method tokens separate from arbitrary text.
-VIDA_TERMS["passthru_connect"] = "passt hruconnect".replace(" ", "")
-VIDA_TERMS["passthru_write"] = "passt hruwritemsgs".replace(" ", "")
-VIDA_TERMS["passthru_read"] = "passt hrureadmsgs".replace(" ", "")
 VIRTUAL_TERMS = {
     "dll_initialized": "VirtualCar DLL initialized",
     "open_success": "PassThruOpen -> device 1",
     "close": "PassThruClose",
     "app_tx_logged": "TX (app request)",
     "rx_delivered_logged": "PassThruReadMsgs -> delivered",
-    "kline_local_ack": "LOCAL ACK ONLY (NO BUS/ECU TX/RX)",
+    "kline_local_ack": "VIDA B3A6 KLINE exact original write LOCAL ACK ONLY (NO BUS/ECU TX/RX)",
 }
 
 
