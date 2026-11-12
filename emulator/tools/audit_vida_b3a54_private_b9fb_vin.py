@@ -15,6 +15,7 @@ from audit_p2_b9fb_shape import audit_frames
 
 SCHEMA = "virtualcar-b3a54-private-b9fb-consistency-v1"
 MAX_FILE = 512 * 1024
+MAX_IDENTITY_JSON = 128 * 1024
 VIN_SHAPE = re.compile(r"[A-HJ-NPR-Z0-9]{17}\Z")
 COUNT_SHAPE = re.compile(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)\Z")
 HEX_BYTE = set("0123456789abcdefABCDEF")
@@ -102,9 +103,41 @@ def _read_b9fb(cfg, target=0x50):
     return "declared_frame_values_loaded_locally", n, frames
 
 
-def inspect_profiles(private_ini_text, active_ini_text=None):
+def _unique_json_object(pairs):
+    """Reject duplicate/case-colliding JSON keys; never echo their values."""
+    out, folded = {}, set()
+    for key, value in pairs:
+        if key.casefold() in folded:
+            raise ValueError("ambiguous_identity_json")
+        folded.add(key.casefold())
+        out[key] = value
+    return out
+
+
+def _identity_json(text):
+    if type(text) is not str or len(text.encode("utf-8")) > MAX_IDENTITY_JSON:
+        raise ValueError("bounded_identity_json_required")
+    root = json.loads(text, object_pairs_hook=_unique_json_object,
+                      parse_constant=lambda _x: (_ for _ in ()).throw(
+                          ValueError("nonfinite_identity_json")))
+    if type(root) is not dict or type(root.get("Vehicle")) is not dict:
+        return "unsupported_schema", None, "unknown"
+    vehicle = root["Vehicle"]
+    vin = vehicle.get("VIN")
+    year = vehicle.get("ModelYear")
+    year_class = ("declares_my2009" if type(year) in (int, str)
+                  and str(year) == "2009" else "other_or_unknown")
+    if type(vin) is not str or not VIN_SHAPE.fullmatch(vin):
+        return "missing_or_invalid_17_ascii_vin", None, year_class
+    return "valid_17_ascii_shape_not_oem_validated", vin, year_class
+
+
+def inspect_profiles(private_ini_text, active_ini_text=None, identity_json_text=None):
     private = _ini(private_ini_text)
     active = _ini(active_ini_text) if active_ini_text is not None else None
+    identity_state, identity_vin, identity_year = (
+        _identity_json(identity_json_text) if identity_json_text is not None
+        else ("not_supplied", None, "unknown"))
     vin = _get(private, "Vehicle", "VIN", "")
     vin_state = ("valid_17_ascii_shape_not_oem_validated" if VIN_SHAPE.fullmatch(vin)
                  else "missing_or_invalid_17_ascii_shape")
@@ -113,6 +146,10 @@ def inspect_profiles(private_ini_text, active_ini_text=None):
         "schema_version": SCHEMA,
         "scope": "current_private_profile_read_only_not_historical_loaded_ini",
         "private_vin_state": vin_state,
+        "identity_json_state": identity_state,
+        "identity_json_model_year": identity_year,
+        "identity_json_vs_private_ini_vin": "not_assessable",
+        "b9fb_field_vs_identity_json_vin": "not_assessable",
         "private_b9fb_target": "CEM_50",
         "private_b9fb_declared_count": count,
         "private_b9fb_loader_state": raw_state,
@@ -131,6 +168,9 @@ def inspect_profiles(private_ini_text, active_ini_text=None):
     hint = _get(private, "P2", "FixtureProvenance", "")
     if hint == LAB_SOURCE_HINT:
         report["profile_provenance"] = "known_published_donor_with_replaced_vin_not_oem_my2009"
+    if identity_vin is not None and vin_state.startswith("valid_17"):
+        report["identity_json_vs_private_ini_vin"] = (
+            "equal" if identity_vin == vin else "different")
     if frames is not None:
         shape = audit_frames(frames, target=0x50)
         report["d2_transport"] = shape["transport"]
@@ -145,6 +185,9 @@ def inspect_profiles(private_ini_text, active_ini_text=None):
             report["vin_field_vs_private_vin"] = (
                 "equal" if vin_state.startswith("valid_17") and
                 observed == vin.encode("ascii") else "different")
+            if identity_vin is not None:
+                report["b9fb_field_vs_identity_json_vin"] = (
+                    "equal" if observed == identity_vin.encode("ascii") else "different")
     if active is not None:
         state, n, active_frames = _read_b9fb(active)
         report["active_ini_b9fb"] = ("zero_frames_declared" if n == 0
@@ -167,12 +210,22 @@ def _read_local(path):
     return path.read_text(encoding="utf-8-sig")
 
 
+def _read_identity_file(path):
+    if (path.is_symlink() or not path.is_file() or
+            path.name.casefold() != "vehicle-identity.json" or
+            path.stat().st_size > MAX_IDENTITY_JSON):
+        raise ValueError("invalid_identity_json_path")
+    return path.read_text(encoding="utf-8-sig")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--private-profile", required=True, type=Path,
                    help="explicit path to OWNER-PRIVATE lab INI; never uploaded")
     p.add_argument("--active-ini", type=Path,
                    help="optional current J2534 virtualcar.ini; never edited")
+    p.add_argument("--identity-json", type=Path,
+                   help="optional owner-private vehicle-identity.json; never printed")
     args = p.parse_args(argv)
     try:
         if (args.active_ini and args.active_ini.resolve() ==
@@ -180,7 +233,8 @@ def main(argv=None):
             raise ValueError("source_alias")
         result = inspect_profiles(
             _read_local(args.private_profile),
-            _read_local(args.active_ini) if args.active_ini else None)
+            _read_local(args.active_ini) if args.active_ini else None,
+            _read_identity_file(args.identity_json) if args.identity_json else None)
     except (OSError, ValueError, UnicodeError, configparser.Error):
         print("B3A54: INVALID_OR_UNREADABLE_PRIVATE_INI", file=sys.stderr)
         return 2
