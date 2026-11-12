@@ -81,7 +81,7 @@ class P3ToolJ2534PreflightTests(unittest.TestCase):
         self.assertEqual(next(x["handling"] for x in result["set_config"]["parameters"]
                               if x["parameter"] == "DATA_RATE"), "applied_baud")
         self.assertEqual(next(x["handling"] for x in result["set_config"]["parameters"]
-                              if x["parameter"] == "J1962_PINS"), "accepted_no_effect")
+                              if x["parameter"] == "LEGACY_PARAMETER_779"), "accepted_no_effect")
         self.assertNotIn("779", json.dumps(result))
         self.assertNotIn("030B", json.dumps(result))
 
