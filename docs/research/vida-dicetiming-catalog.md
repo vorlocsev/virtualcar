@@ -1,0 +1,302 @@
+# VIDA DiceTiming: read-only catalog scope
+
+Research stage, 2026-11-10. This module is an optional, independent **fourth
+database input** to the VIDA Analyzer's redacted evidence summary. It does
+not change the existing three-database SQL/SQLite analyzer or require that
+existing `CarCom`, `DiagSwdlRepository` and `BaseData` exports be replaced.
+
+The owner's original data inventory recorded a small
+`DiceTiming_Data.MDF`, but this source file is **not opened** by the
+module. The real owner installation's contents, table relationships and
+timing parameters have **not been examined** in this change.
+
+## Supported inputs
+
+`emulator/tools/vida_dicetiming_catalog.py` has two backends:
+
+1. `sqlite-export`: require a separate `DiceTiming.sqlite` **metadata-only**
+   exporter snapshot containing the ordinary main-schema tables
+   `_vida_meta`, `_vida_tables`, `_vida_columns`. Require exact exporter
+   identity `schema_version=virtualcar-vida-offline-sqlite-v1`,
+   `source_database=DiceTiming`, `scope=all_user_tables`. Reject malformed
+   schemas, zero-column source tables, missing files, symlinks, and active
+   `-wal`, `-shm`, `-journal` companions before inspection. Do not query
+   any original application table or its timing values.
+2. `sqlserver`: optional owner-local `pyodbc` System DSN with Windows
+   authentication. Require database identity `DB_NAME() = DiceTiming`,
+   `Encrypt=Yes`, `TrustServerCertificate=No`, 8-second login and query
+   timeouts, and an actual read-only SQL principal. Only fixed
+   `sys.tables`, `sys.columns`, `sys.schemas` and
+   `sys.foreign_key_columns` metadata queries are allowed. No application
+   rows, function calls, stored procedures or SQL definitions are read.
+
+The JSON contains only fixed fields and aggregate **table count, column
+count and declared FK column count**. For SQLite, FK count 0 means
+**not exported**, not proof that the original database has no FKs.
+Unknown proprietary names, values, VIN, ECU data and connection details
+are never written into JSON or diagnostic errors. Empty or partially
+invisible metadata catalogs fail closed where detectable, but nonempty
+catalogs still do not prove complete metadata permissions.
+
+## Owner-local commands
+
+Run tests first from the reviewed checkout:
+
+~~~powershell
+py -3 -m unittest discover -s emulator/tests -p 'test_vida_dicetiming_catalog.py' -v
+py -3 -m unittest discover -s emulator/tests -p 'test_vida_evidence_summary.py' -v
+py -3 -m compileall -q emulator/tools/vida_dicetiming_catalog.py emulator/tools/vida_evidence_summary.py emulator/tests/test_vida_dicetiming_catalog.py
+~~~
+
+For a clean, existing owner-local metadata export:
+
+~~~powershell
+py -3 emulator/tools/vida_dicetiming_catalog.py --backend sqlite-export --folder 'E:\VirtualCar\VIDA-private' --output 'E:\VirtualCar\VIDA-private\dicetiming-001.redacted.json'
+~~~
+
+Or for an explicitly reviewed SQL Server read-only connection:
+
+~~~powershell
+$env:VIDA_SQLSERVER_DSN = 'VIDA_READONLY'
+py -3 emulator/tools/vida_dicetiming_catalog.py --backend sqlserver --output 'E:\VirtualCar\VIDA-private\dicetiming-sql-001.redacted.json'
+~~~
+
+Integrate the new output alongside the existing three-database report,
+catalog comparison, ReadVin graph report, or **by itself**:
+
+~~~powershell
+py -3 emulator/tools/vida_evidence_summary.py --dicetiming-report 'E:\VirtualCar\VIDA-private\dicetiming-001.redacted.json' --output 'E:\VirtualCar\VIDA-private\vida-summary-with-dicetiming-001.redacted.json'
+~~~
+
+For multi-source runs add the existing `--catalog-report`,
+`--compare-report` and `--readvin-report` options. When using the
+optional SHA-256 bundle manifest, include the exact supplied
+`"dicetiming": "<lowercase 64-digit SHA-256>"` digest in
+`reports`. A hash matches bytes only, **not same-installation provenance**.
+
+## Optional SQL/SQLite redacted count comparison
+
+After generating both independent, already-redacted `DiceTiming` metadata
+reports, use [the aggregate-only comparison](vida-dicetiming-count-comparison.md)
+to compare table and column totals without reading original data. The
+`--dicetiming-compare-report` input adds a separate gate to the evidence
+summary; matching totals are not a verified identical schema or timing link.
+
+## Optional keyed schema fingerprint
+
+Use the same owner-private random 256-bit key in
+`VIDA_DICETIMING_HMAC_KEY` when generating both the SQL Server and SQLite
+metadata reports, if stronger visible-schema comparison is needed. The
+collector then emits only `visible_schema_hmac_sha256` and a fixed scope
+label, without original table/column names or the key. A key is optional;
+reports without it preserve the existing format. See
+[the comparison documentation](vida-dicetiming-count-comparison.md)
+for command examples and strict evidence limits.
+
+## Evidence boundary
+
+The aggregate gate `dice_timing_metadata` is `passed` only for accepted
+structural **metadata**; absent inputs stay `not_tested`.
+`dice_timing_profile_mapping_verified=false` and independent D2 baud,
+ReadVin execution, accepted VIN, physical J2534 and replay flags remain
+false. Never infer timing values, CAN bitrate, an actual XC90 V8 profile,
+or a CEM response from `DiceTiming` catalog presence.
+
+This step does **not** change J2534 runtime, B9FB frame behavior, main,
+releases or ECU coding. No original VIDA data, exact-HEAD VMware CI,
+or physical hardware has been tested in this change.
+
+## Visible SQL Server foreign-key catalog (2026-11-10)
+
+SQL Server mode now reads additional fixed **system catalog metadata** only:
+`sys.foreign_keys.object_id`, `is_disabled` and `is_not_trusted`,
+joined to existing `sys.foreign_key_columns`. No original application
+records, source SQL definitions or timing values are retrieved. The analyzer
+groups composite FK column pairs by constraint ID before counting, avoiding
+the error of treating a two-column FK as two distinct constraints.
+
+The additional optional `visible_fk_catalog` object includes only fixed
+scope and aggregated counts:
+
+- `constraint_count`
+- `disabled_constraint_count`
+- `untrusted_constraint_count`
+- `self_referencing_constraint_count`
+
+`complete_metadata_visibility_verified=false` and
+`referential_rows_verified=false` are unconditional. FK constraint IDs,
+source/target table names, column names and actual timing values never leave
+the local analysis process. Contradictory composite-FK metadata, duplicate
+column pairs, invalid bit flags and missing referenced catalog columns fail
+closed.
+
+SQLite metadata exports **do not include this object**, because their
+exporter does not retain SQL Server FK definitions. Legacy SQL Server
+redacted reports without this optional object remain compatible.
+In the unified summary, `dice_timing_visible_fk_catalog` is **passed**
+only if a supplied SQL Server report has structurally valid visible FK
+metadata; otherwise it is `not_tested`. Passed here is not a claim that
+any FK is trusted/enabled or that the catalog is complete.
+
+An isolated local Python 3.13.5 focused suite passed **70/70 synthetic
+tests**, `compileall` PASS (12 new FK-specific tests). Exact Git blobs
+were compared against the locally tested files:
+- catalog `1168a9d5df9a03e7cd6c04ff1eb87aec4beead0c`
+- summary `bb7884dfaaf6e09e0219ad55f73a42a8512af5ed`
+- FK tests `57662f5ab8e5d13392513ab747a8c741e98ac458`
+- summary tests `5f97880c6eb15a8a59b2d43a64a854851eaf6039`
+
+No source-original VIDA 2015A tables, actual `DiceTiming` MDF, VMware
+exact-head CI, D2 baud or physical J2534 were inspected.
+
+### Composite-key ordinal validation (2026-11-10)
+
+The SQL Server FK metadata query now also reads the documented
+`sys.foreign_key_columns.constraint_column_id` ordinal (1 through n)
+for each column of a foreign-key constraint. The collector rejects:
+
+- ordinal zero, negative, boolean, noninteger and values above SQL
+  Server's 32-column FK limit;
+- duplicated ordinal positions for one FK;
+- a missing initial ordinal or an interior gap;
+- repeated source or repeated referenced columns in one FK;
+- noncanonical row widths and inconsistent constraint identities.
+
+Rows from the fixed query may arrive in any order. Accepted ordinals must
+form the set `1..N` per FK even when returned out of order. The redacted
+output remains unchanged: it contains only counts and negative evidence
+flags, never FK IDs, ordinals, private table/column names or SQL definitions.
+
+**Limit:** a truncated *suffix* can still look like `1..N` if the
+expected total number of members is not independently available. This
+preflight therefore does not establish complete metadata visibility or
+correct database-level referential integrity.
+
+Six new regression methods extend the isolated focused suite to
+**76/76 PASS** on Linux Python 3.13.5; `compileall` PASS.
+Verified local Git blobs and committed GitHub blobs match exactly:
+- collector: `eb2f7fa27d0480ad9b6fb849179a8c624735c493`
+- FK tests: `06c7e34785a944a208527daae8f330e5c71421ca`
+
+No original VIDA, VMware runner, client VIN acceptance or J2534
+hardware was used for this change.
+
+### Referenced-index cardinality cross-check (2026-11-10)
+
+To detect an FK definition with a *missing trailing member*, the fixed
+SQL Server catalog-only FK query additionally counts visible key columns
+in `sys.index_columns` for
+`fk.referenced_object_id` and `fk.key_index_id`, filtering
+`key_ordinal > 0` to exclude included/non-key columns. This independent
+catalog cardinality is checked against the complete, contiguous set of
+`sys.foreign_key_columns.constraint_column_id` entries for each FK.
+A missing suffix, conflicting key-size declarations or a zero/inaccessible
+referenced-index key count **fails closed**.
+
+This check does not select from application/user tables, inspect actual
+timing values or expose object IDs, key names or the key cardinalities in
+the redacted JSON. The current `visible_fk_catalog` aggregate format is
+unchanged and existing redacted report consumers remain compatible.
+
+Microsoft documents `key_index_id` on `sys.foreign_keys` as the
+referenced key index and `key_ordinal` on `sys.index_columns` as
+the 1-based index-key column position. Both are subject to SQL Server
+metadata visibility. Agreement between the two catalog views is
+**not** proof of full visibility, cross-query transactional snapshot
+consistency, original DiceTiming/InitHw profile linkage, D2 baud,
+VIN acceptance or physical J2534.
+
+A local isolated Python 3.13.5 synthetic suite was executed:
+**82/82 PASS** across the focused VIDA modules with
+`python -m compileall -q emulator/tools emulator/tests` successful.
+The locally tested source and test files have exactly the same Git blob
+SHA as the current PR branch:
+- collector `1bf220b8ec2210973a68cee82d778a93f728df77`
+- FK tests `1e856aa83068e4e0f6e050d41fea082a1bceac55`
+
+The original VIDA 2015A SQL Server and VMware exact-head CI were
+not accessed during this change.
+
+### Complete bounded cursor consumption (2026-11-10)
+
+The SQL Server mode previously used a single
+`fetchmany(MAX+1)` call for each of `sys.tables`,
+`sys.columns`, and `sys.foreign_key_columns`. A DB-API
+cursor can return a short batch before reaching end of results.
+Assuming one short batch is exhaustive could silently undercount
+catalog metadata and incorrectly treat the partial result as valid.
+
+The updated collector uses `_consume_bounded` to drain each
+metadata-only cursor until `fetchmany` indicates end of results.
+It requests at most 256 rows per call, never retains more than
+the respective `MAX_TABLES`, `MAX_COLUMNS`, or `MAX_KEYS` limit,
+and rejects both over-cap catalogs and cursor batches larger than
+the requested size. The SQL commands, DSN, read-only semantics and
+redacted report schema remain unchanged.
+
+Two existing SQL Server mock cursors now model consuming DB-API
+reads rather than repeating the same buffer. Six new synthetic
+tests exercise short one-row batches, overflow across multiple
+batches for each catalog, incomplete column inventory, and a
+cursor violating the requested batch limit.
+
+**Verified local:** Python 3.13.5 **88/88 tests PASS** and
+`compileall` PASS. Exact tested Git blob SHA-1:
+- `emulator/tools/vida_dicetiming_catalog.py`: `552eb8d834f579a751a53bca0681026ffc9054b8`
+- `emulator/tests/test_vida_dicetiming_catalog.py`: `dcd6e74e71d34e0f779c9605dbc1954d9fdd3cb3`
+- `emulator/tests/test_vida_dicetiming_fk_catalog.py`: `16a5fdadbd56bcb510921d63b744dd484226debe`
+- `emulator/tests/test_vida_dicetiming_cursor_paging.py`: `8bc96b814c1a0953c7ff3d77886a0989dbd807d1`
+
+**Evidence limit:** successful draining still cannot prove that the
+SQL Server principal can see every table or constraint, or that
+multiple system-catalog queries reflect one atomic schema snapshot.
+Original VIDA 2015A DiceTiming, InitHw, D2 timing values, ReadVin
+runtime, physical J2534 and exact-head Windows VMware CI remain
+unverified.
+
+### Repeated bounded SQL catalog scan (2026-11-10)
+
+The SQL Server DiceTiming collector now **re-queries** the three fixed
+system catalogs (`sys.tables`, `sys.columns`, and visible
+`sys.foreign_key_columns` with related FK/key-index metadata)
+after completing the first bounded read. Each second scan uses the same
+bounded, draining `fetchmany` routine and limits.
+
+For each catalog, a multiset of the full returned metadata rows
+(including multiplicities) must match between the two passes. Ordering
+differences are allowed. A schema/constraint change, duplicated or missing
+row, malformed row width or second-pass overflow is treated as a
+**fail-closed error**, not a successful metadata report. Private table,
+column and constraint identities are not emitted.
+
+This is a **best-effort drift detector**, *not* a database transaction:
+DDL could change and return to the same structure between scans, or
+several catalog queries could observe different instantaneous schemas
+without an observable drift at the second read. The redacted report
+continues to state `cross_database_snapshot_verified=false` and does
+not claim a snapshot-isolation guarantee or full metadata visibility.
+
+#### Verified isolated synthetic regression run
+
+A local focused checkout containing the current GitHub file contents was
+validated on Python 3.13.5. All **98/98 tests PASS** across six existing
+research test modules plus the new stability module (10 new cases);
+`compileall` passed. New cases cover:
+
+- stable and reordered catalog results;
+- changes to table, column and FK metadata;
+- duplicate entries and unequal row multiplicities;
+- malformed row widths;
+- second-pass catalog overflow;
+- unchanged privacy and negative runtime acceptance flags.
+
+Exact Git blob SHA verified locally against GitHub:
+- collector `f9a617cea9c0cd46d2fc0b33405fa8fee22f17bb`
+- new tests `4f7a7536ea95148be690894125dab2d5e04588bf`
+- updated SQL catalog fixture `b7857f8e455fafbe94c6afabd549fef44ff36b27`
+- updated FK fixture `40957ac3b2749a77600cab53547633b040e781b1`
+- updated paged cursor fixture `2efd2ebc0c8b09c5e309988afe1f43559d8ee9e0`
+
+The full project suite, original VIDA 2015A SQL Server, owner-only
+Windows VMware CI, D2 baud, ReadVin execution and physical J2534
+have **not** been tested in this change.
