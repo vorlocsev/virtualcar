@@ -10,3 +10,5 @@
 - Existing proprietary diagnostic software and user-owned original binaries are not redistributed here.
 
 - External source review (2026-11-13): [volvo-vida/volvo-vida-diagnostics applicability](research/volvo-vida-diagnostics-applicability.md) separates generic Python CAN/ISO-TP/UDS/J2534 design from Volvo P2 D2 and XC90 V8 MY2009 evidence. The upstream's V40/V60 DBC files were **not** imported, and no third-party GPL/LGPL/MIT code was copied. The new synthetic D2-vs-ISO-TP boundary tests exercise only existing Virtual Car validators.
+
+- External VIDA database source review (2026-11-13): [spnda/volvo_vida_db applicability](research/spnda-volvo-vida-db-applicability.md) maps actual 2014D CarCom profile and T111_Service concepts, Volvo D2 message handling and a documented odd-extended-RX-ID filter into *read-only research*. Added an offline categorical filter-candidate field to the existing B9FB auditor with synthetic tests only. No source code, SQL credentials, OEM/VIDA XML or private VIN copied; upstream licensing not established.
