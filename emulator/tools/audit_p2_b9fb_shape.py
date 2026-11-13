@@ -17,6 +17,23 @@ VIN_SHAPE = re.compile(rb"^[A-HJ-NPR-Z0-9]{17}$")
 FIELD_WIDTHS = (3, 17, 9, 3, 6, 2, 6, 20)
 
 
+def vida_2014d_d2_response_id_candidate(can_id):
+    """Classify a recorded ID against the *documented* VIDA 2014D D2 mask.
+
+    spnda/volvo_vida_db scripts/d2.py describes a J2534 pass filter with
+    mask/pattern 1 on an odd, extended CAN response ID. This is only an
+    offline candidate check: the imported trace does not retain trustworthy
+    J2534 CAN_29BIT_ID, filter installation or session attribution.
+    """
+    if not isinstance(can_id, int) or not 0 < can_id <= 0x1FFFFFFF:
+        return "not_evaluated"
+    if can_id <= 0x7FF:
+        # Even an 11-bit-sized integer may be transmitted with 29-bit flags.
+        return "width_unknown_without_j2534_flags"
+    return ("odd_extended_id_candidate" if can_id & 1
+            else "even_extended_id_mask_mismatch")
+
+
 def _base_result(frames, target):
     return {
         "schema_version": "virtualcar-p2-b9fb-shape-v1",
@@ -24,6 +41,8 @@ def _base_result(frames, target):
         "rx_frames": len(frames),
         "transport": "unverified",
         "transport_reason": "not_yet_checked",
+        "vida2014d_d2_rx_filter_candidate": "not_evaluated",
+        "j2534_rx_29bit_flags_verified": False,
         "payload_byte_count": None,
         "embedded_nul": None,
         "observed_length_marker_relation": "unknown",
@@ -55,6 +74,9 @@ def audit_frames(frames, target=0x50):
         out["transport_reason"] = "d2_frame_sequence_or_response_route_invalid"
         return out
 
+    # The D2 sequence is valid, but this is NOT evidence of actual VIDA
+    # filter installation, 29-bit RxStatus or a client's acceptance.
+    out["vida2014d_d2_rx_filter_candidate"] = vida_2014d_d2_response_id_candidate(frames[0][0])
     full = b"".join(data[1:] for _, data in frames)
     if not full.startswith(bytes((target, 0xF9, 0xFB))):
         # The existing importer accepts some single-frame negative replies.
