@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import sys
 
+from audit_p2_b9fb_shape import vida_2014d_d2_response_id_candidate
+
 SCHEMA = "virtualcar-b3a53-d2-b9fb-loader-v1"
 MAX_INI_BYTES = 512 * 1024
 MAX_FRAMES = 64
@@ -138,7 +140,14 @@ def audit_text(text):
             elif count > MAX_FRAMES:
                 reason = 'frame_count_exceeds_native_limit'
                 count = 0
-        rid = _parse_num(get(section, 'ResponseId'), default_rid, base=16)
+        rid_text = get(section, 'ResponseId')
+        if rid_text is None or not rid_text.strip():
+            rid_basis = 'native_default_response_id'
+        elif re.fullmatch(r'(?:0[xX])?[0-9A-Fa-f]+', rid_text.strip()):
+            rid_basis = 'explicit_hex_ini_response_id'
+        else:
+            rid_basis = 'malformed_ini_falls_back_to_native_default'
+        rid = _parse_num(rid_text, default_rid, base=16)
         frames, bad_index = [], None
         if reason is None and rid > 0x1FFFFFFF:
             reason = 'response_id_outside_29bit_range'
@@ -162,8 +171,19 @@ def audit_text(text):
             reason = ('locally_structural_negative_reply_not_vin' if
                       len(frames) == 1 and frames[0][2] == 0x7F else
                       'locally_structural_reply_not_oem_verified')
+        # Classify only a locally valid D2 declaration. The documented VIDA
+        # 2014D odd-ID mask is a source hypothesis, not an observed filter.
+        filter_candidate = (
+            vida_2014d_d2_response_id_candidate(rid)
+            if reason in ('locally_structural_negative_reply_not_vin',
+                          'locally_structural_reply_not_oem_verified')
+            else 'not_evaluated'
+        )
         out['b9fb'][label] = {
             'declared_frame_count': count,
+            'response_id_source': rid_basis,
+            'vida2014d_d2_rx_filter_candidate': filter_candidate,
+            'actual_j2534_d2_filter_and_29bit_flags_verified': False,
             'native_base_route_baud_bps': baud,
             'static_loader_class': reason,
             'first_failed_frame_index': bad_index,
