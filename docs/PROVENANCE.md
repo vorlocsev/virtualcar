@@ -8,3 +8,5 @@
 - olegel/VolvoCan and damienmaguire/Volvo-V70-P2-CAN-Reverse-Engineering inform **early P2 CAN research only**. No GPL third-party code is incorporated by copying. See docs/research/.
 - Neither a successful CI build nor a synthetic ECU response is evidence that the virtual XC90 V8 MY2009 has been discovered by real diagnostic software.
 - Existing proprietary diagnostic software and user-owned original binaries are not redistributed here.
+
+- External source review (2026-11-13): [volvo-vida/volvo-vida-diagnostics applicability](research/volvo-vida-diagnostics-applicability.md) separates generic Python CAN/ISO-TP/UDS/J2534 design from Volvo P2 D2 and XC90 V8 MY2009 evidence. The upstream's V40/V60 DBC files were **not** imported, and no third-party GPL/LGPL/MIT code was copied. The new synthetic D2-vs-ISO-TP boundary tests exercise only existing Virtual Car validators.
