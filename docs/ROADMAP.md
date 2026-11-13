@@ -35,3 +35,9 @@
 - No Stable release or merge based solely on source compilation, synthetic VIN, lab fixtures, or assumed CEM positive responses.
 
 See [workflow](CHAT_GITHUB_WORKFLOW_RU.md) and [provenance](PROVENANCE.md).
+
+## External protocol-source integration gate (2026-11-13)
+- See [volvo-vida-diagnostics applicability review](research/volvo-vida-diagnostics-applicability.md) and `emulator/tests/test_vida_transport_boundaries.py`.
+- Retain separate Volvo P2 D2 and standard ISO-TP framing; verify J2534 ABI/flags against independent references, not against the Python client wrapper as a vendor/DiCE implementation.
+- Do not import V40 2017/V60 2015 DBC data into the XC90 V8 MY2009 emulator or treat generic UDS settings as VIDA timings.
+- Research and synthetic framing regression are not an original VIDA ReadVin PASS; unchanged acceptance gates remain in force.
