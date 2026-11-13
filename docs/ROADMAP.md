@@ -41,3 +41,8 @@ See [workflow](CHAT_GITHUB_WORKFLOW_RU.md) and [provenance](PROVENANCE.md).
 - Retain separate Volvo P2 D2 and standard ISO-TP framing; verify J2534 ABI/flags against independent references, not against the Python client wrapper as a vendor/DiCE implementation.
 - Do not import V40 2017/V60 2015 DBC data into the XC90 V8 MY2009 emulator or treat generic UDS settings as VIDA timings.
 - Research and synthetic framing regression are not an original VIDA ReadVin PASS; unchanged acceptance gates remain in force.
+
+## VIDA 2014D CarCom source cross-check (2026-11-13)
+- Review [spnda/volvo_vida_db](research/spnda-volvo-vida-db-applicability.md) for VIDA `T161` / `T160` profile → `T100/T121` ECU/config → `T122/T123` protocol/bus → `T111` service chain. Treat default ECU rows as *candidate topology*, not diagnosed ECUs.
+- The B9FB shape auditor now reports a conditional `vida2014d_d2_rx_filter_candidate` based on the documented odd-29-bit-response-ID J2534 mask. Actual 29-bit flags, channel/baud, filter and client acceptance stay unverified.
+- Keep original VIDA service/route selection and opt-in synthetic B9FB playback as next owner-VMware gates. Do not enable D2 keep-alive, populate A3/A6/B9F0 responses, or import SQL credentials from external code.
