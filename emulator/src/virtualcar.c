@@ -82,6 +82,12 @@ typedef void *HANDLE;
 #define ERR_INVALID_DEVICE_ID 26u
 #define PROTO_CAN 5u
 #define PROTO_ISO15765 6u
+/* Opt-in J2534-2 Volvo MS-CAN pin-switched virtual transport.
+   The wire IDs are distinct from our internal CAN/ISO15765 routing. */
+#define PROTO_CAN_PS 0x8004u
+#define PROTO_ISO15765_PS 0x8005u
+#define J2534_PINS 0x8001u
+#define VOLVO_MS_PINS 0x030Bu
 #define IO_GET_CONFIG 1u
 #define IO_SET_CONFIG 2u
 #define IO_READ_VBATT 3u
@@ -144,6 +150,8 @@ static U32 g_trace_count=0;
 static U32 g_iso_rx_start=0;
 /* Explicit strict receive-filter policy. Legacy behavior is the default. */
 static U32 g_strict_j2534_filters=0;
+/* Default off: ordinary J2534-1 clients must not accept vendor IDs. */
+static U32 g_vida_can_ps_lab=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -173,7 +181,7 @@ typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 #define BACKEND_DROP_INVALID_SIZE 3u
 typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
-    int used; U32 id,protocol,baud,flags;
+    int used; U32 id,protocol,wire_protocol,baud,flags,ms_pins;
     /* Monotonic private connection lifetime. Reused numeric channel IDs
        must not make an in-flight ReadMsgs consume a new channel's FIFO. */
     U64 session_serial;
@@ -205,6 +213,13 @@ typedef struct {
     U32 pending_cf_active,pending_cf_credit,read_timeout_count;
 } CHANNEL;
 static CHANNEL g_ch[MAX_CHANNELS];
+static U32 channel_wire_protocol(const CHANNEL *c) {
+    return c->wire_protocol?c->wire_protocol:c->protocol;
+}
+static int channel_is_ps(const CHANNEL *c) {
+    U32 wire=channel_wire_protocol(c);
+    return wire==PROTO_CAN_PS || wire==PROTO_ISO15765_PS;
+}
 /* Never reset on Open/Close: even a device reopen can reuse channel ID 1. */
 static U64 g_next_channel_serial;
 /* Read-only vehicle-state observer, serialized by g_lock. */
@@ -298,14 +313,15 @@ static U32 connect_result(U32 protocol,U32 flags,U32 baud,U32 status){
 }
 /* J2534 config reports distinguish implemented baud setting from accepted
    no-op options. Unknown parameter IDs and values are deliberately redacted. */
-static void log_set_config(U32 channel_id,U32 parameter,U32 value){
+static void log_set_config(U32 channel_id,U32 parameter,U32 value,U32 applied){
     U8 meta[16];U32 known=0;
     if(parameter==1u || parameter==3u || parameter==23u ||
-       parameter==30u || parameter==31u || parameter==779u)known=1;
+       parameter==30u || parameter==31u || parameter==779u ||
+       parameter==J2534_PINS)known=1;
     u32_be(meta,channel_id);
     u32_be(meta+4,known?parameter:0u);
     u32_be(meta+8,known?value:0u);
-    u32_be(meta+12,parameter==1u?1u:0u);
+    u32_be(meta+12,applied);
     logline("J2534 SET_CONFIG channel/parameter/value/applied (BE)",meta,16);
 }
 
@@ -716,6 +732,8 @@ static void load_config(void) {
     g_iso_rx_start=parse_num(v,0)?1:0;
     GetPrivateProfileStringA("Diagnostics","StrictJ2534Filters","0",v,sizeof(v),g_profile_path);
     g_strict_j2534_filters=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaCanPsLab","0",v,sizeof(v),g_profile_path);
+    g_vida_can_ps_lab=parse_num(v,0)==1u?1u:0u;
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -996,7 +1014,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
         return;
     }
     msg=&c->queue[c->w];bytes_zero(msg,sizeof(*msg));
-    msg->ProtocolID=c->protocol;msg->RxStatus=(response_id>0x7FF?CAN_29BIT_ID:0)|status;
+    msg->ProtocolID=channel_wire_protocol(c);msg->RxStatus=(response_id>0x7FF?CAN_29BIT_ID:0)|status;
     /* J2534 v04.04 Timestamp is in MICROSECONDS, not GetTickCount() milliseconds.
        A wrapping 32-bit free-running clock is normal for J2534. */
     msg->Timestamp=(U32)now_us();
@@ -1021,7 +1039,7 @@ static void enqueue(CHANNEL *c,U32 response_id,const U8 *payload,U32 len){enqueu
 /* Bus-specific recorded traffic. Never cross CAN-LS/HS speed boundaries. */
 static void pump_recorded_trace(CHANNEL *c){
     U32 i,now;
-    if(c->protocol!=PROTO_CAN)return;
+    if(c->protocol!=PROTO_CAN || (channel_is_ps(c) && c->ms_pins!=VOLVO_MS_PINS))return;
     now=GetTickCount();
     for(i=0;i<MAX_PASSIVE_TRACES;i++){
         TRACE_FRAME *t=&g_trace[i];
@@ -1038,7 +1056,8 @@ static void pump_recorded_trace(CHANNEL *c){
 }
 static void maybe_passive_frame(CHANNEL *c){
     U32 now;
-    if(!g_passive_enabled||c->protocol!=PROTO_CAN||c->count>=MAX_QUEUE)return;
+    if(!g_passive_enabled||c->protocol!=PROTO_CAN||c->count>=MAX_QUEUE||
+       (channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS))return;
     now=GetTickCount();
     if((U32)(now-c->passive_next_tick)>=0x80000000u)return;
     c->passive_next_tick=now+g_passive_period_ms;
@@ -1656,7 +1675,7 @@ static void pump_periodic(CHANNEL *c){
         /* Give text-log triage an exact channel/protocol/timing scope for
            scheduled TX without disguising the tick as PassThruWriteMsgs.
            The context contains no VIN, CAN payload or ECU identity. */
-        {U8 meta[20];u32_be(meta,c->id);u32_be(meta+4,c->protocol);
+        {U8 meta[20];u32_be(meta,c->id);u32_be(meta+4,channel_wire_protocol(c));
          u32_be(meta+8,p->msg.TxFlags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now);
          logline("Periodic TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
@@ -1710,7 +1729,18 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     if(!g_open){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);}
     /* P3Tool driver-specific protocol IDs remain rejected, not aliased. */
     if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765){
-        unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
+        /* Do not alias unknown vendor IDs. Known PS channels are available
+           only for the isolated 125-kbit/s lab with 29-bit CAN flag. */
+        if(!g_vida_can_ps_lab ||
+           (protocol!=PROTO_CAN_PS&&protocol!=PROTO_ISO15765_PS)){
+            unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
+        }
+        if(baud!=125000u){
+            unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);
+        }
+        if((flags&~CAN_29BIT_ID)!=0u){
+            unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_FLAGS);
+        }
     }
     /* Zero cannot represent a configured CAN bit rate. */
     if(baud==0u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);}
@@ -1720,7 +1750,10 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     ++g_next_channel_serial;
     if(!g_next_channel_serial)++g_next_channel_serial;
     g_ch[i].session_serial=g_next_channel_serial;
-    g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
+    g_ch[i].wire_protocol=protocol;
+    g_ch[i].protocol=protocol==PROTO_CAN_PS?PROTO_CAN:
+                     protocol==PROTO_ISO15765_PS?PROTO_ISO15765:protocol;
+    g_ch[i].flags=flags;g_ch[i].baud=baud;
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
@@ -1742,7 +1775,9 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
    must not bypass protocol, classic CAN DLC, physical ID and addressing
    guards by entering through a different scheduling API. */
 static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
-    if(m->ProtocolID!=c->protocol)return ERR_MSG_PROTOCOL_ID;
+    if(m->ProtocolID!=channel_wire_protocol(c))return ERR_MSG_PROTOCOL_ID;
+    /* No pin-switched CAN TX until the client's virtual J1962 pin map is set. */
+    if(channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS)return ERR_PIN_INVALID;
     if(m->DataSize>MAX_DATA||m->DataSize<5u||
        (c->protocol==PROTO_CAN && m->DataSize>12u))return ERR_INVALID_MSG;
     if((m->Data[0]&0xE0u)!=0u)return ERR_INVALID_MSG;
@@ -1759,7 +1794,7 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
         if(validity!=ERR_OK){
             *count=i;unlock_state();return error(validity);
         }
-        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,channel_wire_protocol(c));
          u32_be(meta+8,msgs[i].TxFlags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now_us());
          logline("TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
@@ -1799,7 +1834,7 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         while(c->count&&actual<want){
             if(c->queue_ready_us[c->r] && now_us()<c->queue_ready_us[c->r])break;
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
-            {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+            {U8 meta[20];u32_be(meta,id);u32_be(meta+4,channel_wire_protocol(c));
              u32_be(meta+8,msgs[actual].RxStatus);u32_be(meta+12,c->baud);
              u32_be(meta+16,(U32)now_us());
              logline("RX context channel/protocol/status/baud/time-us (BE)",meta,20);}
@@ -1866,14 +1901,23 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
+    if(channel_is_ps(c)){
+        /* Filter registration is metadata-only; VIDA may install it before
+           SET_CONFIG(J2534_PINS). Actual TX and passive RX remain pin-gated. */
+        if(mask->ProtocolID!=channel_wire_protocol(c)||
+           pattern->ProtocolID!=channel_wire_protocol(c)||
+           (flow&&flow->ProtocolID!=channel_wire_protocol(c))){
+            unlock_state();return error(ERR_MSG_PROTOCOL_ID);
+        }
+    }
     if(g_strict_j2534_filters){
         if(c->protocol==PROTO_CAN && type==3u){unlock_state();return error(ERR_NO_FLOW_CONTROL);}
         if(c->protocol==PROTO_ISO15765 && type!=3u){unlock_state();return error(ERR_INVALID_FLAGS);}
-        if(mask->ProtocolID!=c->protocol||pattern->ProtocolID!=c->protocol){
+        if(mask->ProtocolID!=channel_wire_protocol(c)||pattern->ProtocolID!=channel_wire_protocol(c)){
             unlock_state();return error(ERR_MSG_PROTOCOL_ID);
         }
         if(type==3u && !flow){unlock_state();return error(ERR_NULL_PARAMETER);}
-        if(type==3u && flow->ProtocolID!=c->protocol){unlock_state();return error(ERR_MSG_PROTOCOL_ID);}
+        if(type==3u && flow->ProtocolID!=channel_wire_protocol(c)){unlock_state();return error(ERR_MSG_PROTOCOL_ID);}
         if(c->protocol==PROTO_ISO15765 &&
            ((mask->TxFlags|pattern->TxFlags|(flow?flow->TxFlags:0u))&ISO15765_ADDR_TYPE)){
             unlock_state();return error(ERR_NOT_SUPPORTED);
@@ -2007,7 +2051,7 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         bytes_zero(c->queue_raw_response_baud,sizeof(c->queue_raw_response_baud));
         bytes_zero(c->queue_raw_exchange,sizeof(c->queue_raw_exchange));
         bytes_zero(c->queue_trace,sizeof(c->queue_trace));
-        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,channel_wire_protocol(c));
          u32_be(meta+8,c->flags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now_us());
          logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
@@ -2025,19 +2069,30 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
            speed is invalid, including when it appears after a valid rate
            in the same list; leave baud and observer state unchanged. */
         if(ioctl==IO_SET_CONFIG){
-            for(i=0;i<list->NumOfParams;i++)
-                if(list->ConfigPtr[i].Parameter==1u &&
-                   list->ConfigPtr[i].Value==0u){
+            /* Check the entire batch before changing baud or pins. */
+            for(i=0;i<list->NumOfParams;i++){
+                const SCONFIG *opt=&list->ConfigPtr[i];
+                if(opt->Parameter==1u &&
+                   (opt->Value==0u||(channel_is_ps(c)&&opt->Value!=125000u))){
                     unlock_state();return error(ERR_INVALID_BAUDRATE);
                 }
+                if(channel_is_ps(c)&&opt->Parameter==J2534_PINS&&
+                   opt->Value!=VOLVO_MS_PINS){
+                    unlock_state();return error(ERR_PIN_INVALID);
+                }
+            }
         }
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
-                log_set_config(id,s->Parameter,s->Value);
+                if(s->Parameter==1u)c->baud=s->Value;
+                if(channel_is_ps(c)&&s->Parameter==J2534_PINS)c->ms_pins=s->Value;
+                log_set_config(id,s->Parameter,s->Value,
+                               s->Parameter==1u||(channel_is_ps(c)&&s->Parameter==J2534_PINS));
             }
-            if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
+            if(ioctl==IO_GET_CONFIG)
+                s->Value=s->Parameter==1u?c->baud:
+                    (channel_is_ps(c)&&s->Parameter==J2534_PINS?c->ms_pins:0u);
         }
         /* A staged or queued D2 reply belongs to the baud of the original
            B9 request. Re-tuning this channel must not release those frames
