@@ -1444,7 +1444,8 @@ static void supersede_d2_exchange(CHANNEL *c){
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     U32 i;D2_PROFILE *d;const char *route;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
-    /* B3A144: Original VIDA NETWORK also transmits CB 40 AE 1B on LS CAN.
+    /* B3A144: The owner's historical native log has 12 TX entries shaped
+       CB 40 AE 1B on LS CAN; original VIDA process/session is not attested.
        AE is a D2 Read-DTC service, but no validated CEM 0x40 AE1B
        response exists. Recognize the exact padded request ONLY for
        telemetry. Do not emit a guessed EE reply, alter D2 replay state,
