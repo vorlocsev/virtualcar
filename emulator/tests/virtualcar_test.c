@@ -295,6 +295,28 @@ static void test_vmware_route_evidence(U32 dev){
   REQUIRE(terminal_for(start,last_tx_request(start),k==2?"unimplemented_probe":"missing_profile","no_response")==1);
   REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
  }
+ /* B3A144: eight AE1B diagnostic observer cases. These never create
+    an ECU DTC response and never need a physical vehicle or J2534 driver. */
+ for(k=0;k<8u;k++){
+  U8 ae[8]={0xCBu,0x40u,0xAEu,0x1Bu,0,0,0,0};
+  U32 cid=(k==1u||k==2u)?hs:ls;
+  U32 request_id=k==7u?0x000FFFFDu:0x000FFFFEu;
+  U32 size=k==3u?4u:8u,count=1u;
+  const char *selected=k>=4u?"UNHANDLED":"CEM";
+  const char *outcome=k>=4u?"unhandled_request":
+                      (k==1u?"unsupported_bus":"unimplemented_probe");
+  g_p2_strict_routing=k==2u?0u:1u;
+  if(k==4u)ae[7]=0x01u; /* Not the canonical zero-padded probe. */
+  if(k==5u)ae[1]=0x50u; /* Other target is not proven. */
+  if(k==6u)ae[3]=0x1Au; /* Different DTC selector is not proven. */
+  m=frame(PROTO_CAN,request_id,ae,size);
+  start=backend_lines+backend_len;send(cid,&m);
+  require_route(start,selected,1);
+  REQUIRE(terminal_for(start,last_tx_request(start),outcome,"no_response")==1);
+  REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+  REQUIRE(channel(cid)->d2_count==0u&&channel(cid)->count==0u);
+ }
+ g_p2_strict_routing=1u;
  /* 8: opt-out changes neither suppression nor transport behavior. */
  {U32 before=backend_len,count=1;g_backend_enabled=0;
   m=frame(PROTO_CAN,0x7E0,sf_suppressed,3);send(hs,&m);
