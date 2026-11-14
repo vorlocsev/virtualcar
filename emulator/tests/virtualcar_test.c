@@ -2920,13 +2920,14 @@ static void test_b3a152_canps_lab(U32 dev){
  REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,125000u,&ps)==ERR_OK);
  REQUIRE(channel(ps)->protocol==PROTO_CAN&&channel(ps)->wire_protocol==PROTO_CAN_PS);
  puts("PASS B3A152 2: bounded CAN_PS 125k / 0x100 connect");
- /* 3: no traffic or PASS filters until virtual MS pins are set. */
+ /* 3: pre-pin TX is blocked, but metadata-only filter setup is legal. */
  tx=frame(PROTO_CAN_PS,0x000FFFFEu,lab_request,8u);
  n=1u;REQUIRE(PassThruWriteMsgs(ps,&tx,&n,0)==ERR_PIN_INVALID&&n==0u);
  mask=frame(PROTO_CAN_PS,0xFFFFFFFFu,0,0);
  pattern=frame(PROTO_CAN_PS,0x00800003u,0,0);
- REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&filter_id)==ERR_PIN_INVALID);
- puts("PASS B3A152 3: MS pin gate prevents pre-config CAN traffic");
+ REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&filter_id)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(ps,filter_id)==ERR_OK);
+ puts("PASS B3A152 3: pre-pin TX blocked, filter setup allowed");
  /* 4: invalid pins / mixed invalid rates cannot partially change state. */
  REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&badlist,0)==ERR_PIN_INVALID);
  REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&mixedlist,0)==ERR_INVALID_BAUDRATE);
