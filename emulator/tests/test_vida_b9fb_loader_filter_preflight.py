@@ -13,8 +13,8 @@ from audit_vida_b3a53_b9fb_loader import audit_text
 
 def result(section="D2_40", response_id=None, frame=None, count="1"):
     if frame is None:
-        frame = ("C8 40 F9 FB 00 00 00 00" if section == "D2_40"
-                 else "C8 50 F9 FB 00 00 00 00")
+        frame = ("CB 40 F9 FB 00 00 00 00" if section == "D2_40"
+                 else "CB 50 F9 FB 00 00 00 00")
     lines = [f"[{section}]", f"B9FBFrameCount={count}"]
     if response_id is not None:
         lines.append(f"ResponseId={response_id}")
@@ -76,7 +76,7 @@ class VidaB9FBLoaderFilterPreflightTests(unittest.TestCase):
 
     def test_07_missing_or_invalid_b9fb_does_not_claim_filter_gate(self):
         empty = result(count="0")
-        broken = result(frame="C8 50 F9 FB 00 00 00 00")
+        broken = result(frame="CB 50 F9 FB 00 00 00 00")
         self.assertEqual(empty["static_loader_class"], "zero_frame_count")
         self.assertEqual(broken["static_loader_class"],
                          "invalid_d2_frame_sequence")
@@ -88,7 +88,7 @@ class VidaB9FBLoaderFilterPreflightTests(unittest.TestCase):
         text = ("[Vehicle]\nVIN=PRIVATE_VALUE_SHOULD_STAY_LOCAL\n"
                 "[D2_50]\nB9FBFrameCount=1\n"
                 "ResponseId=01200003\n"
-                "B9FBFrame0=C8 50 F9 FB 00 00 00 00\n")
+                "B9FBFrame0=CB 50 F9 FB 00 00 00 00\n")
         output = audit_text(text)
         report = json.dumps(output)
         for prohibited in ("PRIVATE_VALUE", "01200003", "C8 50 F9",

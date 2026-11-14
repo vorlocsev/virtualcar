@@ -44,8 +44,9 @@ typedef void *HANDLE;
 #define MAX_ECUS 8
 #define MAX_D2_FRAMES 64
 #define MAX_PERIODIC 4
-#define MAX_D2_FIXTURES 14
+#define MAX_D2_FIXTURES 15
 #define BASE_D2_FIXTURES 6
+#define CEM_AE1B_FIXTURE 14
 #define MAX_PASSIVE_TRACES 12
 #define MAX_EXTRA_DID 192
 #define MAX_EXTRA_DID_SLOTS 4
@@ -152,7 +153,7 @@ static ECU g_ecu[MAX_ECUS];
 /* Optional read-only replay fixtures: user must supply verified, non-sensitive
    CAN frames. No invented B9 FB vehicle-configuration payloads. */
 typedef struct {
-    U8 target,subcommand;
+    U8 target,subcommand,service; /* zero preserves legacy B9 fixtures */
     U32 response_id, frame_count, baud;
     U8 frame[MAX_D2_FRAMES][8];
 } D2_PROFILE;
@@ -365,6 +366,15 @@ static int cem_d2_probe_shape(const U8 *p,U32 n){
            (p[1]==0x40u||p[1]==0x50u) &&
            (p[2]==0xA3u||p[2]==0xA6u);
 }
+/* Only the observed CEM_40 read-DTC mode is admitted. No erase/write service,
+   other selector, or presumed interchangeable CEM_50 address is enabled. */
+static int cem_d2_ae1b_shape(const U8 *p,U32 n){
+    U32 j;
+    if(!p || n<4u || n>8u || p[0]!=0xCBu || p[1]!=0x40u ||
+       p[2]!=0xAEu || p[3]!=0x1Bu)return 0;
+    for(j=4u;j<n;j++)if(p[j])return 0;
+    return 1;
+}
 /* Observer only: a bounded catalogue from drpioneer/Volvo-P2-informer
    main@9cd3a6f603915e074ac28c73eccec6b7473e8297. Those frames came from a
    2.5T project, NOT an OEM XC90 V8 identity/response fixture.
@@ -427,6 +437,8 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
     id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
     p=m->Data+4;n=m->DataSize-4;
+    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && cem_d2_ae1b_shape(p,n))
+        return "D2_40_AE1B";
     /* These source-labelled families are metadata only, never new CAN RX. */
     {
         const char *informer=p2_informer_probe_name(c,id,p,n);
@@ -614,15 +626,21 @@ static void backend_cancel_channel(CHANNEL *c,const char *reason,int d2_only) {
 /* Validates framing only. No assertion about undocumented FB semantics. */
 static int validate_d2_fixture(const D2_PROFILE *d){
     U32 k;U8 base,seq=1;int final=0;
+    U8 service=d->service?d->service:0xB9u;
     if(!d->frame_count || d->frame_count>MAX_D2_FRAMES || d->response_id>0x1FFFFFFFu)return 0;
     if(d->frame_count==1){
         const U8 *f=d->frame[0];
+        U32 declared;
         if((f[0]&0xF8)!=0xC8 || f[1]!=d->target)return 0;
-        return (f[2]==0xF9 && f[3]==d->subcommand) ||
-               (f[2]==0x7F && f[3]==0xB9);
+        /* C8 + significant-byte count includes the ECU address. Echo bytes
+           in CAN padding are not a response; a negative also needs its NRC.
+           Padding contents themselves are unspecified and remain ignored. */
+        declared=(U32)(f[0]-0xC8u);
+        return (declared>=3u && f[2]==(U8)(service+0x40u) && f[3]==d->subcommand) ||
+               (declared>=4u && f[2]==0x7F && f[3]==service);
     }
     if((d->frame[0][0]!=0x8F && d->frame[0][0]!=0x97) ||
-       d->frame[0][1]!=d->target || d->frame[0][2]!=0xF9 ||
+       d->frame[0][1]!=d->target || d->frame[0][2]!=(U8)(service+0x40u) ||
        d->frame[0][3]!=d->subcommand)return 0;
     base=(d->frame[0][0]&0x10)?0x10:0x08;
     for(k=1;k<d->frame_count;k++){
@@ -644,7 +662,7 @@ static int validate_d2_fixture(const D2_PROFILE *d){
         /* A duplicated first frame after the sub-block boundary is observed
            in VIDA; it is not a new response or a payload segment. */
         if(header==0x8F && k>1 && (d->frame[k-1][0]&0xF8)==0x50 &&
-           d->frame[k][1]==d->target && d->frame[k][2]==0xF9 &&
+           d->frame[k][1]==d->target && d->frame[k][2]==(U8)(service+0x40u) &&
            d->frame[k][3]==d->subcommand)continue;
         if(header!=(U8)(base|seq))return 0;
         seq=(seq+1)&7u;
@@ -657,7 +675,7 @@ static int validate_d2_fixture(const D2_PROFILE *d){
    followed by the 142-byte configuration block. No flash writes occur. */
 static int validate_fc140_fixture(const D2_PROFILE *d){
     U8 stream[7*MAX_D2_FRAMES];U32 n=0,k,j,chunk,sum=0;
-    if(d->subcommand!=0xFC)return 1;
+    if(d->subcommand!=0xFC || (d->service && d->service!=0xB9u))return 1;
     if(!validate_d2_fixture(d))return 0;
     if(d->frame_count!=21 || d->frame[0][0]!=0x8F)return 0;
     for(k=0;k<d->frame_count;k++){
@@ -810,7 +828,12 @@ static void load_config(void) {
         d->target=(U8)((i==0||i==1||i==4)?0x40:0x50);
         d->subcommand=(U8)(i>=4?0xFC:((i%2)==0?0xFB:0xF0));
         d->baud=(d->target==0x40?125000u:500000u);
-        if(i>=BASE_D2_FIXTURES){
+        if(i==CEM_AE1B_FIXTURE){
+            d->target=0x40u;d->subcommand=0x1Bu;d->service=0xAEu;d->baud=125000u;
+            str_copy(section,"D2_40_AE1B",sizeof(section));
+            GetPrivateProfileStringA(section,"Enabled","0",v,sizeof(v),g_profile_path);
+            if(parse_num(v,0)!=1u)continue;
+        }else if(i>=BASE_D2_FIXTURES){
             char digits[3];U32 target,opcode;
             str_copy(section,"D2_Node",sizeof(section));
             digits[0]=(char)('0'+i-BASE_D2_FIXTURES);digits[1]=0;
@@ -842,7 +865,7 @@ static void load_config(void) {
         d->response_id=(d->target==0x40?0x00800003u:0x01000003u);
         if(d->target==0x50 && d->subcommand==0xFB)d->response_id=0x01200003u;
         GetPrivateProfileStringA(section,"ResponseId","",v,sizeof(v),g_profile_path);
-        d->response_id=parse_hex(v,i>=BASE_D2_FIXTURES?0xFFFFFFFFu:d->response_id);
+        d->response_id=parse_hex(v,(i>=BASE_D2_FIXTURES&&i<CEM_AE1B_FIXTURE)?0xFFFFFFFFu:d->response_id);
         if(d->response_id>0x1FFFFFFFu){
             if(i>=BASE_D2_FIXTURES)logline("D2 extra ECU invalid ResponseId ignored",0,0);
             continue;
@@ -880,7 +903,8 @@ static void load_config(void) {
         /* Do not permit duplicate optional targets to shadow the first match. */
         if(i>=BASE_D2_FIXTURES && d->frame_count)
             for(j=0;j<i;j++)if(g_d2[j].frame_count && g_d2[j].target==d->target &&
-                g_d2[j].subcommand==d->subcommand){d->frame_count=0;invalid_p2++;break;}
+                g_d2[j].subcommand==d->subcommand &&
+                g_d2[j].service==d->service){d->frame_count=0;invalid_p2++;break;}
         if(d->frame_count && (!validate_d2_fixture(d) || !validate_fc140_fixture(d))){
             d->frame_count=0;invalid_p2++;
         }
@@ -890,7 +914,7 @@ static void load_config(void) {
     else str_append(g_log_path,"SectorVVirtualCar.log",sizeof(g_log_path));
     logline("VirtualCar DLL initialized (v0.3.6.6 extended configuration DID)",0,0);
     {U8 network_counts[8];U32 active_extra=0,k;
-     for(k=BASE_D2_FIXTURES;k<MAX_D2_FIXTURES;k++)if(g_d2[k].frame_count)active_extra++;
+     for(k=BASE_D2_FIXTURES;k<CEM_AE1B_FIXTURE;k++)if(g_d2[k].frame_count)active_extra++;
      u32_be(network_counts,g_trace_count);u32_be(network_counts+4,active_extra);
      logline("Network ACTIVE passive frames / extra D2 fixtures (BE)",network_counts,8);}
     if(invalid_p2){U8 number[4];u32_be(number,invalid_p2);
@@ -1442,7 +1466,7 @@ static void supersede_d2_exchange(CHANNEL *c){
         logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
 }
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
-    U32 i;D2_PROFILE *d;const char *route;
+    U32 i;D2_PROFILE *d;const char *route;int ae1b;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
     /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
        responses. Keep them silent, but distinguish the known missing emulator
@@ -1469,10 +1493,15 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         }
         return 1;
     }
-    if(len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
-       (data[3]!=0xFBu&&data[3]!=0xF0u&&data[3]!=0xFCu))return 0;
+    ae1b=cem_d2_ae1b_shape(data,len);
+    if(!ae1b && (len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
+       (data[3]!=0xFBu&&data[3]!=0xF0u&&data[3]!=0xFCu)))return 0;
     route=(data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER";
     backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
+    {U8 detail[20];
+     u32_be(detail,c->id);u32_be(detail+4,data[1]);u32_be(detail+8,data[2]);
+     u32_be(detail+12,data[3]);u32_be(detail+16,c->baud);
+     logline("P2 D2 service context channel/target/service/opcode/baud (BE)",detail,20);}
     {U8 detail[16];
      u32_be(detail,data[1]);u32_be(detail+4,data[3]);
      u32_be(detail+8,c->baud);u32_be(detail+12,c->flags);
@@ -1482,7 +1511,8 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     supersede_d2_exchange(c);
     for(i=0;i<MAX_D2_FIXTURES;i++){
         U32 j;
-        d=&g_d2[i];if(data[1]!=d->target||data[3]!=d->subcommand)continue;
+        d=&g_d2[i];if(data[1]!=d->target||data[3]!=d->subcommand ||
+                     data[2]!=(d->service?d->service:0xB9u))continue;
         if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
             logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
             backend_event(c,c->active_trace,"request_completed",route,"unsupported_bus","no_response");
