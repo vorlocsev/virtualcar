@@ -195,14 +195,19 @@ class VidaDualWindowTests(unittest.TestCase):
         ])
         self.assertEqual(sum(result["request_counts"].values()), 0)
 
-    def test_12_only_native_hex_lines_with_prefix_are_accepted(self):
+    def test_12_bounded_native_can_lengths_and_malformed_hex(self):
+        # Native process_d2() accepts 4..8 D2 bytes, not 8 only.
+        # 4 CAN-ID bytes + 7 data bytes is therefore a VALID request.
         result = self.b3a147_report([
             "TX (app request) 00 0F FF FE CB 40 B9 FB 0X 00 00 00",
             "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 B9",
             "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00 77",
             "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00 SECRET",
         ])
-        self.assertEqual(sum(result["request_counts"].values()), 0)
+        self.assertEqual(result["request_counts"]["CEM_40/B9FB"], 1)
+        self.assertEqual(sum(result["request_counts"].values()), 1)
+        self.assertEqual(result["requests_with_nonzero_ignored_trailer"]["CEM_40/B9FB"], 0)
 
     def test_13_nonzero_tail_is_metadata_not_an_invalid_request(self):
         result = self.b3a147_report([
