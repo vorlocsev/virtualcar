@@ -16,7 +16,7 @@ import sys
 from audit_vida_b3a54_private_b9fb_vin import _identity_json, _read_identity_file
 
 
-CONTRACT = "cem40-synthetic-envelope-v2"
+CONTRACT = "cem40-synthetic-envelope-v3"
 OUTPUT_NAME = "b3a146-cem40-lab.ini"
 MAX_BYTES = 512 * 1024
 RESPONSE_ID = "00800003"
@@ -89,7 +89,7 @@ def _fixture(cfg, section, frames, *, b9fb=False):
         cfg[section][f"{prefix}{index:X}"] = frame.hex(" ").upper()
 
 
-def _contract(vin, enable_synthetic_b9f0):
+def _contract(vin, enable_synthetic_b9f0, enable_synthetic_ae1b=False):
     cfg = configparser.ConfigParser(interpolation=None, strict=True)
     cfg.optionxform = str
     cfg["Vehicle"] = {"VIN": vin, "ModelYear": "2009", "BatteryMv": "12500",
@@ -110,6 +110,14 @@ def _contract(vin, enable_synthetic_b9f0):
     _fixture(cfg, "D2_40_B9FC", [])
     _fixture(cfg, "D2_50_B9FC", [])
     cfg["D2_50_B9FC"]["ResponseId"] = "01200003"
+    _fixture(cfg, "D2_40_AE1B", encode_d2(b"\x40\xee\x1b") if enable_synthetic_ae1b else [])
+    cfg["D2_40_AE1B"]["Enabled"] = "1" if enable_synthetic_ae1b else "0"
+    cfg["Provenance_CEM40_AE1B"] = {
+        "Origin": "synthetic_empty_DTC_list_not_vehicle_measurement",
+        "Grammar": "original_CarCom_T111_AE1B_Mode8_then_fixedlist",
+        "ParserEvidence": "original_ResponseHandler_empty_list_offline",
+        "NetworkAcceptance": "not_verified",
+    }
     cfg["PassiveCAN"] = {"Enabled": "0"}
     cfg["PassiveTrace"] = {"Enabled": "0"}
     cfg["LabContract"] = {
@@ -168,7 +176,8 @@ def validate_profile(text, identity_json):
     cfg = _parse(text)
     normalized = _normalized(cfg)
     enabled = normalized.get("d2_40_b9f0", {}).get("framecount") == "3"
-    if normalized != _normalized(_contract(vin, enabled)):
+    ae_enabled = normalized.get("d2_40_ae1b", {}).get("enabled") == "1"
+    if normalized != _normalized(_contract(vin, enabled, ae_enabled)):
         raise ValueError("profile_differs_from_explicit_synthetic_contract")
     for section, prefix, selector in (("d2_40", "b9fbframe", 0xFB),
                                       ("d2_40_b9f0", "frame", 0xF0)):
@@ -177,14 +186,16 @@ def validate_profile(text, identity_json):
                   for i in range(int(values[prefix + "count"]))]
         if frames:
             decode_d2(frames, service=0xF9, selector=selector)
-    return {"contract": CONTRACT, "preflight": "PASS", "synthetic": True,
+    if ae_enabled:
+        decode_d2([bytes.fromhex(normalized["d2_40_ae1b"]["frame0"])], service=0xEE, selector=0x1B)
+    return {"ae1b_frames": 1 if ae_enabled else 0, "contract": CONTRACT, "preflight": "PASS", "synthetic": True,
             "b9fb_frames": 13, "b9f0_frames": 3 if enabled else 0,
             "identity_consistency": "PASS", "vida_acceptance": "NOT_VERIFIED",
             "oem_semantics": "NOT_VERIFIED", "activated": False}
 
 
-def build_profile(identity_json, *, enable_synthetic_b9f0=False):
-    cfg = _contract(_identity(identity_json), enable_synthetic_b9f0)
+def build_profile(identity_json, *, enable_synthetic_b9f0=False, enable_synthetic_ae1b=False):
+    cfg = _contract(_identity(identity_json), enable_synthetic_b9f0, enable_synthetic_ae1b)
     stream = io.StringIO()
     stream.write("; PRIVATE SYNTHETIC CEM LAB CONTRACT; NOT OEM XC90 DATA\n")
     stream.write("; Do not publish. Generation does not activate this profile.\n\n")
@@ -220,6 +231,7 @@ def main(argv=None):
     parser.add_argument("--identity-json", type=Path, required=True)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--enable-synthetic-b9f0", action="store_true")
+    parser.add_argument("--enable-synthetic-ae1b", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--profile", type=Path)
     args = parser.parse_args(argv)
@@ -228,23 +240,24 @@ def main(argv=None):
             raise ValueError("explicit_identity_json_required")
         identity = _read_identity_file(args.identity_json)
         if args.validate_only:
-            if args.output or args.enable_synthetic_b9f0 or not args.profile:
+            if args.output or args.enable_synthetic_b9f0 or args.enable_synthetic_ae1b or not args.profile:
                 raise ValueError("invalid_validation_arguments")
             if (args.profile.is_symlink() or not args.profile.is_file() or
                     args.profile.stat().st_size > MAX_BYTES):
                 raise ValueError("invalid_profile_source")
             validate_profile(args.profile.read_text(encoding="utf-8-sig"), identity)
-            print("B3A146_V2: PRIVATE_SYNTHETIC_PREFLIGHT_PASS")
+            print("B3A146_V3: PRIVATE_SYNTHETIC_PREFLIGHT_PASS")
         else:
             if not args.output or args.profile:
                 raise ValueError("new_output_required")
-            content = build_profile(identity, enable_synthetic_b9f0=args.enable_synthetic_b9f0)
+            content = build_profile(identity, enable_synthetic_b9f0=args.enable_synthetic_b9f0,
+                                    enable_synthetic_ae1b=args.enable_synthetic_ae1b)
             write_new(args.output, content)
-            print("B3A146_V2: PRIVATE_LAB_PROFILE_CREATED_NOT_ACTIVATED")
+            print("B3A146_V3: PRIVATE_LAB_PROFILE_CREATED_NOT_ACTIVATED")
         print("OEM semantics, original VIDA ReadVin and ECU identification: NOT_VERIFIED")
         return 0
     except (OSError, ValueError, UnicodeError, configparser.Error):
-        print("B3A146_V2: REJECTED; private values not printed", file=sys.stderr)
+        print("B3A146_V3: REJECTED; private values not printed", file=sys.stderr)
         return 2
 
 

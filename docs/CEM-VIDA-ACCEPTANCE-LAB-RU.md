@@ -19,8 +19,10 @@ PR #344–348 проверены: все открытые draft, ни один �
    Остальные поля — явно синтетические заполнители; реальные номера CEM,
    FYON, TypePNR3, завод и structure week неизвестны. B9F0 opt-in содержит
    15 нулевых байт, не номер запчасти. Это исследовательский контракт,
-   а не согласованный OEM-профиль XC90. AE1B в генераторе не включён:
-   допустимость пустого DTC-списка оригинальным прикладным парсером не доказана.
+   а не согласованный OEM-профиль XC90. AE1B включается только флагом `--enable-synthetic-ae1b`: оригинальный
+   ResponseHandler с неизменённым T111 определением принял mode 1B и пустой
+   DtcList. Это не измерение DTC автомобиля и не доказательство присутствия ECU.
+   Контракт v3 заменяет v2, старый профиль следует заново сгенерировать в новой папке.
 4. Новый сценарий Begin/Snapshot/Finish повторного тестирования использует
    существующий collector, проверяет Registry32, точный путь DLL, PE32,
    неизменность DLL/INI/identity, снимок модулей включая WOW64, целостность
@@ -50,7 +52,13 @@ package 66/20. FYON не является полем двигателя; structu
 Оригинальный VehCom2 D2ResponseInterpreter проверяет service+0x40, а для B9
 дополнительно block offset. `verify_original_vida_d2_headers.ps1` проверяет
 эти методы на синтетических входах без открытия диагностического канала.
-Этот тест не проверяет весь payload parser, ReadVin или пустой список T111.
+Этот тест не проверяет весь payload parser или ReadVin. Дополнительно
+`verify_original_vida_empty_dtc.ps1` выполнил 6 проверок оригинального
+ResponseHandler: Mode=1B, пустой DtcList, отсутствие доступа к базе, другой mode,
+пустой буфер и переход к metadata lookup при непустом списке. Все PASS.
+Использован неизменённый AE/1B fragment из T111, служебная обёртка id=0
+и запрещающий доступ к БД интерфейс. Парсер сам по себе не отклоняет
+отсутствующий mode; строгая проверка длины эмулятора остаётся необходимой.
 
 Внешние источники сверены: [volvo_vida_db](https://github.com/spnda/volvo_vida_db),
 [cem-cracker](https://github.com/vtl/volvo-cem-cracker),
@@ -86,7 +94,7 @@ Explorer. Инструмент Computer Use остановил доступ к �
 | Новая DLL реально загружена VIDA | NOT_TESTED — не активирована |
 | CEM Network Status | NOT_TESTED; последнее подтверждённое пользователем состояние Not responding |
 | ReadVin | NOT_TESTED |
-| T111 | NOT_TESTED; лишь структура и синтетический транспорт |
+| T111 | NOT_TESTED; структура, synthetic transport и offline empty-list parser |
 | T122 | NOT_TESTED |
 | ECU Identification / XC90 V8 MY2009 | NOT_TESTED |
 
@@ -98,7 +106,7 @@ CEM_40/B9F0 и B9FB. Следующий блокер: неизвестные в�
 ## Один сценарий повторной проверки
 
 1. В отдельном lab-каталоге создать профиль генератором
-   `build_b3a146_cem40_lab_profile.py --identity-json <private JSON> --output <lab>/b3a146-cem40-lab.ini --enable-synthetic-b9f0`.
+   `build_b3a146_cem40_lab_profile.py --identity-json <private JSON> --output <lab>/b3a146-cem40-lab.ini --enable-synthetic-b9f0 --enable-synthetic-ae1b`.
 2. Сначала `--validate-only --profile <INI> --identity-json <JSON>`.
    Для контролируемой активации остановить диагностический клиент, сохранить
    текущую конфигурацию, выбрать отдельный lab adapter и новую копию DLL с
@@ -118,3 +126,33 @@ CEM_40/B9F0 и B9FB. Следующий блокер: неизвестные в�
    В текущем сеансе штатные DLL/INI/реестр не менялись, откат им не требуется.
 
 Приватные INI, manifest, скриншоты и полные журналы не публиковать в GitHub.
+
+Продолжение PR #350: генератор/аудит 11/11 focused PASS. Оригинальный
+empty-DTC parser 6/6 PASS. Новый профиль создан в отдельной private lab-папке,
+не активирован. Изменения не затрагивают штатную DLL, регистрацию или Dvinholm.
+
+Полный Python suite после продолжения: **904 теста, 3 skip, PASS**.
+`verify_cem40_lab_runtime.ps1` прошёл с private profile v3 и исходной x86 DLL
+PR #350: B9F0=3, B9FB=13, AE1B=1 кадр; CAN/125000, RxStatus CAN_29BIT_ID,
+odd-ID PASS filter, terminal length и пустая очередь проверены. DLL загружена
+только отдельным тестовым процессом из новой папки, не оригинальной VIDA.
+
+Фактические замеры финального запуска (Stopwatch, время от начала WriteMsgs
+до возврата ReadMsgs, с накладными расходами журнала):
+
+| Ответ | Первый кадр, мс | Последний, мс | min/max между возвратами, мс |
+|---|---:|---:|---:|
+| B9F0 | 4.017 | 33.301 | 1.379 / 27.905 |
+| B9FB | 3.284 | 153.638 | 0.782 / 26.639 |
+| AE1B | 3.671 | 3.671 | неприменимо |
+
+Это измерение выдачи J2534, не времени обработки в VIDA. Конфигурация 12 мс
+не является доказательством интервала 12 мс между возвратами клиенту.
+Повторить без регистрации: `verify_cem40_lab_runtime.ps1 -DllPath <built DLL>
+-ProfilePath <private generated INI> -IdentityJson <private JSON>
+-OutputDirectory <new directory outside checkout>`.
+Оригинальный empty-list parser: `verify_original_vida_empty_dtc.ps1
+-VehicleServicesAssembly <original BizServices.CarCom.VehicleServices.DLL>
+-DefinitionXml <private unchanged AE1B definition fragment from T111>`
+в 32-битной Windows PowerShell. Фрагмент извлекается read-only из локального
+CarCom; в репозиторий не входит.

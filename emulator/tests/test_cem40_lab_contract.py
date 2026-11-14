@@ -15,6 +15,26 @@ IDENTITY = json.dumps({'Vehicle': {'VIN': 'YV1CZ000290000001', 'ModelYear': 2009
 
 
 class ContractTests(unittest.TestCase):
+    def test_ae1b_opt_in_and_exact_original_empty_list_shape(self):
+        for f0 in (False, True):
+            for ae in (False, True):
+                text = lab.build_profile(IDENTITY, enable_synthetic_b9f0=f0, enable_synthetic_ae1b=ae)
+                self.assertEqual(lab.validate_profile(text, IDENTITY)['ae1b_frames'], int(ae))
+                cfg = configparser.ConfigParser()
+                cfg.read_string(text)
+                self.assertEqual(cfg['D2_40_AE1B']['Enabled'], str(int(ae)))
+                if ae:
+                    self.assertEqual(bytes.fromhex(cfg['D2_40_AE1B']['Frame0']),
+                                     bytes.fromhex('CB 40 EE 1B 00 00 00 00'))
+
+    def test_ae1b_cannot_silently_change_mode_echo_length_or_enable(self):
+        text = lab.build_profile(IDENTITY, enable_synthetic_ae1b=True)
+        for replacement in ('CA 40 EE 1B', 'CB 50 EE 1B', 'CB 40 F9 1B', 'CB 40 EE 1A'):
+            with self.assertRaises(ValueError):
+                lab.validate_profile(text.replace('CB 40 EE 1B', replacement), IDENTITY)
+        with self.assertRaises(ValueError):
+            lab.validate_profile(text.replace('FrameCount = 1', 'FrameCount = 0'), IDENTITY)
+
     def test_private_identity_consistency(self):
         text = lab.build_profile(IDENTITY)
         report = lab.validate_profile(text, IDENTITY)
