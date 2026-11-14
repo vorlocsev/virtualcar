@@ -120,10 +120,22 @@ class B3A141Tests(unittest.TestCase):
                          'single_frame_length_and_padding_candidate')
         self.assertFalse(row['actual_rx_or_filter_verification'])
 
-    def test_19_nonzero_padding_is_rejected(self):
+    def test_19_nonzero_ignored_tail_is_not_a_wire_failure(self):
         row = fixture('CC 40 F9 F0 55 02 00 00')
         self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
-                         'nonzero_single_frame_padding')
+                         'single_frame_nonzero_tail_ignored_candidate')
+
+    def test_22_nonzero_residue_does_not_make_empty_echo_identity(self):
+        row = fixture('CB 40 F9 F0 41 41 41 41')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
+                         'positive_echo_only_no_identity_payload')
+
+    def test_23_negative_reply_with_nonzero_tail_is_still_not_identity(self):
+        row = fixture('CC 40 7F B9 12 91 80 01')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
+                         'single_frame_nonzero_tail_ignored_candidate')
+        self.assertEqual(row['static_loader_class'],
+                         'structural_negative_not_ecu_identity')
 
     def test_20_multiframe_is_not_mistaken_for_single_frame(self):
         row = fixture('8F 40 F9 F0 00 00 00 00',
