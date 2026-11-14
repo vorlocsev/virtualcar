@@ -94,7 +94,7 @@ def _shape(frames, target):
 
 
 def _single_frame_wire_class(frames, native_class):
-    """Additional VIDA-style length/padding preflight, not a native loader claim.
+    """Additional VIDA-style declared-length preflight, not a native loader claim.
 
     In Volvo D2 a single-frame marker is C8 + meaningful-byte count.
     Native validate_d2_fixture currently checks only its high five bits,
@@ -109,10 +109,13 @@ def _single_frame_wire_class(frames, native_class):
     meaningful = frame[0] & 0x07
     if meaningful < 3:
         return 'declared_length_shorter_than_target_and_echo'
-    if any(frame[1 + meaningful:]):
-        return 'nonzero_single_frame_padding'
     if meaningful == 3 and frame[2:4] == b'\xf9\xf0':
         return 'positive_echo_only_no_identity_payload'
+    if any(frame[1 + meaningful:]):
+        # Volvo D2 examples contain ignored residual bytes beyond the
+        # declared single-frame payload. Do NOT reject an otherwise valid
+        # single-frame header solely because this tail is non-zero.
+        return 'single_frame_nonzero_tail_ignored_candidate'
     return 'single_frame_length_and_padding_candidate'
 
 
