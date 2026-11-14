@@ -103,5 +103,39 @@ class B3A141Tests(unittest.TestCase):
         self.assertEqual(fixture(*frames)['static_loader_class'], 'structural_positive_not_oem_verified')
 
 
+    def test_16_native_acceptance_does_not_mean_wire_length_accepted(self):
+        row = fixture('C8 40 F9 F0 00 00 00 00')
+        self.assertEqual(row['static_loader_class'], 'structural_positive_not_oem_verified')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
+                         'declared_length_shorter_than_target_and_echo')
+
+    def test_17_minimal_echo_without_identity_data(self):
+        row = fixture('CB 40 F9 F0 00 00 00 00')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
+                         'positive_echo_only_no_identity_payload')
+
+    def test_18_valid_length_and_zero_padding_only_candidate(self):
+        row = fixture('CC 40 F9 F0 55 00 00 00')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
+                         'single_frame_length_and_padding_candidate')
+        self.assertFalse(row['actual_rx_or_filter_verification'])
+
+    def test_19_nonzero_padding_is_rejected(self):
+        row = fixture('CC 40 F9 F0 55 02 00 00')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
+                         'nonzero_single_frame_padding')
+
+    def test_20_multiframe_is_not_mistaken_for_single_frame(self):
+        row = fixture('8F 40 F9 F0 00 00 00 00',
+                      '09 00 00 00 00 00 00 00',
+                      '4F 00 00 00 00 00 00 00')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'],
+                         'multiframe_native_shape_only')
+
+    def test_21_invalid_frame_does_not_claim_wire_eligibility(self):
+        row = fixture('CC 50 F9 F0 55 00 00 00')
+        self.assertEqual(row['vida_d2_single_frame_wire_candidate'], 'not_evaluated')
+
+
 if __name__ == '__main__':
     unittest.main()
