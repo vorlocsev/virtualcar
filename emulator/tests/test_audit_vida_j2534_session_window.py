@@ -156,5 +156,104 @@ class VidaDualWindowTests(unittest.TestCase):
         self.assertFalse(item["original_vida_selected_driver_verified"])
 
 
+    # B3A147: eight extra synthetic groups added to the existing eight,
+    # using exactly the native logline TX message and complete D2 metadata.
+    def b3a147_report(self, events):
+        self.vida.write_text("original baseline\n", encoding="utf-8")
+        self.virtual.write_text("native baseline\n", encoding="utf-8")
+        self.invoke("baseline")
+        with self.virtual.open("a", encoding="utf-8") as stream:
+            stream.write("".join(line(event) for event in events))
+        return self.report()["cem_d2_append_window"]
+
+    def test_09_exact_cem40_services_are_counted_separately(self):
+        result = self.b3a147_report([
+            "TX (app request) 00 0F FF FE CB 40 B9 F0 00 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 B9 FC 00 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 AE 1B 00 00 00 00",
+        ])
+        for service in ("B9F0", "B9FB", "B9FC", "AE1B"):
+            self.assertEqual(result["request_counts"]["CEM_40/" + service], 1)
+        self.assertEqual(result["request_counts"]["CEM_50/B9FB"], 0)
+
+    def test_10_cem50_is_not_attributed_to_cem40(self):
+        result = self.b3a147_report([
+            "TX (app request) 00 0F FF FE CB 50 B9 FB 00 00 00 00",
+            "TX (app request) 00 0F FF FE CB 50 AE 1B 00 00 00 00",
+        ])
+        self.assertEqual(result["request_counts"]["CEM_50/B9FB"], 1)
+        self.assertEqual(result["request_counts"]["CEM_50/AE1B"], 1)
+        self.assertEqual(result["request_counts"]["CEM_40/B9FB"], 0)
+
+    def test_11_unrelated_can_id_and_unknown_target_never_match(self):
+        result = self.b3a147_report([
+            "TX (app request) 00 0F FF FD CB 40 B9 FB 00 00 00 00",
+            "TX (app request) 00 0F FF FE CB 60 B9 FB 00 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 B9 F8 00 00 00 00",
+            "TX (app request) 00 0F FF FE CA 40 B9 FB 00 00 00 00",
+        ])
+        self.assertEqual(sum(result["request_counts"].values()), 0)
+
+    def test_12_only_native_hex_lines_with_prefix_are_accepted(self):
+        result = self.b3a147_report([
+            "TX (app request) 00 0F FF FE CB 40 B9 FB 0X 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00 77",
+            "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00 SECRET",
+        ])
+        self.assertEqual(sum(result["request_counts"].values()), 0)
+
+    def test_13_nonzero_tail_is_metadata_not_an_invalid_request(self):
+        result = self.b3a147_report([
+            "TX (app request) 00 0F FF FE CB 40 AE 1B 01 00 00 00",
+            "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00",
+        ])
+        self.assertEqual(result["request_counts"]["CEM_40/AE1B"], 1)
+        self.assertEqual(result["requests_with_nonzero_ignored_trailer"]["CEM_40/AE1B"], 1)
+        self.assertEqual(result["requests_with_nonzero_ignored_trailer"]["CEM_40/B9FB"], 0)
+
+    def test_14_native_d2_markers_are_global_not_request_correlated(self):
+        result = self.b3a147_report([
+            "TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00",
+            "P2 D2 read command: no validated response fixture CB 40 B9 FB",
+            "P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE) "
+            "00 00 00 01 00 00 00 05 00 00 00 01 00 00 00 10 00 00 00 20",
+            "RX discarded by installed J2534 filter 00 80 00 03",
+        ])
+        marks = result["global_native_markers_unattributed_to_specific_request"]
+        self.assertEqual(marks["read_no_fixture"], 1)
+        self.assertEqual(marks["d2_delivered"], 1)
+        self.assertEqual(marks["rx_filter_drop"], 1)
+        self.assertFalse(result["specific_request_to_d2_rx_delivery_verified"])
+
+    def test_15_d2_delivery_without_request_does_not_attest_vida(self):
+        result = self.b3a147_report([
+            "P2 D2 read-only recorded frames staged CB 50 B9 FB",
+            "P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE) 00",
+        ])
+        self.assertEqual(sum(result["request_counts"].values()), 0)
+        self.assertEqual(
+            result["global_native_markers_unattributed_to_specific_request"]["d2_delivered"], 1)
+        self.assertFalse(result["original_vida_ecu_or_vin_acceptance_verified"])
+        self.assertFalse(result["original_vida_process_or_session_binding_verified"])
+
+    def test_16_report_is_privacy_safe_even_when_native_log_contains_secret(self):
+        secret = "VIN_PRIVATE_ABC123456789"
+        self.vida.write_text("old\n", encoding="utf-8")
+        self.virtual.write_text("old\n", encoding="utf-8")
+        self.invoke("baseline")
+        with self.virtual.open("a", encoding="utf-8") as stream:
+            stream.write(line("TX (app request) 00 0F FF FE CB 40 B9 FB 00 00 00 00"))
+            stream.write(line("PassThruReadMsgs -> delivered " + secret))
+        report = self.report()
+        output = json.dumps(report, ensure_ascii=False)
+        self.assertNotIn(secret, output)
+        self.assertNotIn("1234ABCD", output)
+        self.assertNotIn(str(self.vida), output)
+        self.assertNotIn(str(self.virtual), output)
+        self.assertEqual(report["cem_d2_append_window"]["request_counts"]["CEM_40/B9FB"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
