@@ -167,6 +167,50 @@ def _external(path, sources):
         raise ValueError("private output must be outside source tree and logs")
 
 
+# B3A147: service/target counts from the *already bounded append window*.
+# Each request is four CAN ID bytes followed by a D2 CB target service selector.
+# No VIN, raw payload, process identity, or CAN response ID enters the report.
+CEM_D2_ROUTES = {
+    (target, service, selector): f"CEM_{target:02X}/{service:02X}{selector:02X}"
+    for target in (0x40, 0x50)
+    for service, selector in ((0xB9, 0xF0), (0xB9, 0xFB),
+                              (0xB9, 0xFC), (0xAE, 0x1B))
+}
+CEM_D2_NATIVE_MARKERS = {
+    "read_staged": "P2 D2 read-only recorded frames staged",
+    "d2_delivered": "P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)",
+    "read_no_fixture": "P2 D2 read command: no validated response fixture",
+    "read_no_target": "P2 D2 command: no recorded ECU fixture for target",
+    "read_wrong_bus": "P2 D2 strict route rejected (no fixture emitted)",
+    "rx_filter_drop": "RX discarded by installed J2534 filter",
+    "ae1b_not_implemented": "P2 D2 CEM AE1B: read DTC not implemented (no validated response)",
+    "ae1b_wrong_bus": "P2 D2 CEM AE1B strict bus mismatch: no response",
+}
+
+
+def _cem_d2_tx(event):
+    """Return a categorical D2 request, never response bytes.
+
+    A D2 request's declared three bytes are target+service+selector;
+    its remaining raw CAN bytes may contain padding or ignored residue.
+    Source attribution and J2534 channel still require separate evidence.
+    """
+    prefix = "TX (app request) "
+    if not event.startswith(prefix):
+        return None
+    parts = event[len(prefix):].split()
+    if not 8 <= len(parts) <= 12 or any(
+            re.fullmatch(r"[0-9A-Fa-f]{2}", part) is None for part in parts):
+        return None
+    raw = bytes(int(part, 16) for part in parts)
+    if raw[:4] != b"\x00\x0f\xff\xfe" or raw[4] != 0xCB:
+        return None
+    label = CEM_D2_ROUTES.get((raw[5], raw[6], raw[7]))
+    if label is None:
+        return None
+    return label, bool(any(raw[8:]))
+
+
 def summarize(vida_lines, virtual_lines, vida_bytes, virtual_bytes, dropped):
     vida_count = Counter()
     for line in vida_lines:
@@ -175,6 +219,9 @@ def summarize(vida_lines, virtual_lines, vida_bytes, virtual_bytes, dropped):
             if needle in text:
                 vida_count[key] += 1
     virtual_count = Counter()
+    cem_requests = Counter()
+    cem_nonzero_trailer = Counter()
+    cem_native = Counter()
     hosts = Counter()
     accepted = []
     for line in virtual_lines:
@@ -185,6 +232,15 @@ def summarize(vida_lines, virtual_lines, vida_bytes, virtual_bytes, dropped):
         kind = (hostname[:-4] if hostname.endswith(".exe") else hostname)
         hosts[kind if kind in {"iexplore", "java", "vidamonitor"} else "other"] += 1
         event = line[match.end():]
+        observation = _cem_d2_tx(event)
+        if observation is not None:
+            label, nonzero_tail = observation
+            cem_requests[label] += 1
+            if nonzero_tail:
+                cem_nonzero_trailer[label] += 1
+        for key, marker in CEM_D2_NATIVE_MARKERS.items():
+            if event.startswith(marker):
+                cem_native[key] += 1
         for key, marker in VIRTUAL_TERMS.items():
             if event.startswith(marker):
                 virtual_count[key] += 1
@@ -199,6 +255,20 @@ def summarize(vida_lines, virtual_lines, vida_bytes, virtual_bytes, dropped):
         "incomplete_edge_fragments_ignored": dropped,
         "vida_literal_counts": {k: vida_count[k] for k in VIDA_TERMS},
         "virtual_marker_counts": {k: virtual_count[k] for k in VIRTUAL_TERMS},
+        "cem_d2_append_window": {
+            "request_counts": {value: cem_requests[value]
+                               for value in CEM_D2_ROUTES.values()},
+            "requests_with_nonzero_ignored_trailer": {
+                value: cem_nonzero_trailer[value]
+                for value in CEM_D2_ROUTES.values()
+            },
+            "global_native_markers_unattributed_to_specific_request": {
+                key: cem_native[key] for key in CEM_D2_NATIVE_MARKERS
+            },
+            "original_vida_process_or_session_binding_verified": False,
+            "specific_request_to_d2_rx_delivery_verified": False,
+            "original_vida_ecu_or_vin_acceptance_verified": False,
+        },
         "virtual_host_class_line_counts": dict(sorted(hosts.items())),
         "connect_modes": mode["connect"],
         "set_config_modes": mode["set_config"],
@@ -208,6 +278,7 @@ def summarize(vida_lines, virtual_lines, vida_bytes, virtual_bytes, dropped):
         "vin_accepted_verified": False,
         "limitations": [
             "These are append-only lexical counts, not an attested single GUI session.",
+            "CEM D2 request and native RX marker counts are global and not channel-correlated.",
             "A VirtualCar log may contain other callers; process names are not PID attribution.",
             "Native TX/RX log markers can describe synthetic transport or local K-Line ACK.",
             "No raw VIN, CAN payload, client log line, private path, PID or file hash is exported.",
