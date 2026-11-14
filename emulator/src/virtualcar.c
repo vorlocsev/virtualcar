@@ -1902,7 +1902,8 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
     if(channel_is_ps(c)){
-        if(c->ms_pins!=VOLVO_MS_PINS){unlock_state();return error(ERR_PIN_INVALID);}
+        /* Filter registration is metadata-only; VIDA may install it before
+           SET_CONFIG(J2534_PINS). Actual TX and passive RX remain pin-gated. */
         if(mask->ProtocolID!=channel_wire_protocol(c)||
            pattern->ProtocolID!=channel_wire_protocol(c)||
            (flow&&flow->ProtocolID!=channel_wire_protocol(c))){
