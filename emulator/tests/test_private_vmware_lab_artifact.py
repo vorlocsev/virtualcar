@@ -100,7 +100,7 @@ class PrivateVmwareLabArtifactTests(unittest.TestCase):
         run = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(HELPER), "-RetainValidatedLab"],
-            cwd=ROOT, env=env, capture_output=True, text=True, timeout=15,
+            cwd=ROOT, env=env, capture_output=True, text=True, errors="replace", timeout=15,
         )
         self.assertNotEqual(run.returncode, 0)
         self.assertIn("LAB retention requires owner-authored development push",

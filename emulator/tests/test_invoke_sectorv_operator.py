@@ -42,7 +42,7 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         return subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(WRAPPER), "-Phase", phase, *self.common, *extra],
-            input=input_text, capture_output=True, text=True, timeout=35,
+            input=input_text, capture_output=True, text=True, errors="replace", timeout=35,
         )
 
     def begin(self):
@@ -81,7 +81,7 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         proc = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(WRAPPER), "-Phase", "Begin", *args],
-            capture_output=True, text=True, timeout=35)
+            capture_output=True, text=True, errors="replace", timeout=35)
         self.assertEqual(proc.returncode, 2)
         self.assertFalse(self.session.exists())
         self.assertNotIn(str(self.dir), proc.stderr)
@@ -113,7 +113,7 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(WRAPPER), "-Phase", "Finish", *args,
              "-NonInteractive", *STATES],
-            capture_output=True, text=True, timeout=35)
+            capture_output=True, text=True, errors="replace", timeout=35)
         self.assertEqual(proc.returncode, 2)
         self.assertFalse((self.session / "p0-triage.redacted.json").exists())
         self.assertNotIn(str(self.dir), proc.stderr)
@@ -142,7 +142,7 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         bad = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(WRAPPER), "-Phase", "Begin", *args],
-            capture_output=True, text=True, timeout=35)
+            capture_output=True, text=True, errors="replace", timeout=35)
         self.assertEqual(bad.returncode, 2)
         self.assertFalse(self.session.exists())
         self.assertNotIn(str(self.dir), bad.stderr)
@@ -209,7 +209,7 @@ class GuidedSectorVOperatorTests(unittest.TestCase):
         proc = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(WRAPPER), "-Phase", "Module", *args],
-            capture_output=True, text=True, timeout=35)
+            capture_output=True, text=True, errors="replace", timeout=35)
         self.assertEqual(proc.returncode, 2)
         self.assertFalse((self.session / "p0-module.redacted.json").exists())
         self.assertNotIn(str(self.dir), proc.stderr)
