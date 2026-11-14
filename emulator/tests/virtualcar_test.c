@@ -2892,6 +2892,144 @@ static void test_clear_rx_raw_iso_lifetime(U32 dev){
  puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
 }
 
+
+
+/* B3A145: synthetic CEM_40 B9F0/B9FB transport-only host checks.
+ * These are deliberately fabricated structural fixture bytes, NOT OEM
+ * identifiers, a MY2009 VIN, or an active private INI. This never enters
+ * the native DLL or a test VM's VIDA installation.
+ */
+static void test_b3a145_cem40_transport_only(U32 dev){
+ D2_PROFILE old_fb=g_d2[0],old_f0=g_d2[1],old_fc=g_d2[4];
+ U32 old_filter=g_strict_j2534_filters,old_routing=g_p2_strict_routing;
+ U32 old_spacing=g_d2_spacing_ms,ls=0,hs=0,filter_id=0,n=1;
+ PASSTHRU_MSG request,rx,mask,pattern;
+ CHANNEL *c;
+ const char *start;
+ U64 rid;
+ const U8 f0[8]={0xCBu,0x40u,0xB9u,0xF0u,0,0,0,0};
+ const U8 fb[8]={0xCBu,0x40u,0xB9u,0xFBu,0,0,0,0};
+ const U8 fc[8]={0xCBu,0x40u,0xB9u,0xFCu,0,0,0,0};
+ const U8 ae[8]={0xCBu,0x40u,0xAEu,0x1Bu,0,0,0,0};
+ bytes_zero(&g_d2[0],sizeof(g_d2[0]));
+ bytes_zero(&g_d2[1],sizeof(g_d2[1]));
+ bytes_zero(&g_d2[4],sizeof(g_d2[4]));
+ g_d2[0].target=0x40u;g_d2[0].subcommand=0xFBu;
+ g_d2[0].baud=125000u;g_d2[0].response_id=0x00800003u;
+ g_d2[0].frame_count=3u;
+ /* Structural example only, no vehicle identity meaning. */
+ {const U8 frames[3][8]={
+  {0x8Fu,0x40u,0xF9u,0xFBu,0x01u,0x02u,0x03u,0x04u},
+  {0x09u,0x00u,0x00u,0x00u,0x00u,0x00u,0x00u,0x00u},
+  {0x4Cu,0x00u,0x00u,0x00u,0x00u,0x00u,0x00u,0x00u}};
+  memcpy(g_d2[0].frame,frames,sizeof(frames));}
+ g_d2[1].target=0x40u;g_d2[1].subcommand=0xF0u;
+ g_d2[1].baud=125000u;g_d2[1].response_id=0x00800003u;
+ g_d2[1].frame_count=1u;
+ {const U8 demo[8]={0xCCu,0x40u,0xF9u,0xF0u,0x53u,0,0,0};
+  memcpy(g_d2[1].frame[0],demo,8);}
+ g_d2[4].target=0x40u;g_d2[4].subcommand=0xFCu;
+ g_d2[4].baud=125000u;g_d2[4].response_id=0x00800003u;
+ REQUIRE(validate_d2_fixture(&g_d2[0]));
+ REQUIRE(validate_d2_fixture(&g_d2[1]));
+ REQUIRE(g_d2[4].frame_count==0u);
+ g_strict_j2534_filters=1u;
+ g_p2_strict_routing=1u;
+ g_d2_spacing_ms=0u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,125000u,&ls)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&hs)==ERR_OK);
+ c=channel(ls);REQUIRE(c);
+
+ /* 1. Strict filter default: no PASS, no synthetic CEM response. */
+ request=frame(PROTO_CAN,0x000FFFFEu,f0,8u);
+ start=backend_lines+backend_len;send(ls,&request);
+ rid=last_tx_request(start);
+ REQUIRE(rid&&c->count==0u&&c->d2_count==0u);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ n=1u;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* Install the documented offline odd-29bit-ID candidate mask/pattern=1.
+    This proves host filter behavior, NOT the actual VIDA filters/TxFlags. */
+ mask=frame(PROTO_CAN,1u,0,0);
+ pattern=frame(PROTO_CAN,1u,0,0);
+ REQUIRE(PassThruStartMsgFilter(ls,1u,&mask,&pattern,0,&filter_id)==ERR_OK);
+ REQUIRE(filter_id!=0u);
+
+ /* 2. Synthetic F0 single frame passes 125kbps odd-ID filter. */
+ start=backend_lines+backend_len;send(ls,&request);
+ rid=last_tx_request(start);
+ rx=readmsg(ls);
+ REQUIRE(rx.DataSize==12u&&rx.Data[4]==0xCCu&&rx.Data[5]==0x40u);
+ REQUIRE(rx.Data[6]==0xF9u&&rx.Data[7]==0xF0u);
+ REQUIRE(terminal_for(start,rid,"none","responded")==1u);
+ REQUIRE(c->count==0u&&c->d2_count==0u);
+
+ /* 3. Three synthetic FB frames arrive in sequence at 125kbps. */
+ request=frame(PROTO_CAN,0x000FFFFEu,fb,8u);
+ start=backend_lines+backend_len;send(ls,&request);
+ rid=last_tx_request(start);
+ pump_d2(c);pump_d2(c);
+ rx=readmsg(ls);REQUIRE(rx.Data[4]==0x8Fu&&rx.Data[5]==0x40u);
+ rx=readmsg(ls);REQUIRE(rx.Data[4]==0x09u);
+ rx=readmsg(ls);REQUIRE(rx.Data[4]==0x4Cu);
+ REQUIRE(terminal_for(start,rid,"none","responded")==1u);
+ REQUIRE(c->count==0u&&c->d2_count==0u);
+
+ /* 4. Both CEM_40 reads are silent on the wrong physical bitrate. */
+ request=frame(PROTO_CAN,0x000FFFFEu,f0,8u);
+ start=backend_lines+backend_len;send(hs,&request);
+ rid=last_tx_request(start);
+ REQUIRE(terminal_for(start,rid,"unsupported_bus","no_response")==1u);
+ request=frame(PROTO_CAN,0x000FFFFEu,fb,8u);
+ start=backend_lines+backend_len;send(hs,&request);
+ rid=last_tx_request(start);
+ REQUIRE(terminal_for(start,rid,"unsupported_bus","no_response")==1u);
+ n=1u;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 5. Even response ID cannot bypass the odd-ID J2534 pass mask. */
+ g_d2[1].response_id=0x00800002u;
+ request=frame(PROTO_CAN,0x000FFFFEu,f0,8u);
+ start=backend_lines+backend_len;send(ls,&request);
+ rid=last_tx_request(start);
+ REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ n=1u;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ g_d2[1].response_id=0x00800003u;
+
+ /* 6. A new F0 supersedes unread prior FB frames on this channel. */
+ g_d2_spacing_ms=12u;
+ request=frame(PROTO_CAN,0x000FFFFEu,fb,8u);
+ send(ls,&request);
+ REQUIRE(c->count==1u&&c->d2_count==3u);
+ request=frame(PROTO_CAN,0x000FFFFEu,f0,8u);
+ send(ls,&request);
+ REQUIRE(c->count==1u&&c->d2_count==0u);
+ rx=readmsg(ls);
+ REQUIRE(rx.Data[4]==0xCCu&&rx.Data[7]==0xF0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ g_d2_spacing_ms=0u;
+
+ /* 7. FC configuration remains disabled: never invent CCF. */
+ request=frame(PROTO_CAN,0x000FFFFEu,fc,8u);
+ start=backend_lines+backend_len;send(ls,&request);
+ rid=last_tx_request(start);
+ REQUIRE(terminal_for(start,rid,"missing_profile","no_response")==1u);
+ n=1u;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+
+ /* 8. AE1B remains silent pending an independently validated response,
+    regardless of whether the separate B3A144 observer is merged. */
+ request=frame(PROTO_CAN,0x000FFFFEu,ae,8u);
+ send(ls,&request);
+ n=1u;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(c->count==0u&&c->d2_count==0u);
+
+ REQUIRE(PassThruDisconnect(ls)==ERR_OK);
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ g_d2[0]=old_fb;g_d2[1]=old_f0;g_d2[4]=old_fc;
+ g_strict_j2534_filters=old_filter;g_p2_strict_routing=old_routing;
+ g_d2_spacing_ms=old_spacing;
+ puts("PASS B3A145 CEM_40: 8 synthetic transport-only host cases");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -2904,6 +3042,7 @@ int main(){
  test_raw_isotp_retune_cancels_old_bus(dev);
  test_raw_can_cf_filter_gap_isolation(dev);
  test_d2_strict_filter_no_frame_gaps(dev);
+ test_b3a145_cem40_transport_only(dev);
  test_raw_isotp_supersession_queued_rx(dev);
  test_raw_isotp_fully_staged_retry(dev);
  test_raw_fc_evidence_attribution(dev);
