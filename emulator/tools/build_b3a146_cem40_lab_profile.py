@@ -16,7 +16,7 @@ import sys
 from audit_vida_b3a54_private_b9fb_vin import _identity_json, _read_identity_file
 
 
-CONTRACT = "cem40-synthetic-envelope-v3"
+CONTRACT = "cem40-synthetic-envelope-v4"
 OUTPUT_NAME = "b3a146-cem40-lab.ini"
 MAX_BYTES = 512 * 1024
 RESPONSE_ID = "00800003"
@@ -71,12 +71,12 @@ def decode_d2(frames, *, service, selector):
 
 
 def _b9fb(vin):
-    # ONLY the widths and VIN offset of one historical example are reused.
-    # These are lab-owned field meanings, not inferred Volvo field meanings.
+    # Historical envelope widths plus field types from the local CarCom catalog.
+    # This does not select/prove an OEM schema for the target CEM variant.
     fields = (b"LAB", vin.encode("ascii"), b"000000000", b"000",
-              vin[-6:].encode("ascii"), b"00", b"000000",
+              vin[-6:].encode("ascii"), bytes(2), b"000000",
               b"SYNTHETIC-NOT-OEM!!!")
-    body = b"\x57\x00LAB!" + b"\r\n".join(fields) + b"\r\n"
+    body = b"\x57" + bytes(5) + b"\r\n".join(fields) + b"\r\n"
     if tuple(map(len, fields)) != (3, 17, 9, 3, 6, 2, 6, 20) or len(body) != 88:
         raise ValueError("internal_contract_length")
     return b"\x40\xf9\xfb" + body
@@ -132,7 +132,7 @@ def _contract(vin, enable_synthetic_b9f0, enable_synthetic_ae1b=False):
     cfg["Provenance_CEM40_B9FB"] = {
         "Origin": "entire_payload_synthetic_except_owner_vin",
         "Envelope": "one_observed_88byte_CRLF_example_not_oem_schema",
-        "BinaryPrefix": "synthetic_57_00_LAB_marker_not_oem_checksum",
+        "BinaryPrefix": "synthetic_length87_and_five_zero_BCD_document_bytes",
         "Field0": "LAB_marker_unknown_oem_meaning",
         "Field1": "owner_private_json_VIN",
         "Field2": "synthetic_zero_FYON_not_engine",
@@ -246,18 +246,18 @@ def main(argv=None):
                     args.profile.stat().st_size > MAX_BYTES):
                 raise ValueError("invalid_profile_source")
             validate_profile(args.profile.read_text(encoding="utf-8-sig"), identity)
-            print("B3A146_V3: PRIVATE_SYNTHETIC_PREFLIGHT_PASS")
+            print("B3A146_V4: PRIVATE_SYNTHETIC_PREFLIGHT_PASS")
         else:
             if not args.output or args.profile:
                 raise ValueError("new_output_required")
             content = build_profile(identity, enable_synthetic_b9f0=args.enable_synthetic_b9f0,
                                     enable_synthetic_ae1b=args.enable_synthetic_ae1b)
             write_new(args.output, content)
-            print("B3A146_V3: PRIVATE_LAB_PROFILE_CREATED_NOT_ACTIVATED")
+            print("B3A146_V4: PRIVATE_LAB_PROFILE_CREATED_NOT_ACTIVATED")
         print("OEM semantics, original VIDA ReadVin and ECU identification: NOT_VERIFIED")
         return 0
     except (OSError, ValueError, UnicodeError, configparser.Error):
-        print("B3A146_V3: REJECTED; private values not printed", file=sys.stderr)
+        print("B3A146_V4: REJECTED; private values not printed", file=sys.stderr)
         return 2
 
 

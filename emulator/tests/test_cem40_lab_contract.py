@@ -50,11 +50,20 @@ class ContractTests(unittest.TestCase):
 
     def test_no_historical_engine_type_or_date_claim(self):
         data = lab._b9fb(lab._identity(IDENTITY))[3:]
+        self.assertEqual(data[1:6], bytes(5))  # packed BCD document placeholder
+        self.assertEqual(int.from_bytes(data[54:56], 'big'), 0)  # unsigned factory
         self.assertEqual(data[11:28], lab._identity(IDENTITY).encode())
         self.assertEqual(data[46:52], b'000001')
         self.assertEqual(data[30:39], b'000000000')
         self.assertEqual(data[58:64], b'000000')
         self.assertNotIn(b'200512', data)
+
+    def test_ascii_markers_cannot_reenter_numeric_fields(self):
+        text = lab.build_profile(IDENTITY)
+        # Byte 1..5 are BCD; the old marker carried invalid nibble C.
+        old = text.replace('8F 40 F9 FB 57 00 00 00', '8F 40 F9 FB 57 00 4C 41')
+        self.assertNotEqual(old, text)
+        with self.assertRaises(ValueError): lab.validate_profile(old, IDENTITY)
 
     def test_bad_identity_and_ambiguous_json(self):
         for value in (IDENTITY.replace('2009', '2008'),
