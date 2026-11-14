@@ -1758,6 +1758,46 @@ static void test_can_id_range_guard(U32 dev){
 /* The observed 13-frame D2 transport must not silently interpret 0x48..0x4E
    final markers as seven data bytes. This guards only the 0x08-series example;
    different documented sub-block forms remain transport-unverified. */
+static void test_d2_single_frame_declared_length(void){
+ D2_PROFILE d={0};U32 target,opcode,declared;
+ d.response_id=0x00800003u;d.frame_count=1u;
+ /* 1: all short positive declarations must reject echo in CAN padding.
+    2: complete positive target/service/block echoes retain compatibility. */
+ for(target=0x40u;target<=0x50u;target+=0x10u){
+  d.target=(U8)target;d.frame[0][1]=(U8)target;
+  for(opcode=0xF0u;opcode<=0xFCu;opcode++){
+   if(opcode!=0xF0u&&opcode!=0xFBu&&opcode!=0xFCu)continue;
+   d.subcommand=(U8)opcode;d.frame[0][2]=0xF9u;d.frame[0][3]=(U8)opcode;
+   for(declared=0u;declared<=7u;declared++){
+    d.frame[0][0]=(U8)(0xC8u+declared);
+    REQUIRE(validate_d2_fixture(&d)==(declared>=3u));
+   }
+  }
+ }
+ /* 3: negative echo without an in-length NRC is truncated, even when
+    the padded byte happens to contain a plausible error code. */
+ d.target=0x40u;d.subcommand=0xF0u;d.frame[0][1]=0x40u;
+ d.frame[0][2]=0x7Fu;d.frame[0][3]=0xB9u;d.frame[0][4]=0x31u;
+ for(declared=0u;declared<=7u;declared++){
+  d.frame[0][0]=(U8)(0xC8u+declared);
+  REQUIRE(validate_d2_fixture(&d)==(declared>=4u));
+ }
+ /* 4: padding is not a protocol-defined zero requirement. */
+ d.frame[0][0]=0xCBu;d.frame[0][2]=0xF9u;d.frame[0][3]=0xF0u;
+ memset(d.frame[0]+4,0xAA,4);REQUIRE(validate_d2_fixture(&d));
+ d.frame[0][0]=0xCCu;d.frame[0][2]=0x7Fu;d.frame[0][3]=0xB9u;
+ REQUIRE(validate_d2_fixture(&d));
+ /* 5: declared length never relaxes address, service or block matching. */
+ d.frame[0][1]=0x50u;REQUIRE(!validate_d2_fixture(&d));d.frame[0][1]=0x40u;
+ d.frame[0][3]=0xB8u;REQUIRE(!validate_d2_fixture(&d));
+ d.frame[0][2]=0xF9u;d.frame[0][3]=0xFBu;REQUIRE(!validate_d2_fixture(&d));
+ /* 6: non-SF headers still cannot masquerade as single-frame fixtures. */
+ d.frame[0][3]=0xF0u;
+ d.frame[0][0]=0xC7u;REQUIRE(!validate_d2_fixture(&d));
+ d.frame[0][0]=0xD0u;REQUIRE(!validate_d2_fixture(&d));
+ puts("PASS D2 SF declared length: 6 synthetic length/echo/padding gates");
+}
+
 static void test_known_b9fb_13frame_final_marker(void){
  D2_PROFILE d={0};
  U32 i;
@@ -2892,12 +2932,100 @@ static void test_clear_rx_raw_iso_lifetime(U32 dev){
  puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
 }
 
+/* Opt-in read-only AE1B replay. Empty DTC data below are SYNTHETIC transport
+   fixtures; these tests do not assert VIDA accepts an empty DTC list. */
+static void test_cem40_ae1b_fixture_transport(U32 dev){
+ D2_PROFILE saved=g_d2[CEM_AE1B_FIXTURE],saved_fb=g_d2[0];
+ U32 old_strict=g_strict_j2534_filters,old_route=g_p2_strict_routing;
+ U32 old_spacing=g_d2_spacing_ms,ls=0,peer=0,hs=0,n,filter_id;
+ D2_PROFILE *d=&g_d2[CEM_AE1B_FIXTURE];PASSTHRU_MSG request,rx,mask,pattern;
+ const U8 ae[8]={0xCB,0x40,0xAE,0x1B,0,0,0,0};
+ const U8 fb[8]={0xCB,0x40,0xB9,0xFB,0,0,0,0};
+ const U8 positive[8]={0xCB,0x40,0xEE,0x1B,0,0,0,0};
+ const U8 negative[8]={0xCC,0x40,0x7F,0xAE,0x31,0,0,0};
+ const char *start;U64 rid;CHANNEL *c,*other;
+ g_strict_j2534_filters=1u;g_p2_strict_routing=1u;g_d2_spacing_ms=12u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000u,&ls)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000u,&peer)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000u,&hs)==ERR_OK);
+ mask=frame(PROTO_CAN,1u,0,0);pattern=frame(PROTO_CAN,1u,0,0);
+ REQUIRE(PassThruStartMsgFilter(ls,1u,&mask,&pattern,0,&filter_id)==ERR_OK);
+ REQUIRE(PassThruStartMsgFilter(peer,1u,&mask,&pattern,0,&filter_id)==ERR_OK);
+ REQUIRE(PassThruStartMsgFilter(hs,1u,&mask,&pattern,0,&filter_id)==ERR_OK);
+ c=channel(ls);other=channel(peer);request=frame(PROTO_CAN,0x000FFFFEu,ae,8u);
+ /* 1. Default configuration stays silent, but identifies the actual service. */
+ REQUIRE(d->frame_count==0u&&d->service==0xAEu&&d->target==0x40u);
+ REQUIRE(strcmp(backend_probe_name(c,&request),"D2_40_AE1B")==0);
+ start=backend_lines+backend_len;send(ls,&request);rid=last_tx_request(start);
+ REQUIRE(rid&&terminal_for(start,rid,"missing_profile","no_response")==1u);
+ n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ /* 2. Explicit synthetic positive has AE's EE echo, not B9's F9 echo. */
+ d->response_id=0x00800003u;d->frame_count=1u;memcpy(d->frame[0],positive,8);
+ REQUIRE(validate_d2_fixture(d));send(ls,&request);rx=readmsg(ls);
+ REQUIRE(rx.ProtocolID==PROTO_CAN&&rx.RxStatus==CAN_29BIT_ID&&rx.DataSize==12u);
+ REQUIRE(memcmp(rx.Data+4,positive,8)==0);
+ d->frame[0][2]=0xF9u;REQUIRE(!validate_d2_fixture(d));
+ d->frame[0][2]=0xEEu;d->frame[0][3]=0x1Au;REQUIRE(!validate_d2_fixture(d));
+ /* 3. Explicit negative must echo AE and include an in-length NRC. */
+ memcpy(d->frame[0],negative,8);REQUIRE(validate_d2_fixture(d));
+ send(ls,&request);rx=readmsg(ls);REQUIRE(memcmp(rx.Data+4,negative,8)==0);
+ d->frame[0][0]=0xCBu;REQUIRE(!validate_d2_fixture(d));
+ d->frame[0][0]=0xCCu;d->frame[0][3]=0xB9u;REQUIRE(!validate_d2_fixture(d));
+ memcpy(d->frame[0],positive,8);
+ /* 4. Strict LS route applies even when legacy loose B9 mode is enabled. */
+ g_p2_strict_routing=0u;start=backend_lines+backend_len;send(hs,&request);
+ rid=last_tx_request(start);REQUIRE(terminal_for(start,rid,"unsupported_bus","no_response")==1u);
+ n=1;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ g_p2_strict_routing=1u;
+ /* 5. Other address/mode, truncated header, and noncanonical request padding
+    are not aliases for this one explicitly supported read-only probe. */
+ request.Data[5]=0x50u;send(ls,&request);
+ request.Data[5]=0x40u;request.Data[7]=0x1Au;send(ls,&request);
+ request.Data[7]=0x1Bu;request.Data[4]=0xCAu;send(ls,&request);
+ request.Data[4]=0xCBu;request.Data[8]=1u;send(ls,&request);
+ request.Data[8]=0u;request.DataSize=7u;send(ls,&request);
+ n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ request=frame(PROTO_CAN,0x000FFFFEu,ae,8u);
+ /* 6. AE supersedes stale B9 on its own channel, preserving the peer stream. */
+ bytes_zero(&g_d2[0],sizeof(g_d2[0]));g_d2[0].target=0x40u;
+ g_d2[0].subcommand=0xFBu;g_d2[0].baud=125000u;
+ g_d2[0].response_id=0x00800003u;g_d2[0].frame_count=3u;
+ g_d2[0].frame[0][0]=0x8Fu;g_d2[0].frame[0][1]=0x40u;
+ g_d2[0].frame[0][2]=0xF9u;g_d2[0].frame[0][3]=0xFBu;
+ g_d2[0].frame[1][0]=0x09u;g_d2[0].frame[2][0]=0x49u;
+ REQUIRE(validate_d2_fixture(&g_d2[0]));
+ {PASSTHRU_MSG b9=frame(PROTO_CAN,0x000FFFFEu,fb,8u);send(ls,&b9);send(peer,&b9);}
+ send(ls,&request);REQUIRE(c->d2_count==0u&&c->count==1u);
+ REQUIRE(other->d2_count==3u&&other->count==1u);
+ rx=readmsg(ls);REQUIRE(rx.Data[6]==0xEEu);
+ rx=readmsg(peer);REQUIRE(rx.Data[4]==0x8Fu);
+ advance_test_us(12000u);rx=readmsg(peer);REQUIRE(rx.Data[4]==0x09u);
+ advance_test_us(12000u);rx=readmsg(peer);REQUIRE(rx.Data[4]==0x49u);
+ /* 7. Retrying AE discards its unread previous reply, then CLEAR_RX affects
+    only that channel; the peer's independent reply remains deliverable. */
+ send(ls,&request);send(ls,&request);REQUIRE(c->count==1u);
+ send(peer,&request);REQUIRE(other->count==1u);
+ REQUIRE(PassThruIoctl(ls,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ rx=readmsg(peer);REQUIRE(rx.Data[6]==0xEEu);
+ /* 8. Configured response still obeys actual channel CAN filters. */
+ d->response_id=0x00800002u;start=backend_lines+backend_len;send(ls,&request);
+ rid=last_tx_request(start);REQUIRE(terminal_for(start,rid,"filter_reject","dropped")==1u);
+ n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+ REQUIRE(PassThruDisconnect(ls)==ERR_OK);REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ g_d2[CEM_AE1B_FIXTURE]=saved;g_d2[0]=saved_fb;
+ g_strict_j2534_filters=old_strict;g_p2_strict_routing=old_route;g_d2_spacing_ms=old_spacing;
+ puts("PASS CEM_40 AE1B: 8 opt-in synthetic service/route/isolation gates");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
+ test_cem40_ae1b_fixture_transport(dev);
  test_d2_replay_isolation_on_set_config(dev);
  test_passive_can_replay_retune_isolation(dev);
  test_raw_can_orphan_cf_admission(dev);
@@ -2914,6 +3042,7 @@ int main(){
  test_periodic_tx_transport_parity(dev);
  test_periodic_d2_backend_evidence(dev);
  test_filter_can_id_boundaries(dev);
+ test_d2_single_frame_declared_length();
  test_known_b9fb_13frame_final_marker();
  test_d2_unknown_target_supersession(dev);
  test_d2_a3_a6_supersession(dev);

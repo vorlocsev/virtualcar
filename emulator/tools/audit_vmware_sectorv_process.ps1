@@ -8,6 +8,7 @@ prints private paths, hashes or VINs. A name match is not binary authenticity.
 #>
 [CmdletBinding()]
 param(
+    [switch]$FunctionsOnly,
     [switch]$SelfTest,
     [switch]$OperatorSession,
     [string]$ReferenceDll,
@@ -496,6 +497,12 @@ function Invoke-ModuleSnapshotSelfTests {
     Write-Host 'PASS: 7/7 process module snapshot tests (including x86 DLL enumeration)'
 }
 
+if ($FunctionsOnly) {
+    if ($SelfTest -or $OperatorSession -or $ReferenceDll -or $OutputFile) {
+        throw 'Function import cannot combine with collection or self-test'
+    }
+    return
+}
 if ($SelfTest) {
     if ($OperatorSession -or $ReferenceDll -or $OutputFile) {
         throw 'Self-test cannot combine with operator collection'
