@@ -93,6 +93,29 @@ def _shape(frames, target):
     return 'structural_positive_not_oem_verified' if final else 'missing_terminal_frame'
 
 
+def _single_frame_wire_class(frames, native_class):
+    """Additional VIDA-style length/padding preflight, not a native loader claim.
+
+    In Volvo D2 a single-frame marker is C8 + meaningful-byte count.
+    Native validate_d2_fixture currently checks only its high five bits,
+    and can accept C8 even when target/F9/F0 occupy three data bytes.
+    """
+    if native_class not in ('structural_positive_not_oem_verified',
+                            'structural_negative_not_ecu_identity'):
+        return 'not_evaluated'
+    if len(frames) != 1:
+        return 'multiframe_native_shape_only'
+    frame = frames[0]
+    meaningful = frame[0] & 0x07
+    if meaningful < 3:
+        return 'declared_length_shorter_than_target_and_echo'
+    if any(frame[1 + meaningful:]):
+        return 'nonzero_single_frame_padding'
+    if meaningful == 3 and frame[2:4] == b'\xf9\xf0':
+        return 'positive_echo_only_no_identity_payload'
+    return 'single_frame_length_and_padding_candidate'
+
+
 def _id_class(response_id, target, fallback, explicit):
     if response_id > 0x1FFFFFFF:
         return 'outside_29bit_range'
@@ -169,6 +192,7 @@ def audit_text(source):
             'native_baud_bps': baud,
             'declared_frames': count,
             'static_loader_class': status,
+            'vida_d2_single_frame_wire_candidate': _single_frame_wire_class(frames, status),
             'response_id_source': id_provenance,
             'response_id_evidence_class': _id_class(
                 effective_id, target, default_id, parsed_id is not None),
