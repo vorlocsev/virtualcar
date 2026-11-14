@@ -2892,6 +2892,83 @@ static void test_clear_rx_raw_iso_lifetime(U32 dev){
  puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
 }
 
+
+/* B3A152: isolated J2534-2 MS-CAN transport contract, synthetic host only.
+   This is NOT original VIDA ReadVin or physical DiCE acceptance. */
+static void test_b3a152_canps_lab(U32 dev){
+ U32 ps=0,iso=0,filter_id=0,n;
+ U32 prior_strict=g_strict_j2534_filters;
+ PASSTHRU_MSG tx,rx,mask,pattern;
+ SCONFIG pins={J2534_PINS,VOLVO_MS_PINS};
+ SCONFIG badpins={J2534_PINS,0x0102u};
+ SCONFIG mixed[2]={{J2534_PINS,VOLVO_MS_PINS},{1u,500000u}};
+ SCONFIG getpin={J2534_PINS,0u};
+ SCONFIG_LIST pinlist={1u,&pins},badlist={1u,&badpins};
+ SCONFIG_LIST mixedlist={2u,mixed},getlist={1u,&getpin};
+ static const U8 lab_request[8]={0xCBu,0x40u,0xB9u,0xFBu,0u,0u,0u,0u};
+ static const U8 lab_rx[8]={0x56u,0x43u,0x41u,0x52u,0x4Cu,0x41u,0x42u,0u};
+ static const U8 vin_probe[3]={0x22u,0xF1u,0x90u};
+ /* 1: feature gate off and unknown vendor ID fail closed. */
+ REQUIRE(g_vida_can_ps_lab==0u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,125000u,&ps)==ERR_INVALID_PROTOCOL_ID);
+ g_vida_can_ps_lab=1u;
+ REQUIRE(PassThruConnect(dev,0x8006u,CAN_29BIT_ID,125000u,&ps)==ERR_INVALID_PROTOCOL_ID);
+ puts("PASS B3A152 1: default-off and unknown PS protocol");
+ /* 2: PS route accepts only 125k and permitted 29-bit CAN flags. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,250000u,&ps)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID|0x4u,125000u,&ps)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,125000u,&ps)==ERR_OK);
+ REQUIRE(channel(ps)->protocol==PROTO_CAN&&channel(ps)->wire_protocol==PROTO_CAN_PS);
+ puts("PASS B3A152 2: bounded CAN_PS 125k / 0x100 connect");
+ /* 3: no traffic or PASS filters until virtual MS pins are set. */
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,lab_request,8u);
+ n=1u;REQUIRE(PassThruWriteMsgs(ps,&tx,&n,0)==ERR_PIN_INVALID&&n==0u);
+ mask=frame(PROTO_CAN_PS,0xFFFFFFFFu,0,0);
+ pattern=frame(PROTO_CAN_PS,0x00800003u,0,0);
+ REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&filter_id)==ERR_PIN_INVALID);
+ puts("PASS B3A152 3: MS pin gate prevents pre-config CAN traffic");
+ /* 4: invalid pins / mixed invalid rates cannot partially change state. */
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&badlist,0)==ERR_PIN_INVALID);
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&mixedlist,0)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&getlist,0)==ERR_OK);
+ REQUIRE(getpin.Value==0u&&channel(ps)->baud==125000u&&channel(ps)->ms_pins==0u);
+ puts("PASS B3A152 4: atomic PS pins/rate rejection");
+ /* 5: J2534_PINS=0x030B opt-in, GET_CONFIG and mismatch filtering. */
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&pinlist,0)==ERR_OK);
+ REQUIRE(PassThruIoctl(ps,IO_GET_CONFIG,&getlist,0)==ERR_OK);
+ REQUIRE(getpin.Value==VOLVO_MS_PINS);
+ g_strict_j2534_filters=1u;
+ pattern.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&filter_id)==ERR_MSG_PROTOCOL_ID);
+ pattern.ProtocolID=PROTO_CAN_PS;
+ REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&filter_id)==ERR_OK);
+ puts("PASS B3A152 5: virtual J2534 pins and wire protocol filter");
+ /* 6: RX retains the J2534-2 wire identifier, not internal CAN=5. */
+ enqueue(channel(ps),0x00800003u,lab_rx,8u);
+ rx=readmsg(ps);
+ REQUIRE(rx.ProtocolID==PROTO_CAN_PS && rx.DataSize==12u);
+ REQUIRE(PassThruStopMsgFilter(ps,filter_id)==ERR_OK);
+ puts("PASS B3A152 6: CAN_PS RX wire metadata");
+ /* 7: TX protocol must match wire 0x8004; accepted data are still lab only. */
+ tx.ProtocolID=PROTO_CAN;
+ n=1u;REQUIRE(PassThruWriteMsgs(ps,&tx,&n,0)==ERR_MSG_PROTOCOL_ID&&n==0u);
+ tx.ProtocolID=PROTO_CAN_PS;
+ n=1u;REQUIRE(PassThruWriteMsgs(ps,&tx,&n,0)==ERR_OK&&n==1u);
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK);
+ puts("PASS B3A152 7: wire-only TX and CAN_PS disconnect");
+ /* 8: independent ISO15765_PS channel emits its own wire ProtocolID. */
+ g_strict_j2534_filters=0u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,CAN_29BIT_ID,125000u,&iso)==ERR_OK);
+ REQUIRE(PassThruIoctl(iso,IO_SET_CONFIG,&pinlist,0)==ERR_OK);
+ tx=frame(PROTO_ISO15765_PS,0x7E0u,vin_probe,3u);
+ n=1u;REQUIRE(PassThruWriteMsgs(iso,&tx,&n,0)==ERR_OK&&n==1u);
+ rx=readmsg(iso);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765_PS && rx.DataSize>=7u);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ g_vida_can_ps_lab=0u;g_strict_j2534_filters=prior_strict;
+ puts("PASS B3A152 8: independent ISO15765_PS wire metadata and cleanup");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -2920,6 +2997,7 @@ int main(){
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
+ test_b3a152_canps_lab(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
