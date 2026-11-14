@@ -1,0 +1,171 @@
+# CEM: реализация и граница приёмки
+
+Дата: 2026-11-14. База development: `2731edb474f745184b84feea40428b265b493113`.
+PR #344–348 проверены: все открытые draft, ни один не объединён.
+Этот эксперимент не завершает приёмку автомобиля в оригинальной VIDA.
+
+## Изменения
+
+1. Загрузчик D2 отклоняет SF, в котором declared length не включает адрес,
+   положительное эхо/селектор (минимум 3), либо адрес/7F/service/NRC (минимум 4).
+   Неиспользуемый padding не интерпретируется. Python preflight согласован с C.
+2. Отдельный opt-in `[D2_40_AE1B]`, `Enabled=1`, `FrameCount`, `Frame0...`,
+   `ResponseId=00800003`. По умолчанию ответа нет. Только CAN/125000,
+   `CB 40 AE 1B` с нулевым padding; положительное эхо EE/1B, отрицательное 7F/AE.
+   Передача использует существующую очередь канала и её фильтры. Новый запрос
+   отменяет старую передачу только в своём канале. CEM_50 не добавлен.
+3. Генератор B3A146 переработан: прежние донорские поля не переносятся.
+   VIN поступает из private JSON; chassis-сегмент согласован с его суффиксом.
+   Остальные поля — явно синтетические заполнители; реальные номера CEM,
+   FYON, TypePNR3, завод и structure week неизвестны. B9F0 opt-in содержит
+   15 нулевых байт, не номер запчасти. Это исследовательский контракт,
+   а не согласованный OEM-профиль XC90. AE1B включается только флагом `--enable-synthetic-ae1b`: оригинальный
+   ResponseHandler с неизменённым T111 определением принял mode 1B и пустой
+   DtcList. Это не измерение DTC автомобиля и не доказательство присутствия ECU.
+   Контракт v4 заменяет v2/v3, старый профиль следует заново сгенерировать в новой папке.
+   Поле номера документа теперь содержит пять нулевых BCD-байт: прежний
+   маркер `LAB!` включал недопустимый BCD nibble C. Factory содержит числовой
+   ноль из двух байт вместо ASCII `00` (0x3030). Маркеры синтетического
+   происхождения сохранены в текстовых полях и provenance.
+4. Новый сценарий Begin/Snapshot/Finish повторного тестирования использует
+   существующий collector, проверяет Registry32, точный путь DLL, PE32,
+   неизменность DLL/INI/identity, снимок модулей включая WOW64, целостность
+   исходного префикса журналов. Ничего не регистрирует и не активирует.
+
+## Запросы и источники
+
+Полная необходимая для успеха последовательность пока НЕ установлена.
+Ниже — найденные запросы, не перечень гарантированных обязательных команд.
+
+| Запрос | Подтверждение / текущее ограничение |
+|---|---|
+| CEM_40 B9F0 | Исторические TX на 125000; CarCom: 120 бит, Complete Part Number 8 байт и Diagnostic Software number 7 байт, BCD+ASCII. Реальные значения неизвестны. |
+| CEM_40 B9FB | Исторические TX на 125000; наблюдавшийся envelope 88 байт, не доказанная схема целевого CEM. Положительное эхо F9/FB. |
+| CEM_50 B9FB | История содержит 250000 и 500000; не переносить успешность одного маршрута на другой. |
+| CEM_40 AE1B | 12 исторических TX с именем iexplore; CarCom T111: чтение 2-byte DTC с counters 1,3–7. Ответ Mode8 и список DTC16/C1-16/C3-16/C4-16 (C5–7 имеют нулевую длину в найденном определении). |
+| CEM_40 A3/02 | CarCom: Security Access Mode Request; автоматический положительный ответ не добавлен. |
+| CEM_40 A6/1A, A6/D0 | Исторические TX; ответ не реализован. В CarCom запрос A6 имеет Identifier16 + Mode8: пары 1A/D0 недостаточно для восстановления всех параметров. |
+| B9FC | Имеющийся условный replay сохранён. В просмотренной истории iexplore CEM_40 B9FC не найден; обязательность не установлена. |
+
+В известном B9FB body (без target/F9/FB) offsets: VIN 11/17, FYON 30/9,
+TypePNR3 41/3, chassis 46/6, factory 54/2, structure WEEK 58/6,
+package 66/20. FYON не является полем двигателя; structure week не является
+годом модели. В каталоге CarCom найден также Vehicle Information Section
+длиной 784 бита (98 байт), включая ELVP-complete No в позиции 88/10.
+Поля имеют типы BCD (document 1/5), unsigned (factory 54/2), ASCII
+(VIN, FYON, TypePNR3, chassis, week, package). Найденные варианты каталога
+нельзя автоматически приписать целевому CEM: обязательная длина ответа
+для выбранного ECU ещё не установлена. Контракт v4 сохраняет наблюдавшийся
+88-байтовый envelope и не добавляет неподтверждённое расширение.
+Источник: локальные неизменённые экспорты оригинального CarCom.
+Оригинальные XML/SQL, IL и журналы остаются приватными и в PR не включены.
+
+Оригинальный VehCom2 D2ResponseInterpreter проверяет service+0x40, а для B9
+дополнительно block offset. `verify_original_vida_d2_headers.ps1` проверяет
+эти методы на синтетических входах без открытия диагностического канала.
+Этот тест не проверяет весь payload parser или ReadVin. Дополнительно
+`verify_original_vida_empty_dtc.ps1` выполнил 6 проверок оригинального
+ResponseHandler: Mode=1B, пустой DtcList, отсутствие доступа к базе, другой mode,
+пустой буфер и переход к metadata lookup при непустом списке. Все PASS.
+Использован неизменённый AE/1B fragment из T111, служебная обёртка id=0
+и запрещающий доступ к БД интерфейс. Парсер сам по себе не отклоняет
+отсутствующий mode; строгая проверка длины эмулятора остаётся необходимой.
+`verify_original_vida_field_formats.ps1` проверил оригинальный Formatter.Format
+на шести синтетических BCD/ASCII примерах. Это проверка отдельных типов,
+а не полного B9 ResponseHandler с каталогом выбранного ECU.
+
+Внешние источники сверены: [volvo_vida_db](https://github.com/spnda/volvo_vida_db),
+[cem-cracker](https://github.com/vtl/volvo-cem-cracker),
+[VolvoDiagToolkit](https://github.com/MarvinParanoid/VolvoDiagToolkit),
+[P2-informer](https://github.com/drpioneer/Volvo-P2-informer).
+Исходники сторонних проектов в реализацию не копировались.
+Два указанных сообщения MatthewsVolvoSite вернули HTTP 403; не использованы
+как подтверждение неизвестных полей или последовательности приёмки.
+
+## Выполненные проверки
+
+- Python: полный набор 905 тестов, 3 skip, PASS; контракт профиля — 12/12 PASS.
+- Нативный C host suite: PASS, включая 6 SF и 8 AE1B групп.
+- Оригинальный VehCom2: 7 проверок заголовков PASS; прикладная приёмка не проверена.
+- Новая x86 DLL: PE32, ровно 14 J2534 exports.
+- Изолированные вызовы настоящей DLL: 9 групп маршрутизации PASS;
+  22 проверки filter/ABI PASS. Реальный адаптер не открывался.
+- Генератор/аудит: private профиль v4 создан вне checkout без активации.
+- Оригинальный empty-DTC parser: 6/6 PASS; форматтер BCD/ASCII: 6/6 PASS.
+- PowerShell helper: 9 binding, 7 module snapshot, 8 PE32 и 8 byte-comparison PASS.
+- Интервалы 12 мс в host suite использовали управляемые часы. Фактическое
+  время доставки оригинальной VIDA в этом сеансе НЕ измерено.
+- Exact-head CI не запускался; автоматический persistent runner не обходился.
+
+## GUI приёмка и технический блокер
+
+Хост определён как VMware. Локальная оригинальная VIDA запущена в Internet
+Explorer. Инструмент Computer Use остановил доступ к этому браузеру, поскольку
+для него не поддерживается URL policy enforcement. Экран NETWORK после
+изменений не прочитан. Обход этого ограничения не предпринимался.
+
+| Проверка | Статус |
+|---|---|
+| Новая DLL реально загружена VIDA | NOT_TESTED — не активирована |
+| CEM Network Status | NOT_TESTED; последнее подтверждённое пользователем состояние Not responding |
+| ReadVin | NOT_TESTED |
+| T111 | NOT_TESTED; структура, synthetic transport и offline empty-list parser |
+| T122 | NOT_TESTED |
+| ECU Identification / XC90 V8 MY2009 | NOT_TESTED |
+
+Первое подтверждённое прежнее условие отказа — отсутствие фикстур
+CEM_40/B9F0 и B9FB. Следующий блокер: неизвестные валидные значения
+идентификации и отсутствие проверки полного оригинального parser/GUI.
+Заголовок EE/1B сам по себе не доказывает, что VIDA сочтёт CEM присутствующим.
+
+## Один сценарий повторной проверки
+
+1. В отдельном lab-каталоге создать профиль генератором
+   `build_b3a146_cem40_lab_profile.py --identity-json <private JSON> --output <lab>/b3a146-cem40-lab.ini --enable-synthetic-b9f0 --enable-synthetic-ae1b`.
+2. Сначала `--validate-only --profile <INI> --identity-json <JSON>`.
+   Для контролируемой активации остановить диагностический клиент, сохранить
+   текущую конфигурацию, выбрать отдельный lab adapter и новую копию DLL с
+   соседним `virtualcar.ini`. Не менять Dvinholm или его регистрацию.
+   Сценарий не выполняет этот отдельный операторский шаг автоматически.
+3. Запустить `invoke_vida_cem_trial.ps1 -Phase Begin -SessionDirectory <new-private-dir>
+   -ReferenceDll <lab-DLL> -IdentityJson <JSON> -AdapterKey <exact-Registry32-subkey>
+   -VidaLog <original-log>`. По умолчанию native log берётся из TEMP.
+4. В оригинальной VIDA выбрать лабораторный интерфейс, DIAGNOSTICS → NETWORK → UPDATE.
+   Пока интерфейс открыт, тот же сценарий с `-Phase Snapshot -ClientProcessId <actual-client-PID>`.
+5. Сохранить локальные скриншоты NETWORK, чтения VIN, T111, T122 и ECU identification.
+   Затем тот же сценарий `-Phase Finish`. Заполнить созданный
+   `gui-observations-private.json` отдельными статусами и ссылками на доказательства.
+   RX не переводит эти статусы в PASS автоматически.
+6. Восстановление: закрыть клиент, выбрать исходный интерфейс. При ручной замене
+   файлов восстановить сохранённую копию после проверки, что DLL выгружена.
+   В текущем сеансе штатные DLL/INI/реестр не менялись, откат им не требуется.
+
+Приватные INI, manifest, скриншоты и полные журналы не публиковать в GitHub.
+
+`verify_cem40_lab_runtime.ps1` прошёл с private profile v4 и исходной x86 DLL
+PR #350: B9F0=3, B9FB=13, AE1B=1 кадр; CAN/125000, RxStatus CAN_29BIT_ID,
+odd-ID PASS filter, terminal length и пустая очередь проверены. DLL загружена
+только отдельным тестовым процессом из новой папки, не оригинальной VIDA.
+
+Фактические замеры финального запуска (Stopwatch, время от начала WriteMsgs
+до возврата ReadMsgs, с накладными расходами журнала):
+
+| Ответ | Первый кадр, мс | Последний, мс | min/max между возвратами, мс |
+|---|---:|---:|---:|
+| B9F0 | 3.779 | 35.974 | 15.367 / 16.827 |
+| B9FB | 3.862 | 161.352 | 1.204 / 21.770 |
+| AE1B | 5.436 | 5.436 | неприменимо |
+
+Это измерение выдачи J2534, не времени обработки в VIDA. Конфигурация 12 мс
+не является доказательством интервала 12 мс между возвратами клиенту.
+Повторить без регистрации: `verify_cem40_lab_runtime.ps1 -DllPath <built DLL>
+-ProfilePath <private generated INI> -IdentityJson <private JSON>
+-OutputDirectory <new directory outside checkout>`.
+Оригинальный empty-list parser: `verify_original_vida_empty_dtc.ps1
+-VehicleServicesAssembly <original BizServices.CarCom.VehicleServices.DLL>
+-DefinitionXml <private unchanged AE1B definition fragment from T111>`
+в 32-битной Windows PowerShell. Фрагмент извлекается read-only из локального
+CarCom; в репозиторий не входит.
+Проверка форматов: `verify_original_vida_field_formats.ps1
+-VehicleServicesAssembly <original BizServices.CarCom.VehicleServices.DLL>`
+в 32-битной Windows PowerShell, без диагностического подключения или доступа к БД.

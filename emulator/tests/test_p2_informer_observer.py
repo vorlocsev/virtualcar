@@ -108,8 +108,8 @@ class P2InformerObserverTests(unittest.TestCase):
         self.assertFalse(result["identity_verified"])
 
     def test_08_legacy_d2_p3_matrix_is_not_replaced(self):
-        self.assertEqual(len(tool.PROBES), 26)
-        for token in ("D2_40_B9FB", "D2_50_A3", "P3_726_F114",
+        self.assertEqual(len(tool.PROBES), 27)
+        for token in ("D2_40_AE1B", "D2_40_B9FB", "D2_50_A3", "P3_726_F114",
                       "P3_29_F190"):
             self.assertIn(token, tool.PROBES)
         result = audit(evt("tx_received", rid=1, baud=500000),
@@ -118,7 +118,7 @@ class P2InformerObserverTests(unittest.TestCase):
                            reason="missing_profile", outcome="no_response"))
         self.assertEqual(result["summary"]["statuses"], {"no_fixture": 1})
         self.assertEqual(result["transactions"][0]["service"], "B9FB")
-        self.assertEqual(len(result["coverage"]["probes"]), 26)
+        self.assertEqual(len(result["coverage"]["probes"]), 27)
 
 
 if __name__ == "__main__":

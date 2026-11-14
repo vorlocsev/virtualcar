@@ -920,7 +920,8 @@ def audit(lines, *, include_obd=False):
                     elif head & 0xF8 == 0xC8 and payload[1:4] == bytes((target, 0xF9, opcode)):
                         tx["_rxid"] = can_id
                         tx["rx_frames"] += 1
-                        tx["_complete"] = True
+                        tx["_complete"] = head - 0xC8 >= 3
+                        tx["_invalid"] = not tx["_complete"]
                     else:
                         tx["off_route_rx"] += 1
                 else:

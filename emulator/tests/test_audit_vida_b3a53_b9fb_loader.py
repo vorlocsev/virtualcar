@@ -13,11 +13,24 @@ def state(text, target='CEM_40'):
     return mod.audit_text(text)['b9fb'][target]
 
 
-def frame(prefix='C8 40 F9 FB', suffix='00 00 00 00'):
+def frame(prefix='CB 40 F9 FB', suffix='00 00 00 00'):
     return prefix + ' ' + suffix
 
 
 class B3A53Tests(unittest.TestCase):
+    def test_single_frame_declared_length_bounds_echo_and_nrc(self):
+        for header in range(0xC8, 0xD0):
+            for echo, minimum in (('F9 FB 00 00 00 00', 3),
+                                  ('7F B9 11 00 00 00', 4)):
+                with self.subTest(header=header, echo=echo):
+                    text = (f'[D2_40]\nFrameCount=1\n'
+                            f'Frame0={header:02X} 40 {echo}\n')
+                    result = state(text)['static_loader_class']
+                    if header - 0xC8 < minimum:
+                        self.assertEqual(result, 'invalid_d2_frame_sequence')
+                    else:
+                        self.assertTrue(result.startswith('locally_structural_'))
+
     def test_01_missing_count_and_explicit_zero(self):
         self.assertEqual(state('[Vehicle]\nVIN=YV1CZ0002A0000001\n')['static_loader_class'],
                          'no_frame_count_declared')
@@ -38,7 +51,7 @@ class B3A53Tests(unittest.TestCase):
     def test_04_first_key_precedence_and_malformed_hex(self):
         out = state('[D2_40]\nFrameCount=1\nB9FBFrame0=INVALID\nFrame0=' + frame() + '\n')
         self.assertEqual(out['static_loader_class'], 'invalid_eight_byte_frame')
-        self.assertEqual(state('[D2_40]\nFrameCount=1\nFrame0=C840F9FB00000000\n')['static_loader_class'],
+        self.assertEqual(state('[D2_40]\nFrameCount=1\nFrame0=CB40F9FB00000000\n')['static_loader_class'],
                          'locally_structural_reply_not_oem_verified')
 
     def test_05_response_id_limit_and_prefix(self):
@@ -48,9 +61,9 @@ class B3A53Tests(unittest.TestCase):
                          'locally_structural_reply_not_oem_verified')
 
     def test_06_wrong_target_and_native_negative_reply(self):
-        self.assertEqual(state('[D2_40]\nFrameCount=1\nFrame0=' + frame('C8 50 F9 FB') + '\n')['static_loader_class'],
+        self.assertEqual(state('[D2_40]\nFrameCount=1\nFrame0=' + frame('CB 50 F9 FB') + '\n')['static_loader_class'],
                          'invalid_d2_frame_sequence')
-        self.assertEqual(state('[D2_40]\nFrameCount=1\nFrame0=' + frame('C8 40 7F B9') + '\n')['static_loader_class'],
+        self.assertEqual(state('[D2_40]\nFrameCount=1\nFrame0=' + frame('CC 40 7F B9', '11 00 00 00') + '\n')['static_loader_class'],
                          'locally_structural_negative_reply_not_vin')
 
     def test_07_multiframe_native_sequence_and_terminal(self):

@@ -66,9 +66,13 @@ def _valid_d2(frames, target):
         return False
     if count == 1:
         f = frames[0]
-        return ((f[0] & 0xF8) == 0xC8 and f[1] == target and
-                ((f[2] == 0xF9 and f[3] == 0xFB) or
-                 (f[2] == 0x7F and f[3] == 0xB9)))
+        if (f[0] & 0xF8) != 0xC8 or f[1] != target:
+            return False
+        significant = f[0] - 0xC8
+        # Count includes target and echo. Negative responses also need an NRC.
+        # Unused CAN padding is outside the response and is not interpreted.
+        return ((significant >= 3 and f[2:4] == b'\xf9\xfb') or
+                (significant >= 4 and f[2:4] == b'\x7f\xb9'))
     f = frames[0]
     if f[0] not in (0x8F, 0x97) or f[1:4] != bytes((target, 0xF9, 0xFB)):
         return False
