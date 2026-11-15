@@ -28,6 +28,23 @@ while ($null -ne $ancestor) {
 $dll = Join-Path $dir 'VirtualCarJ2534.dll'
 Copy-Item -LiteralPath $DllPath -Destination $dll
 Copy-Item -LiteralPath $ProfilePath -Destination (Join-Path $dir 'virtualcar.ini')
+# The preflight above establishes the exact INI contract. Retain expected
+# bytes in memory only and compare every returned byte, including padding.
+$expectedFrames=@{}; $section=''
+foreach($line in [IO.File]::ReadAllLines((Join-Path $dir 'virtualcar.ini'))) {
+    if($line -match '^\[([^\]]+)\]$') { $section=$Matches[1]; continue }
+    if($line -match '^\s*(b9fbframe[0-9a-f]+|frame[0-9a-f]+)\s*=\s*(.+?)\s*$') {
+        $expectedFrames[$section+'/'+$Matches[1]]=$Matches[2]
+    }
+}
+function Frame-List([string]$Section,[string]$Prefix,[int]$Count) {
+    $frames=for($i=0;$i -lt $Count;$i++) { $expectedFrames[$Section+'/'+$Prefix+$i.ToString('x')] }
+    if(@($frames).Count -ne $Count -or @($frames | Where-Object { -not $_ }).Count) { throw 'Expected frames missing' }
+    return $frames -join ';'
+}
+$f0=Frame-List 'D2_40_B9F0' 'frame' 3
+$fb=Frame-List 'D2_40' 'b9fbframe' 13
+$ae=Frame-List 'D2_40_AE1B' 'frame' 1
 $savedTemp=$env:TEMP; $savedLocal=$env:LOCALAPPDATA
 try {
     $env:TEMP=$dir; $env:LOCALAPPDATA=$dir
@@ -50,7 +67,7 @@ public static class CemLabRuntime {
     [DllImport(Dll)] static extern uint PassThruReadMsgs(uint c,ref Msg m,ref uint n,uint timeout);
     static void Check(bool ok) { if(!ok) throw new Exception("CEM lab native contract failed"); }
     static Msg Message() { return new Msg {ProtocolID=5,TxFlags=0x100,Data=new byte[4128]}; }
-    public static void Run() {
+    public static void Run(string f0,string fb,string ae) {
         uint d,c,f; Check(PassThruOpen(IntPtr.Zero,out d)==0);
         try {
             Check(PassThruConnect(d,5,0x100,125000,out c)==0);
@@ -58,11 +75,12 @@ public static class CemLabRuntime {
                 Msg mask=Message(), pattern=Message(); mask.DataSize=pattern.DataSize=4;
                 mask.Data[3]=pattern.Data[3]=1;
                 Check(PassThruStartMsgFilter(c,1,ref mask,ref pattern,IntPtr.Zero,out f)==0);
-                Probe(c,0xB9,0xF0,3); Probe(c,0xB9,0xFB,13); Probe(c,0xAE,0x1B,1);
+                Probe(c,0xB9,0xF0,f0); Probe(c,0xB9,0xFB,fb); Probe(c,0xAE,0x1B,ae);
             } finally { PassThruDisconnect(c); }
         } finally { PassThruClose(d); }
     }
-    static void Probe(uint c,byte service,byte mode,int expected) {
+    static void Probe(uint c,byte service,byte mode,string expectedFrames) {
+        string[] frames=expectedFrames.Split(';'); int expected=frames.Length;
         Msg tx=Message(); tx.DataSize=12;
         byte[] request={0,15,255,254,203,64,service,mode,0,0,0,0};
         Array.Copy(request,tx.Data,12); uint n=1;
@@ -79,6 +97,9 @@ public static class CemLabRuntime {
             if(i==0) Check(rx.Data[5]==64 && rx.Data[6]==service+64 && rx.Data[7]==mode);
             byte header=expected==1 ? (byte)203 : i==0 ? (byte)143 : i==expected-1 ? (byte)(mode==0xF0?76:79) : (byte)(8|(i&7));
             Check(rx.Data[4]==header);
+            string[] bytes=frames[i].Split(new char[]{' '},StringSplitOptions.RemoveEmptyEntries);
+            Check(bytes.Length==8);
+            for(int j=0;j<8;j++) Check(rx.Data[4+j]==Convert.ToByte(bytes[j],16));
         }
         Msg empty=Message(); n=1; Check(PassThruReadMsgs(c,ref empty,ref n,0)==16 && n==0);
         Console.WriteLine("PASS {0:X2}{1:X2}: frames={2} first_ms={3:F3} last_ms={4:F3} gap_min_ms={5:F3} gap_max_ms={6:F3}",
@@ -87,6 +108,7 @@ public static class CemLabRuntime {
 }
 '@
     Add-Type -TypeDefinition $source.Replace('__DLL__', $dll.Replace('"','""'))
-    [CemLabRuntime]::Run()
+    [CemLabRuntime]::Run($f0,$fb,$ae)
+    Write-Output 'PASS: every returned D2 byte equals the preflighted private profile.'
     Write-Output 'Native profile loaded and delivered; actual VIDA GUI acceptance NOT_VERIFIED.'
 } finally { $env:TEMP=$savedTemp; $env:LOCALAPPDATA=$savedLocal }
