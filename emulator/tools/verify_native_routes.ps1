@@ -242,7 +242,11 @@ public static class NativeRouteCheck {
     [NativeRouteCheck]::Run()
     $backend = Join-Path $directory 'VirtualCar/dev47-backend.jsonl'
     if (-not (Test-Path -LiteralPath $backend)) { throw 'Native DLL produced no backend evidence' }
-    Write-Output 'Native calls passed. Verify the isolated backend with verify_native_routes.py.'
+    if ($IdentityReplay) {
+        Write-Output 'Native identity replay assertions passed. The silent-route Python verifier does not support this mode.'
+    } else {
+        Write-Output 'Native calls passed. Verify the isolated backend with verify_native_routes.py.'
+    }
 } finally {
     $env:LOCALAPPDATA = $savedLocal
     $env:TEMP = $savedTemp

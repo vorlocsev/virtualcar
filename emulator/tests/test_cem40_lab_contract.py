@@ -15,6 +15,24 @@ IDENTITY = json.dumps({'Vehicle': {'VIN': 'YV1CZ000290000001', 'ModelYear': 2009
 
 
 class ContractTests(unittest.TestCase):
+    def test_empty_identification_lists_require_explicit_f0_and_opt_in(self):
+        with self.assertRaises(ValueError):
+            lab.build_profile(IDENTITY, enable_synthetic_ident_followups=True)
+        for enabled in (False, True):
+            text = lab.build_profile(IDENTITY, enable_synthetic_b9f0=True,
+                                     enable_synthetic_ident_followups=enabled)
+            self.assertEqual(lab.validate_profile(text, IDENTITY)['ident_followup_frames'], 2 if enabled else 0)
+            cfg = configparser.ConfigParser(); cfg.read_string(text)
+            for opcode in (0xF5, 0xF8):
+                section = f'D2_40_B9{opcode:02X}'
+                self.assertEqual(cfg[section]['Enabled'], str(int(enabled)))
+                self.assertIn(section, backend.PROBES)
+                if enabled:
+                    self.assertEqual(bytes.fromhex(cfg[section]['Frame0']), bytes((0xCB,0x40,0xF9,opcode,0,0,0,0)))
+            if enabled:
+                bad = text.replace('CB 40 F9 F8', 'CA 40 F9 F8')
+                with self.assertRaises(ValueError): lab.validate_profile(bad, IDENTITY)
+
     def test_ae1b_opt_in_and_exact_original_empty_list_shape(self):
         for f0 in (False, True):
             for ae in (False, True):

@@ -44,9 +44,11 @@ typedef void *HANDLE;
 #define MAX_ECUS 8
 #define MAX_D2_FRAMES 64
 #define MAX_PERIODIC 4
-#define MAX_D2_FIXTURES 15
+#define MAX_D2_FIXTURES 17
 #define BASE_D2_FIXTURES 6
 #define CEM_AE1B_FIXTURE 14
+#define CEM_B9F5_FIXTURE 15
+#define CEM_B9F8_FIXTURE 16
 #define MAX_PASSIVE_TRACES 12
 #define MAX_EXTRA_DID 192
 #define MAX_EXTRA_DID_SLOTS 4
@@ -375,6 +377,15 @@ static int cem_d2_ae1b_shape(const U8 *p,U32 n){
     for(j=4u;j<n;j++)if(p[j])return 0;
     return 1;
 }
+/* Original P2 identification script reads software/serial lists after B9F0.
+   These are opt-in fixtures, never synthesized OEM identification values. */
+static int cem_d2_ident_followup_shape(const U8 *p,U32 n){
+    U32 j;
+    if(!p || n<4u || n>8u || p[0]!=0xCBu || p[1]!=0x40u ||
+       p[2]!=0xB9u || (p[3]!=0xF5u && p[3]!=0xF8u))return 0;
+    for(j=4u;j<n;j++)if(p[j])return 0;
+    return 1;
+}
 /* Observer only: a bounded catalogue from drpioneer/Volvo-P2-informer
    main@9cd3a6f603915e074ac28c73eccec6b7473e8297. Those frames came from a
    2.5T project, NOT an OEM XC90 V8 identity/response fixture.
@@ -439,6 +450,8 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     p=m->Data+4;n=m->DataSize-4;
     if(id==0x000FFFFEu && c->protocol==PROTO_CAN && cem_d2_ae1b_shape(p,n))
         return "D2_40_AE1B";
+    if(id==0x000FFFFEu && c->protocol==PROTO_CAN && cem_d2_ident_followup_shape(p,n))
+        return p[3]==0xF5u?"D2_40_B9F5":"D2_40_B9F8";
     /* These source-labelled families are metadata only, never new CAN RX. */
     {
         const char *informer=p2_informer_probe_name(c,id,p,n);
@@ -828,7 +841,12 @@ static void load_config(void) {
         d->target=(U8)((i==0||i==1||i==4)?0x40:0x50);
         d->subcommand=(U8)(i>=4?0xFC:((i%2)==0?0xFB:0xF0));
         d->baud=(d->target==0x40?125000u:500000u);
-        if(i==CEM_AE1B_FIXTURE){
+        if(i==CEM_B9F5_FIXTURE || i==CEM_B9F8_FIXTURE){
+            d->target=0x40u;d->subcommand=(U8)(i==CEM_B9F5_FIXTURE?0xF5u:0xF8u);d->baud=125000u;
+            str_copy(section,i==CEM_B9F5_FIXTURE?"D2_40_B9F5":"D2_40_B9F8",sizeof(section));
+            GetPrivateProfileStringA(section,"Enabled","0",v,sizeof(v),g_profile_path);
+            if(parse_num(v,0)!=1u)continue;
+        }else if(i==CEM_AE1B_FIXTURE){
             d->target=0x40u;d->subcommand=0x1Bu;d->service=0xAEu;d->baud=125000u;
             str_copy(section,"D2_40_AE1B",sizeof(section));
             GetPrivateProfileStringA(section,"Enabled","0",v,sizeof(v),g_profile_path);
@@ -1494,7 +1512,8 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         return 1;
     }
     ae1b=cem_d2_ae1b_shape(data,len);
-    if(!ae1b && (len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
+    if(!ae1b && !cem_d2_ident_followup_shape(data,len) &&
+       (len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
        (data[3]!=0xFBu&&data[3]!=0xF0u&&data[3]!=0xFCu)))return 0;
     route=(data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER";
     backend_event(c,c->active_trace,"route_selected",route,"none","unknown");

@@ -3019,6 +3019,57 @@ static void test_cem40_ae1b_fixture_transport(U32 dev){
  puts("PASS CEM_40 AE1B: 8 opt-in synthetic service/route/isolation gates");
 }
 
+static void test_cem40_ident_followups(U32 dev){
+ U32 old_filter=g_strict_j2534_filters,old_route=g_p2_strict_routing,ls,hs,peer,n,f,k;
+ PASSTHRU_MSG mask,pattern,request,rx;CHANNEL *c;
+ g_strict_j2534_filters=1u;g_p2_strict_routing=0u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000u,&ls)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000u,&peer)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000u,&hs)==ERR_OK);
+ mask=frame(PROTO_CAN,1u,0,0);pattern=frame(PROTO_CAN,1u,0,0);
+ REQUIRE(PassThruStartMsgFilter(ls,1u,&mask,&pattern,0,&f)==ERR_OK);
+ REQUIRE(PassThruStartMsgFilter(peer,1u,&mask,&pattern,0,&f)==ERR_OK);
+ REQUIRE(PassThruStartMsgFilter(hs,1u,&mask,&pattern,0,&f)==ERR_OK);
+ c=channel(ls);
+ for(k=CEM_B9F5_FIXTURE;k<=CEM_B9F8_FIXTURE;k++){
+  D2_PROFILE saved=g_d2[k],*d=&g_d2[k];U8 op=(U8)(k==CEM_B9F5_FIXTURE?0xF5:0xF8);
+  U8 tx[8]={0xCB,0x40,0xB9,0,0,0,0,0},positive[8]={0xCB,0x40,0xF9,0,0,0,0,0};
+  tx[3]=positive[3]=op;request=frame(PROTO_CAN,0xFFFFEu,tx,8u);
+  /* 1. No implicit fixture, and exact source-labelled telemetry. */
+  REQUIRE(d->target==0x40u&&d->subcommand==op&&d->frame_count==0u);
+  REQUIRE(strcmp(backend_probe_name(c,&request),k==CEM_B9F5_FIXTURE?"D2_40_B9F5":"D2_40_B9F8")==0);
+  send(ls,&request);n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY);
+  /* 2. Explicit empty synthetic list, correct address/echo/metadata. */
+  d->response_id=0x00800003u;d->frame_count=1;memcpy(d->frame[0],positive,8);
+  REQUIRE(validate_d2_fixture(d));send(ls,&request);rx=readmsg(ls);
+  REQUIRE(rx.RxStatus==CAN_29BIT_ID&&memcmp(rx.Data+4,positive,8)==0);
+  /* 3. Significant length and selector cannot be hidden in padding. */
+  d->frame[0][0]=0xCAu;REQUIRE(!validate_d2_fixture(d));d->frame[0][0]=0xCBu;
+  d->frame[0][3]^=1u;REQUIRE(!validate_d2_fixture(d));d->frame[0][3]=op;
+  /* 4. No CEM50 alias, malformed request, or loose-mode HS delivery. */
+  send(hs,&request);n=1;REQUIRE(PassThruReadMsgs(hs,&rx,&n,0)==ERR_BUFFER_EMPTY);
+  request.Data[5]=0x50;send(ls,&request);request.Data[5]=0x40;
+  request.Data[8]=1;send(ls,&request);request.Data[8]=0;
+  request.DataSize=7;send(ls,&request);request.DataSize=12;
+  n=1;REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY);
+  /* 5. Retries supersede only this channel; clear leaves peer reply intact. */
+  send(ls,&request);send(peer,&request);send(ls,&request);REQUIRE(c->count==1u);
+  REQUIRE(PassThruIoctl(ls,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+  rx=readmsg(peer);REQUIRE(memcmp(rx.Data+4,positive,8)==0);
+  /* 6. Actual channel filter still rejects a disallowed response ID. */
+  d->response_id=0x00800002u;send(ls,&request);n=1;
+  REQUIRE(PassThruReadMsgs(ls,&rx,&n,0)==ERR_BUFFER_EMPTY);d->response_id=0x00800003u;
+  /* 7. Explicit negative replay must echo B9 with an in-length NRC. */
+  d->frame[0][0]=0xCC;d->frame[0][2]=0x7F;d->frame[0][3]=0xB9;d->frame[0][4]=0x31;
+  REQUIRE(validate_d2_fixture(d));send(ls,&request);rx=readmsg(ls);REQUIRE(rx.Data[6]==0x7F);
+  d->frame[0][3]=0xAE;REQUIRE(!validate_d2_fixture(d));
+  g_d2[k]=saved;
+ }
+ REQUIRE(PassThruDisconnect(ls)==ERR_OK);REQUIRE(PassThruDisconnect(hs)==ERR_OK);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);g_strict_j2534_filters=old_filter;g_p2_strict_routing=old_route;
+ puts("PASS CEM_40 B9F5/B9F8: 7 opt-in route/echo/isolation gates per selector");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -3026,6 +3077,7 @@ int main(){
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_cem40_ae1b_fixture_transport(dev);
+ test_cem40_ident_followups(dev);
  test_d2_replay_isolation_on_set_config(dev);
  test_passive_can_replay_retune_isolation(dev);
  test_raw_can_orphan_cf_admission(dev);
