@@ -499,6 +499,92 @@ static void test_p3tool_j2534_preflight(U32 dev){
  capture_connect_log=0;
 }
 
+/* B3A189: eight isolated, deterministic J2534 filter lifetime audit gates.
+   Expected scope fields must be recoverable without VIN, CAN payload or any
+   original VIDA installation. Logging must not change the return codes. */
+static void require_b3a189_scope(const char *label,U32 cid,U64 serial,
+                                 U32 protocol,U32 baud,U32 flags,
+                                 U32 fid,U32 filter_type){
+ U8 m[32];char hex[128],needle[256];
+ u32_be(m,cid);u32_be(m+4,(U32)(serial>>32));u32_be(m+8,(U32)serial);
+ u32_be(m+12,protocol);u32_be(m+16,baud);u32_be(m+20,flags);
+ u32_be(m+24,fid);u32_be(m+28,filter_type);
+ hex_bytes(hex,sizeof(hex),m,sizeof(m));
+ snprintf(needle,sizeof(needle),"%s %s",label,hex);
+ REQUIRE(strstr(connect_log_lines,needle)!=0);
+}
+static void test_b3a189_scoped_filter_lifetime(U32 dev){
+ U32 ch=0,ch2=0,f1=0,f2=0,f3=0,other_dev=0;
+ U64 serial=0,serial2=0;U32 prior_strict=g_strict_j2534_filters;
+ U32 nbefore=0;
+ SCONFIG baud={1u,125000u};SCONFIG_LIST rate={1u,&baud};
+ PASSTHRU_MSG mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+ PASSTHRU_MSG pattern=frame(PROTO_ISO15765,0x18DAF150u,0,0);
+ PASSTHRU_MSG flow=frame(PROTO_ISO15765,0x18DA50F1u,0,0);
+ capture_connect_log=1;connect_log_len=0;connect_log_lines[0]=0;
+ g_strict_j2534_filters=1;
+
+ /* 1. Connect records the effective wire protocol, flag, rate and a fresh
+       64-bit session serial, so reused numeric J2534 channels remain distinct. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,CAN_29BIT_ID,500000u,&ch)==ERR_OK);
+ serial=channel(ch)->session_serial;REQUIRE(serial!=0);
+ require_b3a189_scope("J2534 scope channel_connect (BE)",ch,serial,
+                       PROTO_ISO15765,500000u,CAN_29BIT_ID,0,0);
+
+ /* 2. Successful ISO-TP Flow Control filter registration is channel scoped. */
+ REQUIRE(PassThruStartMsgFilter(ch,3u,&mask,&pattern,&flow,&f1)==ERR_OK);
+ require_b3a189_scope("J2534 scope filter_registered (BE)",ch,serial,
+                       PROTO_ISO15765,500000u,CAN_29BIT_ID,f1,3u);
+
+ /* 3. An invalid removal must not produce a bogus lifetime-close event. */
+ nbefore=connect_log_len;
+ REQUIRE(PassThruStopMsgFilter(ch,f1+10000u)==ERR_INVALID_FILTER_ID);
+ REQUIRE(connect_log_len==nbefore);
+ REQUIRE(PassThruStopMsgFilter(ch,f1)==ERR_OK);
+ require_b3a189_scope("J2534 scope filter_stopped (BE)",ch,serial,
+                       PROTO_ISO15765,500000u,CAN_29BIT_ID,f1,3u);
+
+ /* 4. CLEAR_MSG_FILTERS must record each filter's lifetime end. */
+ REQUIRE(PassThruStartMsgFilter(ch,3u,&mask,&pattern,&flow,&f2)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ require_b3a189_scope("J2534 scope filter_cleared (BE)",ch,serial,
+                       PROTO_ISO15765,500000u,CAN_29BIT_ID,f2,3u);
+ REQUIRE(PassThruStopMsgFilter(ch,f2)==ERR_INVALID_FILTER_ID);
+
+ /* 5. A final DATA_RATE retune changes the scope on this active channel. */
+ REQUIRE(PassThruStartMsgFilter(ch,3u,&mask,&pattern,&flow,&f3)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&rate,0)==ERR_OK);
+ REQUIRE(channel(ch)->baud==125000u);
+ require_b3a189_scope("J2534 scope channel_rate_changed (BE)",ch,serial,
+                       PROTO_ISO15765,125000u,CAN_29BIT_ID,0,0);
+
+ /* 6. Disconnect closes every remaining filter and the original session. */
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ require_b3a189_scope("J2534 scope filter_disconnect (BE)",ch,serial,
+                       PROTO_ISO15765,125000u,CAN_29BIT_ID,f3,3u);
+ require_b3a189_scope("J2534 scope channel_disconnect (BE)",ch,serial,
+                       PROTO_ISO15765,125000u,CAN_29BIT_ID,0,0);
+
+ /* 7. Reusing the numeric channel after Disconnect creates a NEW serial. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,CAN_29BIT_ID,500000u,&ch2)==ERR_OK);
+ serial2=channel(ch2)->session_serial;REQUIRE(serial2!=serial);
+ require_b3a189_scope("J2534 scope channel_connect (BE)",ch2,serial2,
+                       PROTO_ISO15765,500000u,CAN_29BIT_ID,0,0);
+
+ /* 8. Closing the device, not merely a channel, ends its active filters. */
+ REQUIRE(PassThruStartMsgFilter(ch2,3u,&mask,&pattern,&flow,&f1)==ERR_OK);
+ REQUIRE(PassThruClose(dev)==ERR_OK);
+ require_b3a189_scope("J2534 scope filter_device_close (BE)",ch2,serial2,
+                       PROTO_ISO15765,500000u,CAN_29BIT_ID,f1,3u);
+ require_b3a189_scope("J2534 scope channel_device_close (BE)",ch2,serial2,
+                       PROTO_ISO15765,500000u,CAN_29BIT_ID,0,0);
+ REQUIRE(strstr(connect_log_lines,"YV1CZ0002A0000001")==NULL);
+ capture_connect_log=0;
+ REQUIRE(PassThruOpen(0,&other_dev)==ERR_OK && other_dev==dev);
+ g_strict_j2534_filters=prior_strict;
+ puts("PASS B3A189 J2534 scope: 8 channel/filter lifetime and privacy gates");
+}
+
 static void require_lab_cf(const PASSTHRU_MSG *m,U32 sn){
  REQUIRE(m->DataSize==12 && m->Data[4]==(0x20u | (sn&15u)));
  REQUIRE(m->Data[2]==0x07 && m->Data[3]==0x2Eu);
@@ -4413,6 +4499,7 @@ int main(){
  }
  test_stage42_multiecu_fc(dev);
  test_stage43_iso_rx_boundaries(dev);
+ test_b3a189_scoped_filter_lifetime(dev);
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Lost host evidence is a test failure, never silently ignored. */
  REQUIRE(backend_capture_overflows==0);
