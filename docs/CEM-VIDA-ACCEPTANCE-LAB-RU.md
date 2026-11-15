@@ -150,6 +150,17 @@ negative или no contact → SetEcuNotAlive. Это конкретное на�
 но также возвращает пустые списки для некоторых обрезанных ответов; native
 проверки significant length остаются обязательными.
 
+`verify_original_vida_ecu_state.ps1` выполнил 6 проверок оригинального
+EcuIdentificationOutput с синтетической function group 0: начальное состояние,
+SetEcuNotAlive, нулевой F0, пустые F5/F8, обрезанный F0, противоречивые вызовы.
+Все PASS. Нулевой F0 даёт запись Alive с NUL в идентификационных строках;
+даже один байт F0 создаёт запись Alive до ошибки разбора аппаратного номера.
+SetEcuNotAlive не удаляет Alive, и обратный вызов не очищает NotAlive:
+оба списка могут содержать один ключ. Это поведение отдельного компонента,
+не конечный статус ECU. Дальнейший ScriptOutputConverter и сопоставление
+CarCom, выполнение оригинального сценария и NETWORK остаются отдельными
+непроверенными стадиями. Стенд не повышает статус GUI по членству в этих списках.
+
 Внешние источники сверены: [volvo_vida_db](https://github.com/spnda/volvo_vida_db),
 [cem-cracker](https://github.com/vtl/volvo-cem-cracker),
 [VolvoDiagToolkit](https://github.com/MarvinParanoid/VolvoDiagToolkit),
@@ -165,6 +176,8 @@ negative или no contact → SetEcuNotAlive. Это конкретное на�
 - Нативный C host suite: PASS, включая 6 SF и 8 AE1B групп.
 - B9F5/F8: по 7 native групп на selector PASS; original identification-list
   interpreter — 6/6 PASS. Свежая x86 DLL прошла route/filter регрессии.
+- Оригинальный EcuIdentificationOutput: 6/6 synthetic state gates PASS;
+  отдельно проверены обрезанные данные и независимость Alive/NotAlive.
 - Оригинальный VehCom2: 7 проверок заголовков PASS; прикладная приёмка не проверена.
 - Новая x86 DLL: PE32, ровно 14 J2534 exports.
 - Изолированные вызовы настоящей DLL: 9 групп маршрутизации PASS;
@@ -272,3 +285,8 @@ CarCom; в репозиторий не входит.
 динамические входы, неоднозначный каталог и несовпадение числового ключа VIN
 отклоняются. Проверка списков: `verify_original_vida_ident_lists.ps1
 -ScriptingAssembly <original DLL>` в x86 Windows PowerShell.
+Проверка отдельного компонента состояния: `verify_original_vida_ecu_state.ps1
+-ScriptingAssembly <original BizServices.Scripting.DLL>
+-VehicleServicesAssembly <original BizServices.CarCom.VehicleServices.DLL>`.
+Используются только публичные синтетические байты и function group 0;
+конструктор создаёт внутренние коллекции, окна и диагностические соединения не открываются.
