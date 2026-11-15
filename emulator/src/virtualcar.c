@@ -302,6 +302,20 @@ static void logline(const char *message,const U8 *data,U32 len) {
     SetFilePointer(f,0,0,2);WriteFile(f,line,p,&written,0);CloseHandle(f);
 }
 
+/* B3A189: fixed-width J2534 filter/channel lifetime scope. All eight fields
+   are big-endian metadata: channel, session_hi, session_lo, wire_protocol,
+   effective_baud, connect_flags, filter_id, filter_type. No VIN, packet,
+   ECU response content or file path is logged. Under the existing g_lock. */
+static void log_channel_filter_scope(const char *event,const CHANNEL *c,
+                                     U32 filter_id,U32 filter_type){
+    U8 m[32];
+    u32_be(m,c->id);u32_be(m+4,(U32)(c->session_serial>>32));
+    u32_be(m+8,(U32)c->session_serial);u32_be(m+12,channel_wire_protocol(c));
+    u32_be(m+16,c->baud);u32_be(m+20,c->flags);
+    u32_be(m+24,filter_id);u32_be(m+28,filter_type);
+    logline(event,m,sizeof(m));
+}
+
 /* P3Tool IL evidence: expose Connect's actual outcome even when no channel
    exists. These four big-endian integers are API metadata, NOT CAN payloads;
    changing this log must never change the return code or open a new protocol. */
@@ -1743,8 +1757,14 @@ EXPORT U32 WINCALL PassThruClose(U32 device) {
        unlocked g_open check. The close operation owns the state lock. */
     lock_state();
     if(!g_open){unlock_state();return error(ERR_INVALID_DEVICE_ID);}
-    for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used)
-        backend_cancel_channel(&g_ch[i],"device_close",0);
+    for(i=0;i<MAX_CHANNELS;i++)if(g_ch[i].used){
+        CHANNEL *c=&g_ch[i];U32 j;
+        for(j=0;j<c->filters_count;j++)
+            log_channel_filter_scope("J2534 scope filter_device_close (BE)",
+                                     c,c->filters[j].id,c->filters[j].type);
+        log_channel_filter_scope("J2534 scope channel_device_close (BE)",c,0,0);
+        backend_cancel_channel(c,"device_close",0);
+    }
     g_open=0;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);
     logline("PassThruClose",0,0);unlock_state();return error(ERR_OK);
 }
@@ -1789,6 +1809,7 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
     *channel_id=i+1;
     p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
+    log_channel_filter_scope("J2534 scope channel_connect (BE)",&g_ch[i],0,0);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
@@ -1797,6 +1818,11 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
     CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     {U8 channel_be[4];u32_be(channel_be,id);
      logline("PassThruDisconnect channel (BE)",channel_be,4);}
+    {U32 j;
+     for(j=0;j<c->filters_count;j++)
+         log_channel_filter_scope("J2534 scope filter_disconnect (BE)",
+                                  c,c->filters[j].id,c->filters[j].type);}
+    log_channel_filter_scope("J2534 scope channel_disconnect (BE)",c,0,0);
     backend_cancel_channel(c,"channel_disconnect",0);
     p2_bridge_disconnect(&g_vehicle_bridge,id);bytes_zero(c,sizeof(*c));logline("PassThruDisconnect",0,0);unlock_state();return error(ERR_OK);
 }
@@ -2001,6 +2027,8 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     }
     {U8 descriptor[8];u32_be(descriptor,type);u32_be(descriptor+4,*filter_id);
      logline("PassThruStartMsgFilter type / id (BE)",descriptor,8);}
+    log_channel_filter_scope("J2534 scope filter_registered (BE)",
+                             c,*filter_id,type);
     if(mask && mask->DataSize<=MAX_DATA)
         logline("  filter mask",mask->Data,mask->DataSize);
     if(pattern && pattern->DataSize<=MAX_DATA)
@@ -2012,6 +2040,8 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
 EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
     U32 i;CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     for(i=0;i<c->filters_count;i++)if(c->filters[i].id==filter_id){
+        log_channel_filter_scope("J2534 scope filter_stopped (BE)",
+                                 c,c->filters[i].id,c->filters[i].type);
         U32 j;for(j=i+1;j<c->filters_count;j++)c->filters[j-1]=c->filters[j];c->filters_count--;
         unlock_state();return error(ERR_OK);
     }
@@ -2087,7 +2117,12 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
          logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 CLEAR_RX_BUFFER: queued D2/raw ISO-TP and staged CF dropped",0,0);
         unlock_state();return error(ERR_OK);}
-    if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
+    if(ioctl==IO_CLEAR_MSG_FILTERS){
+        for(i=0;i<c->filters_count;i++)
+            log_channel_filter_scope("J2534 scope filter_cleared (BE)",
+                                     c,c->filters[i].id,c->filters[i].type);
+        c->filters_count=0;unlock_state();return error(ERR_OK);
+    }
     if(ioctl==IO_CLEAR_PERIODIC_MSGS){bytes_zero(c->periodic,sizeof(c->periodic));unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
@@ -2145,6 +2180,8 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
             /* Passive CEM observation must follow the effective transport
                speed; this never creates ECU RX or CAN TX. */
             p2_bridge_connect(&g_vehicle_bridge,id,c->protocol,c->baud);
+            log_channel_filter_scope("J2534 scope channel_rate_changed (BE)",
+                                     c,0,0);
         }
         unlock_state();return error(ERR_OK);
     }
