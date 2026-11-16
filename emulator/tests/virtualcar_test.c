@@ -3125,6 +3125,7 @@ static void test_b3a274_ggd_cem50_lab(U32 dev){
  fake_ecu.req=0x18DA50F1u;fake_ecu.resp=0x18DAF150u;
  memset(&fake_channel,0,sizeof(fake_channel));
  fake_channel.protocol=PROTO_ISO15765;fake_channel.baud=500000u;
+ fake_channel.flags=CAN_29BIT_ID;
  g_ggd_cem_lab_enabled=0;
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
  g_ggd_cem_lab_enabled=1;
@@ -3143,6 +3144,11 @@ static void test_b3a274_ggd_cem50_lab(U32 dev){
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
  fake_channel.baud=500000u;fake_channel.protocol=PROTO_CAN;
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_channel.protocol=PROTO_ISO15765;fake_channel.flags=0;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_channel.flags=CAN_29BIT_ID|ISO15765_ADDR_TYPE;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_channel.flags=CAN_29BIT_ID;
  g_ecu_count=2;g_ecu[1].req=0x18DA50F1u;g_ecu[1].resp=0x18DAF150u;
  g_iso_rx_start=0;g_strict_j2534_filters=0;
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,CAN_29BIT_ID,500000u,&cid)==ERR_OK);
