@@ -3113,13 +3113,17 @@ static void test_b3a274_ggd_cem50_lab(U32 dev){
  U32 old_strict=g_strict_j2534_filters,old_start=g_iso_rx_start;
  U32 cid=0;
  ECU old_ecu1=g_ecu[1],fake_ecu={0};
- CHANNEL fake_channel={0};
+ /* CHANNEL owns a 64-element J2534 FIFO (~270 KiB): keep it off the
+    Windows host-test stack even though this unit only tests metadata. */
+ static CHANNEL fake_channel;
+
  U8 answer[8]={0};
  const U8 a45f[3]={0x22,0xA4,0x5F};
  const U8 dd02[3]={0x22,0xDD,0x02};
  const U8 other[3]={0x22,0xF0,0x00};
  PASSTHRU_MSG tx,rx;
  fake_ecu.req=0x18DA50F1u;fake_ecu.resp=0x18DAF150u;
+ memset(&fake_channel,0,sizeof(fake_channel));
  fake_channel.protocol=PROTO_ISO15765;fake_channel.baud=500000u;
  g_ggd_cem_lab_enabled=0;
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
@@ -3133,7 +3137,9 @@ static void test_b3a274_ggd_cem50_lab(U32 dev){
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F0u,a45f,3,answer)==0);
  fake_ecu.resp=0x18DAF151u;
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
- fake_ecu.resp=0x18DAF150u;fake_channel.baud=125000u;
+ fake_ecu.resp=0x18DAF150u;fake_ecu.req=0x18DA50F0u;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_ecu.req=0x18DA50F1u;fake_channel.baud=125000u;
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
  fake_channel.baud=500000u;fake_channel.protocol=PROTO_CAN;
  REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
