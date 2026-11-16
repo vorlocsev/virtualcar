@@ -28,7 +28,7 @@ ResponseId=18DAF150
 
 Этот фрагмент — только указание изменяемых ключей, **не заменять им полный профиль**. В приватной копии сохраняются исходные секции D2/ReadVin и остальные собственные параметры. J2534 provider должен иметь отдельное имя и отдельный путь к новой DLL/INI; зарегистрированные эталоны не перезаписывать.
 
-Точный охват обработчика: `PROTO_ISO15765` (J2534 protocol 6), `500000` bps, запрос CAN ID `18DA50F1`, ECU request/response `18DA50F1/18DAF150`, полная UDS payload длиной строго 3 байта. Не обслуживает сырые CAN-запросы или другие 125/250 kbit/s каналы.
+Точный охват обработчика: `PROTO_ISO15765` (J2534 protocol 6), `500000` bps, **строго `CAN_29BIT_ID` в флагах канала (0x100)**, запрос CAN ID `18DA50F1`, ECU request/response `18DA50F1/18DAF150`, полная UDS payload длиной строго 3 байта. Не обслуживает сырые CAN-запросы или другие 125/250 kbit/s каналы.
 
 | Входная payload | Новая ответная payload | Примечание |
 | --- | --- | --- |
@@ -41,7 +41,7 @@ ResponseId=18DAF150
 
 ## Тесты и приёмка
 
-Код теста добавлен в `emulator/tests/virtualcar_test.c`: проверка default off, обоих payload, неподдерживаемого DID, укороченного запроса, неверного CAN ID, ответа ECU, скорости, протокола; полный проход J2534 PassThruConnect / PassThruWriteMsgs / PassThruReadMsgs / PassThruDisconnect с откатом режима в off. Эти тесты **добавлены, но ещё не исполнены на exact-head**.
+Код теста добавлен в `emulator/tests/virtualcar_test.c`: проверка default off, обоих payload, неподдерживаемого DID, укороченного запроса, неверного CAN ID, ответа ECU, скорости, протокола и отсутствующего/лишнего флага 29-битной адресации; полный проход J2534 PassThruConnect / PassThruWriteMsgs / PassThruReadMsgs / PassThruDisconnect с откатом режима в off. Эти тесты **добавлены, но ещё не исполнены на exact-head**.
 
 Для сборки из клона **этой ветки** на Linux (LLVM/LLD, GCC, Python):
 ```bash
