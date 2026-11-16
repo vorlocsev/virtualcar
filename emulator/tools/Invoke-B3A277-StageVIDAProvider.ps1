@@ -35,7 +35,7 @@ function Get-Key([string]$ini,[string]$section,[string]$key){
 }
 function Set-Key([string]$ini,[string]$section,[string]$key,[string]$value){
   $s=Find-Section $ini $section
-  if($null -eq $s){return ($ini.TrimEnd(" `r","`n")+"`r`n`r`n[$section]`r`n$key=$value`r`n")}
+  if($null -eq $s){return ($ini.TrimEnd([char[]]@(' ',[char]13,[char]10))+"`r`n`r`n[$section]`r`n$key=$value`r`n")}
   $pat='(?im)^([ \t]*'+[Regex]::Escape($key)+'[ \t]*=[ \t]*)[^\r\n]*'
   $ms=[regex]::Matches($s.Body,$pat)
   if($ms.Count -gt 1){throw ("DUPLICATE_INI_KEY: "+$section+'/'+$key)}
@@ -43,7 +43,7 @@ function Set-Key([string]$ini,[string]$section,[string]$key,[string]$value){
     $old=$ms[0]
     $body=$s.Body.Substring(0,$old.Index)+$old.Groups[1].Value+$value+$s.Body.Substring($old.Index+$old.Length)
   }else{
-    $body=$s.Body.TrimEnd("`r","`n")+"`r`n$key=$value`r`n`r`n"
+    $body=$s.Body.TrimEnd([char[]]@([char]13,[char]10))+"`r`n$key=$value`r`n`r`n"
   }
   return $ini.Substring(0,$s.Start)+$body+$ini.Substring($s.End)
 }
@@ -61,14 +61,14 @@ if($actualDll -cne $expectedDllSha){throw 'B3A277_DLL_SHA_MISMATCH'}
 $raw=[IO.File]::ReadAllText($iniPath,[Text.Encoding]::Default)
 if($raw.Length -lt 100){throw 'B3A277_INI_TOO_SMALL'}
 $cnt=Get-Key $raw 'D2_50' 'FrameCount'
-if($null -eq $cnt){$cnt=Get-Key $raw 'D2_50' 'B9FBFrameCount'}
+if([string]::IsNullOrWhiteSpace($cnt)){$cnt=Get-Key $raw 'D2_50' 'B9FBFrameCount'}
 if($cnt -cne '13'){throw 'B3A277_READVIN_13FRAME_NOT_PRESENT'}
 $block=Find-Section $raw 'D2_50'
 if($null -eq $block){throw 'B3A277_D2_50_SECTION_MISSING'}
 foreach($i in 0..12){
   $hex=('0123456789ABCDEF')[$i]
   $v=Get-Key $raw 'D2_50' ('B9FBFrame'+$hex)
-  if($null -eq $v){$v=Get-Key $raw 'D2_50' ('Frame'+$hex)}
+  if([string]::IsNullOrWhiteSpace($v)){$v=Get-Key $raw 'D2_50' ('Frame'+$hex)}
   if([string]::IsNullOrWhiteSpace($v)){throw 'B3A277_INCOMPLETE_B9FB_FRAMES'}
 }
 if((Get-Key $raw 'P2' 'StrictRouting') -ne '1'){throw 'B3A277_STRICT_ROUTING_NOT_ENABLED'}
