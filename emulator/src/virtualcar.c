@@ -1584,6 +1584,8 @@ static U32 answer_ggd_cem50_lab(const CHANNEL *c,const ECU *ecu,
                                U32 can_id,const U8 *req,U32 len,U8 *res){
     if(!g_ggd_cem_lab_enabled || !c || !ecu || !req || !res ||
        c->protocol!=PROTO_ISO15765 || c->baud!=500000u ||
+       (c->flags&CAN_29BIT_ID)==0u ||
+       (c->flags&~CAN_29BIT_ID)!=0u ||
        can_id!=0x18DA50F1u || ecu->req!=0x18DA50F1u ||
        ecu->resp!=0x18DAF150u || len!=3u || req[0]!=0x22u)
         return 0;
