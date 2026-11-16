@@ -3151,6 +3151,27 @@ static void test_b3a274_ggd_cem50_lab(U32 dev){
  tx=frame(PROTO_ISO15765,0x18DA50F1u,other,3);
  send(cid,&tx);rx=readmsg(cid);
  REQUIRE(rx.DataSize==7&&rx.Data[4]==0x7F&&rx.Data[5]==0x22&&rx.Data[6]==0x31);
+ /* Strict VIDA-like 29-bit ISO15765 FLOW_CONTROL_FILTER admission.
+    Without the matching filter the response must not leak. */
+ {
+  U32 filter=0,count=1;
+  PASSTHRU_MSG mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+  PASSTHRU_MSG pattern=frame(PROTO_ISO15765,0x18DAF150u,0,0);
+  PASSTHRU_MSG flow=frame(PROTO_ISO15765,0x18DA50F1u,0,0);
+  g_strict_j2534_filters=1;
+  tx=frame(PROTO_ISO15765,0x18DA50F1u,a45f,3);
+  send(cid,&tx);
+  REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+  REQUIRE(PassThruStartMsgFilter(cid,3u,&mask,&pattern,&flow,&filter)==ERR_OK);
+  tx=frame(PROTO_ISO15765,0x18DA50F1u,a45f,3);
+  send(cid,&tx);rx=readmsg(cid);
+  REQUIRE(rx.DataSize==8&&rx.Data[4]==0x62&&rx.Data[5]==0xA4&&rx.Data[6]==0x5F&&rx.Data[7]==0x04);
+  tx=frame(PROTO_ISO15765,0x18DA50F1u,dd02,3);
+  send(cid,&tx);rx=readmsg(cid);
+  REQUIRE(rx.DataSize==8&&rx.Data[4]==0x62&&rx.Data[5]==0xDD&&rx.Data[6]==0x02&&rx.Data[7]==0x32);
+  REQUIRE(PassThruStopMsgFilter(cid,filter)==ERR_OK);
+  g_strict_j2534_filters=0;
+ }
  g_ggd_cem_lab_enabled=0;
  tx=frame(PROTO_ISO15765,0x18DA50F1u,a45f,3);
  send(cid,&tx);rx=readmsg(cid);
