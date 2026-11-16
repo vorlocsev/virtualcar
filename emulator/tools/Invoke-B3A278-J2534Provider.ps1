@@ -28,7 +28,7 @@ if((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -cne $expectedDllSha)
 # Verify only that this is the staged GGD/B9FB copy. Never print INI bytes,
 # private VIN, recorded D2 payload, or hashes of private INI.
 $profile=[IO.File]::ReadAllText($ini,[Text.Encoding]::Default)
-function ConfigValue([string]$section,[string]$key) {
+function ConfigValue([string]$section,[string]$key,[switch]$Optional) {
  $sectionPattern='(?im)^\['+[Regex]::Escape($section)+'\]\s*\r?$'
  $matches=[regex]::Matches($profile,$sectionPattern)
  if($matches.Count -ne 1) {throw ('B3A278_SECTION_INVALID_'+$section)}
@@ -37,6 +37,7 @@ function ConfigValue([string]$section,[string]$key) {
  $body=if($next.Success){$tail.Substring(0,$next.Index)}else{$tail}
  $valuePattern='(?im)^[ \t]*'+[Regex]::Escape($key)+'\s*=\s*([^\r\n;#]*)'
  $values=[regex]::Matches($body,$valuePattern)
+ if($values.Count -eq 0 -and $Optional){return $null}
  if($values.Count -ne 1){throw ('B3A278_KEY_INVALID_'+$section+'_'+$key)}
  return $values[0].Groups[1].Value.Trim()
 }
@@ -47,7 +48,8 @@ if((ConfigValue 'Diagnostics' 'EnableGGDCemLab') -ne '1' -or
    (ConfigValue 'P2' 'StrictRouting') -ne '1'){
  throw 'B3A278_GGD_LAB_INI_NOT_STAGED'
 }
-$frames=ConfigValue 'D2_50' 'B9FBFrameCount'
+$frames=ConfigValue 'D2_50' 'FrameCount' -Optional
+if($null -eq $frames){$frames=ConfigValue 'D2_50' 'B9FBFrameCount'}
 if($frames -ne '13'){throw 'B3A278_READVIN_FRAMECOUNT_UNEXPECTED'}
 $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey(
  [Microsoft.Win32.RegistryHive]::LocalMachine,
