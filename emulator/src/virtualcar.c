@@ -153,6 +153,8 @@ static U32 g_iso_rx_start=0;
 static U32 g_strict_j2534_filters=0;
 /* Default off: ordinary J2534-1 clients must not accept vendor IDs. */
 static U32 g_vida_can_ps_lab=0;
+/* B3A274: isolated, default-off CEM50 GGD read-only laboratory values. */
+static U32 g_ggd_cem_lab_enabled=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -766,6 +768,8 @@ static void load_config(void) {
     g_strict_j2534_filters=parse_num(v,0)==1u?1u:0u;
     GetPrivateProfileStringA("Diagnostics","EnableVidaCanPsLab","0",v,sizeof(v),g_profile_path);
     g_vida_can_ps_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableGGDCemLab","0",v,sizeof(v),g_profile_path);
+    g_ggd_cem_lab_enabled=parse_num(v,0)==1u?1u:0u;
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -1571,6 +1575,34 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     backend_event(c,c->active_trace,"request_completed",route,"missing_profile","no_response");
     return 1;
 }
+/* B3A274: CarCom CEM P1/P2 GGD variant 529, config 541.
+   LABORATORY-ONLY synthetic values, not genuine ECU captures.
+   Restrict replies to the observed 29-bit CEM request/reply IDs on
+   the 500-kbit/s ISO15765 channel. Other DID routing remains unchanged.
+   The ISO15765 J2534 layer handles complete diagnostic payloads. */
+static U32 answer_ggd_cem50_lab(const CHANNEL *c,const ECU *ecu,
+                               U32 can_id,const U8 *req,U32 len,U8 *res){
+    if(!g_ggd_cem_lab_enabled || !c || !ecu || !req || !res ||
+       c->protocol!=PROTO_ISO15765 || c->baud!=500000u ||
+       can_id!=0x18DA50F1u || ecu->req!=0x18DA50F1u ||
+       ecu->resp!=0x18DAF150u || len!=3u || req[0]!=0x22u)
+        return 0;
+    if(req[1]==0xA4u && req[2]==0x5Fu){
+        /* One raw status byte; bits S/X/15/50 share this byte.
+           Bit 2 (0x04) is the synthetic ignition-on state. */
+        res[0]=0x62u;res[1]=0xA4u;res[2]=0x5Fu;res[3]=0x04u;
+        logline("B3A274 LAB CEM50 GGD A45F synthetic positive",req,len);
+        return 4u;
+    }
+    if(req[1]==0xDDu && req[2]==0x02u){
+        /* CarCom raw unsigned byte x * 0.25 V: 0x32 = 12.50 V.
+           Do not synthesize the special 0xFF scaling case. */
+        res[0]=0x62u;res[1]=0xDDu;res[2]=0x02u;res[3]=0x32u;
+        logline("B3A274 LAB CEM50 GGD DD02 synthetic positive",req,len);
+        return 4u;
+    }
+    return 0;
+}
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     U32 id,i,n,sz;U8 payload[256],answer[256];const ECU *ecu;
     const char *route;
@@ -1644,7 +1676,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
         /* One physical route must survive a silent completion. Functional
            fanout is a single aggregate transaction, not conflicting ECU routes. */
         route=id==0x7DFu?"ECU_OTHER":
-              (ecu->req==0x726u?"CEM":(ecu->req==0x7E0u?"ECM":"ECU_OTHER"));
+              ((ecu->req==0x726u||ecu->req==0x18DA50F1u)?"CEM":
+               (ecu->req==0x7E0u?"ECM":"ECU_OTHER"));
         if(!matched)backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
         matched=1;
         /* Never synthesize acknowledgments for protected functional requests:
@@ -1659,7 +1692,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             backend_event(c,c->active_trace,"request_completed",route,"no_response","no_response");
             return;
         }
-        sz=answer_uds(ecu,payload,n,answer);
+        sz=answer_ggd_cem50_lab(c,ecu,id,payload,n,answer);
+        if(!sz)sz=answer_uds(ecu,payload,n,answer);
         if(sz){answered=1;emit_response(c,ecu->resp,id==0x7DFu?ecu->req:id,answer,sz);if(c->pending_len)c->pending_request_id=id;
             /* Functional requests visit every configured ECU. Complete their
                shared telemetry record only after all responders were checked. */
