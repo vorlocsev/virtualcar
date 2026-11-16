@@ -111,7 +111,7 @@ public static class B3A277Combined {
    if(can!=0)PassThruDisconnect(can);
    if(device!=0)Must(PassThruClose(device)==0,"CLOSE");
   }
-  Console.WriteLine("B3A277_NATIVE_COMBINED=PASS_READVIN_PRESERVED_IN_OFFLINE_REPLAY; VIDA=NOT_TESTED");
+  Console.WriteLine("B3A277_NATIVE_COMBINED=PASS_13FRAME_REPLAY_AND_GGD; VIDA=NOT_TESTED");
  }
 }
 '@
