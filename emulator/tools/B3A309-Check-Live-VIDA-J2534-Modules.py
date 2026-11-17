@@ -79,6 +79,31 @@ def read_process_modules(pid: int) -> tuple[str, set[str]]:
     if sys.platform != "win32":
         return "UNSUPPORTED_PLATFORM", set()
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # Check the executable image name before treating an arbitrary PID as VIDA.
+    open_proc = k32.OpenProcess
+    open_proc.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    open_proc.restype = ctypes.c_void_p
+    get_image = k32.QueryFullProcessImageNameW
+    get_image.argtypes = (ctypes.c_void_p, wintypes.DWORD,
+                          wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
+    get_image.restype = wintypes.BOOL
+    close_proc = k32.CloseHandle
+    close_proc.argtypes = (ctypes.c_void_p,)
+    close_proc.restype = wintypes.BOOL
+    # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000 (no debug privileges).
+    proc = open_proc(0x1000, False, pid)
+    if not proc:
+        return "PROCESS_NOT_FOUND_OR_ACCESS_DENIED", set()
+    try:
+        name = ctypes.create_unicode_buffer(32768)
+        length = wintypes.DWORD(len(name))
+        if not get_image(proc, 0, name, ctypes.byref(length)):
+            return "PROCESS_IMAGE_QUERY_ERROR", set()
+        if ntpath.basename(name.value).casefold() != "iexplore.exe":
+            return "PID_NOT_IEXPLORE", set()
+    finally:
+        close_proc(proc)
+
     snapshot = k32.CreateToolhelp32Snapshot
     snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
     snapshot.restype = ctypes.c_void_p
