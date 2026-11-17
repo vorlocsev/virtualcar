@@ -46,13 +46,12 @@ assert not any(line.startswith("B3A298_") for line in mismatch)
 missing = report(data, "FEEDBEEF", "cem-ident", expected_tagged=3)
 assert "B3A300_RESULT=ERROR_PID_NOT_IN_WINDOW" in missing
 
-lead_partial = past + b"broken-" + window + future
-first_byte = len(past) + len(b"broken-")
+# Begin a retrospective capture seven bytes into an existing log line.
 data, _, discarded, start = capture(
-    io.BytesIO(lead_partial), end_offset=len(past) + len(b"broken-") + len(window),
-    window_bytes=len(window) + 7)
-assert start == len(past)
-assert discarded == len(b"broken-") + len(first)
+    io.BytesIO(full_log), end_offset=anchor,
+    window_bytes=len(window) - 7)
+assert start == len(past) + 7
+assert discarded == len(first) - 7
 assert data == second + other
 
 # Trim a final partial line when the end-offset bisects its bytes.
