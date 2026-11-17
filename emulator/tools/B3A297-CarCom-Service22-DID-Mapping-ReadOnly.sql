@@ -10,6 +10,8 @@
 -- 
 -- A binary marker occurrence inside opaque T111.definition is only a
 -- HEURISTIC presence check. Absence also does NOT exclude dynamic mapping.
+-- UTF-16LE with 0x00 bytes is intentionally not probed using CHARINDEX;
+-- Microsoft SQL Server documents a Windows-collation 0x0000 limitation.
 SET NOCOUNT ON;
 
 PRINT 'B3A297_SHARED_SERVICE22_USAGE';
@@ -42,10 +44,7 @@ SELECT id AS service_id,
        CASE WHEN CHARINDEX(0x06F1,b)>0 THEN 1 ELSE 0 END AS le_f106_present,
        CASE WHEN CHARINDEX(0x46313130,b)>0 THEN 1 ELSE 0 END AS ascii_f110_present,
        CASE WHEN CHARINDEX(0x46313134,b)>0 THEN 1 ELSE 0 END AS ascii_f114_present,
-       CASE WHEN CHARINDEX(0x46313036,b)>0 THEN 1 ELSE 0 END AS ascii_f106_present,
-       CASE WHEN CHARINDEX(0x4600310031003000,b)>0 THEN 1 ELSE 0 END AS utf16le_f110_present,
-       CASE WHEN CHARINDEX(0x4600310031003400,b)>0 THEN 1 ELSE 0 END AS utf16le_f114_present,
-       CASE WHEN CHARINDEX(0x4600310030003600,b)>0 THEN 1 ELSE 0 END AS utf16le_f106_present
+       CASE WHEN CHARINDEX(0x46313036,b)>0 THEN 1 ELSE 0 END AS ascii_f106_present
 FROM DefinitionData;
 
 PRINT 'B3A297_SERVICE_TO_BLOCK_BRIDGE_CATALOG';
