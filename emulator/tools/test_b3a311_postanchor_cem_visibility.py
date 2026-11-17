@@ -51,7 +51,7 @@ assert packet(b"TX (app request) NOTHEX", tx.encode()) is None
 rows = scan(data, selected_dir=r"c:\synthetic\selected")
 check = (
     "B3A311_IEXPLORE_PID_COUNT=2",
-    "B3A311_PID=00002710,lines:13,opens:1,ini_to_open:1,"
+    "B3A311_PID=00002710,lines:14,opens:1,ini_to_open:1,"
     "selected_origin_opens:1,other_origin_opens:0,unknown_origin_opens:0,"
     "cem22_tx:3,cem22_tx_iso15765_500k_29bit:3,nrc31:1",
     "B3A311_PID_DID=00002710,did:A45F,tx:1,positive_delivered:1,lab_generated:1",
