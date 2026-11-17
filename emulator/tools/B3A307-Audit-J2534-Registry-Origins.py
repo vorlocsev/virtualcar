@@ -56,7 +56,7 @@ def canonical_dir_from_dll(path: str | None) -> str | None:
 
 
 def registry_sources() -> dict[str, dict]:
-    """Only read HKLM\SOFTWARE\PassThruSupport.04.04 using explicit WOW64 views."""
+    """Only read HKLM\\SOFTWARE\\PassThruSupport.04.04 using explicit WOW64 views."""
     output = {}
     if os.name != "nt":
         return {
