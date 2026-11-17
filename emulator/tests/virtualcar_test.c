@@ -3169,6 +3169,9 @@ static void test_b3a275_cem40_a6_ignition_lab(U32 dev){
  tx.Data[9]=0x01;tx.Data[11]=0x01;send(ps,&tx);
  tx.Data[11]=0;tx.Data[5]=0x50;send(ps,&tx);
  tx=frame(PROTO_CAN_PS,0x000FFFFDu,request,8);tx.TxFlags=CAN_29BIT_ID;
+ send(ps,&tx);
+ /* Exact CAN ID and payload without the frame-level 29-bit flag remain silent. */
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,request,8);tx.TxFlags=0u;
  send(ps,&tx);n=1;
  REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
  /* 8. Standard CAN 125k cannot borrow the opt-in CAN_PS response. */
