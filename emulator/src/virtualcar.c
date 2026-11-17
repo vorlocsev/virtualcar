@@ -53,6 +53,7 @@ typedef void *HANDLE;
 #define MAX_FILTERS 24
 #define START_OF_MESSAGE 0x00000002u
 #define CAN_29BIT_ID 0x00000100u
+#define ISO15765_FRAME_PAD 0x00000040u /* J2534 ISO-TP CAN frame padding */
 #define ISO15765_ADDR_TYPE 0x00000080u /* J2534 5-byte extended address header */
 #define ERR_OK 0u
 #define ERR_NOT_SUPPORTED 1u
@@ -1796,7 +1797,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                p3_f114_lab_record_valid(g_p3_f114_lab_record,g_vin) &&
                c->protocol==PROTO_ISO15765 &&
                channel_wire_protocol(c)==PROTO_ISO15765 &&
-               c->baud==500000u && msg->TxFlags==flags &&
+               c->baud==500000u &&
+               (msg->TxFlags & ~ISO15765_FRAME_PAD)==flags &&
                ecu->resp==expected){
                 answer[0]=0x62u;answer[1]=0xF1u;answer[2]=0x14u;
                 bytes_copy(answer+3u,g_p3_f114_lab_record,P3_F114_LAB_RECORD_BYTES);
