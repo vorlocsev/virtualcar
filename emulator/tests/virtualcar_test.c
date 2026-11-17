@@ -3267,6 +3267,17 @@ static void test_b3a276_f114_structured_lab(U32 dev){
   REQUIRE(memcmp(rx.Data+7u,g_p3_f114_lab_record,88u)==0);
   REQUIRE(memcmp(rx.Data+18u,g_vin,17u)==0);
 
+  /* 3b: original VIDA sets ISO15765_FRAME_PAD (0x40) on 11-bit F114.
+     This option pads classic CAN frames but does not change addressing.
+     The same flag is also valid with the 29-bit addressing flag. */
+  tx.TxFlags=flags|ISO15765_FRAME_PAD;
+  send(channel_id,&tx);rx=readmsg(channel_id);
+  REQUIRE(rx.ProtocolID==PROTO_ISO15765 && rx.DataSize==95u &&
+          rx.ExtraDataIndex==95u && rx.RxStatus==flags);
+  REQUIRE(rx.Data[4]==0x62u && rx.Data[5]==0xF1u && rx.Data[6]==0x14u);
+  REQUIRE(memcmp(rx.Data+7u,g_p3_f114_lab_record,88u)==0);
+  tx.TxFlags=flags;
+
   /* 4: exact TX 29-bit flag is required only on the 29-bit route. */
   tx.TxFlags=flags?0u:CAN_29BIT_ID;
   send(channel_id,&tx);n=1;
