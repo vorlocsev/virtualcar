@@ -3242,7 +3242,12 @@ static void test_b3a276_f114_structured_lab(U32 dev){
   if(ids[i]==0x726u){
    rx=readmsg(channel_id);
    REQUIRE(rx.DataSize==24u && rx.Data[4]==0x62u && rx.Data[5]==0xF1u && rx.Data[6]==0x14u);
-  }else REQUIRE(PassThruReadMsgs(channel_id,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+  }else{
+   /* The unchanged legacy 29-bit route emits NRC31, not a VIN. */
+   rx=readmsg(channel_id);
+   REQUIRE(rx.DataSize==7u && rx.Data[4]==0x7Fu &&
+           rx.Data[5]==0x22u && rx.Data[6]==0x31u);
+  }
 
   /* 2: explicitly invalid record never falls back to 17-byte VIN. */
   g_p3_f114_lab_mode=2u;
