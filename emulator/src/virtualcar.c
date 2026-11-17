@@ -155,6 +155,10 @@ static U32 g_strict_j2534_filters=0;
 static U32 g_vida_can_ps_lab=0;
 /* B3A274: isolated, default-off CEM50 GGD read-only laboratory values. */
 static U32 g_ggd_cem_lab_enabled=0;
+/* B3A275: explicitly opted-in, synthetic CEM40 ignition-status replay.
+   No CEM response is manufactured without a validated eight-byte INI frame. */
+static U32 g_cem40_a6_ignition_lab_enabled=0;
+static U8 g_cem40_a6_ignition_frame[8];
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -400,6 +404,14 @@ static int cem_d2_probe_shape(const U8 *p,U32 n){
 }
 /* Only the observed CEM_40 read-DTC mode is admitted. No erase/write service,
    other selector, or presumed interchangeable CEM_50 address is enabled. */
+/* Observed A6 1A04 positive-envelope grammar, not an OEM MY2009 state.
+   Only these four documented laboratory switch positions are admitted. */
+static int cem40_a6_ignition_valid_frame(const U8 *f){
+    return f && f[0]==0xCDu && f[1]==0x40u && f[2]==0xE6u &&
+           f[3]==0x1Au && f[4]==0x04u &&
+           (f[5]==0x18u || f[5]==0x1Cu || f[5]==0x1Du || f[5]==0x1Eu) &&
+           f[6]==0u && f[7]==0u;
+}
 static int cem_d2_ae1b_shape(const U8 *p,U32 n){
     U32 j;
     if(!p || n<4u || n>8u || p[0]!=0xCBu || p[1]!=0x40u ||
@@ -770,6 +782,22 @@ static void load_config(void) {
     g_vida_can_ps_lab=parse_num(v,0)==1u?1u:0u;
     GetPrivateProfileStringA("Diagnostics","EnableGGDCemLab","0",v,sizeof(v),g_profile_path);
     g_ggd_cem_lab_enabled=parse_num(v,0)==1u?1u:0u;
+    /* Both independent opt-ins and a canonical 8-byte frame are mandatory.
+       A malformed/absent frame is silent, never a default ignition state. */
+    g_cem40_a6_ignition_lab_enabled=0u;
+    bytes_zero(g_cem40_a6_ignition_frame,8u);
+    GetPrivateProfileStringA("Diagnostics","EnableCem40A6IgnitionLab","0",v,sizeof(v),g_profile_path);
+    if(parse_num(v,0)==1u){
+        GetPrivateProfileStringA("CEM40_A6_1A04","Enabled","0",v,sizeof(v),g_profile_path);
+        if(parse_num(v,0)==1u){
+            U8 candidate[8];
+            GetPrivateProfileStringA("CEM40_A6_1A04","Frame","",v,sizeof(v),g_profile_path);
+            if(parse_frame8(v,candidate) && cem40_a6_ignition_valid_frame(candidate)){
+                bytes_copy(g_cem40_a6_ignition_frame,candidate,8u);
+                g_cem40_a6_ignition_lab_enabled=1u;
+            }else logline("CEM40 A6 1A04 synthetic fixture rejected (invalid frame)",0,0);
+        }
+    }
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -1502,7 +1530,21 @@ static void supersede_d2_exchange(CHANNEL *c){
     if(discarded){U8 count_be[4];u32_be(count_be,discarded);
         logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
 }
-static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
+/* A single original-VIDA-observed, read-only ignition-state request.
+   Fail closed on protocol, J1962 pins, bitrate, 29-bit channel and bytes;
+   leave all other A3/A6 requests classified but unanswered. */
+static int cem40_a6_ignition_lab_matches(const CHANNEL *c,const U8 *p,U32 n,U32 tx_flags){
+    static const U8 exact[8]={0xCDu,0x40u,0xA6u,0x1Au,0x04u,0x01u,0u,0u};
+    U32 j;
+    if(!g_cem40_a6_ignition_lab_enabled || !cem40_a6_ignition_valid_frame(g_cem40_a6_ignition_frame) ||
+       !c || !p || n!=8u || tx_flags!=CAN_29BIT_ID || c->protocol!=PROTO_CAN ||
+       channel_wire_protocol(c)!=PROTO_CAN_PS ||
+       c->baud!=125000u || c->ms_pins!=VOLVO_MS_PINS ||
+       (c->flags&CAN_29BIT_ID)!=CAN_29BIT_ID)return 0;
+    for(j=0;j<8u;j++)if(p[j]!=exact[j])return 0;
+    return 1;
+}
+static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len,U32 tx_flags){
     U32 i;D2_PROFILE *d;const char *route;int ae1b;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
     /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
@@ -1513,6 +1555,15 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         /* A3/A6 must not inherit old B9FB frames as a false probe reply. */
         supersede_d2_exchange(c);
         backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
+        if(cem40_a6_ignition_lab_matches(c,data,len,tx_flags)){
+            U32 before=c->count;
+            backend_event(c,c->active_trace,"response_generated","CEM","none","unknown");
+            enqueue(c,0x00800003u,g_cem40_a6_ignition_frame,8u);
+            if(c->count>before)
+                logline("CEM40 A6 1A04 synthetic ignition-status lab frame queued",0,0);
+            backend_end_if_drained(c,c->active_trace);
+            return 1;
+        }
         /* The strict D2 bus policy already gates recorded B9 replies.
            Apply the same *read-only classification* to A3/A6 request
            shapes before calling an unsupported bus "unimplemented".
@@ -1612,7 +1663,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     const U8 *data;
     if(msg->DataSize<5||msg->DataSize>MAX_DATA)return;
     id=((U32)msg->Data[0]<<24)|((U32)msg->Data[1]<<16)|((U32)msg->Data[2]<<8)|msg->Data[3];
-    if(process_d2(c,id,msg->Data+4,msg->DataSize-4))return;
+    if(process_d2(c,id,msg->Data+4,msg->DataSize-4,msg->TxFlags))return;
     /* FF C8 is documented as a broadcast ECU reset in published P2 logs.
        We do not emulate a physical reset or fabricate an acknowledgment. */
     if(id==0x000FFFFEu && msg->DataSize>=6 && msg->Data[4]==0xFF && msg->Data[5]==0xC8){
