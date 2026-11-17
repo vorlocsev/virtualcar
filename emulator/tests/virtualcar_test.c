@@ -3105,6 +3105,94 @@ static void test_cem40_ae1b_fixture_transport(U32 dev){
  puts("PASS CEM_40 AE1B: 8 opt-in synthetic service/route/isolation gates");
 }
 
+/* B3A275: exact CAN_PS CEM40 ignition-status replay is explicitly opted in.
+   No original-VIDA acceptance, OEM state or physical ignition claim. */
+static void test_b3a275_cem40_a6_ignition_lab(U32 dev){
+ U32 old_ps=g_vida_can_ps_lab,old_enabled=g_cem40_a6_ignition_lab_enabled;
+ U32 old_strict=g_strict_j2534_filters,old_route=g_p2_strict_routing;
+ U8 saved_frame[8];U32 ps=0,standard=0,n=1,filter_id=0;
+ PASSTHRU_MSG tx,rx,mask,pattern;
+ SCONFIG pins={J2534_PINS,VOLVO_MS_PINS};SCONFIG_LIST opts={1,&pins};
+ p2_j2534_bridge saved_bridge=g_vehicle_bridge;
+ const U8 request[8]={0xCD,0x40,0xA6,0x1A,0x04,0x01,0,0};
+ const U8 other_a6[8]={0xCD,0x40,0xA6,0xD0,0xD1,0x01,0,0};
+ const U8 a3[8]={0xCF,0x40,0xA3,0x02,0x03,0xA5,0xA5,0};
+ const U8 response[8]={0xCD,0x40,0xE6,0x1A,0x04,0x1E,0,0};
+ U8 malformed[8];const char *start;U64 rid;
+ memcpy(saved_frame,g_cem40_a6_ignition_frame,8);
+ g_vida_can_ps_lab=1u;g_strict_j2534_filters=0u;g_p2_strict_routing=1u;
+ memcpy(g_cem40_a6_ignition_frame,response,8);
+ REQUIRE(cem40_a6_ignition_valid_frame(response));
+ memcpy(malformed,response,8);malformed[2]=0xF9;
+ REQUIRE(!cem40_a6_ignition_valid_frame(malformed));
+ memcpy(malformed,response,8);malformed[5]=0x1Fu;
+ REQUIRE(!cem40_a6_ignition_valid_frame(malformed));
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,125000u,&ps)==ERR_OK);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,request,8);tx.TxFlags=CAN_29BIT_ID;
+
+ /* 1. Missing opt-in stays silent on the exact VIDA request. */
+ g_cem40_a6_ignition_lab_enabled=0u;
+ send(ps,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ /* 2. Even with opt-in, J1962 3/11 routing must be explicitly configured. */
+ g_cem40_a6_ignition_lab_enabled=1u;n=1;
+ REQUIRE(PassThruWriteMsgs(ps,&tx,&n,10)==ERR_PIN_INVALID&&n==0u);
+ REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&opts,0)==ERR_OK);
+ REQUIRE(channel(ps)->ms_pins==VOLVO_MS_PINS);
+ /* 3. Exact request returns one synthetic frame through actual J2534. */
+ start=backend_lines+backend_len;send(ps,&tx);
+ rid=last_tx_request(start);REQUIRE(rid);
+ rx=readmsg(ps);
+ REQUIRE(rx.ProtocolID==PROTO_CAN_PS && rx.RxStatus==CAN_29BIT_ID &&
+         rx.DataSize==12u && rx.ExtraDataIndex==12u);
+ REQUIRE(rx.Data[0]==0x00&&rx.Data[1]==0x80&&rx.Data[2]==0&&rx.Data[3]==0x03);
+ REQUIRE(memcmp(rx.Data+4,response,8)==0);
+ REQUIRE(terminal_for(start,rid,"none","responded")==1u);
+ /* 4. A different permitted synthetic ignition position is an exact fixture. */
+ g_cem40_a6_ignition_frame[5]=0x1Cu;
+ send(ps,&tx);rx=readmsg(ps);REQUIRE(rx.Data[9]==0x1Cu);
+ g_cem40_a6_ignition_frame[5]=0x1Eu;
+ /* 5. An invalid laboratory frame must never be emitted. */
+ g_cem40_a6_ignition_frame[5]=0x1Fu;
+ send(ps,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ g_cem40_a6_ignition_frame[5]=0x1Eu;
+ /* 6. The other A6 selector and A3 stay silent. */
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,other_a6,8);tx.TxFlags=CAN_29BIT_ID;
+ send(ps,&tx);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,a3,8);tx.TxFlags=CAN_29BIT_ID;
+ send(ps,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ /* 7. Any request variant or wrong physical CAN ID stays silent. */
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,request,8);tx.TxFlags=CAN_29BIT_ID;
+ tx.Data[9]=0x02;send(ps,&tx);
+ tx.Data[9]=0x01;tx.Data[11]=0x01;send(ps,&tx);
+ tx.Data[11]=0;tx.Data[5]=0x50;send(ps,&tx);
+ tx=frame(PROTO_CAN_PS,0x000FFFFDu,request,8);tx.TxFlags=CAN_29BIT_ID;
+ send(ps,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ /* 8. Standard CAN 125k cannot borrow the opt-in CAN_PS response. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,125000u,&standard)==ERR_OK);
+ tx=frame(PROTO_CAN,0x000FFFFEu,request,8);tx.TxFlags=CAN_29BIT_ID;
+ send(standard,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(standard,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(standard)==ERR_OK);
+ /* 9. Strict RX filter rejection suppresses a generated ignition frame. */
+ g_strict_j2534_filters=1u;
+ mask=frame(PROTO_CAN_PS,0xFFFFFFFFu,0,0);
+ pattern=frame(PROTO_CAN_PS,0x00800002u,0,0);
+ REQUIRE(PassThruStartMsgFilter(ps,1u,&mask,&pattern,0,&filter_id)==ERR_OK);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,request,8);tx.TxFlags=CAN_29BIT_ID;
+ send(ps,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(ps)==ERR_OK);
+ g_vida_can_ps_lab=old_ps;g_cem40_a6_ignition_lab_enabled=old_enabled;
+ memcpy(g_cem40_a6_ignition_frame,saved_frame,8);
+ g_strict_j2534_filters=old_strict;g_p2_strict_routing=old_route;
+ g_vehicle_bridge=saved_bridge;
+ puts("PASS B3A275 CEM40 A6 ignition: 9 opt-in CAN_PS isolation gates");
+}
+
 /* B3A274: default-off, tightly scoped GGD CEM50 laboratory answers.
    The host test covers both the helper's guardrails and the full J2534
    ISO15765 TX/RX path. No OEM payload or real hardware is used. */
@@ -3221,6 +3309,7 @@ int main(){
  test_known_b9fb_13frame_final_marker();
  test_d2_unknown_target_supersession(dev);
  test_d2_a3_a6_supersession(dev);
+ test_b3a275_cem40_a6_ignition_lab(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
