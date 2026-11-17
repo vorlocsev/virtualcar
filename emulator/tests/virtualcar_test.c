@@ -3105,6 +3105,95 @@ static void test_cem40_ae1b_fixture_transport(U32 dev){
  puts("PASS CEM_40 AE1B: 8 opt-in synthetic service/route/isolation gates");
 }
 
+/* B3A274: default-off, tightly scoped GGD CEM50 laboratory answers.
+   The host test covers both the helper's guardrails and the full J2534
+   ISO15765 TX/RX path. No OEM payload or real hardware is used. */
+static void test_b3a274_ggd_cem50_lab(U32 dev){
+ U32 old_lab=g_ggd_cem_lab_enabled,old_count=g_ecu_count;
+ U32 old_strict=g_strict_j2534_filters,old_start=g_iso_rx_start;
+ U32 cid=0;
+ ECU old_ecu1=g_ecu[1],fake_ecu={0};
+ /* CHANNEL owns a 64-element J2534 FIFO (~270 KiB): keep it off the
+    Windows host-test stack even though this unit only tests metadata. */
+ static CHANNEL fake_channel;
+
+ U8 answer[8]={0};
+ const U8 a45f[3]={0x22,0xA4,0x5F};
+ const U8 dd02[3]={0x22,0xDD,0x02};
+ const U8 other[3]={0x22,0xF0,0x00};
+ PASSTHRU_MSG tx,rx;
+ fake_ecu.req=0x18DA50F1u;fake_ecu.resp=0x18DAF150u;
+ memset(&fake_channel,0,sizeof(fake_channel));
+ fake_channel.protocol=PROTO_ISO15765;fake_channel.baud=500000u;
+ fake_channel.flags=CAN_29BIT_ID;
+ g_ggd_cem_lab_enabled=0;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ g_ggd_cem_lab_enabled=1;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==4);
+ REQUIRE(answer[0]==0x62&&answer[1]==0xA4&&answer[2]==0x5F&&answer[3]==0x04);
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,dd02,3,answer)==4);
+ REQUIRE(answer[0]==0x62&&answer[1]==0xDD&&answer[2]==0x02&&answer[3]==0x32);
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,other,3,answer)==0);
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,2,answer)==0);
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F0u,a45f,3,answer)==0);
+ fake_ecu.resp=0x18DAF151u;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_ecu.resp=0x18DAF150u;fake_ecu.req=0x18DA50F0u;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_ecu.req=0x18DA50F1u;fake_channel.baud=125000u;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_channel.baud=500000u;fake_channel.protocol=PROTO_CAN;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_channel.protocol=PROTO_ISO15765;fake_channel.flags=0;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_channel.flags=CAN_29BIT_ID|ISO15765_ADDR_TYPE;
+ REQUIRE(answer_ggd_cem50_lab(&fake_channel,&fake_ecu,0x18DA50F1u,a45f,3,answer)==0);
+ fake_channel.flags=CAN_29BIT_ID;
+ g_ecu_count=2;g_ecu[1].req=0x18DA50F1u;g_ecu[1].resp=0x18DAF150u;
+ g_iso_rx_start=0;g_strict_j2534_filters=0;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,CAN_29BIT_ID,500000u,&cid)==ERR_OK);
+ tx=frame(PROTO_ISO15765,0x18DA50F1u,a45f,3);
+ send(cid,&tx);rx=readmsg(cid);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765&&rx.DataSize==8);
+ REQUIRE(rx.Data[0]==0x18&&rx.Data[1]==0xDA&&rx.Data[2]==0xF1&&rx.Data[3]==0x50);
+ REQUIRE(rx.Data[4]==0x62&&rx.Data[5]==0xA4&&rx.Data[6]==0x5F&&rx.Data[7]==0x04);
+ tx=frame(PROTO_ISO15765,0x18DA50F1u,dd02,3);
+ send(cid,&tx);rx=readmsg(cid);
+ REQUIRE(rx.DataSize==8&&rx.Data[4]==0x62&&rx.Data[5]==0xDD&&rx.Data[6]==0x02&&rx.Data[7]==0x32);
+ tx=frame(PROTO_ISO15765,0x18DA50F1u,other,3);
+ send(cid,&tx);rx=readmsg(cid);
+ REQUIRE(rx.DataSize==7&&rx.Data[4]==0x7F&&rx.Data[5]==0x22&&rx.Data[6]==0x31);
+ /* Strict VIDA-like 29-bit ISO15765 FLOW_CONTROL_FILTER admission.
+    Without the matching filter the response must not leak. */
+ {
+  U32 filter=0,count=1;
+  PASSTHRU_MSG mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+  PASSTHRU_MSG pattern=frame(PROTO_ISO15765,0x18DAF150u,0,0);
+  PASSTHRU_MSG flow=frame(PROTO_ISO15765,0x18DA50F1u,0,0);
+  g_strict_j2534_filters=1;
+  tx=frame(PROTO_ISO15765,0x18DA50F1u,a45f,3);
+  send(cid,&tx);
+  REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
+  REQUIRE(PassThruStartMsgFilter(cid,3u,&mask,&pattern,&flow,&filter)==ERR_OK);
+  tx=frame(PROTO_ISO15765,0x18DA50F1u,a45f,3);
+  send(cid,&tx);rx=readmsg(cid);
+  REQUIRE(rx.DataSize==8&&rx.Data[4]==0x62&&rx.Data[5]==0xA4&&rx.Data[6]==0x5F&&rx.Data[7]==0x04);
+  tx=frame(PROTO_ISO15765,0x18DA50F1u,dd02,3);
+  send(cid,&tx);rx=readmsg(cid);
+  REQUIRE(rx.DataSize==8&&rx.Data[4]==0x62&&rx.Data[5]==0xDD&&rx.Data[6]==0x02&&rx.Data[7]==0x32);
+  REQUIRE(PassThruStopMsgFilter(cid,filter)==ERR_OK);
+  g_strict_j2534_filters=0;
+ }
+ g_ggd_cem_lab_enabled=0;
+ tx=frame(PROTO_ISO15765,0x18DA50F1u,a45f,3);
+ send(cid,&tx);rx=readmsg(cid);
+ REQUIRE(rx.DataSize==7&&rx.Data[4]==0x7F&&rx.Data[5]==0x22&&rx.Data[6]==0x31);
+ REQUIRE(PassThruDisconnect(cid)==ERR_OK);
+ g_ecu[1]=old_ecu1;g_ecu_count=old_count;
+ g_ggd_cem_lab_enabled=old_lab;g_iso_rx_start=old_start;
+ g_strict_j2534_filters=old_strict;
+ puts("B3A274 GGD CEM50 opt-in scoped DID host regression PASS");
+}
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -4500,6 +4589,7 @@ int main(){
  test_stage42_multiecu_fc(dev);
  test_stage43_iso_rx_boundaries(dev);
  test_b3a189_scoped_filter_lifetime(dev);
+ test_b3a274_ggd_cem50_lab(dev);
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Lost host evidence is a test failure, never silently ignored. */
  REQUIRE(backend_capture_overflows==0);
