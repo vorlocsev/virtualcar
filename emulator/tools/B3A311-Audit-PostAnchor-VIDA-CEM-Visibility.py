@@ -11,7 +11,7 @@ directory) before PassThruOpen. Associate these within each process PID;
 compare *directories only* with the CURRENT 32-bit FunctionLibrary entry
 for an explicit adapter label. Tally UDS 22 request DIDs, RX positives,
 NRC31 and LAB-generated A45F/DD02 by PID, never pair negative NRC to DID
-without packet correlation or claim OEM/GU I ECU-ident acceptance.
+without packet correlation or claim OEM/GUI ECU-ident acceptance.
 
 No VIN, payload bytes, complete log lines, private paths, full registry
 FunctionLibrary values, or hashes are output. No registry/INI/DLL writes,
@@ -103,6 +103,10 @@ def scan(data: bytes, *, selected_dir: str | None) -> list[str]:
         counts = per_pid[pid]
         counts["LINES"] += 1
         current = state[pid]
+        # The native TX context is adjacent to the TX request. Reject any
+        # intervening log event rather than inheriting a stale context.
+        if not body.startswith(TX + b" "):
+            current["txctx"] = None
 
         if body.startswith(INI):
             current["pending_ini"] = body[len(INI):]
