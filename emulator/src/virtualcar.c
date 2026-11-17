@@ -159,6 +159,13 @@ static U32 g_ggd_cem_lab_enabled=0;
    No CEM response is manufactured without a validated eight-byte INI frame. */
 static U32 g_cem40_a6_ignition_lab_enabled=0;
 static U8 g_cem40_a6_ignition_frame[8];
+/* B3A276: experimental, explicitly supplied 88-byte F114 record.
+   D2/PJB-derived shape; not an OEM-authenticated CEM 821/529 reply. */
+#define P3_F114_LAB_RECORD_BYTES 88u
+#define P3_F114_LAB_UDS_BYTES 91u
+/* 0=disabled, 1=validated fixture, 2=enabled but invalid fixture. */
+static U32 g_p3_f114_lab_mode=0u;
+static U8 g_p3_f114_lab_record[P3_F114_LAB_RECORD_BYTES];
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -734,6 +741,18 @@ static int validate_fc140_fixture(const D2_PROFILE *d){
     for(k=0;k<140;k++)sum+=(U32)stream[5+k];
     return stream[4]==(U8)sum;
 }
+/* The original CarCom field metadata places VIN at bit offset 88.
+   The 88-byte candidate is only a bounded laboratory replay from an
+   unrelated D2/PJB sample. Do not assume a complete 166-byte OEM record. */
+static int p3_f114_lab_record_valid(const U8 *record,const char *vin){
+    U32 i;
+    if(!record||!vin||str_len(vin)!=17u ||
+       record[0]!=0x57u ||
+       record[P3_F114_LAB_RECORD_BYTES-2u]!=0x0Du ||
+       record[P3_F114_LAB_RECORD_BYTES-1u]!=0x0Au)return 0;
+    for(i=0;i<17u;i++)if(record[11u+i]!=(U8)vin[i])return 0;
+    return 1;
+}
 static void load_config(void) {
     U32 n,i;char v[512],key[24];
     /* Include the host executable and PID so GUI self-checks and SectorV
@@ -772,6 +791,24 @@ static void load_config(void) {
     }
     GetPrivateProfileStringA("Vehicle","VIN","YV1CZ0002A0000001",v,sizeof(v),g_profile_path);
     if(str_len(v)==17)str_copy(g_vin,v,sizeof(g_vin));
+    /* Never reuse a previous Open() laboratory F114 mode/record.
+       Both opt-in keys plus all 88 bytes are required. Invalid opt-in
+       fails silent rather than falling back to the VIN-only legacy reply. */
+    g_p3_f114_lab_mode=0u;
+    bytes_zero(g_p3_f114_lab_record,sizeof(g_p3_f114_lab_record));
+    GetPrivateProfileStringA("Diagnostics","EnableP3F114StructuredLab","0",v,sizeof(v),g_profile_path);
+    if(parse_num(v,0)==1u){
+        GetPrivateProfileStringA("P3F114","Enabled","0",v,sizeof(v),g_profile_path);
+        if(parse_num(v,0)==1u){
+            g_p3_f114_lab_mode=2u;
+            GetPrivateProfileStringA("P3F114","PayloadHex","",v,sizeof(v),g_profile_path);
+            if(parse_hex_blob(v,g_p3_f114_lab_record,sizeof(g_p3_f114_lab_record))==
+                   P3_F114_LAB_RECORD_BYTES &&
+               p3_f114_lab_record_valid(g_p3_f114_lab_record,g_vin))
+                g_p3_f114_lab_mode=1u;
+            else logline("P3 F114 structured lab fixture rejected (no positive reply)",0,0);
+        }
+    }
     GetPrivateProfileStringA("Vehicle","BatteryMv","12500",v,sizeof(v),g_profile_path);
     g_battery_mv=parse_num(v,12500);
     GetPrivateProfileStringA("Vehicle","EmitIsoRxStart","0",v,sizeof(v),g_profile_path);
@@ -1745,8 +1782,31 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             backend_event(c,c->active_trace,"request_completed",route,"no_response","no_response");
             return;
         }
-        sz=answer_ggd_cem50_lab(c,ecu,id,payload,n,answer);
-        if(!sz)sz=answer_uds(ecu,payload,n,answer);
+        /* B3A276: F114-shaped replay is isolated from the legacy
+           synthetic 17-byte VIN reply. It is strictly ISO15765/500k
+           with the exact configured response CAN ID, and has no
+           fallback when the explicit fixture is missing or invalid. */
+        if(g_p3_f114_lab_mode!=0u && id==ecu->req && n==3u &&
+           payload[0]==0x22u && payload[1]==0xF1u && payload[2]==0x14u &&
+           (id==0x726u || id==0x18DA50F1u)){
+            U32 expected=id==0x726u?0x72Eu:0x18DAF150u;
+            U32 flags=id==0x726u?0u:CAN_29BIT_ID;
+            sz=0u;
+            if(g_p3_f114_lab_mode==1u &&
+               p3_f114_lab_record_valid(g_p3_f114_lab_record,g_vin) &&
+               c->protocol==PROTO_ISO15765 &&
+               channel_wire_protocol(c)==PROTO_ISO15765 &&
+               c->baud==500000u && msg->TxFlags==flags &&
+               ecu->resp==expected){
+                answer[0]=0x62u;answer[1]=0xF1u;answer[2]=0x14u;
+                bytes_copy(answer+3u,g_p3_f114_lab_record,P3_F114_LAB_RECORD_BYTES);
+                sz=P3_F114_LAB_UDS_BYTES;
+                logline("P3 F114 experimental structured lab reply (not OEM)",0,0);
+            }else logline("P3 F114 experimental lab missing/route mismatch: silent",0,0);
+        }else{
+            sz=answer_ggd_cem50_lab(c,ecu,id,payload,n,answer);
+            if(!sz)sz=answer_uds(ecu,payload,n,answer);
+        }
         if(sz){answered=1;emit_response(c,ecu->resp,id==0x7DFu?ecu->req:id,answer,sz);if(c->pending_len)c->pending_request_id=id;
             /* Functional requests visit every configured ECU. Complete their
                shared telemetry record only after all responders were checked. */

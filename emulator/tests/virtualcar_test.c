@@ -3198,6 +3198,124 @@ static void test_b3a275_cem40_a6_ignition_lab(U32 dev){
  puts("PASS B3A275 CEM40 A6 ignition: 9 opt-in CAN_PS isolation gates");
 }
 
+/* B3A276: explicit D2/PJB-derived 88-byte laboratory F114, not OEM.
+   All assertions run through J2534/ISO15765 and preserve legacy opt-out. */
+static void test_b3a276_f114_structured_lab(U32 dev){
+ ECU saved_ecu[MAX_ECUS];U8 saved_record[P3_F114_LAB_RECORD_BYTES];
+ U32 saved_count=g_ecu_count,saved_mode=g_p3_f114_lab_mode;
+ U32 saved_strict=g_strict_j2534_filters,saved_iso_start=g_iso_rx_start;
+ U32 ids[2]={0x726u,0x18DA50F1u};
+ U32 rxids[2]={0x72Eu,0x18DAF150u};
+ U32 i,channel_id=0,filter_id=0,n;
+ PASSTHRU_MSG tx,rx,mask,pattern,flow;
+ p2_j2534_bridge saved_bridge=g_vehicle_bridge;
+ const U8 f114[]={0x22u,0xF1u,0x14u};
+ memcpy(saved_ecu,g_ecu,sizeof(saved_ecu));
+ memcpy(saved_record,g_p3_f114_lab_record,sizeof(saved_record));
+ g_ecu_count=3u;
+ g_ecu[1]=saved_ecu[1];g_ecu[1].req=ids[0];g_ecu[1].resp=rxids[0];
+ g_ecu[2]=saved_ecu[1];g_ecu[2].req=ids[1];g_ecu[2].resp=rxids[1];
+ g_strict_j2534_filters=1u;g_iso_rx_start=0u;
+ memset(g_p3_f114_lab_record,0,sizeof(g_p3_f114_lab_record));
+ g_p3_f114_lab_record[0]=0x57u;
+ g_p3_f114_lab_record[86]=0x0Du;g_p3_f114_lab_record[87]=0x0Au;
+ memcpy(g_p3_f114_lab_record+11u,g_vin,17u);
+ REQUIRE(p3_f114_lab_record_valid(g_p3_f114_lab_record,g_vin));
+ g_p3_f114_lab_record[11u]=(U8)'X';
+ REQUIRE(!p3_f114_lab_record_valid(g_p3_f114_lab_record,g_vin));
+ g_p3_f114_lab_record[11u]=(U8)g_vin[0];
+ g_p3_f114_lab_record[87]=0u;
+ REQUIRE(!p3_f114_lab_record_valid(g_p3_f114_lab_record,g_vin));
+ g_p3_f114_lab_record[87]=0x0Au;
+ for(i=0;i<2u;i++){
+  U32 flags=ids[i]>0x7FFu?CAN_29BIT_ID:0u;
+  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0u,500000u,&channel_id)==ERR_OK);
+  tx=frame(PROTO_ISO15765,ids[i],f114,3u);tx.TxFlags=flags;
+  mask=frame(PROTO_ISO15765,0xFFFFFFFFu,0,0);
+  pattern=frame(PROTO_ISO15765,rxids[i],0,0);
+  flow=frame(PROTO_ISO15765,ids[i],0,0);
+  REQUIRE(PassThruStartMsgFilter(channel_id,3u,&mask,&pattern,&flow,&filter_id)==ERR_OK);
+
+  /* 1: no opt-in: legacy 20-byte VIN-only answer ONLY on 0x726. */
+  g_p3_f114_lab_mode=0u;
+  send(channel_id,&tx);n=1;
+  if(ids[i]==0x726u){
+   rx=readmsg(channel_id);
+   REQUIRE(rx.DataSize==24u && rx.Data[4]==0x62u && rx.Data[5]==0xF1u && rx.Data[6]==0x14u);
+  }else{
+   /* The unchanged legacy 29-bit route emits NRC31, not a VIN. */
+   rx=readmsg(channel_id);
+   REQUIRE(rx.DataSize==7u && rx.Data[4]==0x7Fu &&
+           rx.Data[5]==0x22u && rx.Data[6]==0x31u);
+  }
+
+  /* 2: explicitly invalid record never falls back to 17-byte VIN. */
+  g_p3_f114_lab_mode=2u;
+  send(channel_id,&tx);n=1;
+  REQUIRE(PassThruReadMsgs(channel_id,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+
+  /* 3: enabled validated 88-byte record emits the exact 91-byte F114. */
+  g_p3_f114_lab_mode=1u;
+  send(channel_id,&tx);rx=readmsg(channel_id);
+  REQUIRE(rx.ProtocolID==PROTO_ISO15765 && rx.DataSize==95u &&
+          rx.ExtraDataIndex==95u && rx.RxStatus==flags);
+  REQUIRE(rx.Data[0]==(U8)(rxids[i]>>24) &&
+          rx.Data[1]==(U8)(rxids[i]>>16) &&
+          rx.Data[2]==(U8)(rxids[i]>>8) &&
+          rx.Data[3]==(U8)rxids[i]);
+  REQUIRE(rx.Data[4]==0x62u && rx.Data[5]==0xF1u && rx.Data[6]==0x14u);
+  REQUIRE(memcmp(rx.Data+7u,g_p3_f114_lab_record,88u)==0);
+  REQUIRE(memcmp(rx.Data+18u,g_vin,17u)==0);
+
+  /* 4: exact TX 29-bit flag is required only on the 29-bit route. */
+  tx.TxFlags=flags?0u:CAN_29BIT_ID;
+  send(channel_id,&tx);n=1;
+  REQUIRE(PassThruReadMsgs(channel_id,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+  tx.TxFlags=flags;
+
+  /* 5: a changed DID cannot borrow the laboratory F114 record. */
+  tx.Data[6]=0x15u;send(channel_id,&tx);rx=readmsg(channel_id);
+  REQUIRE(rx.DataSize==7u && rx.Data[4]==0x7Fu &&
+          rx.Data[5]==0x22u && rx.Data[6]==0x31u);
+  tx.Data[6]=0x14u;
+
+  /* 6: a mismatch in the configured physical response ID is silent. */
+  if(i==0u)g_ecu[1].resp=0x72Fu;
+  else g_ecu[2].resp=0x18DAF151u;
+  send(channel_id,&tx);n=1;
+  REQUIRE(PassThruReadMsgs(channel_id,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+  if(i==0u)g_ecu[1].resp=rxids[0];
+  else g_ecu[2].resp=rxids[1];
+
+  /* 7: strict RX filter gate suppresses generated lab replies. */
+  REQUIRE(PassThruStopMsgFilter(channel_id,filter_id)==ERR_OK);
+  send(channel_id,&tx);n=1;
+  REQUIRE(PassThruReadMsgs(channel_id,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+  REQUIRE(PassThruDisconnect(channel_id)==ERR_OK);
+ }
+
+ /* 8: a validated F114 record is not emitted on the wrong CAN baud. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0u,125000u,&channel_id)==ERR_OK);
+ tx=frame(PROTO_ISO15765,ids[0],f114,3u);
+ g_strict_j2534_filters=0u;g_p3_f114_lab_mode=1u;
+ send(channel_id,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(channel_id,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruDisconnect(channel_id)==ERR_OK);
+
+ /* 9: corrupting the in-memory record fails closed on the target route. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0u,500000u,&channel_id)==ERR_OK);
+ g_p3_f114_lab_record[11u]=(U8)'X';send(channel_id,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(channel_id,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruDisconnect(channel_id)==ERR_OK);
+
+ memcpy(g_ecu,saved_ecu,sizeof(saved_ecu));g_ecu_count=saved_count;
+ memcpy(g_p3_f114_lab_record,saved_record,sizeof(saved_record));
+ g_p3_f114_lab_mode=saved_mode;
+ g_strict_j2534_filters=saved_strict;g_iso_rx_start=saved_iso_start;
+ g_vehicle_bridge=saved_bridge;
+ puts("PASS B3A276 F114 structured: 9 opt-in read-only host gates");
+}
+
 /* B3A274: default-off, tightly scoped GGD CEM50 laboratory answers.
    The host test covers both the helper's guardrails and the full J2534
    ISO15765 TX/RX path. No OEM payload or real hardware is used. */
@@ -3315,6 +3433,7 @@ int main(){
  test_d2_unknown_target_supersession(dev);
  test_d2_a3_a6_supersession(dev);
  test_b3a275_cem40_a6_ignition_lab(dev);
+ test_b3a276_f114_structured_lab(dev);
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
