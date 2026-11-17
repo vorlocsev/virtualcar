@@ -3764,7 +3764,7 @@ int main(){
    static CHANNEL wrong;U8 request[8]={0xCD,0x50,0xA6,0,0,0,0,0};
    wrong=*channel(cid);wrong.protocol=PROTO_ISO15765;m=frame(PROTO_ISO15765,0x000FFFFE,request,8);
    REQUIRE(backend_probe_name(&wrong,&m)==NULL);
-   REQUIRE(process_d2(&wrong,0x000FFFFE,request,8)==0);
+   REQUIRE(process_d2(&wrong,0x000FFFFE,request,8,0u)==0);
   }
  }
  /* Issue #4: A3/A6 requests stay silent regardless of bus. In strict mode
