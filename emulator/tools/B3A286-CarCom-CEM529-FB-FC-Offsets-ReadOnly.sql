@@ -57,16 +57,17 @@ PRINT 'B3A286_FC_EXPECTED_8_UNIT_SLOTS';
     FROM Slots WHERE stored_offset<1032
 )
 SELECT Slots.stored_offset,
-       COUNT(edge.fkT141_Block_Child) AS actual_fields_at_offset
+       COALESCE(actual.actual_fields_at_offset,CONVERT(bigint,0)) AS actual_fields_at_offset
 FROM Slots
-LEFT JOIN dbo.T141_Block AS field
-  ON field.[offset]=Slots.stored_offset
-LEFT JOIN dbo.T144_BlockChild AS edge
-  ON edge.fkT100_EcuVariant=529
- AND edge.fkT141_Block_Parent=293867
- AND edge.fkT141_Block_Child=field.id
-GROUP BY Slots.stored_offset
-HAVING COUNT(edge.fkT141_Block_Child)<>1
+LEFT JOIN (
+    SELECT field.[offset] AS stored_offset,
+           COUNT_BIG(*) AS actual_fields_at_offset
+    FROM dbo.T144_BlockChild AS edge
+    JOIN dbo.T141_Block AS field ON field.id=edge.fkT141_Block_Child
+    WHERE edge.fkT100_EcuVariant=529 AND edge.fkT141_Block_Parent=293867
+    GROUP BY field.[offset]
+) AS actual ON actual.stored_offset=Slots.stored_offset
+WHERE COALESCE(actual.actual_fields_at_offset,0)<>1
 ORDER BY Slots.stored_offset
 OPTION (MAXRECURSION 256);
 
