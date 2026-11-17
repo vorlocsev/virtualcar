@@ -29,6 +29,7 @@ typedef unsigned int U32;
 typedef unsigned long U32; /* Windows LLP64: 32-bit unsigned long */
 #endif
 #include "p2core/p2_j2534_bridge.h"
+#include "p2core/p2_observed_routes.h"
 typedef unsigned char U8;
 typedef unsigned long long U64;
 typedef long long I64;
@@ -489,6 +490,13 @@ static const char *backend_probe_name(const CHANNEL *c,const PASSTHRU_MSG *m) {
     if(!c||!m||m->DataSize<5||m->DataSize>MAX_DATA)return 0;
     id=((U32)m->Data[0]<<24)|((U32)m->Data[1]<<16)|((U32)m->Data[2]<<8)|m->Data[3];
     p=m->Data+4;n=m->DataSize-4;
+    /* B3A293: TX-only VIDA request-route labels. No ECU presence inferred.
+       This probe does not control response handling or RX. */
+    {
+        const char *observed=p2_observed_29bit_request_label(
+            c->protocol,c->baud,m->ProtocolID,m->TxFlags,id,p,n);
+        if(observed)return observed;
+    }
     if(id==0x000FFFFEu && c->protocol==PROTO_CAN && cem_d2_ae1b_shape(p,n))
         return "D2_40_AE1B";
     /* These source-labelled families are metadata only, never new CAN RX. */
