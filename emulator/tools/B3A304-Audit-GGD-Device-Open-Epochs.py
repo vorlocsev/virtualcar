@@ -56,7 +56,7 @@ def u32(buffer: bytes, off: int) -> int:
 
 
 def analyze(data: bytes, *, start_offset: int, action_start: int,
-            action_end: int, pid: str) -> list[str]:
+            action_end: int, pid: str, expected_action_lines: int) -> list[str]:
     stats = Counter()
     current_epoch = 0
     known_epoch_open = False
@@ -202,7 +202,8 @@ def analyze(data: bytes, *, start_offset: int, action_start: int,
         f"B3A304_ACTION_START_OFFSET={action_start}",
         f"B3A304_ACTION_END_OFFSET={action_end}",
         f"B3A304_ACTION_COMPLETE_PID_LINES={action_lines}",
-        f"B3A304_ACTION_CENSUS_EXPECTED=1830",
+        f"B3A304_ACTION_CENSUS_EXPECTED={expected_action_lines}",
+        f"B3A304_ACTION_CENSUS_MATCH={'TRUE' if action_lines == expected_action_lines else 'FALSE'}",
         f"B3A304_PREWINDOW_OPEN_EVENTS={stats['OPEN_TOTAL']-stats['OPEN_ACTION']}",
         f"B3A304_PREWINDOW_CLOSE_EVENTS={stats['CLOSE_TOTAL']-stats['CLOSE_ACTION']}",
         f"B3A304_ACTION_OPEN_EVENTS={stats['OPEN_ACTION']}",
@@ -214,6 +215,9 @@ def analyze(data: bytes, *, start_offset: int, action_start: int,
         f"B3A304_ACTION_LAB_WITHOUT_SAME_ACTIVE_TX={stats['LAB_WITHOUT_SAME_ACTIVE_TX']}",
         f"B3A304_CROSSING_BOUNDARY_LINES={stats['CROSSING_ACTION_BOUNDARY_LINES']}",
     ]
+    if action_lines != expected_action_lines:
+        out.append("B3A304_RESULT=ERROR_ACTION_CENSUS_MISMATCH")
+        return out
     for did in DIDS:
         out.append(f"B3A304_DID_{did}_TX={stats['DID_'+did+'_TX']}")
     for did in ("A45F", "DD02"):
@@ -244,10 +248,12 @@ def main() -> int:
     p.add_argument("--window-end", required=True, type=int)
     p.add_argument("--lookback-bytes", type=int, default=4*1024*1024)
     p.add_argument("--pid", default="00002710")
+    p.add_argument("--expected-action-lines", type=int, required=True)
     args = p.parse_args()
     pid = args.pid.upper()
     if (PID.fullmatch(pid) is None or not 1 <= args.lookback_bytes <= 32*1024*1024
-            or args.window_start <= 0 or args.window_end <= args.window_start):
+            or args.window_start <= 0 or args.window_end <= args.window_start
+            or not 1 <= args.expected_action_lines <= 500000):
         print("B3A304_RESULT=ERROR_INVALID_ARGUMENT")
         return 2
     from_peer = runpy.run_path(
@@ -269,7 +275,8 @@ def main() -> int:
     # Existing helper trims the leading partial line, if any.
     for line in analyze(chunk, start_offset=start+trimmed,
                         action_start=args.window_start,
-                        action_end=args.window_end, pid=pid):
+                        action_end=args.window_end, pid=pid,
+                        expected_action_lines=args.expected_action_lines):
         print(line)
     return 0
 
