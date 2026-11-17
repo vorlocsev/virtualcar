@@ -3130,15 +3130,17 @@ static void test_b3a275_cem40_a6_ignition_lab(U32 dev){
  REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,125000u,&ps)==ERR_OK);
  tx=frame(PROTO_CAN_PS,0x000FFFFEu,request,8);tx.TxFlags=CAN_29BIT_ID;
 
- /* 1. Missing opt-in stays silent on the exact VIDA request. */
- g_cem40_a6_ignition_lab_enabled=0u;
- send(ps,&tx);n=1;
- REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
- /* 2. Even with opt-in, J1962 3/11 routing must be explicitly configured. */
+ /* 1. Even with opt-in, J1962 3/11 routing must be configured first.
+    The J2534 TX validator rejects a pinless CAN_PS write before D2 routing. */
  g_cem40_a6_ignition_lab_enabled=1u;n=1;
  REQUIRE(PassThruWriteMsgs(ps,&tx,&n,10)==ERR_PIN_INVALID&&n==0u);
  REQUIRE(PassThruIoctl(ps,IO_SET_CONFIG,&opts,0)==ERR_OK);
  REQUIRE(channel(ps)->ms_pins==VOLVO_MS_PINS);
+ /* 2. Missing opt-in stays silent after a valid CAN_PS pin setup. */
+ g_cem40_a6_ignition_lab_enabled=0u;
+ send(ps,&tx);n=1;
+ REQUIRE(PassThruReadMsgs(ps,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ g_cem40_a6_ignition_lab_enabled=1u;
  /* 3. Exact request returns one synthetic frame through actual J2534. */
  start=backend_lines+backend_len;send(ps,&tx);
  rid=last_tx_request(start);REQUIRE(rid);
