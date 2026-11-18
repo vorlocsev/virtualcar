@@ -38,12 +38,14 @@ class InstalledVidaBridgeSourceChecks(unittest.TestCase):
     def test_04_parameterized_selects_only(self):
         self.assertIn("$cmd.Parameters.Add('@value'", self.source)
         text = self.source
-        sql = re.findall(r"'(SELECT TOP \\(.*?FROM \\[dbo\\].*?)'", text)
+        sql = re.findall(r"'(SELECT TOP .*?)'", text)
         self.assertGreaterEqual(len(sql), 7)
         for statement in sql:
             self.assertTrue(statement.startswith("SELECT TOP ("))
             self.assertIn("@value", statement)
-        self.assertNotRegex(text, r"(?i)\\$cmd\\.CommandText\\s*=\\s*['\\\"](?:UPDATE|INSERT|DELETE|EXEC|MERGE|ALTER)")
+        self.assertNotRegex(
+            text, r"(?i)\$cmd\.CommandText\s*=\s*['\"]\s*(?:UPDATE|INSERT|DELETE|EXEC|MERGE|ALTER)\b"
+        )
 
     def test_05_bounded_private_inputs(self):
         self.assertIn("Read-ProfileLines $ExactProfiles 43 43", self.source)
