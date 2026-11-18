@@ -27,6 +27,12 @@ REQUIRED = {
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 MAX_ROWS = 5000
 MAX_PAIRS = 20000
+# Public spnda VIDA decoder SQL spells VM.Yearcode / VM.Yearcodepos;
+# original source captures may use YearCode / YearCodePos instead.
+YEAR_NAME_VARIANTS = {
+    'YearCode': ('YearCode', 'Yearcode'),
+    'YearCodePos': ('YearCodePos', 'Yearcodepos'),
+}
 
 
 class EvidenceError(ValueError):
@@ -66,7 +72,16 @@ def _table(obj, name):
     cols = [c.get('name') if type(c) is dict else None for c in obj['columns']]
     if any(type(c) is not str for c in cols) or len(cols) != len(set(cols)):
         raise EvidenceError('invalid original columns')
-    if not set(REQUIRED[name]).issubset(cols):
+    required = set(REQUIRED[name])
+    year_names = {}
+    if name == 'VINDecodeModel':
+        for canonical, alternatives in YEAR_NAME_VARIANTS.items():
+            present = [candidate for candidate in alternatives if candidate in cols]
+            if len(present) != 1:
+                raise EvidenceError('ambiguous or missing original VIN year column')
+            year_names[canonical] = present[0]
+            required.remove(canonical)
+    if not required.issubset(cols):
         raise EvidenceError('original table lacks required columns')
     full = obj.get('full_table_extracted_within_row_limit')
     partial = obj.get('selection_scope') == 'filtered_subset_only'
@@ -79,6 +94,9 @@ def _table(obj, name):
         if type(v) is not list or len(v) != len(cols):
             raise EvidenceError('invalid row width')
         row = dict(zip(cols, v))
+        for canonical, original in year_names.items():
+            # Canonical key is internal only; the owner's capture is untouched.
+            row[canonical] = row[original]
         rows.append(row)
     return rows, 'full_within_limit' if full else 'filtered_subset_only'
 
@@ -164,6 +182,11 @@ def analyze(vin, partner_group, model_capture, variant_capture):
             'partner_group_original': partner_group, 'source_database': BASE,
             'source_tables': ['dbo.VINDecodeModel', 'dbo.VINDecodeVariant'],
             'model_capture_scope': model_scope, 'variant_capture_scope': variant_scope,
+            'model_year_column_names_original': {
+                canonical: next(column['name'] for column in model_capture['columns']
+                                if column['name'] in variants)
+                for canonical, variants in YEAR_NAME_VARIANTS.items()
+            },
             'filter_stage_counts_in_given_captures': stats,
             'model_variant_candidate_pair_count': len(joined),
             'model_variant_candidate_pairs': joined,
