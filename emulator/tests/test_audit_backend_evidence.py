@@ -426,5 +426,58 @@ class UnimplementedCemProbeTests(unittest.TestCase):
         self.assertEqual(r["transactions"][0]["status"], "unsupported")
 
 
+class VidaObservedTargetTests(unittest.TestCase):
+    """B3A297: request-only targets must never become OEM ECU evidence."""
+
+    def test_37_new_labels_have_fixed_request_only_metadata(self):
+        for module, can_id in (
+            ("ECM", "0x18DA10F1"), ("TCM", "0x18DA18F1"),
+            ("DEM", "0x18DA1AF1"), ("BCM", "0x18DA01F1"),
+            ("SAS", "0x18DA32F1"), ("HCM", "0x18DA76F1"),
+        ):
+            with self.subTest(module=module):
+                label = f"P3_29_{module}_REQUEST_OBSERVED"
+                r = audit(
+                    evt("tx_received", protocol=6, baud=500000),
+                    evt("probe_classified", probe=label, protocol=6, baud=500000),
+                    evt("request_completed", protocol=6, baud=500000,
+                        reason="unimplemented_probe", outcome="no_response"))
+                t = r["transactions"][0]
+                self.assertEqual((t["can_id"], t["target"], t["service"]),
+                                 (can_id, f"{module}_REQUEST_ONLY", None))
+                self.assertEqual((t["status"], t["rx_dequeued"]), ("unsupported", 0))
+                self.assertFalse(r["identity_verified"])
+                self.assertFalse(r["client_acceptance_verified"])
+
+    def test_38_new_label_on_wrong_protocol_is_invalid(self):
+        r = audit(evt("tx_received", protocol=5, baud=500000),
+                  evt("probe_classified", probe="P3_29_ECM_REQUEST_OBSERVED",
+                      protocol=5, baud=500000),
+                  evt("request_completed", protocol=5, baud=500000,
+                      reason="no_response", outcome="no_response"))
+        self.assertEqual(r["summary"]["invalid_lines"], 1)
+        self.assertIsNone(r["transactions"][0]["can_id"])
+
+    def test_39_new_label_on_wrong_baud_is_invalid(self):
+        r = audit(evt("tx_received", protocol=6, baud=125000),
+                  evt("probe_classified", probe="P3_29_HCM_REQUEST_OBSERVED",
+                      protocol=6, baud=125000),
+                  evt("request_completed", protocol=6, baud=125000,
+                      reason="no_response", outcome="no_response"))
+        self.assertEqual(r["summary"]["invalid_lines"], 1)
+        self.assertIsNone(r["transactions"][0]["target"])
+
+    def test_40_unknown_target_string_and_private_vin_not_exported(self):
+        secret = "PRIVATE_ORIGINAL_VIN_DO_NOT_EXPORT"
+        r = audit(evt("tx_received", protocol=6, baud=500000, vin=secret),
+                  evt("probe_classified", protocol=6, baud=500000,
+                      probe="P3_29_FAKE_REQUEST_OBSERVED", vin=secret),
+                  evt("request_completed", protocol=6, baud=500000,
+                      reason="no_response", outcome="no_response"))
+        self.assertEqual(r["summary"]["invalid_lines"], 1)
+        self.assertNotIn(secret, json.dumps(r))
+        self.assertIsNone(r["transactions"][0]["target"])
+
+
 if __name__ == "__main__":
     unittest.main()
