@@ -43,13 +43,13 @@ def row(ident=PROFILE_A, level=3, model=45, year=2009, group=PARTNER,
     return [ident, level, model, year, group, engine, trans, body, steering, node, special]
 
 
-def capture(*rows, full=True):
+def capture(*rows, full=True, id_column='Id'):
     rows = list(rows) if rows else [row()]
     return {'schema_version': tool.CAPTURE_SCHEMA, 'source_database': 'BaseData',
             'source_schema': 'dbo', 'source_table': 'VehicleProfile',
             'original_names_and_driver_values_not_anonymized': True,
             'same_installation_provenance_verified': False, 'vehicle_runtime_verified': False,
-            'columns': [{'name': key} for key in BASE_FIELDS],
+            'columns': [{'name': (id_column if key == 'Id' else key)} for key in BASE_FIELDS],
             'rows': rows, 'row_count': len(rows),
             'full_table_extracted_within_row_limit': full,
             **({} if full else {'selection_scope': 'filtered_subset_only',
@@ -202,6 +202,43 @@ class OfflineProfileTests(unittest.TestCase):
         original = 'ABCDEF0123456789'
         result = tool.analyze(candidates(), capture(row(ident=original)))
         self.assertEqual(result['candidate_compatible_profile_links'][0]['original_profile_id'], original)
+
+    def test_27_owner_original_lowercase_id_matches_without_editing_source(self):
+        owner_id = '0c00c8af80205920'
+        source = capture(row(ident=owner_id), id_column='id')
+        before = json.dumps(source, sort_keys=True)
+        result = tool.analyze(candidates(), source)
+        self.assertEqual(result['source_vehicle_profile_id_column_original'], 'id')
+        self.assertEqual(result['candidate_compatible_profile_links'][0]['original_profile_id'], owner_id)
+        self.assertEqual(json.dumps(source, sort_keys=True), before)
+
+    def test_28_public_csv_uppercase_id_still_supported(self):
+        result = tool.analyze(candidates(), capture(id_column='Id'))
+        self.assertEqual(result['source_vehicle_profile_id_column_original'], 'Id')
+        self.assertEqual(result['candidate_compatible_profile_count'], 1)
+
+    def test_29_conflicting_id_and_Id_columns_are_not_assumed_equivalent(self):
+        src = capture()
+        src['columns'].append({'name': 'id'})
+        src['rows'][0].append('ffffffffffffffff')
+        with self.assertRaises(tool.ProfileEvidenceError):
+            tool.analyze(candidates(), src)
+
+    def test_30_unseen_id_spellings_not_silently_normalized(self):
+        for original in ('ID', 'iD', 'profileId'):
+            src = capture(id_column=original)
+            with self.subTest(column=original), self.assertRaises(tool.ProfileEvidenceError):
+                tool.analyze(candidates(), src)
+
+    def test_31_original_global_null_model_lowercase_key_not_vehicle_match(self):
+        global_id = '0c00c8af80205920'
+        root = row(ident=global_id, level=0, model=None, year=None,
+                   group=None, engine=None, trans=None, body=None)
+        result = tool.analyze(candidates(), capture(root, id_column='id'))
+        self.assertEqual(result['source_vehicle_profile_id_column_original'], 'id')
+        self.assertEqual(result['candidate_compatible_profile_count'], 0)
+        self.assertEqual(result['global_level0_profile_candidates_in_capture'][0]['original_profile_id'], global_id)
+        self.assertFalse(result['global_readvin_script_selection_verified'])
 
     def test_20_unproven_same_snapshot_remains_false(self):
         r=tool.analyze(candidates(),capture())
