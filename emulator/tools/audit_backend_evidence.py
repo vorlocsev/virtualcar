@@ -50,6 +50,20 @@ for _kind, _id, _bits in (("726", "0x726", "11bit"),
             "id_format": _bits, "target": None}
 
 
+
+# B3A293 observed VIDA 29-bit ECU request destinations. They are metadata
+# labels for *outgoing TX only*: no ECU presence, DID support or RX is implied.
+for _module, _can_id in (
+    ("ECM", "0x18DA10F1"), ("TCM", "0x18DA18F1"),
+    ("DEM", "0x18DA1AF1"), ("BCM", "0x18DA01F1"),
+    ("SAS", "0x18DA32F1"), ("HCM", "0x18DA76F1"),
+):
+    PROBES[f"P3_29_{_module}_REQUEST_OBSERVED"] = {
+        "service": None, "can_id": _can_id,
+        "id_format": "29bit", "target": f"{_module}_REQUEST_ONLY",
+    }
+
+
 # Published community Arduino/MCP2515 TX shapes, not OEM module responses.
 # Exact source: drpioneer/Volvo-P2-informer main@9cd3a6f603915e074ac28c73eccec6b7473e8297.
 # Labels are source-bound observations only; 2.5T observations cannot be
@@ -113,6 +127,10 @@ def _decode(line):
             required_baud = 125000 if "_LS_" in e["probe"] else 500000
             if e["protocol"] != 5 or e["baud"] != required_baud:
                 return None
+    if e["kind"] == "probe_classified" and e["probe"].endswith("_REQUEST_OBSERVED"):
+        # Prevent forged labels on D2 / other buses or baud.
+        if e["protocol"] != 6 or e["baud"] != 500000:
+            return None
     # Explicit allowlist. Unknown keys, including raw CAN or VIN, are discarded.
     out = {k: e[k] for k in ("session_id", "request_id", "kind", "route",
                               "reason", "outcome", "channel", "protocol",
