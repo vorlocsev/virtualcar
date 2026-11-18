@@ -139,10 +139,16 @@ def _validate_profiles(capture):
             or capture['row_count'] != len(capture['rows'])):
         raise ProfileEvidenceError('untrusted original VehicleProfile capture')
     columns = [c.get('name') if type(c) is dict else None for c in capture['columns']]
+    # Original owner BaseData SQL reports the key as lowercase 'id';
+    # the public CSV decoder uses 'Id'. Accept only these two observed
+    # spellings and reject conflicting variants rather than guessing.
+    id_columns = [name for name in ('Id', 'id') if name in columns]
     if (any(type(name) is not str for name in columns)
             or len(columns) != len(set(columns))
-            or not set(CAPTURE_COLUMNS).issubset(columns)):
+            or len(id_columns) != 1
+            or not set(CAPTURE_COLUMNS[1:]).issubset(columns)):
         raise ProfileEvidenceError('unsupported original VehicleProfile columns')
+    id_column = id_columns[0]
     scope = _scope(capture)
     rows = []
     ids = set()
@@ -150,7 +156,9 @@ def _validate_profiles(capture):
         if type(raw) is not list or len(raw) != len(columns):
             raise ProfileEvidenceError('invalid original VehicleProfile row')
         row = dict(zip(columns, raw))
-        ident, level = row['Id'], row['FolderLevel']
+        ident, level = row[id_column], row['FolderLevel']
+        # Internal canonical access does not change source rows/column names.
+        row['Id'] = ident
         if not _original_profile_id(ident) or ident in ids or not _int(level) or level < 0:
             raise ProfileEvidenceError('invalid VehicleProfile key or folder level')
         if not _optional_int(row['fkVehicleModel']) or not all(
@@ -158,14 +166,14 @@ def _validate_profiles(capture):
             raise ProfileEvidenceError('unsupported original profile values')
         ids.add(ident)
         rows.append(row)
-    return rows, scope
+    return rows, scope, id_column
 
 
 def analyze(candidate_report, profile_capture, *, body_style=None):
     if body_style is not None and not _int(body_style):
         raise ProfileEvidenceError('invalid original body style')
     candidates, candidate_incomplete = _validate_candidates(candidate_report)
-    profiles, scope = _validate_profiles(profile_capture)
+    profiles, scope, id_column = _validate_profiles(profile_capture)
     # The original ReadVin profile in BaseData is a FolderLevel=0 row with
     # nullable model/year and other dimensions.  It participates in the
     # GetValidProfilesForSelected global UNION, not in the public decoder's
@@ -235,6 +243,7 @@ def analyze(candidate_report, profile_capture, *, body_style=None):
         'source_model_variant_scope_incomplete': candidate_incomplete,
         'source_vehicle_profile_scope': scope,
         'source_vehicle_profile_row_count': len(profiles),
+        'source_vehicle_profile_id_column_original': id_column,
         'global_level0_profile_candidates_in_capture': global_profiles,
         'global_readvin_script_selection_verified': False,
         'profile_capture_incomplete': scope == 'filtered_subset_only',
@@ -260,7 +269,8 @@ def analyze(candidate_report, profile_capture, *, body_style=None):
             'A filtered table capture cannot establish absence of applicable profiles',
             'Original profiles may be inherited or combined by rules not reproduced here',
             'IDs are original SQL foreign keys: VehicleModel.Cid 275 must not substitute for VehicleModel.Id',
-            'BaseData.VehicleProfile.Id is an original 16-hex string and not CarCom.T161_Profile.id',
+            'BaseData.VehicleProfile.Id/id is an original 16-hex string and not CarCom.T161_Profile.id',
+            'Owner export may have lowercase id while public CSV uses Id; original column spelling retained',
             'Null VehicleModel at FolderLevel=0 is catalog evidence, not a model-specific candidate match',
             'J2534 RX, VIDA GUI VIN acceptance, ECU presence and T111/T122 are not attested',
         ],

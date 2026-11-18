@@ -43,13 +43,13 @@ def candidates(*pairs, partial=False):
             'model_variant_candidate_pair_count': len(pairs)}
 
 
-def capture(*rows, partial=False):
+def capture(*rows, partial=False, id_column='Id'):
     return {'schema_version': a.TABLE_SCHEMA, 'source_database': 'BaseData',
             'source_schema': 'dbo', 'source_table': 'VehicleProfile',
             'original_names_and_driver_values_not_anonymized': True,
             'same_installation_provenance_verified': False,
             'vehicle_runtime_verified': False,
-            'columns': [{'name': k} for k in FIELDS],
+            'columns': [{'name': (id_column if k == 'Id' else k)} for k in FIELDS],
             'rows': [[profile_id(r[0]), *r[1:]] if type(r[0]) is int else r for r in rows], 'row_count': len(rows),
             'full_table_extracted_within_row_limit': not partial,
             **({'selection_scope': 'filtered_subset_only',
@@ -203,6 +203,38 @@ class PublicDecoderSemanticTests(unittest.TestCase):
         out = a.analyze(candidates(pair(transmission=80),pair(transmission=81)),
                         capture([original,44,2009,8400,80]))
         self.assertEqual(out['candidate_combinations_original'][0]['profile_match_ids_original'],[original])
+
+    def test_26_owner_original_lowercase_id_supported_and_preserved(self):
+        original_id = '0c00c8af80205920'
+        source = capture([original_id,44,2009,8400,80], id_column='id')
+        before = json.dumps(source, sort_keys=True)
+        result = a.analyze(candidates(pair(transmission=80), pair(transmission=81)), source)
+        self.assertEqual(result['source_vehicle_profile_id_column_original'], 'id')
+        self.assertEqual(result['candidate_combinations_original'][0]['profile_match_ids_original'], [original_id])
+        self.assertEqual(json.dumps(source, sort_keys=True), before)
+
+    def test_27_public_csv_uppercase_Id_still_supported(self):
+        result = a.analyze(candidates(pair()), capture(id_column='Id'))
+        self.assertEqual(result['source_vehicle_profile_id_column_original'], 'Id')
+
+    def test_28_conflicting_id_and_Id_rejected(self):
+        source = capture([1,44,2009,8400,80])
+        source['columns'].append({'name': 'id'})
+        source['rows'][0].append('ffffffffffffffff')
+        with self.assertRaises(a.OfflineEvidenceError):
+            a.analyze(candidates(pair()), source)
+
+    def test_29_unverified_aliases_rejected(self):
+        for alias in ('ID', 'iD', 'profile_id'):
+            with self.subTest(alias=alias), self.assertRaises(a.OfflineEvidenceError):
+                a.analyze(candidates(pair()), capture([1,44,2009,8400,80], id_column=alias))
+
+    def test_30_global_null_model_owner_id_is_not_exact_filter_match(self):
+        global_id = '0c00c8af80205920'
+        result = a.analyze(candidates(pair(transmission=80),pair(transmission=81)),
+                           capture([global_id,None,None,None,None], id_column='id'))
+        self.assertEqual(result['public_filtered_candidate_count'], 0)
+        self.assertFalse(result['original_vida_decoder_runtime_verified'])
 
     def test_20_cli_no_private_echo_on_failed_source(self):
         with tempfile.TemporaryDirectory() as tmp:

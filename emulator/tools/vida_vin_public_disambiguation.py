@@ -121,10 +121,16 @@ def _profiles(source):
             or not _int(source.get('row_count')) or source['row_count'] != len(source['rows'])):
         raise OfflineEvidenceError('invalid original VehicleProfile capture')
     columns = [entry.get('name') if type(entry) is dict else None for entry in source['columns']]
+    # Owner-original BaseData uses lowercase 'id'; the public
+    # CSV research uses 'Id'. Never guess additional aliases or
+    # collapse two competing columns.
+    id_columns = [name for name in ('Id', 'id') if name in columns]
     if (any(type(name) is not str for name in columns)
             or len(columns) != len(set(columns))
-            or not set(REQUIRED_PROFILE_KEYS).issubset(columns)):
+            or len(id_columns) != 1
+            or not set(REQUIRED_PROFILE_KEYS[1:]).issubset(columns)):
         raise OfflineEvidenceError('unsupported original profile columns')
+    id_column = id_columns[0]
     full = source.get('full_table_extracted_within_row_limit')
     partial = source.get('selection_scope') == 'filtered_subset_only'
     if (type(full) is not bool or (full and partial)
@@ -138,17 +144,20 @@ def _profiles(source):
         if type(values) is not list or len(values) != len(columns):
             raise OfflineEvidenceError('invalid profile row width')
         row = dict(zip(columns, values))
-        if (not _original_profile_id(row['Id']) or row['Id'] in ids
+        ident = row[id_column]
+        if (not _original_profile_id(ident) or ident in ids
                 or not all(_optional_int(row[k]) for k in REQUIRED_PROFILE_KEYS[1:])):
             raise OfflineEvidenceError('invalid source profile key')
-        ids.add(row['Id'])
+        # Internal alias: original input column and value remain intact.
+        row['Id'] = ident
+        ids.add(ident)
         rows.append(row)
-    return rows, 'full_within_limit' if full else 'filtered_subset_only'
+    return rows, 'full_within_limit' if full else 'filtered_subset_only', id_column
 
 
 def analyze(candidate_report, profile_capture):
     candidates, candidate_incomplete = _candidates(candidate_report)
-    profiles, profile_scope = _profiles(profile_capture)
+    profiles, profile_scope, id_column = _profiles(profile_capture)
     # Public spnda/vin_decoder.py: c1 for engine, c2 for transmission;
     # no c1↔c2 model/year/group predicate in its CROSS JOIN.
     engines = [c for c in candidates if c[3] is not None]
@@ -224,6 +233,7 @@ def analyze(candidate_report, profile_capture):
         'candidate_combinations_original': outcomes,
         'model_variant_capture_incomplete': candidate_incomplete,
         'vehicle_profile_capture_scope': profile_scope,
+        'source_vehicle_profile_id_column_original': id_column,
         'source_same_snapshot_verified': False,
         'body_style_discarded_upstream': True,
         'public_decoder_equivalence_verified': False,
@@ -238,7 +248,8 @@ def analyze(candidate_report, profile_capture):
             'Public profile filter runs only if distinct cross-product candidates exceed one',
             'Public profile filter matches exact engine/transmission, not generic NULL wildcards; NULL transmission is special',
             'Original SQL collation, FK meaning, runtime caches and profile inheritance not attested',
-            'BaseData.VehicleProfile.Id is a 16-hex original string, not a numeric CarCom profile ID',
+            'BaseData.VehicleProfile.Id/id is a 16-hex original string, not a numeric CarCom profile ID',
+            'Owner-original lowercase id and public CSV Id are accepted without rewriting source data',
             'No source capture proves original VIN, Partner Group, GUI decoding or physical ECU presence',
         ],
     }
