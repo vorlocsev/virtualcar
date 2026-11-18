@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import vida_vin_vehicle_profile as tool
 
 VIN = 'YV1CZ000290000001'  # Public synthetic example, not the owner's VIN.
