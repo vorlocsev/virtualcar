@@ -15,6 +15,11 @@ PARTNER = 1002
 FIELDS = ['Id', 'fkVehicleModel', 'fkModelYear', 'fkEngine', 'fkTransmission']
 
 
+def profile_id(number):
+    return f'{number:016x}'  # invented opaque 16-hex BaseData key
+
+
+
 def pair(model=44, year=2009, group=PARTNER, engine=8400, transmission=80):
     return {'fkVehicleModel_original': model, 'fkModelYear_original': year,
             'fkPartnerGroup_original': group, 'fkEngine_original': engine,
@@ -45,7 +50,7 @@ def capture(*rows, partial=False):
             'same_installation_provenance_verified': False,
             'vehicle_runtime_verified': False,
             'columns': [{'name': k} for k in FIELDS],
-            'rows': list(rows), 'row_count': len(rows),
+            'rows': [[profile_id(r[0]), *r[1:]] if type(r[0]) is int else r for r in rows], 'row_count': len(rows),
             'full_table_extracted_within_row_limit': not partial,
             **({'selection_scope': 'filtered_subset_only',
                 'filtered_subset_complete_within_row_limit': True,
@@ -64,7 +69,7 @@ class PublicDecoderSemanticTests(unittest.TestCase):
                       capture([1, 44, 2009, 8400, 80]))
         self.assertEqual(r['distinct_cross_join_candidate_count'], 2)
         self.assertEqual(r['public_filtered_candidate_count'], 1)
-        self.assertEqual(r['candidate_combinations_original'][0]['profile_match_ids_original'], [1])
+        self.assertEqual(r['candidate_combinations_original'][0]['profile_match_ids_original'], [profile_id(1)])
 
     def test_03_null_generic_profile_does_not_pass_exact_second_filter(self):
         r = a.analyze(candidates(pair(transmission=80), pair(transmission=81)),
@@ -166,6 +171,38 @@ class PublicDecoderSemanticTests(unittest.TestCase):
         before=(json.dumps(m),json.dumps(p))
         a.analyze(m,p)
         self.assertEqual((json.dumps(m),json.dumps(p)),before)
+
+    def test_21_original_base_data_profile_id_preserved(self):
+        original = '0c00c8af80205920'
+        report = a.analyze(candidates(pair()), capture([original,44,2009,8400,80]))
+        # A single candidate does not trigger the additional profile filter.
+        self.assertEqual(report['vehicle_profile_capture_scope'], 'full_within_limit')
+        many = a.analyze(candidates(pair(transmission=80),pair(transmission=81)),
+                         capture([original,44,2009,8400,80]))
+        self.assertEqual(many['candidate_combinations_original'][0]['profile_match_ids_original'], [original])
+
+    def test_22_reject_integer_profile_id_from_carcom_domain(self):
+        bad = capture([1,44,2009,8400,80])
+        bad['rows'][0][0] = 163119
+        with self.assertRaises(a.OfflineEvidenceError):
+            a.analyze(candidates(pair()),bad)
+
+    def test_23_reject_nonhex_profile_id(self):
+        for bad_id in ('0x0c00c8af80205920','abc','zzzzzzzzzzzzzzzz', True):
+            with self.subTest(original=bad_id), self.assertRaises(a.OfflineEvidenceError):
+                a.analyze(candidates(pair()),capture([bad_id,44,2009,8400,80]))
+
+    def test_25_null_model_global_base_data_does_not_match_second_filter(self):
+        original = '0c00c8af80205920'
+        output = a.analyze(candidates(pair(transmission=80),pair(transmission=81)),
+                           capture([original,None,None,None,None]))
+        self.assertEqual(output['public_filtered_candidate_count'], 0)
+
+    def test_24_preserve_uppercase_source_profile_id(self):
+        original = 'ABCDEF0123456789'
+        out = a.analyze(candidates(pair(transmission=80),pair(transmission=81)),
+                        capture([original,44,2009,8400,80]))
+        self.assertEqual(out['candidate_combinations_original'][0]['profile_match_ids_original'],[original])
 
     def test_20_cli_no_private_echo_on_failed_source(self):
         with tempfile.TemporaryDirectory() as tmp:
