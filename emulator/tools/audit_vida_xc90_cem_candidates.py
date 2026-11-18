@@ -70,6 +70,12 @@ def load_identifiers(path: Path, low: int, high: int) -> tuple[str, ...]:
 
 def resolve_tables(db: sqlite3.Connection) -> dict[str, str]:
     # Verify exporter identity and catalog before accessing source user rows.
+    # Exporter catalog objects must be ordinary, trusted tables. Reject
+    # virtual tables/views (including FTS) before reading their contents.
+    for cat in ("_vida_meta", "_vida_tables", "_vida_columns"):
+        schema = db.execute("SELECT type,sql FROM sqlite_schema WHERE name=?", (cat,)).fetchall()
+        if len(schema) != 1 or schema[0][0] != "table" or not isinstance(schema[0][1], str) or "VIRTUAL" in schema[0][1].upper():
+            raise EvidenceError("unsafe exporter catalog object")
     meta_rows = db.execute('SELECT "key", "value" FROM "_vida_meta"').fetchmany(32)
     if len(meta_rows) != len({k for k, _ in meta_rows}):
         raise EvidenceError("ambiguous exporter identity")
@@ -103,12 +109,6 @@ def resolve_tables(db: sqlite3.Connection) -> dict[str, str]:
         if column.casefold() in names:
             raise EvidenceError("duplicate exporter column")
         names.add(column.casefold())
-    # Exporter catalog objects must be ordinary, trusted tables. Reject
-    # virtual tables/views (including FTS) before reading their contents.
-    for cat in ("_vida_meta", "_vida_tables", "_vida_columns"):
-        schema = db.execute("SELECT type,sql FROM sqlite_schema WHERE name=?", (cat,)).fetchall()
-        if len(schema) != 1 or schema[0][0] != "table" or not isinstance(schema[0][1], str) or "VIRTUAL" in schema[0][1].upper():
-            raise EvidenceError("unsafe exporter catalog object")
     physical = [r[0] for r in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")]
     result: dict[str, str] = {}
     for name, required in TABLES.items():
