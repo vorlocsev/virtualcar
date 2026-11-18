@@ -204,6 +204,7 @@ def main(argv=None):
     except (OSError, ValueError, UnicodeError, RecursionError):
         print('VIDA offline model/variant candidate audit failed', file=sys.stderr)
         return 2
+    return 0
 
 
 if __name__ == '__main__':
