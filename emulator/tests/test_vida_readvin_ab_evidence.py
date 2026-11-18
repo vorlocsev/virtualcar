@@ -196,5 +196,4 @@ class ABTests(unittest.TestCase):
         self.assertEqual(result['j2534_observation']['gui_result_owner_reported'],'REJECTED')
         self.assertFalse(result['original_gui_log_interpretation_independently_verified'])
 
-
 if __name__=='__main__':unittest.main()
