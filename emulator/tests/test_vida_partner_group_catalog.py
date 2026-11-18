@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import vida_partner_group_catalog as mod
 
 
@@ -144,6 +144,14 @@ class CatalogEvidenceTests(unittest.TestCase):
                         {'schema_version':mod.CONTEXT_FORMAT,'fkPartnerGroup_original':1002.0}):
             with self.assertRaises(mod.CatalogEvidenceError):
                 mod.inspect(schema(),rows(),invalid)
+
+    def test_15_source_year_case_listed_without_normalization(self):
+        original = schema()
+        original['tables'][0]['columns'].append({'name': 'Yearcodepos', 'column_id': 9})
+        result = mod.inspect(original)
+        reported = {c['column']: c['present'] for c in result['original_column_presence']}
+        self.assertTrue(reported['Yearcodepos'])
+        self.assertFalse(reported['YearCodePos'])
 
     def test_14_nonexistent_source_table_rows_are_not_evidence(self):
         s=schema();s['tables'][0]['name']='other'

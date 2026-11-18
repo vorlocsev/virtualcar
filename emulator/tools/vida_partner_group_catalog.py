@@ -22,7 +22,8 @@ DATABASE = 'BaseData'
 TABLE = 'VINDecodeModel'
 INTERESTING = ('VinStartPos', 'VinEndPos', 'VinCompare', 'fkVehicleModel',
                'fkModelYear', 'fkBodyStyle', 'fkPartnerGroup', 'ChassisNoFrom',
-               'ChassisNoTo', 'YearCodePos', 'YearCode', 'ObjVersion')
+               'ChassisNoTo', 'YearCodePos', 'Yearcodepos', 'YearCode',
+               'Yearcode', 'ObjVersion')
 MAX_BYTES_SCHEMA = 20 * 1024 * 1024
 MAX_BYTES_ROWS = 50 * 1024 * 1024
 MAX_ROWS = 5000

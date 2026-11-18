@@ -92,6 +92,43 @@ class CandidateTests(unittest.TestCase):
             with self.subTest(vin=vin),self.assertRaises(m.EvidenceError):
                 m.analyze(vin,PG,a,b)
 
+    def test_15_public_yearcode_and_yearcodepos_casing(self):
+        model, variant = fixtures()
+        names = {'YearCode': 'Yearcode', 'YearCodePos': 'Yearcodepos'}
+        for column in model['columns']:
+            column['name'] = names.get(column['name'], column['name'])
+        before = json.dumps(model, sort_keys=True)
+        result = m.analyze(VIN, PG, model, variant)
+        self.assertEqual(result['model_variant_candidate_pair_count'], 1)
+        self.assertEqual(result['model_year_column_names_original'],
+                         {'YearCode': 'Yearcode', 'YearCodePos': 'Yearcodepos'})
+        self.assertEqual(json.dumps(model, sort_keys=True), before)
+        self.assertFalse(result['client_vin_acceptance_verified'])
+
+    def test_16_mixed_year_column_case(self):
+        model, variant = fixtures()
+        for column in model['columns']:
+            if column['name'] == 'YearCodePos':
+                column['name'] = 'Yearcodepos'
+        result = m.analyze(VIN, PG, model, variant)
+        self.assertEqual(result['model_year_column_names_original'],
+                         {'YearCode': 'YearCode', 'YearCodePos': 'Yearcodepos'})
+
+    def test_17_ambiguous_year_column_casing_rejected(self):
+        model, variant = fixtures()
+        model['columns'].append({'name': 'Yearcode'})
+        model['rows'][0].append('A')
+        with self.assertRaises(m.EvidenceError):
+            m.analyze(VIN, PG, model, variant)
+
+    def test_18_unknown_year_column_case_not_guessed(self):
+        model, variant = fixtures()
+        for column in model['columns']:
+            if column['name'] == 'YearCodePos':
+                column['name'] = 'YearcodePos'
+        with self.assertRaises(m.EvidenceError):
+            m.analyze(VIN, PG, model, variant)
+
     def test_14_cli_no_overwrite_or_echo(self):
         a,b=fixtures()
         with tempfile.TemporaryDirectory() as directory:
