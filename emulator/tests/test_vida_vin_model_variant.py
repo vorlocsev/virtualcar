@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import vida_vin_model_variant as m
 
 VIN = 'YV1CZ000290000001'
