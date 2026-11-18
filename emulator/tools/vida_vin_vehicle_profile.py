@@ -69,6 +69,15 @@ def _optional_int(value):
     return value is None or _int(value)
 
 
+def _original_profile_id(value):
+    # BaseData.VehicleProfile.id is a 16-hex-character identifier in the
+    # owner-confirmed original global ReadVin profile (not a CarCom T161 ID).
+    # Preserve its exact spelling; never coerce to integer or strip zeroes.
+    return type(value) is str and re.fullmatch(r'[0-9a-fA-F]{16}', value) is not None
+
+
+
+
 def _scope(obj):
     full = obj.get('full_table_extracted_within_row_limit')
     subset = obj.get('selection_scope') == 'filtered_subset_only'
@@ -142,9 +151,9 @@ def _validate_profiles(capture):
             raise ProfileEvidenceError('invalid original VehicleProfile row')
         row = dict(zip(columns, raw))
         ident, level = row['Id'], row['FolderLevel']
-        if not _int(ident) or ident <= 0 or ident in ids or not _int(level) or level < 0:
+        if not _original_profile_id(ident) or ident in ids or not _int(level) or level < 0:
             raise ProfileEvidenceError('invalid VehicleProfile key or folder level')
-        if not _int(row['fkVehicleModel']) or not all(
+        if not _optional_int(row['fkVehicleModel']) or not all(
                 _optional_int(row[name]) for name in CAPTURE_COLUMNS[3:]):
             raise ProfileEvidenceError('unsupported original profile values')
         ids.add(ident)
@@ -157,6 +166,15 @@ def analyze(candidate_report, profile_capture, *, body_style=None):
         raise ProfileEvidenceError('invalid original body style')
     candidates, candidate_incomplete = _validate_candidates(candidate_report)
     profiles, scope = _validate_profiles(profile_capture)
+    # The original ReadVin profile in BaseData is a FolderLevel=0 row with
+    # nullable model/year and other dimensions.  It participates in the
+    # GetValidProfilesForSelected global UNION, not in the public decoder's
+    # model-specific Vehicle.get_vehicle_profiles() equality predicate.
+    global_profiles = [
+        {'original_profile_id': p['Id'], 'original_folder_level': p['FolderLevel']}
+        for p in profiles if p['FolderLevel'] == 0 and all(
+            p[name] is None for name in CAPTURE_COLUMNS[2:])
+    ]
     compatible = []
     requires_context = []
     explicit_pair_matches = 0
@@ -217,6 +235,8 @@ def analyze(candidate_report, profile_capture, *, body_style=None):
         'source_model_variant_scope_incomplete': candidate_incomplete,
         'source_vehicle_profile_scope': scope,
         'source_vehicle_profile_row_count': len(profiles),
+        'global_level0_profile_candidates_in_capture': global_profiles,
+        'global_readvin_script_selection_verified': False,
         'profile_capture_incomplete': scope == 'filtered_subset_only',
         'candidate_compatible_profile_count': len(compatible),
         'candidate_requires_context_profile_count': len(requires_context),
@@ -240,6 +260,8 @@ def analyze(candidate_report, profile_capture, *, body_style=None):
             'A filtered table capture cannot establish absence of applicable profiles',
             'Original profiles may be inherited or combined by rules not reproduced here',
             'IDs are original SQL foreign keys: VehicleModel.Cid 275 must not substitute for VehicleModel.Id',
+            'BaseData.VehicleProfile.Id is an original 16-hex string and not CarCom.T161_Profile.id',
+            'Null VehicleModel at FolderLevel=0 is catalog evidence, not a model-specific candidate match',
             'J2534 RX, VIDA GUI VIN acceptance, ECU presence and T111/T122 are not attested',
         ],
     }
