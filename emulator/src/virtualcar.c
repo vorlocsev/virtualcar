@@ -141,6 +141,16 @@ static char g_host_name[48]="unknown.exe";
 static U32 g_host_pid;
 static char g_vin[18]="YV1CZ0002A0000001";
 static U32 g_battery_mv=12500;
+/* CEM H/L is an explicitly declared hardware variant, NOT a CAN bus rate.
+   The independent D2/GGD label is context only and never enables ECU RX. */
+#define CEM_HW_UNKNOWN 0u
+#define CEM_HW_L 1u
+#define CEM_HW_H 2u
+#define CEM_DIAG_UNKNOWN 0u
+#define CEM_DIAG_D2 1u
+#define CEM_DIAG_GGD 2u
+static U32 g_cem_hardware_class=CEM_HW_UNKNOWN;
+static U32 g_cem_diag_protocol=CEM_DIAG_UNKNOWN;
 /* Optional diagnostic traffic is synthetic VCARLAB, never a Volvo CAN trace. */
 static U32 g_passive_enabled=0,g_passive_id=0x555,g_passive_period_ms=50;
 static U8 g_passive_payload[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0x00};
@@ -253,6 +263,22 @@ static void bytes_copy(void *out,const void *src,U32 n) {U8 *d=(U8*)out;const U8
 static void bytes_zero(void *out,U32 n) {U8 *d=(U8*)out;U32 i;for(i=0;i<n;i++)d[i]=0;}
 static void str_copy(char *out,const char *src,U32 cap) {U32 i=0;if(!cap)return;while(src && src[i] && i+1<cap){out[i]=src[i];i++;}out[i]=0;}
 static void str_append(char *out,const char *s,U32 cap) {U32 i=str_len(out),j=0;while(s&&s[j]&&i+1<cap)out[i++]=s[j++];out[i]=0;}
+static int str_equal_exact(const char *a,const char *b){
+    U32 i=0;if(!a||!b)return 0;
+    while(a[i]&&b[i]){if(a[i]!=b[i])return 0;i++;}
+    return a[i]==b[i];
+}
+/* No guess from logical 0x40/0x50, bitrate, year or diagnostic number. */
+static U32 parse_cem_hardware(const char *s){
+    if(str_equal_exact(s,"H")||str_equal_exact(s,"CEM-H"))return CEM_HW_H;
+    if(str_equal_exact(s,"L")||str_equal_exact(s,"CEM-L"))return CEM_HW_L;
+    return CEM_HW_UNKNOWN;
+}
+static U32 parse_cem_diagnostic(const char *s){
+    if(str_equal_exact(s,"D2"))return CEM_DIAG_D2;
+    if(str_equal_exact(s,"GGD"))return CEM_DIAG_GGD;
+    return CEM_DIAG_UNKNOWN;
+}
 static int digit(char c) { if(c>='0'&&c<='9')return c-'0';if(c>='a'&&c<='f')return c-'a'+10;if(c>='A'&&c<='F')return c-'A'+10;return -1; }
 static U32 parse_num(const char *s,U32 fallback) {U32 v=0,base=10,i=0;int d,any=0;if(!s)return fallback;if(s[0]=='0'&&(s[1]=='x'||s[1]=='X')){base=16;i=2;}for(;s[i];i++){d=digit(s[i]);if(d<0||((U32)d)>=base) return fallback;any=1;v=v*base+(U32)d;}return any?v:fallback;}
 static U32 parse_hex(const char *s,U32 fallback){U32 v=0,i=0;int d,any=0;if(!s)return fallback;if(s[0]=='0'&&(s[1]=='x'||s[1]=='X'))i=2;for(;s[i];i++){d=digit(s[i]);if(d<0)return fallback;any=1;v=(v<<4)|(U32)d;}return any?v:fallback;}
@@ -745,6 +771,10 @@ static void load_config(void) {
     }
     GetPrivateProfileStringA("Vehicle","VIN","YV1CZ0002A0000001",v,sizeof(v),g_profile_path);
     if(str_len(v)==17)str_copy(g_vin,v,sizeof(g_vin));
+    GetPrivateProfileStringA("Vehicle","CEMHardware","Unknown",v,sizeof(v),g_profile_path);
+    g_cem_hardware_class=parse_cem_hardware(v);
+    GetPrivateProfileStringA("Vehicle","CEMDiagnosticProtocol","Unknown",v,sizeof(v),g_profile_path);
+    g_cem_diag_protocol=parse_cem_diagnostic(v);
     GetPrivateProfileStringA("Vehicle","BatteryMv","12500",v,sizeof(v),g_profile_path);
     g_battery_mv=parse_num(v,12500);
     GetPrivateProfileStringA("Vehicle","EmitIsoRxStart","0",v,sizeof(v),g_profile_path);
@@ -941,6 +971,12 @@ static void load_config(void) {
     if(n==0||n>=sizeof(g_log_path)-32)str_copy(g_log_path,"C:\\Windows\\Temp\\SectorVVirtualCar.log",sizeof(g_log_path));
     else str_append(g_log_path,"SectorVVirtualCar.log",sizeof(g_log_path));
     logline("VirtualCar DLL initialized (v0.3.6.6 extended configuration DID)",0,0);
+    {U8 cem_meta[8];u32_be(cem_meta,g_cem_hardware_class);
+     u32_be(cem_meta+4,g_cem_diag_protocol);
+     logline("Vehicle declared CEM class (0=? 1=L 2=H) / protocol (0=? 1=D2 2=GGD) BE",cem_meta,8);
+     /* Metadata only. It never selects fixtures, generates RX or attests
+        the actual hardware installed in a specific XC90. */
+    }
     {U8 network_counts[8];U32 active_extra=0,k;
      for(k=BASE_D2_FIXTURES;k<CEM_AE1B_FIXTURE;k++)if(g_d2[k].frame_count)active_extra++;
      u32_be(network_counts,g_trace_count);u32_be(network_counts+4,active_extra);
