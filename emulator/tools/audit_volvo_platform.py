@@ -93,7 +93,14 @@ def audit_platform(
     warnings: list[str] = []
     if suggestion == UNKNOWN:
         warnings.append("NO_SUPPORTED_MODEL_YEAR_RULE: check VIN, market and vehicle generation")
-    if declared != UNKNOWN and suggestion != UNKNOWN and declared != suggestion:
+    if suggestion == UNKNOWN:
+        # Out-of-scope year (e.g. XC90 2015 is SPA, not P3) must remain
+        # unknown even when a caller supplies a manual generation string.
+        if declared != UNKNOWN:
+            warnings.append("DECLARED_OUT_OF_SUPPORTED_RANGE: manual label is not accepted as platform evidence")
+        generation = UNKNOWN
+        evidence = "unknown"
+    elif declared != UNKNOWN and declared != suggestion:
         warnings.append("DECLARED_GENERATION_CONFLICT: do not select a platform automatically")
         generation = UNKNOWN
         evidence = "conflict"
@@ -102,7 +109,7 @@ def audit_platform(
         evidence = "declared_metadata"
     else:
         generation = suggestion
-        evidence = "model_year_range_only" if suggestion != UNKNOWN else "unknown"
+        evidence = "model_year_range_only"
 
     family = "P2" if generation in {P2, P2_RESTYLING} else "P3" if generation == P3 else UNKNOWN
     facelift = True if generation == P2_RESTYLING else False if generation == P2 else None
