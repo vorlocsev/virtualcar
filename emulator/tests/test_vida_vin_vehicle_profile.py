@@ -36,7 +36,7 @@ def candidates(*pairs, scope='full_within_limit'):
             'client_vin_acceptance_verified': False, 'ecu_identity_verified': False}
 
 
-def row(ident=163191, level=3, model=45, year=2009, group=PARTNER,
+def row(ident=910001, level=3, model=45, year=2009, group=PARTNER,
         engine=8444, trans=80, body=None, steering=None, node=None, special=None):
     return [ident, level, model, year, group, engine, trans, body, steering, node, special]
 
@@ -60,11 +60,11 @@ class OfflineProfileTests(unittest.TestCase):
         r = tool.analyze(candidates(), capture())
         self.assertEqual(r['candidate_compatible_profile_count'], 1)
         self.assertEqual(r['explicit_engine_transmission_pair_matches'], 1)
-        self.assertEqual(r['candidate_compatible_profile_links'][0]['original_profile_id'], 163191)
+        self.assertEqual(r['candidate_compatible_profile_links'][0]['original_profile_id'], 910001)
         self.assertFalse(r['client_readvin_accepted'])
 
     def test_02_null_generic_profile_wildcards(self):
-        r = tool.analyze(candidates(), capture(row(163119,0,45,None,None,None,None)))
+        r = tool.analyze(candidates(), capture(row(910000,0,45,None,None,None,None)))
         self.assertEqual(r['candidate_compatible_profile_count'], 1)
         self.assertEqual(r['explicit_engine_transmission_pair_matches'], 0)
 
