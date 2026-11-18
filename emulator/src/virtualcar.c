@@ -151,6 +151,13 @@ static U32 g_battery_mv=12500;
 #define CEM_DIAG_GGD 2u
 static U32 g_cem_hardware_class=CEM_HW_UNKNOWN;
 static U32 g_cem_diag_protocol=CEM_DIAG_UNKNOWN;
+/* A cosmetic P2 restyling is still P2; it is never a third CAN protocol.
+   Explicit, informational only; independent of CEM-H/L and D2/GGD. */
+#define VEH_GEN_UNKNOWN 0u
+#define VEH_GEN_P2 1u
+#define VEH_GEN_P2_RESTYLING 2u
+#define VEH_GEN_P3 3u
+static U32 g_vehicle_generation=VEH_GEN_UNKNOWN;
 /* Optional diagnostic traffic is synthetic VCARLAB, never a Volvo CAN trace. */
 static U32 g_passive_enabled=0,g_passive_id=0x555,g_passive_period_ms=50;
 static U8 g_passive_payload[8]={0x56,0x43,0x41,0x52,0x4C,0x41,0x42,0x00};
@@ -278,6 +285,17 @@ static U32 parse_cem_diagnostic(const char *s){
     if(str_equal_exact(s,"D2"))return CEM_DIAG_D2;
     if(str_equal_exact(s,"GGD"))return CEM_DIAG_GGD;
     return CEM_DIAG_UNKNOWN;
+}
+static U32 parse_vehicle_generation(const char *s){
+    if(str_equal_exact(s,"P2"))return VEH_GEN_P2;
+    if(str_equal_exact(s,"P2-Restyling"))return VEH_GEN_P2_RESTYLING;
+    if(str_equal_exact(s,"P3"))return VEH_GEN_P3;
+    return VEH_GEN_UNKNOWN;
+}
+static U32 vehicle_platform_family(U32 generation){
+    if(generation==VEH_GEN_P2||generation==VEH_GEN_P2_RESTYLING)return 2u;
+    if(generation==VEH_GEN_P3)return 3u;
+    return 0u;
 }
 static int digit(char c) { if(c>='0'&&c<='9')return c-'0';if(c>='a'&&c<='f')return c-'a'+10;if(c>='A'&&c<='F')return c-'A'+10;return -1; }
 static U32 parse_num(const char *s,U32 fallback) {U32 v=0,base=10,i=0;int d,any=0;if(!s)return fallback;if(s[0]=='0'&&(s[1]=='x'||s[1]=='X')){base=16;i=2;}for(;s[i];i++){d=digit(s[i]);if(d<0||((U32)d)>=base) return fallback;any=1;v=v*base+(U32)d;}return any?v:fallback;}
@@ -775,6 +793,8 @@ static void load_config(void) {
     g_cem_hardware_class=parse_cem_hardware(v);
     GetPrivateProfileStringA("Vehicle","CEMDiagnosticProtocol","Unknown",v,sizeof(v),g_profile_path);
     g_cem_diag_protocol=parse_cem_diagnostic(v);
+    GetPrivateProfileStringA("Vehicle","Generation","Unknown",v,sizeof(v),g_profile_path);
+    g_vehicle_generation=parse_vehicle_generation(v);
     GetPrivateProfileStringA("Vehicle","BatteryMv","12500",v,sizeof(v),g_profile_path);
     g_battery_mv=parse_num(v,12500);
     GetPrivateProfileStringA("Vehicle","EmitIsoRxStart","0",v,sizeof(v),g_profile_path);
@@ -976,6 +996,13 @@ static void load_config(void) {
      logline("Vehicle declared CEM class (0=? 1=L 2=H) / protocol (0=? 1=D2 2=GGD) BE",cem_meta,8);
      /* Metadata only. It never selects fixtures, generates RX or attests
         the actual hardware installed in a specific XC90. */
+    }
+    {U8 gen_meta[12];
+     u32_be(gen_meta,g_vehicle_generation);
+     u32_be(gen_meta+4,vehicle_platform_family(g_vehicle_generation));
+     u32_be(gen_meta+8,g_vehicle_generation==VEH_GEN_P2_RESTYLING?1u:0u);
+     logline("Vehicle generation (0=? 1=P2 2=P2-Restyling 3=P3) / family / facelift BE",gen_meta,12);
+     /* Never change D2, GGD, ISO-TP or J2534 behavior from this label. */
     }
     {U8 network_counts[8];U32 active_extra=0,k;
      for(k=BASE_D2_FIXTURES;k<CEM_AE1B_FIXTURE;k++)if(g_d2[k].frame_count)active_extra++;
