@@ -66,7 +66,9 @@ class VolvoPlatformGenerationTests(unittest.TestCase):
         self.assertEqual(r["evidence_level"], "conflict")
         self.assertIn("DECLARED_GENERATION_CONFLICT: do not select a platform automatically", r["warnings"])
         r = platform.audit_platform("XC90", 2015, declared_generation="P3")
-        self.assertEqual(r["evidence_level"], "declared_metadata")
+        self.assertEqual(r["generation"], platform.UNKNOWN)
+        self.assertEqual(r["evidence_level"], "unknown")
+        self.assertIn("DECLARED_OUT_OF_SUPPORTED_RANGE: manual label is not accepted as platform evidence", r["warnings"])
         self.assertFalse(r["approved_for_ecu_response_selection"])
 
     def test_08_invalid_and_unsupported_never_become_p3(self):
