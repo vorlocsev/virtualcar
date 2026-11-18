@@ -44,9 +44,10 @@ typedef void *HANDLE;
 #define MAX_ECUS 8
 #define MAX_D2_FRAMES 64
 #define MAX_PERIODIC 4
-#define MAX_D2_FIXTURES 15
+#define MAX_D2_FIXTURES 16
 #define BASE_D2_FIXTURES 6
 #define CEM_AE1B_FIXTURE 14
+#define CEM50_250_FIXTURE 15
 #define MAX_PASSIVE_TRACES 12
 #define MAX_EXTRA_DID 192
 #define MAX_EXTRA_DID_SLOTS 4
@@ -851,6 +852,13 @@ static void load_config(void) {
             str_copy(section,"D2_40_AE1B",sizeof(section));
             GetPrivateProfileStringA(section,"Enabled","0",v,sizeof(v),g_profile_path);
             if(parse_num(v,0)!=1u)continue;
+        }else if(i==CEM50_250_FIXTURE){
+            /* Original VIDA CEM config 241: D2 node 50, plain CAN 250k.
+               No inherited 500k response ID or donor frames. */
+            d->target=0x50u;d->subcommand=0xFBu;d->baud=250000u;
+            str_copy(section,"D2_CEM50_250_B9FB",sizeof(section));
+            GetPrivateProfileStringA(section,"Enabled","0",v,sizeof(v),g_profile_path);
+            if(parse_num(v,0)!=1u)continue;
         }else if(i>=BASE_D2_FIXTURES){
             char digits[3];U32 target,opcode;
             str_copy(section,"D2_Node",sizeof(section));
@@ -883,7 +891,7 @@ static void load_config(void) {
         d->response_id=(d->target==0x40?0x00800003u:0x01000003u);
         if(d->target==0x50 && d->subcommand==0xFB)d->response_id=0x01200003u;
         GetPrivateProfileStringA(section,"ResponseId","",v,sizeof(v),g_profile_path);
-        d->response_id=parse_hex(v,(i>=BASE_D2_FIXTURES&&i<CEM_AE1B_FIXTURE)?0xFFFFFFFFu:d->response_id);
+        d->response_id=parse_hex(v,((i>=BASE_D2_FIXTURES&&i<CEM_AE1B_FIXTURE)||i==CEM50_250_FIXTURE)?0xFFFFFFFFu:d->response_id);
         if(d->response_id>0x1FFFFFFFu){
             if(i>=BASE_D2_FIXTURES)logline("D2 extra ECU invalid ResponseId ignored",0,0);
             continue;
@@ -922,7 +930,9 @@ static void load_config(void) {
         if(i>=BASE_D2_FIXTURES && d->frame_count)
             for(j=0;j<i;j++)if(g_d2[j].frame_count && g_d2[j].target==d->target &&
                 g_d2[j].subcommand==d->subcommand &&
-                g_d2[j].service==d->service){d->frame_count=0;invalid_p2++;break;}
+                g_d2[j].service==d->service && g_d2[j].baud==d->baud){
+                    d->frame_count=0;invalid_p2++;break;
+                }
         if(d->frame_count && (!validate_d2_fixture(d) || !validate_fc140_fixture(d))){
             d->frame_count=0;invalid_p2++;
         }
@@ -1485,7 +1495,7 @@ static void supersede_d2_exchange(CHANNEL *c){
         logline("P2 D2 stale queued frames dropped (BE)",count_be,4);}
 }
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
-    U32 i;D2_PROFILE *d;const char *route;int ae1b;
+    U32 i;D2_PROFILE *d;const char *route;int ae1b,bus_mismatch=0;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
     /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
        responses. Keep them silent, but distinguish the known missing emulator
@@ -1515,7 +1525,10 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     ae1b=cem_d2_ae1b_shape(data,len);
     if(!ae1b && (len<4 || data[0]!=0xCBu || data[2]!=0xB9u ||
        (data[3]!=0xFBu&&data[3]!=0xF0u&&data[3]!=0xFCu)))return 0;
-    route=(data[1]==0x40u||data[1]==0x50u)?"CEM":"ECU_OTHER";
+    /* Node 0x50 alone is ambiguous: original ReadVin uses CEM config 241
+       at CAN/250k, but separately uses PJB config 74 at CAN/500k. */
+    route=(data[1]==0x40u || (data[1]==0x50u && c->baud==250000u))?
+          "CEM":"ECU_OTHER";
     backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
     {U8 detail[20];
      u32_be(detail,c->id);u32_be(detail+4,data[1]);u32_be(detail+8,data[2]);
@@ -1532,10 +1545,14 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         U32 j;
         d=&g_d2[i];if(data[1]!=d->target||data[3]!=d->subcommand ||
                      data[2]!=(d->service?d->service:0xB9u))continue;
-        if((g_p2_strict_routing || i>=BASE_D2_FIXTURES) && c->baud!=d->baud){
-            logline("P2 D2 strict route rejected (no fixture emitted)",data,4);
-            backend_event(c,c->active_trace,"request_completed",route,"unsupported_bus","no_response");
-            return 1;
+        /* All node-50 B9 reads are speed-isolated even in legacy loose
+           mode; otherwise CEM 250k can accidentally inherit PJB 500k RX.
+           Continue searching after a mismatched fixture rather than
+           aborting before the new CEM50_250 slot is considered. */
+        if((g_p2_strict_routing || i>=BASE_D2_FIXTURES || data[1]==0x50u) &&
+           (c->baud!=d->baud ||
+            (i==CEM50_250_FIXTURE && c->wire_protocol!=PROTO_CAN))){
+            bus_mismatch=1;continue;
         }
         if(d->frame_count){
             c->d2_trace=c->active_trace;
@@ -1553,8 +1570,10 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
         }
         return 1;
     }
-    logline("P2 D2 command: no recorded ECU fixture for target",data,4);
-    backend_event(c,c->active_trace,"request_completed",route,"missing_profile","no_response");
+    logline(bus_mismatch?"P2 D2 transport mismatch: no fixture emitted":
+             "P2 D2 command: no recorded ECU fixture for target",data,4);
+    backend_event(c,c->active_trace,"request_completed",route,
+                  bus_mismatch?"unsupported_bus":"missing_profile","no_response");
     return 1;
 }
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){

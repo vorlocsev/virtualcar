@@ -291,7 +291,8 @@ static void test_vmware_route_evidence(U32 dev){
   U32 cid=k==0?ls:hs,count=1;
   if(k==2){const U8 p3[3]={0x22,0xF1,0x14};m=frame(PROTO_ISO15765,0x726,p3,3);cid=iso;}
   else m=frame(PROTO_CAN,0x000FFFFE,probe,8);
-  start=backend_lines+backend_len;send(cid,&m);require_route(start,"CEM",1);
+  start=backend_lines+backend_len;send(cid,&m);
+  require_route(start,k==1?"ECU_OTHER":"CEM",1);
   REQUIRE(terminal_for(start,last_tx_request(start),k==2?"unimplemented_probe":"missing_profile","no_response")==1);
   REQUIRE(PassThruReadMsgs(cid,&rx,&count,0)==ERR_BUFFER_EMPTY&&count==0);
  }
@@ -3019,12 +3020,86 @@ static void test_cem40_ae1b_fixture_transport(U32 dev){
  puts("PASS CEM_40 AE1B: 8 opt-in synthetic service/route/isolation gates");
 }
 
+/* B3A308: raw D2 node 0x50 is not an ECU identity. Original VIDA uses
+   CAN/250k for CEM config 241 and CAN/500k for another PJB config.
+   All fixture bytes below are synthetic, never XC90 OEM evidence. */
+static void test_b3a308_cem50_250_route_isolation(U32 dev){
+ D2_PROFILE saved500=g_d2[2],saved250=g_d2[CEM50_250_FIXTURE];
+ U32 saved_routing=g_p2_strict_routing,saved_filters=g_strict_j2534_filters;
+ U32 saved_ps=g_vida_can_ps_lab,can250=0,can500=0,can125=0,ps=0,n;
+ CHANNEL *c250;PASSTHRU_MSG rx,request;
+ const U8 tx[8]={0xCBu,0x50u,0xB9u,0xFBu,0,0,0,0};
+ g_p2_strict_routing=0u;g_strict_j2534_filters=0u;
+ bytes_zero(&g_d2[2],sizeof(g_d2[2]));
+ g_d2[2].target=0x50u;g_d2[2].subcommand=0xFBu;
+ g_d2[2].baud=500000u;g_d2[2].response_id=0x01200003u;
+ g_d2[2].frame_count=1u;
+ {U8 f[8]={0xCBu,0x50u,0xF9u,0xFBu,0x50u,0,0,0};
+  bytes_copy(g_d2[2].frame[0],f,8u);}
+ bytes_zero(&g_d2[CEM50_250_FIXTURE],sizeof(g_d2[CEM50_250_FIXTURE]));
+ g_d2[CEM50_250_FIXTURE].target=0x50u;
+ g_d2[CEM50_250_FIXTURE].subcommand=0xFBu;
+ g_d2[CEM50_250_FIXTURE].baud=250000u;
+ g_d2[CEM50_250_FIXTURE].response_id=0x01000003u;
+ {U8 f[8]={0xCBu,0x50u,0xF9u,0xFBu,0x25u,0,0,0};
+  bytes_copy(g_d2[CEM50_250_FIXTURE].frame[0],f,8u);}
+ REQUIRE(validate_d2_fixture(&g_d2[2]));
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,250000u,&can250)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,500000u,&can500)==ERR_OK);
+ c250=channel(can250);REQUIRE(c250);
+ request=frame(PROTO_CAN,0x000FFFFEu,tx,8u);
+ /* 1. 250k without its own fixture must NOT leak legacy 500k RX. */
+ send(can250,&request);n=1u;
+ REQUIRE(PassThruReadMsgs(can250,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(c250->count==0u&&c250->d2_count==0u);
+ /* 2. The legacy 500k fixture remains independently available. */
+ send(can500,&request);rx=readmsg(can500);
+ REQUIRE(rx.Data[0]==0x01u&&rx.Data[1]==0x20u&&rx.Data[2]==0x00u&&rx.Data[3]==0x03u);
+ REQUIRE(rx.Data[8]==0x50u);
+ /* 3. A separately loaded 250k fixture responds ONLY on its own bus. */
+ g_d2[CEM50_250_FIXTURE].frame_count=1u;
+ REQUIRE(validate_d2_fixture(&g_d2[CEM50_250_FIXTURE]));
+ send(can250,&request);rx=readmsg(can250);
+ REQUIRE(rx.Data[0]==0x01u&&rx.Data[1]==0x00u&&rx.Data[2]==0x00u&&rx.Data[3]==0x03u);
+ REQUIRE(rx.Data[8]==0x25u);
+ /* 4. Absence of 500k fixture does not substitute the 250k fixture. */
+ g_d2[2].frame_count=0u;send(can500,&request);n=1u;
+ REQUIRE(PassThruReadMsgs(can500,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ send(can250,&request);rx=readmsg(can250);REQUIRE(rx.Data[8]==0x25u);
+ /* 5. 125k target-50 request matches neither observed node-50 route. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,0,125000u,&can125)==ERR_OK);
+ send(can125,&request);n=1u;
+ REQUIRE(PassThruReadMsgs(can125,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ /* 6. CAN_PS is a separate J2534-2 protocol restricted to 125k. */
+ g_vida_can_ps_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,250000u,&ps)==ERR_INVALID_BAUDRATE);
+ REQUIRE(ps==0u);
+ g_vida_can_ps_lab=saved_ps;
+ /* 7. 250k and 500k can stage independent replies simultaneously. */
+ g_d2[2].frame_count=1u;send(can250,&request);send(can500,&request);
+ rx=readmsg(can250);REQUIRE(rx.Data[8]==0x25u);
+ rx=readmsg(can500);REQUIRE(rx.Data[8]==0x50u);
+ /* 8. Repeated 250k B9FB supersedes old unread D2 RX on that channel. */
+ send(can250,&request);REQUIRE(c250->count==1u);
+ send(can250,&request);REQUIRE(c250->count==1u);
+ rx=readmsg(can250);REQUIRE(rx.Data[8]==0x25u);n=1u;
+ REQUIRE(PassThruReadMsgs(can250,&rx,&n,0)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(can125)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can500)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can250)==ERR_OK);
+ g_d2[2]=saved500;g_d2[CEM50_250_FIXTURE]=saved250;
+ g_p2_strict_routing=saved_routing;g_strict_j2534_filters=saved_filters;
+ g_vida_can_ps_lab=saved_ps;
+ puts("PASS B3A308 D2 CEM50/250 versus target50/500: 8 synthetic host cases");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
+ test_b3a308_cem50_250_route_isolation(dev);
  test_cem40_ae1b_fixture_transport(dev);
  test_d2_replay_isolation_on_set_config(dev);
  test_passive_can_replay_retune_isolation(dev);
