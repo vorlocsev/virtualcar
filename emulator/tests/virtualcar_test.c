@@ -35,6 +35,7 @@ static U32 tick=0;static I64 qpc_offset_us=0;
 /* Full host suite holds synthetic evidence from every native stage.
    Silent truncation cannot masquerade as a J2534 terminal bug. */
 static char backend_lines[2000000];static U32 backend_len=0;
+static const char *cem_test_hw_ini=0,*cem_test_diag_ini=0;
 static U32 backend_capture_overflows=0;
 static int capture_connect_log=0;
 static char connect_log_lines[32000];static U32 connect_log_len=0;
@@ -128,6 +129,8 @@ U32 GetCurrentProcessId(void){return 0xAABBCCDD;}
 U32 GetModuleFileNameA(PTR mod,char*out,U32 n){(void)mod;strncpy(out,"C:\\SectorV\\VirtualCarJ2534.dll",n);return (U32)strlen(out);}
 U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32 n,const char*path){
  (void)path;
+ if(strcmp(s,"Vehicle")==0 && strcmp(k,"CEMHardware")==0 && cem_test_hw_ini)d=cem_test_hw_ini;
+ if(strcmp(s,"Vehicle")==0 && strcmp(k,"CEMDiagnosticProtocol")==0 && cem_test_diag_ini)d=cem_test_diag_ini;
  /* Only host-test fixture: the distributed INI keeps count=0 by default. */
  if(strcmp(s,"Diagnostics")==0 && strcmp(k,"BackendTelemetryEnabled")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
@@ -3093,11 +3096,46 @@ static void test_b3a308_cem50_250_route_isolation(U32 dev){
  puts("PASS B3A308 D2 CEM50/250 versus target50/500: 8 synthetic host cases");
 }
 
+/* Eight lab metadata gates. H/L never aliases 0x40/0x50, HS/MS or D2/GGD. */
+static void test_b3a309_cem_class_protocol_independent(void){
+ /* 1. Default is unknown, not inferred from vehicle model or date. */
+ REQUIRE(g_cem_hardware_class==CEM_HW_UNKNOWN);
+ REQUIRE(g_cem_diag_protocol==CEM_DIAG_UNKNOWN);
+ /* 2. Explicit H with D2 is legal as metadata, not as OEM evidence. */
+ cem_test_hw_ini="H";cem_test_diag_ini="D2";load_config();
+ REQUIRE(g_cem_hardware_class==CEM_HW_H&&g_cem_diag_protocol==CEM_DIAG_D2);
+ /* 3. Explicit H with GGD is also representable. */
+ cem_test_diag_ini="GGD";load_config();
+ REQUIRE(g_cem_hardware_class==CEM_HW_H&&g_cem_diag_protocol==CEM_DIAG_GGD);
+ /* 4. L with GGD is independent, not assumed low-speed CAN. */
+ cem_test_hw_ini="L";load_config();
+ REQUIRE(g_cem_hardware_class==CEM_HW_L&&g_cem_diag_protocol==CEM_DIAG_GGD);
+ /* 5. L with D2 is independent of diagnostic mode. */
+ cem_test_diag_ini="D2";load_config();
+ REQUIRE(g_cem_hardware_class==CEM_HW_L&&g_cem_diag_protocol==CEM_DIAG_D2);
+ /* 6. Exact explicit sticker notation is accepted; partial text is not. */
+ REQUIRE(parse_cem_hardware("CEM-H")==CEM_HW_H);
+ REQUIRE(parse_cem_hardware("CEM-L")==CEM_HW_L);
+ REQUIRE(parse_cem_hardware("CEM-HS")==CEM_HW_UNKNOWN);
+ /* 7. Protocol errors must never turn into hardware classifications. */
+ cem_test_hw_ini="HS-CAN";cem_test_diag_ini="500000";load_config();
+ REQUIRE(g_cem_hardware_class==CEM_HW_UNKNOWN);
+ REQUIRE(g_cem_diag_protocol==CEM_DIAG_UNKNOWN);
+ REQUIRE(parse_cem_diagnostic("D2")==CEM_DIAG_D2);
+ REQUIRE(parse_cem_diagnostic("GGD")==CEM_DIAG_GGD);
+ /* 8. Reset to default: no implicit hardware class from VIN or rate. */
+ cem_test_hw_ini=0;cem_test_diag_ini=0;load_config();
+ REQUIRE(g_cem_hardware_class==CEM_HW_UNKNOWN);
+ REQUIRE(g_cem_diag_protocol==CEM_DIAG_UNKNOWN);
+ puts("PASS B3A309 CEM H/L vs D2/GGD: 8 metadata-only host gates");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
+ test_b3a309_cem_class_protocol_independent();
  test_zero_baud_guard(dev);
  test_b3a308_cem50_250_route_isolation(dev);
  test_cem40_ae1b_fixture_transport(dev);
