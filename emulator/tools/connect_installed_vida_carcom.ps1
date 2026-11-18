@@ -53,7 +53,7 @@ function Read-ProfileLines([string]$path,[int]$low,[int]$high) {
  if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw 'missing private profile input'}
  $item=Get-Item -LiteralPath $path
  if($item.Length -le 0 -or $item.Length -gt 16384){throw 'invalid input size'}
- $encoding=New-Object System.Text.UTF8Encoding($false,$true)
+ $encoding=[System.Text.UTF8Encoding]::new($false,$true)
  $lines=[System.IO.File]::ReadAllLines($item.FullName,$encoding)
  if($lines.Length -lt $low -or $lines.Length -gt $high){throw 'incorrect profile count'}
  $seen=@{}
@@ -129,7 +129,7 @@ try{
  $b.ConnectTimeout=6
  $b.Encrypt=$false  # Local legacy named SQL Server instance only.
  $b.Pooling=$false
- $con=New-Object System.Data.SqlClient.SqlConnection($b.ConnectionString)
+ $con=[System.Data.SqlClient.SqlConnection]::new($b.ConnectionString)
  $con.Open()
  $db=Read-SqlTable $con 'SELECT DB_NAME() AS [database_name]'
  if($db.Rows.Count -ne 1 -or ([string]$db.Rows[0][0]) -cne 'CarCom'){throw 'unexpected database'}
@@ -209,7 +209,7 @@ WHERE s.[name]=N'dbo' AND t.[name] IN
  $stream=[System.IO.File]::Open($out,[System.IO.FileMode]::CreateNew,
                                [System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
  try{
-  $data=(New-Object System.Text.UTF8Encoding($false)).GetBytes($json+[Environment]::NewLine)
+  $data=([System.Text.UTF8Encoding]::new($false)).GetBytes($json+[Environment]::NewLine)
   $stream.Write($data,0,$data.Length)
  }finally{$stream.Dispose()}
  [pscustomobject]@{
