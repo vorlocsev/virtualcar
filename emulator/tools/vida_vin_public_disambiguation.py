@@ -39,6 +39,13 @@ def _optional_int(x):
     return x is None or _int(x)
 
 
+def _original_profile_id(value):
+    # Original BaseData.VehicleProfile.Id, including its leading zeroes.
+    return type(value) is str and re.fullmatch(r'[0-9a-fA-F]{16}', value) is not None
+
+
+
+
 def _unique(pairs):
     result = {}
     for name, value in pairs:
@@ -131,7 +138,7 @@ def _profiles(source):
         if type(values) is not list or len(values) != len(columns):
             raise OfflineEvidenceError('invalid profile row width')
         row = dict(zip(columns, values))
-        if (not _int(row['Id']) or row['Id'] <= 0 or row['Id'] in ids
+        if (not _original_profile_id(row['Id']) or row['Id'] in ids
                 or not all(_optional_int(row[k]) for k in REQUIRED_PROFILE_KEYS[1:])):
             raise OfflineEvidenceError('invalid source profile key')
         ids.add(row['Id'])
@@ -231,6 +238,7 @@ def analyze(candidate_report, profile_capture):
             'Public profile filter runs only if distinct cross-product candidates exceed one',
             'Public profile filter matches exact engine/transmission, not generic NULL wildcards; NULL transmission is special',
             'Original SQL collation, FK meaning, runtime caches and profile inheritance not attested',
+            'BaseData.VehicleProfile.Id is a 16-hex original string, not a numeric CarCom profile ID',
             'No source capture proves original VIN, Partner Group, GUI decoding or physical ECU presence',
         ],
     }

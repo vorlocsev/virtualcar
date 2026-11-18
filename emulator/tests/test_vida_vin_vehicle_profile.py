@@ -12,6 +12,8 @@ import vida_vin_vehicle_profile as tool
 
 VIN = 'YV1CZ000290000001'  # Public synthetic example, not the owner's VIN.
 PARTNER = 1002
+PROFILE_A = '0000000000000001'
+PROFILE_B = '0000000000000002'
 BASE_FIELDS = ('Id', 'FolderLevel', 'fkVehicleModel', 'fkModelYear',
                'fkPartnerGroup', 'fkEngine', 'fkTransmission', 'fkBodyStyle',
                'fkSteering', 'fkNodeECU', 'fkSpecialVehicle')
@@ -36,7 +38,7 @@ def candidates(*pairs, scope='full_within_limit'):
             'client_vin_acceptance_verified': False, 'ecu_identity_verified': False}
 
 
-def row(ident=910001, level=3, model=45, year=2009, group=PARTNER,
+def row(ident=PROFILE_A, level=3, model=45, year=2009, group=PARTNER,
         engine=8444, trans=80, body=None, steering=None, node=None, special=None):
     return [ident, level, model, year, group, engine, trans, body, steering, node, special]
 
@@ -60,11 +62,11 @@ class OfflineProfileTests(unittest.TestCase):
         r = tool.analyze(candidates(), capture())
         self.assertEqual(r['candidate_compatible_profile_count'], 1)
         self.assertEqual(r['explicit_engine_transmission_pair_matches'], 1)
-        self.assertEqual(r['candidate_compatible_profile_links'][0]['original_profile_id'], 910001)
+        self.assertEqual(r['candidate_compatible_profile_links'][0]['original_profile_id'], PROFILE_A)
         self.assertFalse(r['client_readvin_accepted'])
 
     def test_02_null_generic_profile_wildcards(self):
-        r = tool.analyze(candidates(), capture(row(910000,0,45,None,None,None,None)))
+        r = tool.analyze(candidates(), capture(row(PROFILE_B,0,45,None,None,None,None)))
         self.assertEqual(r['candidate_compatible_profile_count'], 1)
         self.assertEqual(r['explicit_engine_transmission_pair_matches'], 0)
 
@@ -166,6 +168,40 @@ class OfflineProfileTests(unittest.TestCase):
             for text in ('{"x":1,"x":2}','{"x":NaN}'):
                 p.write_text(text)
                 with self.assertRaises(tool.ProfileEvidenceError):tool.read_json(p)
+
+    def test_21_original_base_data_profile_hex_id_preserves_zeroes(self):
+        original = '0c00c8af80205920'  # confirmed global profile ID in owner catalog
+        result = tool.analyze(candidates(), capture(row(ident=original)))
+        self.assertEqual(result['candidate_compatible_profile_links'][0]['original_profile_id'], original)
+
+    def test_22_reject_numeric_carcom_id_as_base_data_id(self):
+        with self.assertRaises(tool.ProfileEvidenceError):
+            tool.analyze(candidates(), capture(row(ident=163119)))
+
+    def test_23_reject_bad_profile_id_shapes(self):
+        for ident in ('0x0c00c8af80205920','0c00c8af8020592', 'GGGGGGGGGGGGGGGG', '', 'aaa\nbbbbbbbbbbbb'):
+            with self.subTest(identifier=ident), self.assertRaises(tool.ProfileEvidenceError):
+                tool.analyze(candidates(), capture(row(ident=ident)))
+
+    def test_25_owner_original_global_folder_level_zero_is_accepted_not_vehicle_match(self):
+        original = '0c00c8af80205920'
+        root = row(ident=original, level=0, model=None, year=None,
+                   group=None, engine=None, trans=None, body=None)
+        result = tool.analyze(candidates(), capture(root, row()))
+        self.assertEqual(result['global_level0_profile_candidates_in_capture'],
+                         [{'original_profile_id': original, 'original_folder_level': 0}])
+        self.assertEqual(result['candidate_compatible_profile_count'], 1)
+        self.assertFalse(result['global_readvin_script_selection_verified'])
+
+    def test_26_null_model_non_global_row_does_not_fail_or_match(self):
+        result = tool.analyze(candidates(), capture(row(model=None, level=1)))
+        self.assertEqual(result['candidate_compatible_profile_count'], 0)
+        self.assertEqual(result['global_level0_profile_candidates_in_capture'], [])
+
+    def test_24_keep_case_of_original_hex_profile_key(self):
+        original = 'ABCDEF0123456789'
+        result = tool.analyze(candidates(), capture(row(ident=original)))
+        self.assertEqual(result['candidate_compatible_profile_links'][0]['original_profile_id'], original)
 
     def test_20_unproven_same_snapshot_remains_false(self):
         r=tool.analyze(candidates(),capture())
