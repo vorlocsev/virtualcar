@@ -36,6 +36,7 @@ static U32 tick=0;static I64 qpc_offset_us=0;
    Silent truncation cannot masquerade as a J2534 terminal bug. */
 static char backend_lines[2000000];static U32 backend_len=0;
 static const char *cem_test_hw_ini=0,*cem_test_diag_ini=0;
+static const char *vehicle_test_generation_ini=0;
 static U32 backend_capture_overflows=0;
 static int capture_connect_log=0;
 static char connect_log_lines[32000];static U32 connect_log_len=0;
@@ -131,6 +132,7 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
  (void)path;
  if(strcmp(s,"Vehicle")==0 && strcmp(k,"CEMHardware")==0 && cem_test_hw_ini)d=cem_test_hw_ini;
  if(strcmp(s,"Vehicle")==0 && strcmp(k,"CEMDiagnosticProtocol")==0 && cem_test_diag_ini)d=cem_test_diag_ini;
+ if(strcmp(s,"Vehicle")==0 && strcmp(k,"Generation")==0 && vehicle_test_generation_ini)d=vehicle_test_generation_ini;
  /* Only host-test fixture: the distributed INI keeps count=0 by default. */
  if(strcmp(s,"Diagnostics")==0 && strcmp(k,"BackendTelemetryEnabled")==0)d="1";
  if(strcmp(s,"D2_40")==0 && strcmp(k,"B9FBFrameCount")==0)d="1";
@@ -3130,12 +3132,57 @@ static void test_b3a309_cem_class_protocol_independent(void){
  puts("PASS B3A309 CEM H/L vs D2/GGD: 8 metadata-only host gates");
 }
 
+/* B3A310: restyling is a P2-era property, never a distinct P3 family.
+   Host tests are synthetic metadata only; no OEM vehicle acceptance. */
+static void test_b3a310_vehicle_generation_independent(void){
+ U32 save_hw=g_cem_hardware_class,save_diag=g_cem_diag_protocol;
+ /* 1. Unknown is the only safe implicit generation. */
+ REQUIRE(g_vehicle_generation==VEH_GEN_UNKNOWN);
+ REQUIRE(vehicle_platform_family(g_vehicle_generation)==0u);
+ /* 2. P2 means family 2, not facelift. */
+ vehicle_test_generation_ini="P2";load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_P2);
+ REQUIRE(vehicle_platform_family(g_vehicle_generation)==2u);
+ /* 3. P2-Restyling is a distinct version of the SAME platform. */
+ vehicle_test_generation_ini="P2-Restyling";load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_P2_RESTYLING);
+ REQUIRE(vehicle_platform_family(g_vehicle_generation)==2u);
+ /* 4. P3 has another platform family. */
+ vehicle_test_generation_ini="P3";load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_P3);
+ REQUIRE(vehicle_platform_family(g_vehicle_generation)==3u);
+ /* 5. Cosmetic and bus labels are not accepted as a platform. */
+ REQUIRE(parse_vehicle_generation("P2-HS")==VEH_GEN_UNKNOWN);
+ REQUIRE(parse_vehicle_generation("GGD")==VEH_GEN_UNKNOWN);
+ REQUIRE(parse_vehicle_generation("P2 facelift")==VEH_GEN_UNKNOWN);
+ /* 6. Generation independent from CEM H/L marking. */
+ cem_test_hw_ini="H";vehicle_test_generation_ini="P2-Restyling";load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_P2_RESTYLING);
+ REQUIRE(g_cem_hardware_class==CEM_HW_H);
+ cem_test_hw_ini="L";vehicle_test_generation_ini="P3";load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_P3&&g_cem_hardware_class==CEM_HW_L);
+ /* 7. Generation also independent from diagnostic protocol. */
+ cem_test_diag_ini="D2";vehicle_test_generation_ini="P3";load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_P3&&g_cem_diag_protocol==CEM_DIAG_D2);
+ cem_test_diag_ini="GGD";vehicle_test_generation_ini="P2";load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_P2&&g_cem_diag_protocol==CEM_DIAG_GGD);
+ /* 8. Reset declared generation, protocol and hardware to UNKNOWN. */
+ vehicle_test_generation_ini=0;cem_test_hw_ini=0;cem_test_diag_ini=0;
+ load_config();
+ REQUIRE(g_vehicle_generation==VEH_GEN_UNKNOWN);
+ REQUIRE(g_cem_hardware_class==CEM_HW_UNKNOWN);
+ REQUIRE(g_cem_diag_protocol==CEM_DIAG_UNKNOWN);
+ REQUIRE(g_cem_hardware_class==save_hw&&g_cem_diag_protocol==save_diag);
+ puts("PASS B3A310 P2/P2-Restyling/P3: eight metadata-only host gates");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_b3a309_cem_class_protocol_independent();
+ test_b3a310_vehicle_generation_independent();
  test_zero_baud_guard(dev);
  test_b3a308_cem50_250_route_isolation(dev);
  test_cem40_ae1b_fixture_transport(dev);
