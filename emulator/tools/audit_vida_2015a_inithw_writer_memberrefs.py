@@ -94,7 +94,13 @@ def _memberref_relation(layout: dict, token: int, field_type: int | None, kind: 
     sig = layout["blob"](u(p + ps + ss, bs))
     header = _simple_method_return_and_header(sig)
     if field_type is None or header is None:
-        return kind + "_unclassified"
+        # Use the exact fixed output categories; "callvirt_unclassified"
+        # and "newobj_unclassified" are NOT valid RELATIONS keys.
+        if kind == "newobj":
+            return "newobj_owner_unclassified"
+        if kind == "callvirt":
+            return "callvirt_return_unclassified"
+        return "other_or_unclassified"
     has_this, void_return, simple_return = header
     if kind == "newobj":
         if name != ".ctor" or not has_this or not void_return:
