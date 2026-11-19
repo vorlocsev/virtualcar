@@ -17,7 +17,8 @@ import audit_vida_2015a_inithw_assembly_identity as tool
 def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
                  namespace="Demo.Diagnostics", version=(1, 2, 3, 4),
                  key=b"\xAB\xCD", typeref_assembly_row=1,
-                 with_manifest=False, local_interface=False):
+                 with_manifest=False, local_interface=False,
+                 reference_full_key=False):
     names = bytearray(b"\x00")
     indices = {}
     for s in ("ICarComRepository", "CarComRepository", "GetInitHwSettings",
@@ -69,7 +70,7 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
                                     indices[assembly_name], 0))
         elif tab == 35:
             data.extend(struct.pack("<HHHHIHHHH",
-                                    *version, 0, 1,
+                                    *version, 1 if reference_full_key else 0, 1,
                                     indices[assembly_name], 0, 0))
     # Metadata root with three streams. All offsets relative to metadata.
     version_str = b"v4.0.30319\x00"
