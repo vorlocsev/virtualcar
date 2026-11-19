@@ -117,5 +117,19 @@ class InstalledVidaBridgeSourceChecks(unittest.TestCase):
         )
 
 
+    def test_12_global_sql_work_budget(self):
+        self.assertIn("$script:sqlReadCount=0", self.source)
+        self.assertIn("[System.Diagnostics.Stopwatch]::StartNew()", self.source)
+        self.assertIn("$script:sqlReadCount -ge 4096", self.source)
+        self.assertIn("$script:sqlBudgetClock.Elapsed.TotalSeconds -ge 120", self.source)
+        self.assertIn("$script:sqlReadCount++", self.source)
+        self.assertIn("throw 'aggregate SQL read budget exceeded'", self.source)
+        self.assertIn("$cmd.CommandTimeout=15", self.source)
+        self.assertLess(
+            self.source.index("$script:sqlReadCount -ge 4096"),
+            self.source.index("$cmd=$con.CreateCommand()")
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
