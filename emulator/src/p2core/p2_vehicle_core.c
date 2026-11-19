@@ -43,6 +43,7 @@ p2_vehicle_tx_assessment p2_vehicle_observe_tx(p2_vehicle *v,
         case P2_CEM_B9F0: ++v->b9f0_seen; break;
         case P2_CEM_B9FB: ++v->b9fb_seen; break;
         case P2_CEM_A6_REF6660_CANDIDATE: ++v->possible_ref6660_seen; break;
+        case P2_CEM_A6_OTHER_DID_UNVERIFIED: ++v->a6_other_did_seen; break;
         default: break;
         }
     }
