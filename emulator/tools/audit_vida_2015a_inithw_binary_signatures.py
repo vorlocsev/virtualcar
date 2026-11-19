@@ -93,8 +93,9 @@ def audit(root: Path) -> dict:
             path = Path(directory) / filename
             if path.suffix.casefold() not in (".dll", ".exe") or path.is_symlink():
                 continue
-            if not SAFE_BASENAME.fullmatch(filename):
-                raise EvidenceError("unexpected executable filename shape")
+            # Real VIDA installs can have spaces or localized filenames.
+            # Scan them too; suppress only untrusted basename presentation.
+            safe_filename = filename if SAFE_BASENAME.fullmatch(filename) else "special_filename_suppressed"
             size = path.stat().st_size
             if size < 1 or size > MAX_SOURCE_BINARY_BYTES:
                 binaries_skipped_size += 1
@@ -110,7 +111,7 @@ def audit(root: Path) -> dict:
             files_scanned += 1
             if any(flags.values()):
                 hits.append({
-                    "module_basename": filename,
+                    "module_basename": safe_filename,
                     "sha256": digest,
                     "fixed_token_present": flags,
                 })
