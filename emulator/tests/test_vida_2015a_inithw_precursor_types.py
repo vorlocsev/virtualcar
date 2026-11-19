@@ -35,17 +35,29 @@ def instructions(pre, *, producer_op=0x73, precursor_op=None, nested=NESTED):
             b"\x6F" + struct.pack("<I", TARGET) + b"\x2A")
 
 
-def layout_with_nested(ctor_sig, nested_sig):
+def layout_with_nested(ctor_sig, nested_sig, writer_sig=b"\x20\x01\x01\x12\x05"):
     base = fake_layout(method_sig=ctor_sig)
     old_row, old_u, old_blob = base["row"], base["u"], base["blob"]
-    base["row"] = lambda t, i: 16 if (t, i) == (10, 3) else old_row(t, i)
-    base["u"] = lambda p, n: 4 if (p, n) == (20, 2) else old_u(p, n)
-    base["blob"] = lambda i: nested_sig if i == 4 else old_blob(i)
+    base["row"] = lambda t, i: (
+        16 if (t, i) == (10, 3) else
+        24 if (t, i) == (6, 1) else
+        40 if (t, i) == (6, 3) else old_row(t, i)
+    )
+    base["u"] = lambda p, n: (
+        4 if (p, n) == (20, 2) else
+        5 if (p, n) == (34, 2) else
+        6 if (p, n) == (50, 2) else old_u(p, n)
+    )
+    base["blob"] = lambda i: (
+        nested_sig if i in (4, 6) else
+        writer_sig if i == 5 else old_blob(i)
+    )
     return base
 
 
 def inspect(code, *, ctor_sig=b"\x20\x01\x01\x0E",
-            nested_sig=b"\x20\x00\x0E", more_layout=None):
+            nested_sig=b"\x20\x00\x0E", writer_sig=b"\x20\x01\x01\x12\x05",
+            more_layout=None):
     pe = with_first_method_body(code)
     m = tool._metadata_tables(pe)
     m["target_reference_parent_type_families"][TARGET] = "icarcom_repository"
@@ -53,7 +65,7 @@ def inspect(code, *, ctor_sig=b"\x20\x01\x01\x0E",
         "parameters": 1, "has_this": True,
     }
     layout = more_layout if more_layout is not None else layout_with_nested(
-        ctor_sig, nested_sig,
+        ctor_sig, nested_sig, writer_sig,
     )
     with patch.object(tool, "_metadata_tables", return_value=m), patch.object(
         tool, "_table_layout", return_value=layout
@@ -156,6 +168,65 @@ class OriginalVidaPrecursorSyntheticTests(unittest.TestCase):
         self.assertEqual(c["target_field_stfld_sites"], 2)
         self.assertEqual(c["producer_input_source_counts"]["ldstr"], 1)
         self.assertEqual(c["producer_input_source_counts"]["receiver_ldarg"], 1)
+
+    def test_19_nested_local_callvirt_methoddef_instance_zero_args(self):
+        code = instructions(b"\x02", precursor_op=0x6F, nested=0x06000003)
+        c = inspect(code, ctor_sig=b"\x20\x01\x01\x12\x05",
+                    nested_sig=b"\x20\x00\x12\x05")
+        self.assertEqual(c["nested_local_callvirt_methoddef_sites"], 1)
+        self.assertEqual(c["nested_local_callvirt_methoddef_signature_counts"][
+            "instance_zero_explicit"], 1)
+        self.assertEqual(c["nested_local_callvirt_immediate_input_family"][
+            "load_arg_or_address"], 1)
+        self.assertEqual(c["newobj_nested_call_return_to_constructor_parameter_relation"][
+            "exact_same_module_type"], 1)
+
+    def test_20_nested_local_callvirt_methoddef_static_one_arg(self):
+        code = instructions(b"\x06", precursor_op=0x6F, nested=0x06000003)
+        c = inspect(code, ctor_sig=b"\x20\x01\x01\x12\x05",
+                    nested_sig=b"\x00\x01\x12\x05\x08")
+        self.assertEqual(c["nested_local_callvirt_methoddef_signature_counts"][
+            "static_one_explicit"], 1)
+        self.assertEqual(c["nested_local_callvirt_immediate_input_family"][
+            "load_local_or_address"], 1)
+
+    def test_21_writer_slot1_is_instance_first_explicit_class(self):
+        code = instructions(b"\x03", producer_op=0x6F)
+        c = inspect(code)
+        self.assertEqual(c["callvirt_writer_slot1_method_signature_counts"][
+            "instance_first_explicit"], 1)
+        self.assertEqual(c["callvirt_writer_receiver_parent_token_kind_counts"][
+            "typeref"], 1)
+        self.assertEqual(c["callvirt_writer_slot1_type_vs_receiver_parent"][
+            "exact_same_module_type"], 1)
+
+    def test_22_writer_slot1_class_different_from_memberref_owner(self):
+        code = instructions(b"\x03", producer_op=0x6F)
+        c = inspect(code, writer_sig=b"\x20\x01\x01\x12\x09")
+        self.assertEqual(c["callvirt_writer_slot1_type_vs_receiver_parent"][
+            "different_type"], 1)
+
+    def test_23_writer_static_slot1_second_explicit_parameter(self):
+        code = instructions(b"\x03", producer_op=0x6F)
+        c = inspect(code, writer_sig=b"\x00\x02\x01\x08\x12\x05")
+        self.assertEqual(c["callvirt_writer_slot1_method_signature_counts"][
+            "static_second_explicit"], 1)
+        self.assertEqual(c["callvirt_writer_slot1_type_vs_receiver_parent"][
+            "exact_same_module_type"], 1)
+
+    def test_24_writer_slot1_without_declared_parameter_not_invented(self):
+        code = instructions(b"\x03", producer_op=0x6F)
+        c = inspect(code, writer_sig=b"\x20\x00\x01")
+        self.assertEqual(c["callvirt_writer_slot1_method_signature_counts"][
+            "out_of_signature_or_unclassified"], 1)
+        self.assertEqual(c["callvirt_writer_slot1_type_vs_receiver_parent"][
+            "unclassified"], 1)
+
+    def test_25_writer_slot1_non_class_parameter_unclassified(self):
+        code = instructions(b"\x03", producer_op=0x6F)
+        c = inspect(code, writer_sig=b"\x20\x01\x01\x08")
+        self.assertEqual(c["callvirt_writer_slot1_type_vs_receiver_parent"][
+            "different_type"], 1)
 
     def test_16_sha_pin_mismatch_fails_closed(self):
         pe = with_first_method_body(b"\x2A")
