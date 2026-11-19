@@ -13,11 +13,11 @@ int main(void) {
   p2_bridge_connect(&b,1u,5u,500000u);
   p2_bridge_connect(&b,2u,5u,500000u);
   assert(p2_bridge_inspect_tx(&b,1u,P2_BRIDGE_CAN_29BIT_FLAG,a3,12u,&out));
-  assert(out.observed && b.channels[0].hw_tx.last_request==1u);
+  assert(out.observed && out.hw_event==P2_HW_A3_TX && b.channels[0].hw_tx.last_request==1u);
   assert(b.channels[1].hw_tx.last_request==0u);
   /* A different channel must NOT inherit A3 from channel 1. */
   assert(p2_bridge_inspect_tx(&b,2u,P2_BRIDGE_CAN_29BIT_FLAG,f0,12u,&out));
-  assert(b.channels[1].hw_tx.out_of_order==1u);
+  assert(out.hw_event==P2_HW_OUT_OF_ORDER && b.channels[1].hw_tx.out_of_order==1u);
   assert(b.channels[1].hw_tx.last_request==0u);
   /* Correct TX order on channel 1 is still NOT authentication. */
   assert(p2_bridge_inspect_tx(&b,1u,P2_BRIDGE_CAN_29BIT_FLAG,e0,12u,&out));
@@ -27,6 +27,7 @@ int main(void) {
   /* B9FB classification/replay path is unchanged by the observer. */
   assert(p2_bridge_inspect_tx(&b,1u,P2_BRIDGE_CAN_29BIT_FLAG,fb,12u,&out));
   assert(out.observed && out.decision==P2_CEM_KEEP_EXISTING);
+  assert(out.hw_event==P2_HW_UNRELATED);
   assert(b.vehicle.b9fb_seen==1u && b.channels[0].hw_tx.last_request==3u);
   /* Disconnect and reuse of numeric channel ID reset all phase evidence. */
   p2_bridge_disconnect(&b,1u);
