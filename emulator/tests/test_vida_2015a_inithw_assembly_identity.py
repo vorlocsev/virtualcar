@@ -16,7 +16,8 @@ import audit_vida_2015a_inithw_assembly_identity as tool
 
 def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
                  namespace="Demo.Diagnostics", version=(1, 2, 3, 4),
-                 key=b"\xAB\xCD", typeref_assembly_row=1):
+                 key=b"\xAB\xCD", typeref_assembly_row=1,
+                 with_manifest=False, local_interface=False):
     names = bytearray(b"\x00")
     indices = {}
     for s in ("ICarComRepository", "CarComRepository", "GetInitHwSettings",
@@ -25,8 +26,10 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
             continue
         indices[s] = len(names)
         names.extend(s.encode("utf-8") + b"\x00")
-    # compressed blob heap index 1 has two PublicKeyOrToken bytes.
-    blobs = b"\x00\x02" + key + b"\x03\x20\x01\x01"
+    # Bounded synthetic compressed #Blob length, one-based first blob index.
+    if not 0 < len(key) < 128:
+        raise ValueError("fixture public key extent")
+    blobs = b"\x00" + bytes([len(key)]) + key + b"\x03\x20\x01\x01"
     # Module 0, TypeRef 1, TypeDef 2, InterfaceImpl 9,
     # MemberRef 10, AssemblyRef 35. Tests use only a few real tables.
     tables_present = [1, 35]
@@ -34,10 +37,12 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
         tables_present += [2, 9]
     else:
         tables_present += [10]
+    if with_manifest:
+        tables_present += [32]
     valid = sum(1 << t for t in tables_present)
     data = bytearray(struct.pack("<IBBBBQQ", 0, 2, 0, 0, 1, valid, 0))
     for tab in sorted(tables_present):
-        data.extend(struct.pack("<I", 1))
+        data.extend(struct.pack("<I", 2 if tab == 2 and local_interface else 1))
     for tab in sorted(tables_present):
         if tab == 1:
             ref_scope = (typeref_assembly_row << 2) | 2
@@ -48,11 +53,20 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
             data.extend(struct.pack("<IHHHHH", 0,
                                     indices["CarComRepository"],
                                     indices[namespace], 0, 1, 1))
+            if local_interface:
+                data.extend(struct.pack("<IHHHHH", 0,
+                                        indices["ICarComRepository"],
+                                        indices[namespace], 0, 1, 1))
         elif tab == 9:
-            data.extend(struct.pack("<HH", 1, (1 << 2) | 1))
+            data.extend(struct.pack("<HH", 1,
+                                    (2 << 2) if local_interface else (1 << 2) | 1))
         elif tab == 10:
             data.extend(struct.pack("<HHH", (1 << 3) | 1,
                                     indices["GetInitHwSettings"], 5))
+        elif tab == 32:
+            data.extend(struct.pack("<IHHHHIHHH", 0, *version,
+                                    1 if key else 0, 1,
+                                    indices[assembly_name], 0))
         elif tab == 35:
             data.extend(struct.pack("<HHHHIHHHH",
                                     *version, 0, 1,
