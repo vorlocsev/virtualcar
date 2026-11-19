@@ -150,14 +150,19 @@ try{
  $phase='connection'
  Add-Type -AssemblyName System.Data
  $b=New-Object System.Data.SqlClient.SqlConnectionStringBuilder
- $b.DataSource=$ServerInstance
- $b.InitialCatalog='CarCom'
- $b.IntegratedSecurity=$true
- $b.ApplicationIntent=[System.Data.SqlClient.ApplicationIntent]::ReadOnly
- $b.ConnectTimeout=6
- $b.Encrypt=$false  # Local legacy named SQL Server instance only.
- $b.Pooling=$false
- $con=[System.Data.SqlClient.SqlConnection]::new($b.ConnectionString)
+ # PowerShell 5.1 binds SqlConnectionStringBuilder's IDictionary adapter
+ # before .NET properties. $b.DataSource=... writes the invalid dictionary
+ # key 'DataSource' rather than the canonical 'Data Source' and throws.
+ # Use the intrinsic PSObject member adapter for all CLR properties,
+ # including ConnectionString (do not read $b.ConnectionString directly).
+ $b.psobject.Properties['DataSource'].Value=$ServerInstance
+ $b.psobject.Properties['InitialCatalog'].Value='CarCom'
+ $b.psobject.Properties['IntegratedSecurity'].Value=$true
+ $b.psobject.Properties['ApplicationIntent'].Value=[System.Data.SqlClient.ApplicationIntent]::ReadOnly
+ $b.psobject.Properties['ConnectTimeout'].Value=6
+ $b.psobject.Properties['Encrypt'].Value=$false  # Local legacy named instance only.
+ $b.psobject.Properties['Pooling'].Value=$false
+ $con=[System.Data.SqlClient.SqlConnection]::new($b.psobject.Properties['ConnectionString'].Value)
  $con.Open()
  $phase='database'
  $db=Read-SqlTable $con 'SELECT DB_NAME() AS [database_name]'
