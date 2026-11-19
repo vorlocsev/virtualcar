@@ -175,6 +175,8 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
         "target_getinithw_calls": reads,
         "distinct_target_fielddefs_in_module": len(fields),
         "target_field_stfld_sites": 0,
+        "newobj_producer_sites": 0,
+        "callvirt_producer_sites": 0,
         "producer_input_source_counts": {k: 0 for k in SOURCE},
         "newobj_constructor_one_param_kind": {k: 0 for k in KINDS},
         "newobj_ldstr_constructor_parameter_relation": {k: 0 for k in RELATION},
@@ -214,6 +216,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             if input_end != pstart:
                 raise MetadataError("invalid original source instruction boundary")
             if producer_op == 0x73:  # one-param constructor
+                counts["newobj_producer_sites"] += 1
                 param = sig[1][0] if sig is not None and len(sig[1]) == 1 else None
                 counts["newobj_constructor_one_param_kind"][_type_kind(param)] += 1
                 if input_op == 0x72:
@@ -249,6 +252,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
                 else:
                     counts["producer_input_source_counts"]["other_or_unclassified"] += 1
             else:
+                counts["callvirt_producer_sites"] += 1
                 slot = _arg_slot(code, input_inst)
                 if slot == "other_or_unclassified":
                     counts["producer_input_source_counts"]["other_or_unclassified"] += 1
@@ -262,13 +266,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
     total = counts["target_field_stfld_sites"]
     if sum(counts["producer_input_source_counts"].values()) != total:
         raise MetadataError("unreconciled producer source classifications")
-    if (sum(counts["newobj_constructor_one_param_kind"].values()) !=
-        counts["producer_input_source_counts"]["ldstr"] +
-            counts["producer_input_source_counts"]["nested_call"] +
-            sum(1 for code, ins in bodies for i, (_, op, _, _) in enumerate(ins)
-                if op == 0x7D and i >= 2 and
-                _u(code, ins[i][0] + 1, 4) in fields and
-                ins[i-1][1] == 0x73 and ins[i-2][1] not in (0x72, 0x28, 0x6F, 0x29))):
+    if sum(counts["newobj_constructor_one_param_kind"].values()) != counts["newobj_producer_sites"]:
         raise MetadataError("unreconciled newobj constructor input kind totals")
     if (sum(counts["newobj_ldstr_constructor_parameter_relation"].values()) !=
         counts["producer_input_source_counts"]["ldstr"] or
@@ -283,10 +281,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
         sum(counts[k] for k in (
             "callvirt_receiver_is_address", "callvirt_receiver_is_value",
             "callvirt_receiver_other_or_unclassified"
-        )) != sum(1 for code, ins in bodies for i, (_, op, _, _) in enumerate(ins)
-                    if op == 0x7D and i >= 2 and
-                    _u(code, ins[i][0] + 1, 4) in fields and
-                    ins[i - 1][1] == 0x6F)):
+        )) != counts["callvirt_producer_sites"]):
         raise MetadataError("unreconciled nested call/receiver categories")
     return counts
 
