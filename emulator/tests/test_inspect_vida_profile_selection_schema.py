@@ -6,7 +6,10 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import sys
 
+# unittest discovery uses emulator/tests, but the production module is in tools.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from inspect_vida_profile_selection_schema import SchemaError, inspect, main
 
 
