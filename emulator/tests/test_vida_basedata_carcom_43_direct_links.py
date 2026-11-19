@@ -160,6 +160,29 @@ class DirectLinksTests(unittest.TestCase):
         self.assertIn("T136_InitHw_Profile", expanded)
         self.assertNotIn("T160_DefaultEcuVariant", original)
 
+    def test_15_nonexact_ecm_prefix_is_only_a_lexical_hint(self):
+        with closing(sqlite3.connect(self.carcom)) as db, db:
+            db.execute('UPDATE "dbo_T101_Ecu" SET identifier="ECM-V8" WHERE id=3')
+        r = audit(self.folder)
+        c = r["counts"]
+        self.assertEqual(c["direct_default_ecm_rows"], 1)
+        self.assertEqual(c["direct_default_other_ecu_rows"], 6)
+        self.assertEqual(c["direct_default_other_ecm_prefix_rows"], 6)
+        self.assertEqual(c["direct_default_other_ecm_token_rows"], 6)
+        self.assertEqual(c["direct_default_other_ecm_substring_rows"], 6)
+        self.assertFalse(r["ecm_lexical_name_matches_prove_ecu_identity"])
+
+    def test_16_embedded_ecm_substring_not_a_prefix_or_identity(self):
+        with closing(sqlite3.connect(self.carcom)) as db, db:
+            db.execute('UPDATE "dbo_T101_Ecu" SET identifier="XECM" WHERE id=3')
+        r = audit(self.folder)
+        c = r["counts"]
+        self.assertEqual(c["direct_default_ecm_rows"], 1)
+        self.assertEqual(c["direct_default_other_ecm_prefix_rows"], 0)
+        self.assertEqual(c["direct_default_other_ecm_token_rows"], 0)
+        self.assertEqual(c["direct_default_other_ecm_substring_rows"], 6)
+        self.assertFalse(r["ecm_lexical_name_matches_prove_ecu_identity"])
+
     def test_14_error_message_contains_only_class(self):
         stream = StringIO()
         with redirect_stderr(stream):
