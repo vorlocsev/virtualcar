@@ -1667,8 +1667,8 @@ static void pump_periodic(CHANNEL *c){
            not a fresh direct PassThruWriteMsgs call from the GUI. */
         {
             p2_bridge_tx_result observed;
-            if(p2_bridge_inspect_tx(&g_vehicle_bridge,c->id,p->msg.TxFlags,
-                    p->msg.Data,p->msg.DataSize,&observed)) {
+            if(p2_bridge_inspect_tx_at(&g_vehicle_bridge,c->id,p->msg.TxFlags,
+                    p->msg.Data,p->msg.DataSize,now_us(),&observed)) {
                 if(observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
                     logline(observed.label,0,0);
                 if(observed.hw_event!=P2_HW_UNRELATED)
@@ -1770,8 +1770,8 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
         /* The observer cannot affect J2534 return codes or ECU responses. */
         {
             p2_bridge_tx_result observed;
-            if (p2_bridge_inspect_tx(&g_vehicle_bridge,id,msgs[i].TxFlags,
-                    msgs[i].Data,msgs[i].DataSize,&observed)) {
+            if (p2_bridge_inspect_tx_at(&g_vehicle_bridge,id,msgs[i].TxFlags,
+                    msgs[i].Data,msgs[i].DataSize,now_us(),&observed)) {
                 if(observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
                     logline(observed.label,0,0);
                 if(observed.hw_event!=P2_HW_UNRELATED)
@@ -1813,9 +1813,9 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
             /* Observe delivered RX only: E3 remains an unverified header,
                not ECU authentication or a generated positive reply. */
             {
-                p2_hw_rx_event hw_rx=p2_bridge_inspect_hw_rx(
+                p2_hw_rx_event hw_rx=p2_bridge_inspect_hw_rx_at(
                     &g_vehicle_bridge,id,msgs[actual].RxStatus,
-                    msgs[actual].Data,msgs[actual].DataSize);
+                    msgs[actual].Data,msgs[actual].DataSize,now_us());
                 if(hw_rx!=P2_HW_RX_UNRELATED)
                     logline(p2_hw_rx_event_name(hw_rx),0,0);
             }
