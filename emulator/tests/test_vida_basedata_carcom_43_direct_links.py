@@ -12,6 +12,7 @@ from audit_vida_basedata_carcom_43_direct_links import (
     CARCOM_REQUIRED, SchemaError, audit, main,
 )
 import test_vida_basedata_carcom_43_equality as fixture
+from audit_vida_profile_fk_counts import _catalog
 
 
 class DirectLinksTests(unittest.TestCase):
@@ -150,7 +151,16 @@ class DirectLinksTests(unittest.TestCase):
         self.assertFalse(audit(self.folder)["original_source_identifiers_or_values_emitted"])
         self.assertFalse(audit(self.folder)["private_profile_lists_created"])
 
-    def test_13_error_message_contains_only_class(self):
+    def test_13_expanded_carcom_catalog_scope_not_silently_omitted(self):
+        with closing(sqlite3.connect(self.carcom)) as db:
+            expanded = _catalog(db, "CarCom", CARCOM_REQUIRED)
+            original = _catalog(db, "CarCom")
+        self.assertEqual(set(expanded), set(CARCOM_REQUIRED))
+        self.assertIn("T160_DefaultEcuVariant", expanded)
+        self.assertIn("T136_InitHw_Profile", expanded)
+        self.assertNotIn("T160_DefaultEcuVariant", original)
+
+    def test_14_error_message_contains_only_class(self):
         stream = StringIO()
         with redirect_stderr(stream):
             status = main(["--folder", str(self.folder / "missing")])
