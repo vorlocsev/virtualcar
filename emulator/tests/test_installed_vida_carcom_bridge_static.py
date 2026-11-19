@@ -149,5 +149,29 @@ class InstalledVidaBridgeSourceChecks(unittest.TestCase):
         self.assertNotIn("[System.IO.File]::Open($out,", self.source)
 
 
+    def test_14_sql_connection_builder_clr_members(self):
+        # SqlConnectionStringBuilder implements IDictionary. In PowerShell,
+        # $b.DataSource=... binds to the invalid dictionary key "DataSource".
+        # Access actual CLR setters/getters using the intrinsic PSObject adapter.
+        for member in ("DataSource", "InitialCatalog", "IntegratedSecurity",
+                       "ApplicationIntent", "ConnectTimeout", "Encrypt",
+                       "Pooling", "ConnectionString"):
+            with self.subTest(member=member):
+                self.assertIn(
+                    "$b.psobject.Properties['" + member + "'].Value",
+                    self.source
+                )
+                self.assertNotRegex(
+                    self.source,
+                    r"(?m)^\s*\$b\." + member + r"\s*="
+                )
+        self.assertIn(
+            "[System.Data.SqlClient.SqlConnection]::new("
+            "$b.psobject.Properties['ConnectionString'].Value)",
+            self.source
+        )
+        self.assertNotIn("::new($b.ConnectionString)", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()
