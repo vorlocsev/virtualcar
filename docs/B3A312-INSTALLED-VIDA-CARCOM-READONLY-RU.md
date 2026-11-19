@@ -28,6 +28,7 @@ Safety:
 - Metadata validated from sys.tables/sys.columns before data SELECT.
 - Input identifiers bound with SQL @value, not interpolated in SQL.
 - Bounded direct-link queries, unique-ID checks, readonly SQL queries.
+- Global fail-closed work budget: at most 4096 SQL SELECT operations and 120 seconds checked before each query, with a separate 15-second per-command timeout. Exceeding the budget raises a sanitized aggregation failure; no report is written. This is a bounded sequential audit, not a consistent SQL snapshot.
 - SQL connection ApplicationIntent=ReadOnly is only a hint, not database permission enforcement; script itself performs only SELECT. Prefer SELECT-only SQL account.
 - No UPDATE, DELETE, INSERT, EXEC, ALTER, database configuration, J2534, security, PIN or ECU programming.
 - New report FileMode.CreateNew; refuse outputs inside the original VIDA root, repo or over original input files.
