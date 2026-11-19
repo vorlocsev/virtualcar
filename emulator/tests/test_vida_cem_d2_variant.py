@@ -163,7 +163,12 @@ class D2CemVariantCatalogTests(unittest.TestCase):
         original=self.root/"original"
         dataset(original)
         self.folder.mkdir()
-        (self.folder/"CarCom.sqlite").symlink_to(original/"CarCom.sqlite")
+        try:
+            (self.folder/"CarCom.sqlite").symlink_to(original/"CarCom.sqlite")
+        except OSError as exc:
+            if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Symlinks unavailable without Windows privilege")
+            raise
         with self.assertRaises(VariantAuditError):
             inspect(self.folder)
 
