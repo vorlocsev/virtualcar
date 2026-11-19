@@ -67,6 +67,26 @@ p2_hw_tx_event p2_hw_observe_tx(p2_hw_tx_trace *trace, uint32_t can_id,
 /* Static-safe event labels for native J2534 logs (no payload). */
 const char *p2_hw_tx_event_name(p2_hw_tx_event event);
 
+/* Candidate RX observer for a legacy D2 E3/02 header after an A3 TX.
+   This does NOT authenticate a CEM, prove OEM provenance, or unlock a session.
+   Legacy response IDs are observational assumptions, not MY2009 truth. */
+typedef enum {
+  P2_HW_RX_UNRELATED = 0,
+  P2_HW_RX_ORPHAN_E3_CANDIDATE,
+  P2_HW_RX_INVALID_FRAME_CANDIDATE,
+  P2_HW_RX_ROUTE_MISMATCH_CANDIDATE,
+  P2_HW_RX_SUBCOMMAND_MISMATCH_CANDIDATE,
+  P2_HW_RX_WRONG_BUS_CANDIDATE,
+  P2_HW_RX_OTHER_ID_CANDIDATE,
+  P2_HW_RX_LEGACY_ID_CANDIDATE_UNVERIFIED
+} p2_hw_rx_event;
+
+p2_hw_rx_event p2_hw_inspect_e3_rx_candidate(const p2_hw_tx_trace *tx,
+                                             uint32_t bitrate,
+                                             uint32_t response_can_id,
+                                             const uint8_t *payload, size_t len);
+const char *p2_hw_rx_event_name(p2_hw_rx_event event);
+
 /* Independent passive readers: do not convert the following into responses.
    Two-frame legacy F0 PN and SectorV's 15-byte F0 body are distinct formats. */
 int p2_cem_decode_legacy_b9f0_pn(const uint8_t first[8],
