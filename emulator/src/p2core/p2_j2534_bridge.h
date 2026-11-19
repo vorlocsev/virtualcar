@@ -13,6 +13,7 @@
 typedef struct {
     uint32_t id, protocol_id, baud, generation;
     bool active;
+    p2_hw_tx_trace hw_tx; /* per-channel TX chronology, never an ECU ACK */
 } p2_bridge_channel;
 
 typedef struct {
