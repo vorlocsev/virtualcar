@@ -172,13 +172,15 @@ class OriginalAssemblyRefTests(unittest.TestCase):
             tool._compare_private(m)
 
     def test_09_duplicate_local_interface_definition_rejected(self):
-        meta = triplet()
-        repo = meta["bizservices.carcom.db.dll"]
-        original = repo["counts"][9]
+        repo = triplet()["bizservices.carcom.db.dll"]
+        first_row = repo["row"](9, 1)
+        old_row = repo["row"]
         repo["counts"][9] = 2
+        repo["row"] = lambda tid, index: (
+            first_row if tid == 9 and index == 2 else old_row(tid, index)
+        )
         with self.assertRaises(tool.MetadataError):
             tool._repository_interface(repo)
-        repo["counts"][9] = original
 
     def test_10_no_runtime_interface_claims(self):
         with tempfile.TemporaryDirectory() as d:
