@@ -83,5 +83,13 @@ class InstalledVidaBridgeSourceChecks(unittest.TestCase):
                 self.assertNotIn(cmd, self.source)
 
 
+    def test_09_no_powershell_pid_automatic_variable_assignment(self):
+        # $PID is a read-only automatic variable (PowerShell variable names
+        # are case-insensitive); assigning $pid breaks Analyze at runtime.
+        self.assertNotRegex(self.source, r"(?im)^\s*\$pid\s*=")
+        self.assertIn("$profileDbId=Unique-Row", self.source)
+        self.assertIn("$profileDbId[0]", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()
