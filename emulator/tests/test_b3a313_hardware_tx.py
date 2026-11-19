@@ -32,8 +32,9 @@ class HardwareTxObserverTests(unittest.TestCase):
     def test_vehicle_observer_integration(self):
         self._build_and_run(
             "p2_hw_tx_vehicle_test.c",
-            ["p2_vehicle_core.c", "p2_cem_router.c", "p2_ls_observer.c"],
-            "PASS: p2_vehicle")
+            ["p2_j2534_bridge.c", "p2_vehicle_core.c",
+             "p2_cem_router.c", "p2_ls_observer.c"],
+            "PASS: per-channel")
 
 
 if __name__ == "__main__":
