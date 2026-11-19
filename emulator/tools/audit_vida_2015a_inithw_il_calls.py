@@ -591,6 +591,70 @@ def inspect_module(blob: bytes) -> dict:
     return counts
 
 
+def _compare_original_interface_contract(meta_by_module: dict) -> dict:
+    """Compare in-memory namespace/signature bytes across three pinned DLLs.
+
+    Namespace matching is only a stored metadata string comparison.
+    Raw signature-byte equality is sufficient evidence of equal bytes
+    but NOT of identity, source assembly binding, or actual CLR dispatch.
+    TypeDefOrRef encoded indices may differ across assemblies.
+    """
+    repo = meta_by_module["bizservices.carcom.db.dll"]
+    methods = [
+        m["signature_bytes_private"]
+        for m in repo["methods"].values()
+        if m["name"] == TARGET and m["repository_owner"]
+    ]
+    impl_ns = repo["carcom_repository_interfaceimpl_namespaces_private"]
+    signature = methods[0] if len(methods) == 1 else None
+    namespace = impl_ns[0] if len(impl_ns) == 1 else None
+    counts = {
+        "repository_target_methoddef_candidates": len(methods),
+        "repository_icarcom_interfaceimpl_candidates": len(impl_ns),
+        "caller_icarcom_typeref_memberref_candidates": 0,
+        "stored_namespace_equal_nonempty": 0,
+        "stored_namespace_different_nonempty": 0,
+        "stored_namespace_missing_or_ambiguous": 0,
+        "signature_blob_bytes_equal": 0,
+        "signature_blob_bytes_different": 0,
+        "signature_blob_bytes_missing_or_ambiguous": 0,
+    }
+    for module in ("bizservices.vehiclecommprovider.dll", "workflow.dll"):
+        meta = meta_by_module[module]
+        for token, caller_namespace in meta[
+            "target_reference_icarcom_namespaces_private"
+        ].items():
+            if caller_namespace is None:
+                continue
+            counts["caller_icarcom_typeref_memberref_candidates"] += 1
+            if not caller_namespace or not namespace:
+                counts["stored_namespace_missing_or_ambiguous"] += 1
+            elif caller_namespace == namespace:
+                counts["stored_namespace_equal_nonempty"] += 1
+            else:
+                counts["stored_namespace_different_nonempty"] += 1
+            ref_signature = meta["target_reference_signature_bytes_private"].get(token)
+            if signature is None or ref_signature is None:
+                counts["signature_blob_bytes_missing_or_ambiguous"] += 1
+            elif signature == ref_signature:
+                counts["signature_blob_bytes_equal"] += 1
+            else:
+                counts["signature_blob_bytes_different"] += 1
+    n = counts["caller_icarcom_typeref_memberref_candidates"]
+    if (sum(counts[k] for k in (
+            "stored_namespace_equal_nonempty",
+            "stored_namespace_different_nonempty",
+            "stored_namespace_missing_or_ambiguous",
+        )) != n or
+        sum(counts[k] for k in (
+            "signature_blob_bytes_equal",
+            "signature_blob_bytes_different",
+            "signature_blob_bytes_missing_or_ambiguous",
+        )) != n):
+        raise MetadataError("unreconciled owner-only CLR interface comparison")
+    return counts
+
+
 def audit(folder: Path) -> dict:
     if not folder.is_dir() or folder.is_symlink():
         raise MetadataError("invalid original assembly folder")
@@ -613,6 +677,7 @@ def audit(folder: Path) -> dict:
     if set(found) != set(EXPECTED):
         raise MetadataError("missing pinned original DLL")
     results = []
+    private_metadata = {}
     for key, (basename, sha) in sorted(EXPECTED.items()):
         file = found[key]
         n = file.stat().st_size
@@ -623,11 +688,17 @@ def audit(folder: Path) -> dict:
         if len(blob) != n or hashlib.sha256(blob).hexdigest() != sha or file.stat().st_size != n:
             raise MetadataError("original source SHA256 changed")
         counts = inspect_module(blob)
+        private_metadata[key] = _metadata_tables(blob)
         results.append({"module_basename": basename, "sha256": sha, "counts": counts})
     return {
         "schema_version": "virtualcar-vida-original-2015a-getinithw-cil-calls-v1",
         "status": "owner_original_hash_pinned_static_cil_callsite_counts_only",
         "results": results,
+        "stored_interface_relation_counts": _compare_original_interface_contract(
+            private_metadata
+        ),
+        "stored_namespace_match_proves_assembly_identity": False,
+        "raw_signature_blob_byte_match_proves_semantic_equivalence": False,
         "source_writes_performed": False,
         "original_assemblies_loaded_or_executed": False,
         "source_il_bytes_method_names_profiles_or_paths_exported": False,
