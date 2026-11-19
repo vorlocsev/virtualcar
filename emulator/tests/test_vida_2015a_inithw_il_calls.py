@@ -165,6 +165,41 @@ class VidaOriginalStaticCilCallTests(unittest.TestCase):
         with self.assertRaises(MetadataError):
             tool._calls(b"\x45" + struct.pack("<I", 0xFFFF) + b"\x2A")
 
+    def test_17_hwsettings_memberref_parent_and_caller_are_separate(self):
+        il = b"\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A"
+        data = with_first_method_body(il)
+        before = b"CarComRepository\x00"
+        after = b"HwSettings\x00" + b"\x00" * (len(before) - len(b"HwSettings\x00"))
+        self.assertEqual(len(before), len(after))
+        self.assertIn(before, data)
+        edited = data.replace(before, after, 1)
+        r = tool.inspect_module(edited)
+        self.assertEqual(r["target_memberref_parent_hwsettings_rows"], 1)
+        self.assertEqual(r["target_memberref_parent_carcom_repository_rows"], 0)
+        self.assertEqual(r["target_methoddef_owner_hwsettings_rows"], 1)
+        self.assertEqual(r["distinct_target_caller_methods_in_hwsettings"], 1)
+        self.assertEqual(r["direct_target_calls_to_hwsettings_memberref"], 1)
+        self.assertEqual(r["direct_call_to_repository_memberref_sites"], 0)
+
+    def test_18_supported_no_prefix_remains_instruction_aligned(self):
+        il = b"\xFE\x19\x01\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A"
+        self.assertEqual(tool._calls(il), [("call", TARGET_MEMBERREF)])
+
+    def test_19_multiple_calls_one_method_are_not_multiple_callers(self):
+        il = (b"\x28" + struct.pack("<I", TARGET_MEMBERREF)) * 2 + b"\x2A"
+        r = tool.inspect_module(with_first_method_body(il))
+        self.assertEqual(r["direct_call_memberref_sites"], 2)
+        self.assertEqual(r["distinct_methods_with_target_calls"], 1)
+        self.assertEqual(r["distinct_target_caller_methods_in_carcom_repository"], 1)
+        self.assertEqual(r["direct_call_to_repository_memberref_sites"], 2)
+
+    def test_20_skipped_method_reason_count_reconciles(self):
+        r = tool.inspect_module(with_first_method_body(b"\xFF\x2A"))
+        self.assertEqual(r["method_bodies_unsupported"], 1)
+        self.assertEqual(r["method_bodies_unsupported_unknown_opcode"], 1)
+        self.assertEqual(r["method_bodies_unsupported_truncated_or_invalid_operand"], 0)
+        self.assertEqual(r["method_bodies_unsupported_other"], 0)
+
     def test_16_first_layer_stored_scope_not_runtime_profile_list(self):
         result = tool.inspect_module(with_first_method_body(b"\x2A"))
         self.assertEqual(result["method_bodies_present"], 1)
