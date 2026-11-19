@@ -86,6 +86,27 @@ JSON ключи:
 interprocedural stack/CFG и последующей проверки оригинальной
 VIDA ReadVin нельзя считать работу эмулятора принятой.
 
+## Расширение: локальный MethodDef и сигнатура slot1
+
+Дополнительно возвращаются только фиксированные агрегаты:
+- nested_local_callvirt_methoddef_sites;
+- nested_local_callvirt_methoddef_signature_counts:
+  instance/static × zero/one/two_or_more explicit;
+- nested_local_callvirt_immediate_input_family:
+  фиксированный opcode family прямо перед nested local callvirt;
+- callvirt_writer_slot1_method_signature_counts:
+  instance_first_explicit / static_second_explicit /
+  out_of_signature_or_unclassified;
+- callvirt_writer_receiver_parent_token_kind_counts:
+  typedef / typeref / other_or_unclassified;
+- callvirt_writer_slot1_type_vs_receiver_parent:
+  exact_same_module_type / different_type / unclassified.
+
+Код проверяет original MethodDef и MemberRef metadata layout
+в пределах одного и того же модуля. Числа не могут установить
+semantic CLR assignability через наследование, runtime aliasing
+или фактическое значение receiver.
+
 ## Выполнение локально на Windows владельца
 
 Из checkout feature/b3a312-installed-vida-carcom-readonly:
@@ -94,11 +115,31 @@ VIDA ReadVin нельзя считать работу эмулятора при�
 
     py -3 -m unittest discover -s emulator/tests -p test_vida_2015a_inithw_precursor_types.py -v
 
-Только если Ran 18 tests ... OK:
+Только если Ran 25 tests ... OK:
 
     py -3 .\emulator\tools\audit_vida_2015a_inithw_precursor_types.py --folder 'E:\vida'
 
-Синтетических тестов 18, исходный Windows прогон и owner-original
-JSON нового анализатора **ещё не получены**. Статическая проверка
-исходников не равна PASS тестов. Никаких workflow dispatch, merge,
+Владелец уже выполнил предыдущие 18-case source checks на трёх
+оригинальных SHA-pinned DLL и передал только JSON, а не
+отдельный transcript unittest. Результат:
+VehicleCommProvider: nested callvirt METHODDEF перед newobj,
+возвращаемый CLASS совпадает с CLASS единственного параметра
+конструктора 1/1; другой writer — ldarg.1 перед нуль-параметрным
+callvirt, receiver value slot1, не address.
+Workflow: ldstr непосредственно перед newobj, конструктор
+принимает STRING, строгое type-match 1/1.
+
+Этап расширен шестью дополнительными собственно synthetic
+регрессиями (всего 25) на HasThis/arity локального MethodDef,
+инструкцию до nested callvirt и сигнатуру метода-писателя
+со slot1 (instance first explicit versus static second explicit),
+сопоставление его SIMPLE CLASS TypeDefOrRef с MemberRefParent
+receiver owner внутри одного CLR-модуля.
+
+На момент этой ревизии повторный Windows unittest **25 tests**
+и повторный аудит оригинальных DLL с новыми полями **НЕ
+выполнялись / не подтверждены**. Static review не означает PASS.
+Не утверждать, что slot1 реально был receiver, даже при
+совпадении локальной CLR ссылки: требуется CIL operand-stack,
+branch entry, aliasing и interprocedural def-use. Никаких workflow dispatch, merge,
 релизов и изменений исходной VIDA.
