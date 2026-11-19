@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+from unittest.mock import patch
 import tempfile
 import unittest
 
@@ -107,6 +108,44 @@ class B3A318Tests(unittest.TestCase):
             report = json.loads(output.getvalue())
             self.assertEqual(report['group_count'], 1)
             self.assertNotIn(str(log), output.getvalue())
+
+    def test_16_cli_scans_past_150k_unrelated_rows_without_truncation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'native-big-unrelated-private.log'
+            with log.open('w', encoding='utf-8') as out:
+                out.write('unrelated native log line\n' * (audit.MAX_ROWS + 3))
+                out.write(req(P1, 0x50, op=0xFB, baud=500000) + '\n')
+                out.write(req(P1, 0x64) + '\n')
+                out.write(missing(P1, 0x64) + '\n')
+            capture = io.StringIO()
+            with redirect_stdout(capture):
+                self.assertEqual(audit.main(['--native', str(log)]), 0)
+            result = json.loads(capture.getvalue())
+            self.assertTrue(result['complete_source_scan'])
+            self.assertEqual(result['source_scan_counts']['source_rows_scanned'],
+                             audit.MAX_ROWS + 6)
+            self.assertEqual(result['source_scan_counts']['relevant_d2_rows_seen'], 3)
+            self.assertEqual(result['groups'][0]['b9f0_request_count'], 1)
+            self.assertEqual(result['groups'][0]['b9fb_request_count'], 1)
+            self.assertNotIn(str(log), capture.getvalue())
+
+    def test_17_cli_refuses_excessive_source_without_partial_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'source-too-large-private.log'
+            log.write_text(req(P1, 0x50), encoding='utf-8')
+            with patch.object(audit, 'MAX_SOURCE_BYTES', 1):
+                with self.assertRaises(SystemExit) as failed:
+                    audit.main(['--native', str(log)])
+            self.assertEqual(failed.exception.code, 2)
+
+    def test_18_long_relevant_event_is_counted_not_parsed(self):
+        scan = {'source_rows_scanned': 0, 'relevant_d2_rows_seen': 0}
+        lines = [req(P1, 0x50) + ' X' * 250, req(P1, 0x64)]
+        result = audit.analyze(audit._relevant_rows(lines, scan))
+        self.assertEqual(result['oversized_rows_ignored'], 1)
+        self.assertEqual(result['groups'][0]['b9f0_request_count'], 1)
+        self.assertEqual(scan['source_rows_scanned'], 2)
+
 
     def test_15_public_catalog_keeps_d2_ggd_and_modules_distinct(self):
         registry = ROOT / 'tools' / 'data' / 'b3a318_xc90_v8_cem_candidates.json'
