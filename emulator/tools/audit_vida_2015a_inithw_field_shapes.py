@@ -187,10 +187,13 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             if shape is None or parameter_shape is None:
                 counts["field_or_parameter_shape_unclassified"] += 1
             else:
+                # ldflda/ldsflda push a managed pointer to the field,
+                # not the field's value. Compare effective stack shape.
+                produced_shape = ("byref", shape) if prev_op in (0x7C, 0x7F) else shape
                 counts["field_type_shapes_compared"] += 1
                 key = (
                     "field_shape_equal_to_target_parameter_ignoring_local_type_tokens"
-                    if shape == parameter_shape else
+                    if produced_shape == parameter_shape else
                     "field_shape_different_from_target_parameter"
                 )
                 counts[key] += 1
