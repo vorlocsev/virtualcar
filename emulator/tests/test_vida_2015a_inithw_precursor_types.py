@@ -28,7 +28,7 @@ def instructions(pre, *, producer_op=0x73, precursor_op=None, nested=NESTED):
     if precursor_op is None:
         first = pre
     else:
-        first = bytes([precursor_op]) + struct.pack("<I", nested)
+        first = pre + bytes([precursor_op]) + struct.pack("<I", nested)
     return (first + bytes([producer_op]) + struct.pack("<I", CTOR) +
             b"\x7D" + struct.pack("<I", FIELD) +
             b"\x7B" + struct.pack("<I", FIELD) +
