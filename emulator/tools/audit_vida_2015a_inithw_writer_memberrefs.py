@@ -58,6 +58,8 @@ def _simple_method_return_and_header(raw: bytes) -> tuple[bool, bool, int | None
         if n > MAX_SIGNATURE_ARGS:
             raise MetadataError("bounded MemberRef signature parameter count exceeded")
         ret_offset = r.pos
+        if r.pos >= len(r.blob):
+            raise MetadataError("truncated MemberRef return signature")
         class_token = None
         if r.blob[r.pos] == 0x12:  # ELEMENT_TYPE_CLASS, no modifiers
             r.byte()
