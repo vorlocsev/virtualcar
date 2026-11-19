@@ -31,7 +31,7 @@ Safety:
 - Global fail-closed work budget: at most 4096 SQL SELECT operations and 120 seconds checked before each query, with a separate 15-second per-command timeout. Exceeding the budget raises a sanitized aggregation failure; no report is written. This is a bounded sequential audit, not a consistent SQL snapshot.
 - SQL connection ApplicationIntent=ReadOnly is only a hint, not database permission enforcement; script itself performs only SELECT. Prefer SELECT-only SQL account.
 - No UPDATE, DELETE, INSERT, EXEC, ALTER, database configuration, J2534, security, PIN or ECU programming.
-- New report FileMode.CreateNew; refuse outputs inside the original VIDA root, repo or over original input files.
+- Completed report is written to a same-directory, exclusively created temporary file, flushed and then renamed with `File.Move` (no overwrite of an existing final report). If the write/rename fails, the temporary file is deleted when possible; the final report is never written incrementally. Refuse outputs inside the original VIDA root, repo or over original input files.
 - Also refuse a missing report parent directory and any NTFS reparse point (junction or symlink) in its ancestor chain. `GetFullPath` lexical normalization alone does not resolve those aliases. This guard is designed to prevent report writes redirected through a link into VIDA or the repository; it does not establish sandboxing against an actively changing filesystem.
 - No consistent SQL Server snapshot guarantee: multiple separate SELECTs. No change to server SNAPSHOT isolation.
 
