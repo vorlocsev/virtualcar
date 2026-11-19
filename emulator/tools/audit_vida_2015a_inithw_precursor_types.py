@@ -23,7 +23,7 @@ from audit_vida_2015a_inithw_metadata import (
     EXPECTED, MAX_FILE, MAX_FILES_WALK, MetadataError, _u,
 )
 from audit_vida_2015a_inithw_il_calls import _metadata_tables, _sections, _body
-from audit_vida_2015a_inithw_callsite_adjacent import _instructions
+from audit_vida_2015a_inithw_callsite_adjacent import _instructions, _fixed_adjacent_class
 from audit_vida_2015a_inithw_assembly_identity import _table_layout
 from audit_vida_2015a_inithw_signature_shapes import _SigReader, UnsupportedSignature
 
@@ -37,6 +37,25 @@ TOKENS = ("memberref", "methoddef", "other_or_unclassified")
 SLOTS = ("slot0", "slot1", "slot2plus", "address_slot0", "address_slot1",
          "address_slot2plus", "other_or_unclassified")
 KINDS = ("string", "class", "primitive", "other_or_unclassified")
+NESTED_SIGNATURES = (
+    "instance_zero_explicit", "instance_one_explicit",
+    "instance_two_or_more_explicit", "static_zero_explicit",
+    "static_one_explicit", "static_two_or_more_explicit",
+    "unclassified",
+)
+WRITER_SLOT1 = (
+    "instance_first_explicit", "static_second_explicit",
+    "out_of_signature_or_unclassified",
+)
+SOURCE_INPUT_FAMILIES = (
+    "none", "load_arg_or_address", "load_local_or_address",
+    "load_field_or_address", "nested_call_or_calli_unresolved_return",
+    "new_object_or_array", "load_null", "load_string", "load_numeric",
+    "duplicate_stack_item", "type_cast_or_transform",
+    "array_element_or_length", "load_method_or_type_handle",
+    "prefix_not_value_producer", "nop", "other_or_unresolved",
+)
+MEMBERREF_PARENT_KINDS = ("typedef", "typeref", "other_or_unclassified")
 _ATOMS = {
     0x01: "void", 0x02: "bool", 0x03: "char", 0x04: "i1",
     0x05: "u1", 0x06: "i2", 0x07: "u2", 0x08: "i4",
@@ -127,7 +146,52 @@ def _arg_slot(code: bytes, inst: tuple) -> str:
     return "address_" + label if address else label
 
 
-def _field_token(code: bytes, ins: tuple, op: int) -> int:
+def _nested_methoddef_signature_category(
+    layout: dict, token: int,
+) -> str:
+    if token >> 24 != 6 or not (token & 0xFFFFFF):
+        return "unclassified"
+    sig = _signature(layout, token)
+    if sig is None:
+        return "unclassified"
+    _, args, has_this = sig
+    arity = ("zero" if not args else "one" if len(args) == 1
+             else "two_or_more")
+    return ("instance_" if has_this else "static_") + arity + "_explicit"
+
+
+def _writer_slot1_signature_relation(
+    layout: dict, writer_methoddef: int, callvirt_memberref: int,
+) -> tuple[str, str, str]:
+    """Keep MethodDef/MemberRef IDs and exact class-coded indices in memory."""
+    writer = _signature(layout, writer_methoddef)
+    if writer is None:
+        return ("out_of_signature_or_unclassified", "other_or_unclassified",
+                "unclassified")
+    _, params, has_this = writer
+    if has_this and len(params) >= 1:
+        where, arg_type = "instance_first_explicit", params[0]
+    elif not has_this and len(params) >= 2:
+        where, arg_type = "static_second_explicit", params[1]
+    else:
+        return ("out_of_signature_or_unclassified", "other_or_unclassified",
+                "unclassified")
+    if callvirt_memberref >> 24 != 10 or not (callvirt_memberref & 0xFFFFFF):
+        return where, "other_or_unclassified", "unclassified"
+    p = layout["row"](10, callvirt_memberref & 0xFFFFFF)
+    parent = layout["u"](p, layout["memberref_parent_size"])
+    tag, index = parent & 7, parent >> 3
+    if not index or tag not in (0, 1, 2, 3, 4):
+        raise MetadataError("invalid original MemberRefParent")
+    parent_kind = ("typedef" if tag == 0 else "typeref" if tag == 1
+                   else "other_or_unclassified")
+    if tag not in (0, 1) or arg_type is None:
+        return where, parent_kind, "unclassified"
+    type_coded = (index << 2) | (0 if tag == 0 else 1)
+    return where, parent_kind, _relation(arg_type, ("class", type_coded))
+
+
+def _field_token(code: bytes, ins: tuple, op: int):
     start, actual, _, end = ins
     if actual != op or end - start != 5:
         raise MetadataError("invalid original local FieldDef instruction")
@@ -157,12 +221,12 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
     sections, layout = _sections(blob), _table_layout(blob)
     bodies, fields = [], set()
     reads = 0
-    for method in md["methods"].values():
+    for method_index, method in md["methods"].items():
         if not method["rva"]:
             continue
         code = _body(blob, method["rva"], sections)
         ins = _instructions(code)
-        bodies.append((code, ins))
+        bodies.append((method_index, code, ins))
         for i, (_, op, tok, _) in enumerate(ins):
             if op not in (0x28, 0x6F) or tok not in targets:
                 continue
@@ -189,8 +253,24 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
         "callvirt_receiver_is_address": 0,
         "callvirt_receiver_is_value": 0,
         "callvirt_receiver_other_or_unclassified": 0,
+        "nested_local_callvirt_methoddef_sites": 0,
+        "nested_local_callvirt_methoddef_signature_counts": {
+            k: 0 for k in NESTED_SIGNATURES
+        },
+        "nested_local_callvirt_immediate_input_family": {
+            k: 0 for k in SOURCE_INPUT_FAMILIES
+        },
+        "callvirt_writer_slot1_method_signature_counts": {
+            k: 0 for k in WRITER_SLOT1
+        },
+        "callvirt_writer_receiver_parent_token_kind_counts": {
+            k: 0 for k in MEMBERREF_PARENT_KINDS
+        },
+        "callvirt_writer_slot1_type_vs_receiver_parent": {
+            k: 0 for k in RELATION
+        },
     }
-    for code, ins in bodies:
+    for writer_method_index, code, ins in bodies:
         for i, (start, op, _, end) in enumerate(ins):
             if op != 0x7D:
                 continue
@@ -246,6 +326,23 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
                     nested = (_signature(layout, producer_tok)
                               if input_op != 0x29 else None)
                     returned = nested[0] if nested is not None else None
+                    if input_op == 0x6F and token_table == 6:
+                        counts["nested_local_callvirt_methoddef_sites"] += 1
+                        category = _nested_methoddef_signature_category(
+                            layout, producer_tok
+                        )
+                        counts[
+                            "nested_local_callvirt_methoddef_signature_counts"
+                        ][category] += 1
+                        prior = ins[i - 3] if i >= 3 else None
+                        prior_class = _fixed_adjacent_class(
+                            prior[1] if prior else None
+                        )
+                        if prior_class not in SOURCE_INPUT_FAMILIES:
+                            raise MetadataError("nested call input family unsupported")
+                        counts[
+                            "nested_local_callvirt_immediate_input_family"
+                        ][prior_class] += 1
                     counts["newobj_nested_call_return_to_constructor_parameter_relation"][
                         _relation(returned, param)
                     ] += 1
@@ -262,10 +359,36 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
                     counts["callvirt_receiver_arg_slot_counts"][slot] += 1
                     counts["callvirt_receiver_is_address" if slot.startswith("address")
                            else "callvirt_receiver_is_value"] += 1
+                    if slot == "slot1":
+                        where, owner_kind, relation = _writer_slot1_signature_relation(
+                            layout, 0x06000000 | writer_method_index, memberref
+                        )
+                        counts["callvirt_writer_slot1_method_signature_counts"][
+                            where
+                        ] += 1
+                        counts[
+                            "callvirt_writer_receiver_parent_token_kind_counts"
+                        ][owner_kind] += 1
+                        counts["callvirt_writer_slot1_type_vs_receiver_parent"][
+                            relation
+                        ] += 1
 
     total = counts["target_field_stfld_sites"]
     if sum(counts["producer_input_source_counts"].values()) != total:
         raise MetadataError("unreconciled producer source classifications")
+    if (
+        sum(counts["nested_local_callvirt_methoddef_signature_counts"].values()) !=
+        counts["nested_local_callvirt_methoddef_sites"] or
+        sum(counts["nested_local_callvirt_immediate_input_family"].values()) !=
+        counts["nested_local_callvirt_methoddef_sites"] or
+        any(sum(counts[k].values()) != counts["callvirt_receiver_arg_slot_counts"]["slot1"]
+            for k in (
+                "callvirt_writer_slot1_method_signature_counts",
+                "callvirt_writer_receiver_parent_token_kind_counts",
+                "callvirt_writer_slot1_type_vs_receiver_parent",
+            ))
+    ):
+        raise MetadataError("unreconciled writer slot1 and nested MethodDef counts")
     if sum(counts["newobj_constructor_one_param_kind"].values()) != counts["newobj_producer_sites"]:
         raise MetadataError("unreconciled newobj constructor input kind totals")
     if (sum(counts["newobj_ldstr_constructor_parameter_relation"].values()) !=
@@ -332,6 +455,8 @@ def audit(folder: Path) -> dict:
         "original_signatures_tokens_strings_method_type_field_names_or_paths_emitted": False,
         "immediate_precursor_proves_constructor_input_or_receiver": False,
         "local_metadata_signature_match_proves_stack_provenance": False,
+        "writer_method_signature_proves_receiver_value_or_alias": False,
+        "nested_method_signature_proves_runtime_call_or_producer": False,
         "original_profile_identifiers_proven": False,
         "original_vida_2015a_generic_profile_inheritance_verified": False,
         "d2_baudrate_verified": False,
