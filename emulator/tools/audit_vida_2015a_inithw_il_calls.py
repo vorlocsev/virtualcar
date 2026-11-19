@@ -318,9 +318,9 @@ def inspect_module(blob: bytes) -> dict:
         "direct_call_to_repository_local_methoddef_sites": 0,
         "ldftn_reference_sites_not_calls": 0,
         "distinct_methods_with_target_calls": 0,
-        "direct_target_calls_from_carcom_repository": 0,
-        "direct_target_calls_from_hwsettings": 0,
-        "direct_target_calls_from_other_types": 0,
+        "distinct_target_caller_methods_in_carcom_repository": 0,
+        "distinct_target_caller_methods_in_hwsettings": 0,
+        "distinct_target_caller_methods_in_other_types": 0,
         "direct_target_calls_to_hwsettings_memberref": 0,
         "direct_target_calls_to_other_or_unresolved_memberref": 0,
         "method_bodies_unsupported_unknown_opcode": 0,
@@ -370,9 +370,9 @@ def inspect_module(blob: bytes) -> dict:
                     counts["ldftn_reference_sites_not_calls"] += 1
         counts["distinct_methods_with_target_calls"] += int(has_call)
         if has_call:
-            category = ("direct_target_calls_from_carcom_repository" if method["repository_owner"] else
-                        "direct_target_calls_from_hwsettings" if method["hwsettings_owner"] else
-                        "direct_target_calls_from_other_types")
+            category = ("distinct_target_caller_methods_in_carcom_repository" if method["repository_owner"] else
+                        "distinct_target_caller_methods_in_hwsettings" if method["hwsettings_owner"] else
+                        "distinct_target_caller_methods_in_other_types")
             # For caller provenance, count distinct methods here; a method
             # containing multiple callsites still counts only once.
             counts[category] += 1
@@ -383,9 +383,9 @@ def inspect_module(blob: bytes) -> dict:
             counts["method_bodies_unsupported_truncated_or_invalid_operand"] +
             counts["method_bodies_unsupported_other"] or
             counts["distinct_methods_with_target_calls"] !=
-            counts["direct_target_calls_from_carcom_repository"] +
-            counts["direct_target_calls_from_hwsettings"] +
-            counts["direct_target_calls_from_other_types"] or
+            counts["distinct_target_caller_methods_in_carcom_repository"] +
+            counts["distinct_target_caller_methods_in_hwsettings"] +
+            counts["distinct_target_caller_methods_in_other_types"] or
             counts["target_name_memberref_rows"] !=
             counts["target_memberref_parent_carcom_repository_rows"] +
             counts["target_memberref_parent_hwsettings_rows"] +
