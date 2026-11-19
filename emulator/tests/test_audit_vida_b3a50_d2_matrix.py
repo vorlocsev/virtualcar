@@ -1,8 +1,12 @@
 """Eight bounded synthetic B3A50 D2 route matrix gates."""
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import audit_vida_b3a50_d2_matrix as audit
@@ -80,6 +84,57 @@ class D2RouteMatrixTests(unittest.TestCase):
         for secret in ("PRIVATE_VIN", "1234ABCD", "900000", "CB 40 B9 FB", "iexplore"):
             self.assertNotIn(secret, encoded)
         self.assertEqual(out["paired_route_outcomes"][0]["baud_bps"], "other")
+
+    def test_09_full_cli_keeps_original_row_gap_and_separate_40_50_outcomes(self):
+        with tempfile.TemporaryDirectory(prefix="p2-d2-full-log-") as temp:
+            path = Path(temp) / "owner-private.log"
+            with path.open("w", encoding="utf-8") as out:
+                out.write("unrelated native row\n" * (audit.MAX_ROWS + 1))
+                out.write(req(0x50, 0xF0, 250000) + "\n")
+                out.write(result("strict_bus_rejected", 0x50, 0xF0) + "\n")
+                out.write(req(0x40, 0xF0, 125000) + "\n")
+                out.write(result("no_validated_fixture", 0x40, 0xF0) + "\n")
+                out.write(req(0x50, 0xF0, 250000) + "\n")
+                out.write("unrelated native row\n" * (audit.MAX_GAP + 1))
+                out.write(result("strict_bus_rejected", 0x50, 0xF0) + "\n")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(audit.main(["--native", str(path)]), 0)
+            report = json.loads(output.getvalue())
+            self.assertTrue(report["complete_source_scan"])
+            self.assertEqual(report["source_scan_counts"]["source_rows_scanned"],
+                             audit.MAX_ROWS + audit.MAX_GAP + 8)
+            self.assertEqual(report["observed_d2_request_count"], 3)
+            self.assertEqual(report["same_logger_prefix_paired_outcomes"], 2)
+            self.assertEqual(report["unpaired_outcomes"], 1)
+            paired = {(r["target"], r["baud_bps"], r["outcome"]): r["count"]
+                      for r in report["paired_route_outcomes"]}
+            self.assertEqual(paired, {
+                ("CEM_50", "250000", "strict_bus_rejected"): 1,
+                ("CEM_40", "125000", "no_validated_fixture"): 1,
+            })
+            self.assertNotIn(str(path), output.getvalue())
+            self.assertFalse(report["genuine_ecu_rx_verified"])
+
+    def test_10_full_cli_rejects_excessive_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "owner.log"
+            path.write_text(req(0x50, 0xF0, 250000), encoding="utf-8")
+            with patch.object(audit, "MAX_SOURCE_BYTES", 1):
+                with self.assertRaises(SystemExit) as failure:
+                    audit.main(["--native", str(path)])
+            self.assertEqual(failure.exception.code, 2)
+
+    def test_11_full_analyzer_keeps_relevant_event_cap(self):
+        with self.assertRaisesRegex(ValueError, "bounded_d2_event_count_exceeded"):
+            audit.analyze([req(0x50, 0xF0, 250000)] * 3,
+                          max_rows=100, max_d2_events=2)
+
+    def test_12_different_prefix_same_opcode_not_paired(self):
+        report = audit.analyze([req(0x50, 0xF0, 250000),
+                                result("strict_bus_rejected", 0x50, 0xF0, OTHER)])
+        self.assertEqual(report["unpaired_outcomes"], 1)
+        self.assertEqual(report["same_logger_prefix_paired_outcomes"], 0)
 
     def test_08_bounded_input_and_no_fabricated_acceptance(self):
         with self.assertRaisesRegex(ValueError, "bounded_native_lines_exceeded"):
