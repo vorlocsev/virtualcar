@@ -623,7 +623,7 @@ def _native_d2_delivery_tags(lines):
             key = (pid, scope["session"], channel,
                    scope["channel_epochs"].get(channel, 0), generation)
             group = groups.setdefault(key, [])
-            group.append((frame, raw[4:]))
+            group.append((frame, raw[4:], rxctx[3]))
             counters["paired_tag_records"] += 1
             continue
         # Anything between the native RX record and its generation tag
@@ -631,8 +631,9 @@ def _native_d2_delivery_tags(lines):
         scope["ctx"] = scope["pending"] = None
 
     coherent = gaps = b9fb_13 = 0
+    b9f0_delivery = Counter()
     for frames in groups.values():
-        numbers = [index for index, _ in frames]
+        numbers = [index for index, _, _ in frames]
         contiguous = numbers == list(range(1, len(frames) + 1))
         if contiguous:
             coherent += 1
@@ -641,13 +642,25 @@ def _native_d2_delivery_tags(lines):
         if contiguous and len(frames) == 13:
             first = frames[0][1]
             target = first[1]
-            controls = tuple(payload[0] for _, payload in frames)
+            controls = tuple(payload[0] for _, payload, _ in frames)
             if (target in (0x40, 0x50)
                     and first[:4] == bytes((0x8F, target, 0xF9, 0xFB))
                     and controls == (0x8F, 0x09, 0x0A, 0x0B, 0x0C,
                                      0x0D, 0x0E, 0x0F, 0x08, 0x09,
                                      0x0A, 0x0B, 0x4F)):
                 b9fb_13 += 1
+        # These are simulated J2534 emitter-owned RX frames, NOT ECU identity.
+        first = frames[0][1]
+        if (len(first) == 8 and first[0] == 0x8F
+                and first[1] in (0x40, 0x50)
+                and first[2:4] == bytes((0xF9, 0xF0))):
+            speeds = {baud for _, _, baud in frames}
+            speed = next(iter(speeds)) if len(speeds) == 1 else 0
+            terminal = (contiguous and len(frames) >= 2
+                        and frames[-1][1][0] & 0xF0 == 0x40)
+            outcome = ("delivered_contiguous_terminal_shape"
+                       if terminal and speed else "partial_or_ambiguous")
+            b9f0_delivery[(first[1], speed, outcome)] += 1
     return {
         "source": "local_emulator_native_d2_delivery_tags_only",
         "observed": bool(counters["tag_records"]),
@@ -660,6 +673,17 @@ def _native_d2_delivery_tags(lines):
         "groups_with_frame_indices_1_to_n": coherent,
         "groups_with_missing_duplicate_or_out_of_order_indices": gaps,
         "b9fb_13frame_control_sequence_groups": b9fb_13,
+        "b9f0_emitter_rx_groups": [
+            {"target": f"0x{target:02X}", "baud_bps": baud if baud else "mixed",
+             "delivery_shape": status, "count": count}
+            for (target, baud, status), count in sorted(b9f0_delivery.items())
+        ],
+        "b9f0_emitter_rx_groups_with_positive_first_echo": sum(b9f0_delivery.values()),
+        "b9f0_emitter_rx_groups_with_contiguous_terminal": sum(
+            n for (_, _, outcome), n in b9f0_delivery.items()
+            if outcome == "delivered_contiguous_terminal_shape"),
+        "b9f0_replay_stage_correlated_to_rx": False,
+        "b9f0_original_client_ecu_identity_accepted": False,
         "physical_can_or_ecu_provenance": "not_verified",
         "client_vin_and_ecu_acceptance": "not_verified",
         "replay_approved": False,
