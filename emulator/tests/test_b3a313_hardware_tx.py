@@ -27,7 +27,7 @@ class HardwareTxObserverTests(unittest.TestCase):
     def test_8_pure_c_groups(self):
         self._build_and_run(
             "p2_hw_tx_sequence_test.c", ["p2_cem_router.c"],
-            "PASS 8/8")
+            "PASS 10/10")
 
     def test_vehicle_observer_integration(self):
         self._build_and_run(
