@@ -66,6 +66,23 @@ function Read-ProfileLines([string]$path,[int]$low,[int]$high) {
  }
  return ,$lines
 }
+function Assert-SafeReportParent([string]$reportPath) {
+ # GetFullPath normalizes '..' but intentionally does not resolve junctions.
+ # Reject any existing reparse point in the parent directory chain so a
+ # permitted path cannot alias the VIDA root or the source checkout.
+ $parent=[System.IO.Path]::GetDirectoryName($reportPath)
+ if([string]::IsNullOrWhiteSpace($parent) -or
+     -not(Test-Path -LiteralPath $parent -PathType Container)){
+  throw 'report parent directory absent'
+ }
+ $cursor=[System.IO.DirectoryInfo]::new($parent)
+ while($null -ne $cursor){
+  if(($cursor.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0){
+   throw 'unsafe report parent reparse point'
+  }
+  $cursor=$cursor.Parent
+ }
+}
 function Get-Counts($con,[string[]]$names) {
  $r=[ordered]@{
   input_profiles=$names.Length; profiles_with_defaults=0; profiles_without_defaults=0
@@ -185,6 +202,7 @@ WHERE s.[name]=N'dbo' AND t.[name] IN
     $out -ieq [System.IO.Path]::GetFullPath($GeneralProfiles)){
   throw 'source/output path collision'
  }
+ Assert-SafeReportParent $out
  $phase='aggregation'
  $a=Get-Counts $con $exact
  $g=Get-Counts $con $general
