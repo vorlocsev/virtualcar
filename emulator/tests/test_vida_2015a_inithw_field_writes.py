@@ -223,6 +223,65 @@ class FieldDefProvenanceSyntheticTests(unittest.TestCase):
         self.assertEqual(histogram["load_local_or_address"], 1)
         self.assertEqual(r["target_field_write_sites_in_target_call_methods"], 2)
 
+    def test_26_newobj_preceding_stfld_classified_in_constructor(self):
+        maker = b"\x73" + struct.pack("<I", 0x0A000002)
+        r = inspect(maker + _write() + _load() + _call() + b"\x2A",
+                    caller_name=".ctor")
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["newobj"], 1)
+        self.assertEqual(r["preceding_stfld_operand_token_kind_counts"]["memberref"], 1)
+        self.assertEqual(r["preceding_stfld_opcode_by_writer_method_family"][
+            "instance_constructor"]["newobj"], 1)
+
+    def test_27_newarr_not_mislabeled_newobj(self):
+        maker = b"\x8D" + struct.pack("<I", 0x01000001)
+        r = inspect(maker + _write() + _load() + _call() + b"\x2A")
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["newarr"], 1)
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["newobj"], 0)
+        self.assertEqual(r["preceding_stfld_operand_token_kind_counts"]["typeref"], 1)
+
+    def test_28_nested_call_methoddef_in_other_method(self):
+        maker = b"\x28" + struct.pack("<I", 0x06000001)
+        r = inspect(maker + _write() + _load() + _call() + b"\x2A",
+                    caller_name="OtherMethod")
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["call"], 1)
+        self.assertEqual(r["preceding_stfld_operand_token_kind_counts"]["methoddef"], 1)
+        self.assertEqual(r["preceding_stfld_opcode_by_writer_method_family"][
+            "other_named_method"]["call"], 1)
+
+    def test_29_nested_callvirt_memberref_classified(self):
+        maker = b"\x6F" + struct.pack("<I", 0x0A000002)
+        r = inspect(maker + _write() + _load() + _call() + b"\x2A")
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["callvirt"], 1)
+        self.assertEqual(r["preceding_stfld_operand_token_kind_counts"]["memberref"], 1)
+
+    def test_30_calli_standalone_signature_not_methodref(self):
+        maker = b"\x29" + struct.pack("<I", 0x11000001)
+        r = inspect(maker + _write() + _load() + _call() + b"\x2A")
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["calli"], 1)
+        self.assertEqual(r["preceding_stfld_operand_token_kind_counts"]["standalonesig"], 1)
+
+    def test_31_invalid_newobj_token_kind_fails_closed(self):
+        maker = b"\x73" + struct.pack("<I", 0x01000001)
+        with self.assertRaises(MetadataError):
+            inspect(maker + _write() + _load() + _call() + b"\x2A")
+
+    def test_32_ldarg_predecessor_has_no_metadata_operand(self):
+        r = inspect(b"\x02" + _write() + _load() + _call() + b"\x2A")
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["other_or_none"], 1)
+        self.assertEqual(r["preceding_stfld_operand_token_kind_counts"]["not_applicable"], 1)
+
+    def test_33_writer_cross_tab_reconciles_two_different_opcodes(self):
+        maker1 = b"\x73" + struct.pack("<I", 0x0A000002)
+        maker2 = b"\x28" + struct.pack("<I", 0x0A000003)
+        r = inspect(maker1 + _write() + maker2 + _write() +
+                    _load() + _call() + b"\x2A", caller_name=".ctor")
+        by_family = r["preceding_stfld_opcode_by_writer_method_family"]
+        self.assertEqual(r["writer_write_sites_by_method_family"]["instance_constructor"], 2)
+        self.assertEqual(by_family["instance_constructor"]["newobj"], 1)
+        self.assertEqual(by_family["instance_constructor"]["call"], 1)
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["newobj"], 1)
+        self.assertEqual(r["preceding_stfld_exact_opcode_counts"]["call"], 1)
+
     def test_19_cli_errors_only_class_no_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = StringIO()
