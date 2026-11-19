@@ -103,5 +103,19 @@ class InstalledVidaBridgeSourceChecks(unittest.TestCase):
         self.assertNotIn("Exception.Message", self.source)
 
 
+    def test_11_reject_output_path_reparse_ancestors(self):
+        self.assertIn("function Assert-SafeReportParent", self.source)
+        self.assertIn("[System.IO.Path]::GetDirectoryName($reportPath)", self.source)
+        self.assertIn("[System.IO.DirectoryInfo]::new($parent)", self.source)
+        self.assertIn("while($null -ne $cursor)", self.source)
+        self.assertIn("[System.IO.FileAttributes]::ReparsePoint", self.source)
+        self.assertIn("throw 'unsafe report parent reparse point'", self.source)
+        self.assertIn("Assert-SafeReportParent $out", self.source)
+        self.assertLess(
+            self.source.index("Assert-SafeReportParent $out"),
+            self.source.index("$phase='aggregation'")
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
