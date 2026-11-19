@@ -24,7 +24,7 @@ class HardwareTxObserverTests(unittest.TestCase):
                                  text=True, timeout=20)
             self.assertIn(expected, res.stdout)
 
-    def test_8_pure_c_groups(self):
+    def test_10_pure_c_groups(self):
         self._build_and_run(
             "p2_hw_tx_sequence_test.c", ["p2_cem_router.c"],
             "PASS 10/10")
