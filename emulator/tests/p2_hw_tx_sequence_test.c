@@ -26,7 +26,7 @@ int main(void) {
   t=(p2_hw_tx_trace){0};
   assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,500000,a3_50,8)==P2_HW_A3_TX);
   assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,125000,e0_40,8)==P2_HW_OUT_OF_ORDER);
-  assert(t.last_request==1 && t.last_target==0x50);
+  assert(t.last_request==0 && t.last_target==0);
   /* 5. Alternate 0x40 / 125 kbit/s route works as TX-only observation. */
   t=(p2_hw_tx_trace){0};
   assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,125000,a3_40,8)==P2_HW_A3_TX);
@@ -48,6 +48,22 @@ int main(void) {
   assert(p2_hw_observe_tx(&t,0x7E0u,500000,a3_50,8)==P2_HW_UNRELATED);
   assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,500000,NULL,8)==P2_HW_UNRELATED);
   assert(t.last_request==0 && t.a3_tx==0);
-  puts("PASS 8/8 read-only Hardware TX observation groups");
+  /* 9. A failed Hardware request invalidates previously stored phase evidence. */
+  t=(p2_hw_tx_trace){0};
+  assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,500000,a3_50,8)==P2_HW_A3_TX);
+  assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,125000,e0_50,8)==P2_HW_WRONG_BUS);
+  assert(t.last_request==0);
+  assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,500000,e0_50,8)==P2_HW_OUT_OF_ORDER);
+  assert(t.last_request==0);
+  assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,500000,a3_50,8)==P2_HW_A3_TX);
+  for(int i=0;i<8;i++)bad[i]=e0_50[i];
+  bad[7]=1;
+  assert(p2_hw_observe_tx(&t,P2_CEM_D2_TX_CAN_ID,500000,bad,8)==P2_HW_INVALID_SHAPE);
+  assert(t.last_request==0);
+  /* 10. Metadata names are bounded static literals with no raw request bytes. */
+  assert(p2_hw_tx_event_name(P2_HW_A3_TX)!=0);
+  assert(p2_hw_tx_event_name(P2_HW_F0_TX_AFTER_E0_TX_UNVERIFIED)!=0);
+  assert(p2_hw_tx_event_name(P2_HW_UNRELATED)!=0);
+  puts("PASS 10/10 read-only Hardware TX observation groups");
   return 0;
 }
