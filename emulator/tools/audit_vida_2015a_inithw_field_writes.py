@@ -180,6 +180,9 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
         "writer_method_family_counts": {
             kind: 0 for kind in WRITER_METHOD_FAMILIES
         },
+        "writer_write_sites_by_method_family": {
+            kind: 0 for kind in WRITER_METHOD_FAMILIES
+        },
         "preceding_stfld_exact_opcode_counts": {
             kind: 0 for kind in WRITER_PREDECESSOR_OPCODES
         },
@@ -263,6 +266,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             counts["preceding_stfld_opcode_by_writer_method_family"][
                 method_family
             ][precise_opcode] += 1
+            counts["writer_write_sites_by_method_family"][method_family] += 1
             counts[
                 "target_field_write_sites_in_target_call_methods"
                 if method_index in callsite_method_indices else
@@ -301,13 +305,17 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             counts["target_fielddef_stsfld_write_sites"] or
         any(
             sum(counts["preceding_stfld_opcode_by_writer_method_family"][family].values()) !=
-            sum(1 for i, (name, code, ins) in enumerate(all_instructions)
-                for start, op, _, end in ins
-                if ((name == ".ctor" and family == "instance_constructor") or
-                    (name == ".cctor" and family == "type_initializer") or
-                    (name not in (".ctor", ".cctor") and family == "other_named_method"))
-                and op in (0x7D, 0x80) and _u(code, start + 1, 4) in fields)
+            counts["writer_write_sites_by_method_family"][family]
             for family in WRITER_METHOD_FAMILIES
+        ) or
+        sum(counts["writer_write_sites_by_method_family"].values()) !=
+            counts["target_fielddef_stfld_write_sites"] +
+            counts["target_fielddef_stsfld_write_sites"] or
+        any(
+            sum(counts["preceding_stfld_opcode_by_writer_method_family"][family][kind]
+                for family in WRITER_METHOD_FAMILIES) !=
+            counts["preceding_stfld_exact_opcode_counts"][kind]
+            for kind in WRITER_PREDECESSOR_OPCODES
         ) or
         sum(counts["immediately_preceding_stfld_opcode_family_counts"].values()) !=
             counts["target_fielddef_stfld_write_sites"] +
