@@ -172,7 +172,7 @@ def _count_edge(db: sqlite3.Connection, tables: dict, edge: tuple) -> dict:
         "dimension": label, "source_rows": all_rows,
         "null_fk_rows": null_fk, "missing_target_rows": missing,
         "unique_target_rows": unique, "ambiguous_target_rows": ambiguous,
-        "all_source_keys_unambiguous": missing == 0 and ambiguous == 0,
+        "all_source_keys_unambiguous": null_fk == 0 and missing == 0 and ambiguous == 0,
         "original_sqlserver_fk_verified": False,
         "xc90_v8_my2009_profile_selected": False,
     }
