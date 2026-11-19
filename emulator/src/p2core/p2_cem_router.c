@@ -64,6 +64,48 @@ const char *p2_cem_request_name(p2_cem_request r) {
   }
 }
 
+/* Exact outbound client Hardware requests, with address byte substituted.
+   This observer is intentionally not a replay mechanism or security protocol. */
+p2_hw_tx_event p2_hw_observe_tx(p2_hw_tx_trace *t, uint32_t id,
+                                 uint32_t baud, const uint8_t *p, size_t n) {
+  uint8_t kind, target;
+  static const uint8_t a3_suffix[6] = {0xA3u,0x02u,0x03u,0xA5u,0xA5u,0x00u};
+  static const uint8_t e0_suffix[6] = {0xB9u,0xE0u,0u,0u,0u,0u};
+  static const uint8_t f0_suffix[6] = {0xB9u,0xF0u,0u,0u,0u,0u};
+  if(!t || id!=P2_CEM_D2_TX_CAN_ID || !p || n<4u)return P2_HW_UNRELATED;
+  target=p[1];
+  if(target!=0x40u && target!=0x50u)return P2_HW_UNRELATED;
+  if(p[2]==0xA3u && p[3]==0x02u)kind=1u;
+  else if(p[2]==0xB9u && p[3]==0xE0u)kind=2u;
+  else if(p[2]==0xB9u && p[3]==0xF0u)kind=3u;
+  else return P2_HW_UNRELATED;
+  if(n!=8u || p[0]!=(kind==1u?0xCFu:0xCBu) ||
+     !bytes_equal(p+2,kind==1u?a3_suffix:(kind==2u?e0_suffix:f0_suffix),6u)) {
+    t->invalid_shapes++;
+    return P2_HW_INVALID_SHAPE;
+  }
+  if((target==0x40u && baud!=125000u) ||
+     (target==0x50u && baud!=500000u)) {
+    t->wrong_bus++;
+    return P2_HW_WRONG_BUS;
+  }
+  if(kind==1u) {
+    t->a3_tx++;
+    t->last_target=target;
+    t->last_request=1u;
+    return P2_HW_A3_TX;
+  }
+  if(kind==2u)t->e0_tx++;
+  else t->f0_tx++;
+  if(t->last_target!=target || t->last_request!=kind-1u) {
+    t->out_of_order++;
+    return P2_HW_OUT_OF_ORDER;
+  }
+  t->last_request=kind;
+  return kind==2u?P2_HW_E0_TX_AFTER_A3_TX_UNVERIFIED:
+                  P2_HW_F0_TX_AFTER_E0_TX_UNVERIFIED;
+}
+
 int p2_cem_decode_legacy_b9f0_pn(const uint8_t first[8],
                                  const uint8_t second[8],uint32_t *pn) {
   const uint8_t b[4] = {first?first[5]:0,first?first[6]:0,
