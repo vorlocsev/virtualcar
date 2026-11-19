@@ -1,5 +1,5 @@
 """Synthetic privacy/negative tests; never open the owner's SQLite files."""
-from contextlib import redirect_stderr
+from contextlib import closing, redirect_stderr
 from io import StringIO
 from pathlib import Path
 import json
@@ -14,8 +14,10 @@ from inspect_vida_profile_selection_schema import SchemaError, inspect, main
 
 
 def make_export(folder: Path, name: str):
+    # sqlite3.Connection's context manager commits/rolls back but does NOT
+    # close the connection; Windows then refuses TemporaryDirectory cleanup.
     path = folder / (name + ".sqlite")
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         for sql in (
             'CREATE TABLE "_vida_meta"("key" TEXT,"value" TEXT)',
             'CREATE TABLE "_vida_tables"("schema_name" TEXT,"table_name" TEXT,"rows_exported" INTEGER)',
@@ -51,7 +53,7 @@ class SchemaInventoryTests(unittest.TestCase):
         self.assertEqual(result["databases"]["CarCom"]["profile_related_tables"][0]["table"], "T161_Profile")
 
     def test_02_never_echo_source_profile_values(self):
-        with sqlite3.connect(self.carcom) as db:
+        with closing(sqlite3.connect(self.carcom)) as db, db:
             db.execute('CREATE TABLE "secret_owner_source"("owner_vin" TEXT)')
             db.execute('INSERT INTO "secret_owner_source" VALUES ("PRIVATE-VIN-SENTINEL")')
         output = json.dumps(inspect(self.folder))
@@ -60,17 +62,17 @@ class SchemaInventoryTests(unittest.TestCase):
         self.assertNotIn("secret_owner_source", output)
 
     def test_03_reject_source_identity_mismatch(self):
-        with sqlite3.connect(self.base) as db:
+        with closing(sqlite3.connect(self.base)) as db, db:
             db.execute('UPDATE "_vida_meta" SET "value"="Wrong" WHERE "key"="source_database"')
         with self.assertRaises(SchemaError):
             inspect(self.folder)
 
     def test_04_reject_duplicate_table_or_column(self):
-        with sqlite3.connect(self.base) as db:
+        with closing(sqlite3.connect(self.base)) as db, db:
             db.execute('INSERT INTO "_vida_tables" VALUES ("dbo","VEHICLEPROFILE",0)')
         with self.assertRaises(SchemaError):
             inspect(self.folder)
-        with sqlite3.connect(self.base) as db:
+        with closing(sqlite3.connect(self.base)) as db, db:
             db.execute('DELETE FROM "_vida_tables" WHERE "table_name"="VEHICLEPROFILE"')
             db.execute('INSERT INTO "_vida_columns" VALUES ("dbo","VehicleProfile","ID")')
         with self.assertRaises(SchemaError):
@@ -82,14 +84,14 @@ class SchemaInventoryTests(unittest.TestCase):
             inspect(self.folder)
 
     def test_06_reject_source_views_instead_of_catalog_tables(self):
-        with sqlite3.connect(self.carcom) as db:
+        with closing(sqlite3.connect(self.carcom)) as db, db:
             db.execute('DROP TABLE "_vida_columns"')
             db.execute('CREATE VIEW "_vida_columns" AS SELECT 1 AS "schema_name", 2 AS "table_name", 3 AS "column_name"')
         with self.assertRaises(SchemaError):
             inspect(self.folder)
 
     def test_07_bounded_candidate_table_output(self):
-        with sqlite3.connect(self.base) as db:
+        with closing(sqlite3.connect(self.base)) as db, db:
             for i in range(40):
                 name = "VehicleModel" + str(i)
                 db.execute('INSERT INTO "_vida_tables" VALUES (?,?,?)', ("dbo", name, 0))
