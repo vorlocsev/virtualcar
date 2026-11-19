@@ -368,3 +368,98 @@ MethodImpl/implicit interface method mapping и доказательство
 
 Оригинальные DLL, VIDA/SQL, J2534/CEM, main/development
 и релизы в этом этапе не изменяются.
+
+
+## 2034/2034 IL и следующий gate: namespace / Blob signature (2026-11-19)
+
+Владелец подтвердил повторным исходным JSON после исправления
+CIL leave / leave.s:
+- все 140/140 CarCom.DB MethodDef IL декодированы;
+- все 175/175 VehicleCommProvider MethodDef IL декодированы;
+- все 1719/1719 Workflow MethodDef IL декодированы;
+- всего 2034/2034, ноль неподдерживаемых методов;
+- в VehicleCommProvider остался 1, в Workflow 5
+  реальных статических вызовов GetInitHwSettings
+  через MemberRef родительского TypeRef с простым
+  именем ICarComRepository (оба TypeRef имеют
+  ResolutionScope категории AssemblyRef);
+- в CarCom.DB имеется одна прямая InterfaceImpl
+  CarComRepository → ICarComRepository;
+- два GetInitHwSettings MethodDef в CarCom.DB имеют
+  HasThis=true и каждый по одному параметру; один
+  MethodDef принадлежит CarComRepository, второй
+  другому типу; оба MemberRef из других модулей
+  тоже имеют HasThis=true и по одному параметру.
+- исходные DLL не выполнялись/не изменялись.
+
+Это подтверждённые статические факты оригинальных
+SHA-pinned DLL, но не логирование реального вызова на
+автомобиле и не состав аргументов GetInitHwSettings.
+Новые 33 Windows-теста не подтверждены отдельным
+текстовым unittest-логом в этом сообщении пользователя.
+
+### Новая проверка без публикации исходных значений
+
+В том же audit_vida_2015a_inithw_il_calls.py добавлены
+внутренние поля signature_bytes_private и namespace
+private. Они живут только в памяти процесса при чтении
+трёх закреплённых SHA DLL и не возвращаются в JSON.
+
+В дополнительном публичном объекте
+stored_interface_relation_counts содержатся только
+числовые категории:
+- repository_target_methoddef_candidates;
+- repository_icarcom_interfaceimpl_candidates;
+- caller_icarcom_typeref_memberref_candidates;
+- stored_namespace_equal_nonempty,
+  stored_namespace_different_nonempty,
+  stored_namespace_missing_or_ambiguous;
+- signature_blob_bytes_equal,
+  signature_blob_bytes_different,
+  signature_blob_bytes_missing_or_ambiguous.
+
+Сравнение namespace строго посимвольное и только когда
+обе строки не пусты. Сравнение сигнатур — только строгая
+побайтовая идентичность CLR #Blob между MemberRef
+интерфейсного вызова и MethodDef метода в CarComRepository.
+Ни bytes, ни namespace, ни оригинальные типы аргументов,
+ни исходные ID/код/путь установки не печатаются.
+
+Интерпретация ограничена: совпавший namespace
+сам по себе не доказывает одинаковую AssemblyRef identity.
+Совпавшие исходные байты сигнатуры — равенство байтов,
+а не доказательство идентичности типов из разных CLR
+scope. Разные байты также не исключают одну логическую
+сигнатуру, если TypeDefOrRef coded indices относительны
+к разным сборкам. Отсутствующие/неоднозначные поля не
+подменяются успешным совпадением.
+
+Флаги stored_namespace_match_proves_assembly_identity=false
+и raw_signature_blob_byte_match_proves_semantic_equivalence=false
+остаются фиксированными. Все прежние флаги original VIDA
+runtime binding, profiles, D2 bitrate и VIN также false.
+
+Добавлено пять синтетических тестов сравнения
+namespace/Blob (34–38), в том числе отсутствующее
+значение и недопустимая длина Blob; суммарно 38
+тестовых методов. Оригинальные приватные DLL в тестах
+не нужны. Запуск новых 38 тестов и реальный JSON
+новой версии ещё не подтверждены.
+
+Из checkout ветки PR #376, команды по одной:
+
+    git pull --ff-only
+
+    py -3 -m unittest discover -s emulator/tests -p test_vida_2015a_inithw_il_calls.py -v
+
+После Ran 38 tests и OK:
+
+    py -3 .\emulator\tools\audit_vida_2015a_inithw_il_calls.py --folder 'E:\vida'
+
+Следующий этап после фактического owner JSON — сравнить
+исходную AssemblyRef identity, namespace и типы внутри
+GetInitHwSettings sig с настоящими MethodImpl/InterfaceImpl
+для подтверждения CLR dispatch, затем восстановить
+происхождение единственного аргумента profileIdentifiers.
+Даже установленное связывание интерфейса не докажет
+применение общего XC90 MY2009 InitHw в первом ReadVin.
