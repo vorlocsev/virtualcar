@@ -32,7 +32,7 @@ def frames(blob=None, target=0x50, can_id=0x01200003):
     pieces = [raw[i:i + 7] for i in range(0, len(raw), 7)]
     return [(can_id, bytes([0x8F if i == 0 else
                              0x48 + len(piece) if i == len(pieces) - 1
-                             else 0x08 | (i & 7)]) + piece.ljust(7, b"\\x00"))
+                             else 0x08 | (i & 7)]) + piece.ljust(7, bytes([0]))
             for i, piece in enumerate(pieces)]
 
 
