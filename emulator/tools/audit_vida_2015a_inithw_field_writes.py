@@ -35,6 +35,47 @@ MAX_METHODS = 100000
 MAX_SITES_PER_MODULE = 100
 MAX_MATCHED_WRITES_PER_MODULE = 10000
 
+WRITER_METHOD_FAMILIES = (
+    "instance_constructor", "type_initializer", "other_named_method",
+)
+WRITER_PREDECESSOR_OPCODES = (
+    "newobj", "newarr", "call", "callvirt", "calli", "other_or_none",
+)
+WRITER_PREDECESSOR_TOKEN_KINDS = (
+    "methoddef", "memberref", "methodspec", "typedef", "typeref",
+    "typespec", "standalonesig", "not_applicable",
+)
+_OPERAND_KIND = {
+    0x06: "methoddef", 0x0A: "memberref", 0x2B: "methodspec",
+    0x02: "typedef", 0x01: "typeref", 0x1B: "typespec",
+    0x11: "standalonesig",
+}
+_PREDECESSOR_CLASS = {
+    0x73: ("newobj", (0x06, 0x0A, 0x2B)),
+    0x8D: ("newarr", (0x02, 0x01, 0x1B)),
+    0x28: ("call", (0x06, 0x0A, 0x2B)),
+    0x6F: ("callvirt", (0x06, 0x0A, 0x2B)),
+    0x29: ("calli", (0x11,)),
+}
+
+
+def _writer_predecessor_operand_category(
+    code: bytes, instructions: list[tuple], index: int,
+) -> tuple[str, str]:
+    """Return fixed opcode+token-kind categories, never original token values."""
+    if not index:
+        return "other_or_none", "not_applicable"
+    start, opcode, _, end = instructions[index - 1]
+    if opcode not in _PREDECESSOR_CLASS:
+        return "other_or_none", "not_applicable"
+    name, allowed = _PREDECESSOR_CLASS[opcode]
+    if end - start != 5 or start + 5 > len(code):
+        raise MetadataError("invalid CIL writer predecessor instruction width")
+    token = _u(code, start + 1, 4)
+    if (token & 0xFFFFFF) == 0 or token >> 24 not in allowed:
+        raise MetadataError("invalid CIL writer predecessor metadata token kind")
+    return name, _OPERAND_KIND[token >> 24]
+
 
 def _coded_type(reader: _SigReader) -> int | None:
     """Return local TypeDefOrRef coded index, never for output."""
@@ -137,9 +178,17 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             )
         },
         "writer_method_family_counts": {
-            "instance_constructor": 0,
-            "type_initializer": 0,
-            "other_named_method": 0,
+            kind: 0 for kind in WRITER_METHOD_FAMILIES
+        },
+        "preceding_stfld_exact_opcode_counts": {
+            kind: 0 for kind in WRITER_PREDECESSOR_OPCODES
+        },
+        "preceding_stfld_operand_token_kind_counts": {
+            kind: 0 for kind in WRITER_PREDECESSOR_TOKEN_KINDS
+        },
+        "preceding_stfld_opcode_by_writer_method_family": {
+            family: {kind: 0 for kind in WRITER_PREDECESSOR_OPCODES}
+            for family in WRITER_METHOD_FAMILIES
         },
     }
     for method in methods.values():
@@ -182,6 +231,11 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
     writers = set()
     fields_written = set()
     for method_index, (method_name, code, ins) in enumerate(all_instructions):
+        method_family = (
+            "instance_constructor" if method_name == ".ctor" else
+            "type_initializer" if method_name == ".cctor" else
+            "other_named_method"
+        )
         matched_writes = 0
         for instruction_index, (start, op, _, end) in enumerate(ins):
             if op not in (0x7D, 0x80):  # stfld / stsfld
@@ -201,6 +255,14 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             predecessor = ins[instruction_index - 1][1] if instruction_index else None
             category = _fixed_adjacent_class(predecessor)
             counts["immediately_preceding_stfld_opcode_family_counts"][category] += 1
+            precise_opcode, precise_token_kind = _writer_predecessor_operand_category(
+                code, ins, instruction_index
+            )
+            counts["preceding_stfld_exact_opcode_counts"][precise_opcode] += 1
+            counts["preceding_stfld_operand_token_kind_counts"][precise_token_kind] += 1
+            counts["preceding_stfld_opcode_by_writer_method_family"][
+                method_family
+            ][precise_opcode] += 1
             counts[
                 "target_field_write_sites_in_target_call_methods"
                 if method_index in callsite_method_indices else
@@ -209,13 +271,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             fields_written.add(token)
         if matched_writes:
             writers.add(method_index)
-            if method_name == ".ctor":
-                label = "instance_constructor"
-            elif method_name == ".cctor":
-                label = "type_initializer"
-            else:
-                label = "other_named_method"
-            counts["writer_method_family_counts"][label] += 1
+            counts["writer_method_family_counts"][method_family] += 1
     counts["distinct_methods_writing_target_fielddefs"] = len(writers)
     counts["distinct_target_call_methods_in_module"] = len(callsite_method_indices)
     counts["distinct_target_call_methods_with_local_field_write"] = len(
@@ -237,6 +293,22 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
         counts["distinct_target_fielddefs_with_any_stfld"] +
         counts["distinct_target_fielddefs_without_local_stfld"] != len(fields) or
         sum(counts["writer_method_family_counts"].values()) != len(writers) or
+        sum(counts["preceding_stfld_exact_opcode_counts"].values()) !=
+            counts["target_fielddef_stfld_write_sites"] +
+            counts["target_fielddef_stsfld_write_sites"] or
+        sum(counts["preceding_stfld_operand_token_kind_counts"].values()) !=
+            counts["target_fielddef_stfld_write_sites"] +
+            counts["target_fielddef_stsfld_write_sites"] or
+        any(
+            sum(counts["preceding_stfld_opcode_by_writer_method_family"][family].values()) !=
+            sum(1 for i, (name, code, ins) in enumerate(all_instructions)
+                for start, op, _, end in ins
+                if ((name == ".ctor" and family == "instance_constructor") or
+                    (name == ".cctor" and family == "type_initializer") or
+                    (name not in (".ctor", ".cctor") and family == "other_named_method"))
+                and op in (0x7D, 0x80) and _u(code, start + 1, 4) in fields)
+            for family in WRITER_METHOD_FAMILIES
+        ) or
         sum(counts["immediately_preceding_stfld_opcode_family_counts"].values()) !=
             counts["target_fielddef_stfld_write_sites"] +
             counts["target_fielddef_stsfld_write_sites"] or
@@ -301,6 +373,8 @@ def audit(folder: Path) -> dict:
         "control_flow_stack_or_exception_handlers_traced": False,
         "field_assignments_or_runtime_values_verified": False,
         "preceding_stfld_opcode_proves_value_source": False,
+        "writer_predecessor_metadata_token_kind_proves_return_type": False,
+        "writer_opcode_cross_tab_proves_runtime_write_order": False,
         "writer_and_caller_same_method_proves_write_reaches_call": False,
         "profile_identifiers_argument_proven": False,
         "original_vida_2015a_generic_profile_inheritance_verified": False,
