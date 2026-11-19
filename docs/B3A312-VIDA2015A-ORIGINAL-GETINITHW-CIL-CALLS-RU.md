@@ -189,3 +189,86 @@ assembly-qualified имени и сигнатуре. Этого достаточ
 MemberRef (включая namespace и assembly), аргументов callsite и
 реальной процедуры формирования списка профилей. Этим счётчиком
 наследование InitHw, скорость D2 и ReadVin не подтверждаются.
+
+
+## Повторная классификация владельца и разбор MemberRefParent (2026-11-19)
+
+Владелец запустил предыдущую 20-тестовую версию анализатора
+на тех же оригинальных SHA-256 сборках. JSON подтвердил:
+- CarCom.DB: 137/140 IL, три неизвестных опкода, 0 подтверждённых
+  прямых вызовов GetInitHwSettings среди успешно прочитанных тел,
+  два исходных MethodDef с этим именем, из них один определён в
+  CarComRepository, другой — в неизвестном здесь классе;
+- VehicleCommProvider: 175/175 IL, один прямой call/callvirt
+  через MemberRef с классом other_or_unresolved, из одного
+  метода-вызывателя вне CarComRepository/HwSettings;
+- Workflow: 1709/1719 IL, пять прямых call/callvirt через
+  такой же неполностью разрешённый MemberRef, 8 неизвестных
+  опкодов, два ошибочных/неполных операнда, пять
+  методов-вызывателей других типов.
+
+Всего точно 6 подтверждённых **статических** вызовов
+именованного MemberRef в декодированных методах и
+13 не полностью декодированных тел. Отсутствие совпадения
+с простыми именами CarComRepository/HwSettings не значит,
+что связь невозможна через интерфейс, адаптер, nested TypeRef,
+MethodDef/TypeSpec или другой промежуточный уровень.
+Не установлен ни один исходный аргумент profileList.
+
+### Узкое расширение того же анализатора
+
+Добавлено раздельное отображение MemberRefParent coded-tag:
+- typedef / typeref / moduleref / methoddef / typespec;
+- TypeRef.ResolutionScope: module / moduleref / assemblyref /
+  nested_typeref / unresolved (это **тип области**, не имя
+  оригинальной DLL/сборки);
+- фиксированные классы простых имён типа: CarComRepository,
+  ICarComRepository, HwSettings, лексическая другая
+  I*CarComRepository, либо other_or_unresolved.
+
+Признак ICarComRepository, даже если появится, — лишь
+проверенный текст имени в метаданных, **не доказательство
+подлинной интерфейсной реализации, runtime binding или
+семантики вызова**. Full namespace, AssemblyRef name,
+GenericInst, сигнатуры return/arguments и actual caller-flow
+этот этап ещё не разрешает.
+
+Для оставшихся 11 неизвестных opcodes добавлен
+unsupported_unknown_opcode_histogram: агрегированные
+фиксированные имена opcode в формате cil_opcode_XX / FE_XX,
+не raw IL bytes, без RVA, MethodDef token, тела методов,
+строк/значений из сборок. Одно такое значение сообщает
+только о месте до которого дошёл декодер; оно само по себе
+не доказывает, что бинарник повреждён (возможна ошибка
+таблицы opcode / неверная длина предыдущего операнда).
+
+Проверяется сумма всех MemberRef-классов и сумма частот
+неизвестных инструкций против прежних счётчиков. Добавлено
+6 новых synthetic tests с TypeRef, неподдерживаемыми опкодами,
+ошибочным parent row и несуществующим MemberRef token.
+Всего **26** синтетических методов в тестовом файле,
+новый Windows результат и оригинальный JSON **пока отсутствуют**.
+
+Из корня checkout PR #376:
+
+    git pull --ff-only
+
+    py -3 -m unittest discover -s emulator/tests -p test_vida_2015a_inithw_il_calls.py -v
+
+Только если 26 тестов OK:
+
+    py -3 .\emulator\tools\audit_vida_2015a_inithw_il_calls.py --folder 'E:\vida'
+
+Отдельный источник-верификационный gate после нового JSON:
+разбор подтверждённых сигнатур MethodDef/MemberRef и
+namespace/assembly resolution, затем IL источников
+аргументов и фактического формирования списка профилей.
+
+По-прежнему FALSE: static_calls_prove_execution,
+memberref_owner_name_proves_runtime_target_binding,
+callsite_arguments_or_profile_list_proven,
+original_vida_2015a_generic_profile_inheritance_verified,
+d2_baudrate_verified, original_vida_readvin_accepted.
+
+Никаких изменений оригинальных DLL, SQL, VIDA,
+автомобиля/J2534, main/development и CI/job/release.
