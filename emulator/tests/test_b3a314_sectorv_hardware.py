@@ -115,5 +115,30 @@ class SectorVHardwareTests(unittest.TestCase):
         self.assertFalse(r["positive_hardware_session_verified"])
 
 
+    def test_13_timestamped_candidate_still_not_client_hardware_success(self):
+        events = (
+            "P2_HW_TX_A3_OBSERVED",
+            "P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED",
+            "P2_HW_RX_DUPLICATE_E3_CANDIDATE",
+        )
+        r = audit.analyze(n(*events), c(VIN, HW50, HW40, FAILURE))
+        self.assertEqual(r["native_rx_candidate_counts"]["TIMED_LEGACY_ID_UNVERIFIED"], 1)
+        self.assertEqual(r["native_rx_candidate_counts"]["DUPLICATE_E3"], 1)
+        self.assertEqual(r["client_event_counts"]["HW_50_no_reply"], 1)
+        self.assertFalse(r["positive_hardware_session_verified"])
+        self.assertFalse(r["native_and_client_same_session_attested"])
+
+    def test_14_expired_and_before_tx_cannot_confirm_session(self):
+        r = audit.analyze(
+            n("P2_HW_RX_NO_TX_CLOCK_CANDIDATE",
+              "P2_HW_RX_BEFORE_A3_TX_CANDIDATE",
+              "P2_HW_RX_EXPIRED_A3_WINDOW_CANDIDATE"),
+            [])
+        for key in ("NO_TX_CLOCK", "BEFORE_A3_TX", "EXPIRED_A3_WINDOW"):
+            self.assertEqual(r["native_rx_candidate_counts"][key], 1)
+        self.assertFalse(r["positive_hardware_session_verified"])
+        self.assertFalse(r["vehicle_identity_verified"])
+
+
 if __name__ == "__main__":
     unittest.main()
