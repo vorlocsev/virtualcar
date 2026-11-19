@@ -13,7 +13,8 @@ p2_cem_result p2_cem_classify(uint32_t tx_can_id,uint32_t bitrate,
   uint8_t service;
   if(tx_can_id != P2_CEM_D2_TX_CAN_ID) return r;
   if(!p || n < 3u){r.request=P2_CEM_INVALID_REQUEST;return r;}
-  if(p[0] != 0xCFu && p[0] != 0xCBu && p[0] != 0xCAu) {
+  if(p[0] != 0xCFu && p[0] != 0xCBu && p[0] != 0xCAu &&
+     !(p[0] == 0xCDu && n == 8u && p[2] == 0xA6u)) {
     r.request=P2_CEM_UNKNOWN; return r;
   }
   r.route = p[1];
@@ -34,7 +35,7 @@ p2_cem_result p2_cem_classify(uint32_t tx_can_id,uint32_t bitrate,
        case 0xFCu:r.request=P2_CEM_B9FC;break;
        default:r.request=P2_CEM_UNKNOWN;break;
      }
-  } else if(service==0xA6u && n>=6u &&
+  } else if(service==0xA6u && p[0]==0xCDu && n==8u &&
              p[3]==0x1Au && p[4]==0x04u && p[5]==0x01u) {
      /* Candidate only: protocol framing is not yet independently validated. */
      r.request=P2_CEM_A6_REF6660_CANDIDATE;
