@@ -11,8 +11,10 @@ import json
 import re
 
 SCHEMA = "virtualcar-b3a318-p2-ecu-requests-v1"
-MAX_ROWS = 150000
+MAX_ROWS = 150000  # cap on relevant D2 events, not unrelated native log rows
 MAX_LINE = 512
+MAX_SOURCE_BYTES = 256 * 1024 * 1024  # 256 MiB; bounded full-source scan
+MAX_SOURCE_ROWS = 6000000
 PREFIX = re.compile(r"^\[PID=([0-9A-Fa-f]{8}) ([A-Za-z0-9_.-]{1,48})\] ")
 HEX_BYTE = re.compile(r"^[0-9A-Fa-f]{2}$")
 REQUEST = "P2 D2 request target/opcode/baud/flags (BE) "
@@ -139,16 +141,42 @@ def analyze(lines):
     }
 
 
+def _relevant_rows(source, scan):
+    """Stream the ENTIRE bounded native log, keeping only D2 events.
+
+    Do not truncate the source, print its contents, or copy event payloads.
+    Discard unrelated logging before the 150k event cap. Preserve the
+    oversized D2 event counter without keeping oversized source lines.
+    """
+    for line in source:
+        scan["source_rows_scanned"] += 1
+        if scan["source_rows_scanned"] > MAX_SOURCE_ROWS:
+            raise ValueError("bounded_source_rows_exceeded")
+        prefix = line[:MAX_LINE].lstrip("\ufeff")
+        m = PREFIX.match(prefix)
+        if m is None or not prefix[m.end():].startswith("P2 D2 "):
+            continue
+        scan["relevant_d2_rows_seen"] += 1
+        if len(line) > MAX_LINE:
+            # Counts as ignored by analyze(); emit no actual source bytes.
+            yield "X" * (MAX_LINE + 1)
+        else:
+            yield line
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Privacy-safe local D2 ECU request evidence")
     p.add_argument("--native", required=True, help="Read-only bounded native logger text")
     args = p.parse_args(argv)
     path = Path(args.native)
     try:
-        if not path.is_file() or path.stat().st_size > MAX_ROWS * MAX_LINE:
+        if not path.is_file() or path.stat().st_size > MAX_SOURCE_BYTES:
             raise ValueError("invalid_or_excessive_input")
+        scan = {"source_rows_scanned": 0, "relevant_d2_rows_seen": 0}
         with path.open("r", encoding="utf-8-sig", errors="replace") as stream:
-            report = analyze(stream)
+            report = analyze(_relevant_rows(stream, scan))
+        report["complete_source_scan"] = True
+        report["source_scan_counts"] = scan
     except (OSError, ValueError):
         p.exit(2, "ERROR: invalid_or_unreadable_bounded_input\n")
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
