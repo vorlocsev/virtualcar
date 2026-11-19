@@ -131,5 +131,23 @@ class InstalledVidaBridgeSourceChecks(unittest.TestCase):
         )
 
 
+    def test_13_report_is_complete_before_publication(self):
+        self.assertIn("('.vc-carcom-'+[Guid]::NewGuid().ToString('N')+'.tmp')", self.source)
+        self.assertIn("[System.IO.FileMode]::CreateNew", self.source)
+        self.assertIn("$stream.Flush($true)", self.source)
+        self.assertIn("[System.IO.File]::Move($tempOut,$out)", self.source)
+        self.assertIn("[System.IO.File]::Delete($tempOut)", self.source)
+        self.assertIn("$tempCreated=$false", self.source)
+        self.assertLess(
+            self.source.index("$stream.Flush($true)"),
+            self.source.index("[System.IO.File]::Move($tempOut,$out)")
+        )
+        self.assertLess(
+            self.source.index("[System.IO.File]::Move($tempOut,$out)"),
+            self.source.index("status='aggregate_report_saved'")
+        )
+        self.assertNotIn("[System.IO.File]::Open($out,", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()
