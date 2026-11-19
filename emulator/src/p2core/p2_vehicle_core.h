@@ -41,6 +41,7 @@ typedef struct {
     uint32_t possible_ref6660_seen;
     uint32_t diag_wrong_bus_annotations;
     uint32_t diag_e3_02_candidates;       /* unverified header observations ONLY */
+    p2_hw_tx_trace hw_tx;                 /* observed TX only; no ECU authentication */
     uint32_t ls_frames_accepted;
     uint32_t ls_frames_rejected;
     uint32_t stale_ignition_frames;
