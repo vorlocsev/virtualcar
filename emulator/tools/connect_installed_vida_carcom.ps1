@@ -26,6 +26,13 @@ $required=[ordered]@{
  T122_Protocol=@('id','identifier')
 }
 function Read-SqlTable($con,[string]$query,$value) {
+ # Bound aggregate work independently of the TOP limits on each query.
+ # The deadline is checked before every query; CommandTimeout bounds one query.
+ if($script:sqlReadCount -ge 4096 -or
+    $script:sqlBudgetClock.Elapsed.TotalSeconds -ge 120){
+  throw 'aggregate SQL read budget exceeded'
+ }
+ $script:sqlReadCount++
  $cmd=$con.CreateCommand()
  try {
   $cmd.CommandText=$query
@@ -136,6 +143,8 @@ function Get-Counts($con,[string[]]$names) {
 }
 $con=$null
 $phase='preflight'
+$script:sqlReadCount=0
+$script:sqlBudgetClock=[System.Diagnostics.Stopwatch]::StartNew()
 try{
  if(-not(Test-Path -LiteralPath $VidaRoot -PathType Container)){throw 'VIDA installation root absent'}
  $phase='connection'
