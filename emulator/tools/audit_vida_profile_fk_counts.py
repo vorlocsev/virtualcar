@@ -110,7 +110,7 @@ def _catalog(db: sqlite3.Connection, name: str) -> dict:
     return selected
 
 
-def _physical(db: sqlite3.Connection, catalog: dict) -> dict:
+def _physical(db: sqlite3.Connection, catalog: dict, needed: dict) -> dict:
     rows = db.execute(
         "SELECT name,type FROM sqlite_schema WHERE type IN ('table','view')"
     ).fetchall()
@@ -137,7 +137,7 @@ def _physical(db: sqlite3.Connection, catalog: dict) -> dict:
         if (not actual_columns or any(r[6] != 0 for r in actual_columns)
                 or len(actual_columns) != len({r[1].casefold() for r in actual_columns})):
             raise SchemaError("unexpected source physical columns")
-        if not set(x.casefold() for x in NEEDED_ENTRY[table]).issubset(
+        if not set(x.casefold() for x in needed[table]).issubset(
                 {r[1].casefold() for r in actual_columns}):
             raise SchemaError("required physical column absent")
         count = db.execute("SELECT COUNT(*) FROM " + q).fetchone()[0]
@@ -190,9 +190,7 @@ def _read_one(folder: Path, name: str) -> dict:
         started = time.monotonic()
         db.set_progress_handler(lambda: int(time.monotonic() - started >= MAX_RUN_SECONDS), 20000)
         catalog = _catalog(db, name)
-        global NEEDED_ENTRY
-        NEEDED_ENTRY = NEEDED[name]
-        physical = _physical(db, catalog)
+        physical = _physical(db, catalog, NEEDED[name])
         edges = [_count_edge(db, physical, e) for e in EDGES[name]]
         for e in edges:
             if e["source_rows"] != catalog[EDGES[name][0][0]]["rows"]:
