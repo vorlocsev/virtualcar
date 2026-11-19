@@ -95,7 +95,8 @@ class Xc90StoredGenericConstraintsTests(unittest.TestCase):
                 'UPDATE "dbo_T161_Profile" SET "folderLevel"=2 WHERE id=2'
             )
             db.execute(
-                'UPDATE "dbo_T161_Profile" SET "folderLevel"="unknown" WHERE id=3'
+                'UPDATE "dbo_T161_Profile" SET "folderLevel"=? WHERE id=3',
+                ("unknown",)
             )
         c = audit(self.folder)["counts"]
         self.assertEqual(c["exact_folderlevel_less_than_generic"], 1)
