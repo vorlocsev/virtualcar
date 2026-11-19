@@ -66,6 +66,21 @@ bool p2_bridge_inspect_tx(p2_j2534_bridge *b,uint32_t id,uint32_t flags,
     ++b->inspected_tx;
     return true;
 }
+/* Caller supplies only an RX *delivered* through PassThruReadMsgs.
+   Per-channel A3 chronology came from TX, but no ECU acceptance is inferred. */
+p2_hw_rx_event p2_bridge_inspect_hw_rx(p2_j2534_bridge *b,
+                                        uint32_t channel,uint32_t rx_status,
+                                        const uint8_t *data,size_t size){
+    p2_bridge_channel *c;
+    uint32_t id;
+    (void)rx_status;
+    if(!b || !data || size!=12u)return P2_HW_RX_UNRELATED;
+    c=find_channel(b,channel);
+    if(!c || c->protocol_id!=5u)return P2_HW_RX_UNRELATED;
+    id=be32(data);
+    if(id<=0x7FFu || id>0x1FFFFFFFu)return P2_HW_RX_UNRELATED;
+    return p2_hw_inspect_e3_rx_candidate(&c->hw_tx,c->baud,id,data+4,8u);
+}
 const char *p2_bridge_inspect_rx(p2_j2534_bridge *b,uint32_t id,uint32_t flags,
                                   const uint8_t *data,size_t size,uint64_t now) {
     p2_bridge_channel *c;
