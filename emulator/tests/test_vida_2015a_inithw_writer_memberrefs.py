@@ -145,6 +145,26 @@ class MemberRefWriterRelationsTests(unittest.TestCase):
         self.assertEqual(counts["writer_producer_type_relation_counts"][
             "callvirt_return_unclassified"], 1)
 
+    def test_19_unsupported_newobj_signature_uses_declared_category(self):
+        layout = fake_layout(method_sig=b"\x20\x00\x14\x08")
+        counts = synthetic_inspect(layout=layout, writer=".ctor")
+        self.assertEqual(counts["writer_producer_type_relation_counts"][
+            "newobj_owner_unclassified"], 1)
+
+    def test_20_newobj_with_nonclass_field_uses_declared_category(self):
+        layout = fake_layout(field_sig=b"\x06\x08")
+        counts = synthetic_inspect(layout=layout, writer=".ctor")
+        self.assertEqual(counts["writer_producer_type_relation_counts"][
+            "newobj_owner_unclassified"], 1)
+
+    def test_21_callvirt_with_nonclass_field_uses_declared_category(self):
+        layout = fake_layout(method_sig=b"\x20\x00\x12\x05",
+                             method_name="Factory", field_sig=b"\x06\x08")
+        counts = synthetic_inspect(source_il(0x6F), layout=layout)
+        self.assertEqual(counts["writer_producer_type_relation_counts"][
+            "callvirt_return_unclassified"], 1)
+        self.assertEqual(sum(counts["writer_producer_type_relation_counts"].values()), 1)
+
     def test_14_no_raw_original_values_emitted(self):
         counts = synthetic_inspect()
         output = json.dumps(counts)
