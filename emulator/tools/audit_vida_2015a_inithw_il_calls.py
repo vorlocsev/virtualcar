@@ -125,6 +125,9 @@ def _metadata_tables(blob: bytes) -> dict:
         raise MetadataError("unowned CLR method")
     references = {}
     reference_parent_category = {}
+    reference_parent_kind = {}
+    reference_parent_type_family = {}
+    reference_typeref_resolution_scope = {}
     for i in range(1, counts.get(10, 0) + 1):
         off = row(10, i)
         parent = _u(tables, off, ref_parent)
@@ -132,6 +135,18 @@ def _metadata_tables(blob: bytes) -> dict:
         if refname != TARGET:
             continue
         tag, index = parent & 7, parent >> 3
+        if tag not in (0, 1, 2, 3, 4) or not index:
+            raise MetadataError("invalid MemberRefParent coded tag")
+        kinds = ("typedef", "typeref", "moduleref", "methoddef", "typespec")
+        kind = kinds[tag]
+        scope = "not_typeref"
+        if tag == 1:
+            type_ref_offset = row(1, index)
+            scope_coded = _u(tables, type_ref_offset, coded((0, 26, 35, 1), 2))
+            scope_tag = scope_coded & 3
+            scope_index = scope_coded >> 2
+            scope_names = ("module", "moduleref", "assemblyref", "nested_typeref")
+            scope = scope_names[scope_tag] if scope_index else "unresolved"
         if tag == 0:
             parent_name = typename(2, index)
         elif tag == 1:
@@ -143,6 +158,17 @@ def _metadata_tables(blob: bytes) -> dict:
         reference_parent_category[token] = (
             "carcom_repository" if parent_name == "CarComRepository" else
             "hwsettings" if parent_name == "HwSettings" else "other_or_unresolved"
+        )
+        reference_parent_kind[token] = kind
+        reference_typeref_resolution_scope[token] = scope
+        reference_parent_type_family[token] = (
+            "carcom_repository" if parent_name == "CarComRepository" else
+            "icarcom_repository" if parent_name == "ICarComRepository" else
+            "hwsettings" if parent_name == "HwSettings" else
+            "icarcom_repository_suffix_lexical" if
+                parent_name is not None and parent_name.startswith("I") and
+                parent_name.endswith("CarComRepository") else
+            "other_or_unresolved"
         )
     target_defs = {
         0x06000000 | i: m["repository_owner"]
@@ -159,6 +185,9 @@ def _metadata_tables(blob: bytes) -> dict:
         "methods": methods,
         "target_references": references,
         "target_reference_parent_categories": reference_parent_category,
+        "target_reference_parent_kinds": reference_parent_kind,
+        "target_reference_parent_type_families": reference_parent_type_family,
+        "target_reference_typeref_resolution_scopes": reference_typeref_resolution_scope,
         "target_definitions": target_defs,
         "target_definition_owner_categories": definition_owner_category,
         "fixed_name_tables_parsed": True,
@@ -249,7 +278,7 @@ def _calls(code: bytes) -> list[tuple[str, int]]:
             elif extra in _FE_INLINE:
                 n = 4
             else:
-                raise MetadataError("unsupported two-byte CIL opcode")
+                raise MetadataError("unsupported two-byte CIL opcode FE_%02X" % extra)
             operation = "ldftn" if extra == 0x06 else "ldvirtftn" if extra == 0x07 else ""
         elif op in _ZERO:
             n, operation = 0, ""
@@ -270,7 +299,7 @@ def _calls(code: bytes) -> list[tuple[str, int]]:
                 raise MetadataError("unbounded CIL switch")
             n, operation = 4 + count * 4, ""
         else:
-            raise MetadataError("unknown CIL opcode")
+            raise MetadataError("unknown CIL opcode %02X" % op)
         if p + n > len(code):
             raise MetadataError("truncated CIL operand")
         if operation:
@@ -297,6 +326,24 @@ def inspect_module(blob: bytes) -> dict:
         "target_name_memberrefs_on_repository_type": sum(ref.values()),
         "target_name_methoddef_rows": len(local),
         "target_name_methoddefs_on_repository_type": sum(local.values()),
+        "target_memberref_parent_kind_counts": {
+            kind: sum(x == kind for x in meta["target_reference_parent_kinds"].values())
+            for kind in ("typedef", "typeref", "moduleref", "methoddef", "typespec")
+        },
+        "target_memberref_parent_type_family_counts": {
+            family: sum(x == family for x in meta["target_reference_parent_type_families"].values())
+            for family in (
+                "carcom_repository", "icarcom_repository", "hwsettings",
+                "icarcom_repository_suffix_lexical", "other_or_unresolved"
+            )
+        },
+        "target_memberref_typeref_scope_counts": {
+            scope: sum(x == scope for x in meta["target_reference_typeref_resolution_scopes"].values())
+            for scope in (
+                "module", "moduleref", "assemblyref", "nested_typeref",
+                "unresolved", "not_typeref"
+            )
+        },
         "target_memberref_parent_carcom_repository_rows": sum(
             cat == "carcom_repository" for cat in meta["target_reference_parent_categories"].values()
         ),
@@ -326,6 +373,7 @@ def inspect_module(blob: bytes) -> dict:
         "method_bodies_unsupported_unknown_opcode": 0,
         "method_bodies_unsupported_truncated_or_invalid_operand": 0,
         "method_bodies_unsupported_other": 0,
+        "unsupported_unknown_opcode_histogram": {},
     }
     total_bytes = 0
     for method in meta["methods"].values():
@@ -343,6 +391,16 @@ def inspect_module(blob: bytes) -> dict:
             reason = str(exc)
             if "opcode" in reason:
                 counts["method_bodies_unsupported_unknown_opcode"] += 1
+                opcode = reason.rsplit(" ", 1)[-1]
+                if (len(opcode) == 2 or
+                        (len(opcode) == 5 and opcode.startswith("FE_"))) and all(
+                    digit in "0123456789ABCDEF" for digit in opcode.replace("FE_", "")
+                ):
+                    opcode_class = "cil_opcode_" + opcode
+                else:
+                    opcode_class = "cil_opcode_unresolved"
+                bins = counts["unsupported_unknown_opcode_histogram"]
+                bins[opcode_class] = bins.get(opcode_class, 0) + 1
             elif "operand" in reason or "switch" in reason:
                 counts["method_bodies_unsupported_truncated_or_invalid_operand"] += 1
             else:
@@ -389,7 +447,15 @@ def inspect_module(blob: bytes) -> dict:
             counts["target_name_memberref_rows"] !=
             counts["target_memberref_parent_carcom_repository_rows"] +
             counts["target_memberref_parent_hwsettings_rows"] +
-            counts["target_memberref_parent_other_or_unresolved_rows"]):
+            counts["target_memberref_parent_other_or_unresolved_rows"] or
+            sum(counts["target_memberref_parent_kind_counts"].values()) !=
+            counts["target_name_memberref_rows"] or
+            sum(counts["target_memberref_parent_type_family_counts"].values()) !=
+            counts["target_name_memberref_rows"] or
+            sum(counts["target_memberref_typeref_scope_counts"].values()) !=
+            counts["target_name_memberref_rows"] or
+            sum(counts["unsupported_unknown_opcode_histogram"].values()) !=
+            counts["method_bodies_unsupported_unknown_opcode"]):
         raise MetadataError("unreconciled CIL decoder scope")
     counts["all_present_cil_method_bodies_decoded"] = (
         counts["method_bodies_unsupported"] == 0
