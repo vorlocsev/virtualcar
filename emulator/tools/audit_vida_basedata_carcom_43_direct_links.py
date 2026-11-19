@@ -146,7 +146,7 @@ def audit(folder: Path) -> dict:
         base = _open_private(stack, folder, "BaseData")
         carcom = _open_private(stack, folder, "CarCom")
         bc = _catalog(base, "BaseData")
-        cc = _catalog(carcom, "CarCom")
+        cc = _catalog(carcom, "CarCom", CARCOM_REQUIRED)
         for table, required in BASE_REQUIRED.items():
             if not set(x.casefold() for x in required).issubset(bc[table]["cols"]):
                 raise SchemaError("missing BaseData evidence columns")
