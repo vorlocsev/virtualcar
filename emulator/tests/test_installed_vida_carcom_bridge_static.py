@@ -91,5 +91,17 @@ class InstalledVidaBridgeSourceChecks(unittest.TestCase):
         self.assertIn("$profileDbId[0]", self.source)
 
 
+    def test_10_sanitized_failure_stage_and_nonzero_exit(self):
+        for phase in ("preflight", "connection", "database", "schema",
+                      "private_input", "aggregation", "report"):
+            with self.subTest(phase=phase):
+                self.assertIn("$phase='" + phase + "'", self.source)
+        self.assertIn("status='failed';phase=$phase;error_class=", self.source)
+        self.assertIn("[Console]::Error.WriteLine($safeError)", self.source)
+        self.assertNotIn("Write-Error", self.source)
+        self.assertRegex(self.source, r"(?s)catch\s*\{.*?exit 2\s*\}")
+        self.assertNotIn("Exception.Message", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()
