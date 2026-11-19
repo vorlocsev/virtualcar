@@ -139,12 +139,32 @@ int p2_cem_decode_legacy_b9f0_pn(const uint8_t first[8],
   *pn=number;return 1;
 }
 
-int p2_cem_validate_sectorv_f0_body(const uint8_t *body,size_t n){
+/* B3A315: reproduce the static ClientP2HardwareProtocol.Decode
+   structural guards only. The 15-byte argument is a REASSEMBLED body,
+   not a single CAN payload. Never decode or log the module number. */
+p2_cem_f0_shape p2_cem_inspect_sectorv_f0_body(const uint8_t *body,size_t n){
   size_t i;
-  if(!body||n!=15u)return 0;
-  for(i=0;i<5;i++)if(!bcd_ok(body[i]))return 0;
-  if(body[5]==0x20u && (!ascii_printable(body[6])||!ascii_printable(body[7])))return 0;
-  return 1;
+  if(!body)return P2_CEM_F0_NO_BODY;
+  if(n!=15u)return P2_CEM_F0_INVALID_LENGTH;
+  for(i=0;i<5u;i++)if(!bcd_ok(body[i]))return P2_CEM_F0_INVALID_BCD;
+  if(body[5]==0x20u && (!ascii_printable(body[6])||!ascii_printable(body[7])))
+    return P2_CEM_F0_INVALID_REVISION;
+  return P2_CEM_F0_STRUCTURAL_CANDIDATE;
+}
+/* Fixed labels only: no VIN, CEM number, revision, keys or raw bytes. */
+const char *p2_cem_f0_shape_name(p2_cem_f0_shape status){
+  switch(status){
+    case P2_CEM_F0_NO_BODY:return "no_body";
+    case P2_CEM_F0_INVALID_LENGTH:return "invalid_length";
+    case P2_CEM_F0_INVALID_BCD:return "invalid_bcd";
+    case P2_CEM_F0_INVALID_REVISION:return "invalid_revision";
+    case P2_CEM_F0_STRUCTURAL_CANDIDATE:return "structural_candidate_unverified";
+    default:return "unknown";
+  }
+}
+/* Retain original public bool contract for existing tests/callers. */
+int p2_cem_validate_sectorv_f0_body(const uint8_t *body,size_t n){
+  return p2_cem_inspect_sectorv_f0_body(body,n)==P2_CEM_F0_STRUCTURAL_CANDIDATE;
 }
 
 int p2_cem_e3_02_candidate(const uint8_t *body,size_t n){
