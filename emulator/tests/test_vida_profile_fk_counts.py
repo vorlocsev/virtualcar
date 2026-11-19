@@ -67,6 +67,8 @@ class ProfileFkCountTests(unittest.TestCase):
                 self.assertEqual(edge["source_rows"], 3)
                 self.assertEqual(edge["missing_target_rows"], 0)
                 self.assertEqual(edge["ambiguous_target_rows"], 0)
+            self.assertEqual(db["candidate_fk_edges"][0]["null_fk_rows"], 1)
+            self.assertFalse(db["candidate_fk_edges"][0]["all_source_keys_unambiguous"])
 
     def test_02_no_keys_values_or_private_strings_in_output(self):
         text = json.dumps(audit(self.folder))
