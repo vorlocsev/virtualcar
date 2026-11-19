@@ -118,8 +118,10 @@ function Get-Counts($con,[string[]]$names) {
  return $r
 }
 $con=$null
+$phase='preflight'
 try{
  if(-not(Test-Path -LiteralPath $VidaRoot -PathType Container)){throw 'VIDA installation root absent'}
+ $phase='connection'
  Add-Type -AssemblyName System.Data
  $b=New-Object System.Data.SqlClient.SqlConnectionStringBuilder
  $b.DataSource=$ServerInstance
@@ -131,8 +133,10 @@ try{
  $b.Pooling=$false
  $con=[System.Data.SqlClient.SqlConnection]::new($b.ConnectionString)
  $con.Open()
+ $phase='database'
  $db=Read-SqlTable $con 'SELECT DB_NAME() AS [database_name]'
  if($db.Rows.Count -ne 1 -or ([string]$db.Rows[0][0]) -cne 'CarCom'){throw 'unexpected database'}
+ $phase='schema'
  $schema=Read-SqlTable $con @'
 SELECT t.[name] AS [table_name],c.[name] AS [column_name]
 FROM [sys].[tables] AS t
@@ -162,6 +166,7 @@ WHERE s.[name]=N'dbo' AND t.[name] IN
   } | ConvertTo-Json -Compress
   return
  }
+ $phase='private_input'
  $exact=Read-ProfileLines $ExactProfiles 43 43
  $general=Read-ProfileLines $GeneralProfiles 1 8
  $seen=@{}
@@ -180,6 +185,7 @@ WHERE s.[name]=N'dbo' AND t.[name] IN
     $out -ieq [System.IO.Path]::GetFullPath($GeneralProfiles)){
   throw 'source/output path collision'
  }
+ $phase='aggregation'
  $a=Get-Counts $con $exact
  $g=Get-Counts $con $general
  $report=[ordered]@{
@@ -205,6 +211,7 @@ WHERE s.[name]=N'dbo' AND t.[name] IN
   exact_xc90_v8_my2009=$a
   general_profile_comparators=$g
  }
+ $phase='report'
  $json=ConvertTo-Json -InputObject $report -Depth 6
  $stream=[System.IO.File]::Open($out,[System.IO.FileMode]::CreateNew,
                                [System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
@@ -218,8 +225,11 @@ WHERE s.[name]=N'dbo' AND t.[name] IN
  } | ConvertTo-Json -Compress
 }
 catch{
- [pscustomobject]@{status='failed';error_class=$_.Exception.GetType().Name} |
-  ConvertTo-Json -Compress | Write-Error
+ # Error output is intentionally bounded: no SQL, profile IDs, paths or payloads.
+ $safeError=[pscustomobject]@{
+  status='failed';phase=$phase;error_class=$_.Exception.GetType().Name
+ } | ConvertTo-Json -Compress
+ [Console]::Error.WriteLine($safeError)
  exit 2
 }
 finally{if($null -ne $con){$con.Dispose()}}
