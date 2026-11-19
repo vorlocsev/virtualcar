@@ -79,10 +79,16 @@ D2 bitrate и принятого ReadVin. Отличия токенов такж
 
     py -3 -m unittest discover -s emulator/tests -p test_vida_2015a_inithw_writer_memberrefs.py -v
 
-И только после Ran 18 tests ... OK:
+И только после Ran 21 tests ... OK:
 
     py -3 .\emulator\tools\audit_vida_2015a_inithw_writer_memberrefs.py --folder 'E:\vida'
 
-На момент коммита этот набор тестов и новый оригинальный
-аудит ещё НЕ выполнялись. Статическое чтение GitHub не
+Пользователь выполнил исходный набор из 18 synthetic-тестов: Ran 18 tests,
+FAILED (errors=1). Ошибка в классификаторе при неподдерживаемой
+сигнатуре: KeyError callvirt_unclassified вместо допустимого ключа
+callvirt_return_unclassified. Аналогичная потенциальная ветка
+newobj_unclassified исправлена на newobj_owner_unclassified.
+Добавлено 3 регрессионных теста (всего 21). После исправления
+повторный Windows-запуск 21 теста и новый оригинальный аудит
+ещё НЕ подтверждены. Статическое чтение GitHub не
 равно test PASS. CI/workflows не запускаются, PR остаётся Draft.
