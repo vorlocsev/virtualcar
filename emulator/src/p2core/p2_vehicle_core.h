@@ -39,6 +39,7 @@ typedef struct {
     uint32_t b9f0_seen;
     uint32_t b9fb_seen;
     uint32_t possible_ref6660_seen;
+    uint32_t a6_other_did_seen;          /* read request count only; no DID or payload */
     uint32_t diag_wrong_bus_annotations;
     uint32_t diag_e3_02_candidates;       /* unverified header observations ONLY */
     uint32_t ls_frames_accepted;
@@ -56,7 +57,7 @@ typedef struct {
 p2_vehicle_config p2_vehicle_xc90_v8_my2009_config(void);
 void p2_vehicle_init(p2_vehicle *vehicle, const p2_vehicle_config *cfg);
 
-/* `payload` begins with the D2 envelope marker (CF/CB/CA), NOT the 4-byte CAN ID.
+/* `payload` begins with a D2 envelope marker (CF/CB/CA/CD), NOT the 4-byte CAN ID.
    Caller still passes all messages to the existing J2534 implementation unchanged. */
 p2_vehicle_tx_assessment p2_vehicle_observe_tx(p2_vehicle *vehicle,
       p2_bus bus, uint32_t bitrate, uint32_t can_id,
