@@ -47,7 +47,9 @@ def with_typeref_parent(binary: bytes) -> bytes:
     old_rows = old[24 + 16:]
     selfmodule = old_rows[:10]
     typedef = old_rows[10:24]
-    methods = old_rows[24:66]
+    methods = bytearray(old_rows[24:66])
+    # Reserve extra synthetic RVA room for the larger TypeRef metadata blob.
+    struct.pack_into("<I", methods, 0, 0x2400)
     memberrefs = bytearray(old_rows[66:78])
     struct.pack_into("<H", memberrefs, 0, (1 << 3) | 1)  # TypeRef row 1, tag 1
     new_valid = struct.unpack_from("<Q", old, 8)[0] | (1 << 1)
@@ -76,7 +78,8 @@ def with_typeref_parent(binary: bytes) -> bytes:
         root.extend(struct.pack("<II", off, len(blob)) + name)
     root.extend(new_tables)
     root.extend(new_strings)
-    assert len(root) < 0x100, "synthetic metadata must not overlap test IL"
+    assert len(root) < 0x300, "synthetic metadata must not overlap relocated test IL"
+    image[0x600:0x640] = image[0x400:0x440]
     image[0x300:0x300 + len(root)] = root
     struct.pack_into("<I", image, 0x200 + 12, len(root))
     return bytes(image)
