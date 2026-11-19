@@ -292,6 +292,24 @@ class VidaOriginalStaticCilCallTests(unittest.TestCase):
         with self.assertRaises(MetadataError):
             tool.inspect_module(bytes(pe))
 
+    def test_27_leave_four_byte_operand_preserves_call_boundary(self):
+        il = (b"\xDD" + b"\x28\x24\xA9\xE3" +
+              b"\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A")
+        r = tool.inspect_module(with_first_method_body(il))
+        self.assertTrue(r["all_present_cil_method_bodies_decoded"])
+        self.assertEqual(r["direct_call_memberref_sites"], 1)
+        self.assertEqual(r["method_bodies_unsupported"], 0)
+
+    def test_28_leave_short_operand_preserves_call_boundary(self):
+        il = b"\xDE\x24\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A"
+        r = tool.inspect_module(with_first_method_body(il))
+        self.assertTrue(r["all_present_cil_method_bodies_decoded"])
+        self.assertEqual(r["direct_call_memberref_sites"], 1)
+
+    def test_29_branch_operands_with_fake_call_token_not_counted(self):
+        il = b"\xDD\x28\x00\x00\x0A\xDE\x28\x2A"
+        self.assertEqual(tool._calls(il), [])
+
     def test_16_first_layer_stored_scope_not_runtime_profile_list(self):
         result = tool.inspect_module(with_first_method_body(b"\x2A"))
         self.assertEqual(result["method_bodies_present"], 1)
