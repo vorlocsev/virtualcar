@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -34,6 +35,8 @@ CARCOM_REQUIRED = {
 }
 MAX_DEFAULTS_PER_PROFILE = 32
 MAX_INITHW_PER_PROFILE = 32
+ECM_PREFIX = re.compile(r"^ECM(?![A-Z0-9])")
+ECM_TOKEN = re.compile(r"(?<![A-Z0-9])ECM(?![A-Z0-9])")
 
 
 def _one(db, sql: str, args: tuple) -> object:
@@ -88,6 +91,9 @@ def _aggregate(carcom, tables: dict, identifiers: list) -> dict:
         "direct_default_cem_rows": 0,
         "direct_default_ecm_rows": 0,
         "direct_default_other_ecu_rows": 0,
+        "direct_default_other_ecm_prefix_rows": 0,
+        "direct_default_other_ecm_token_rows": 0,
+        "direct_default_other_ecm_substring_rows": 0,
         "profiles_with_direct_inithw": 0,
         "profiles_without_direct_inithw": 0,
         "direct_inithw_link_rows": 0,
@@ -125,6 +131,11 @@ def _aggregate(carcom, tables: dict, identifiers: list) -> dict:
                 counts["direct_default_ecm_rows"] += 1
             else:
                 counts["direct_default_other_ecu_rows"] += 1
+                # Diagnostic lexical classes ONLY for the seven non-exact labels.
+                # Each is a hint, never an ECU identity or resolved alias.
+                counts["direct_default_other_ecm_prefix_rows"] += int(bool(ECM_PREFIX.search(name)))
+                counts["direct_default_other_ecm_token_rows"] += int(bool(ECM_TOKEN.search(name)))
+                counts["direct_default_other_ecm_substring_rows"] += int("ECM" in name)
 
     if (counts["matched_exact_profile_count"] != EXPECTED_EXACT or
             counts["profiles_with_direct_defaults"] +
@@ -134,7 +145,11 @@ def _aggregate(carcom, tables: dict, identifiers: list) -> dict:
             counts["direct_default_link_rows"] !=
             counts["direct_default_cem_rows"] +
             counts["direct_default_ecm_rows"] +
-            counts["direct_default_other_ecu_rows"]):
+            counts["direct_default_other_ecu_rows"] or
+            not (0 <= counts["direct_default_other_ecm_prefix_rows"] <=
+                 counts["direct_default_other_ecm_token_rows"] <=
+                 counts["direct_default_other_ecm_substring_rows"] <=
+                 counts["direct_default_other_ecu_rows"])):
         raise SchemaError("unreconciled CarCom direct links")
     return counts
 
@@ -192,6 +207,7 @@ def audit(folder: Path) -> dict:
             "gate": gate,
             "counts": counts,
             "original_source_identifiers_or_values_emitted": False,
+            "ecm_lexical_name_matches_prove_ecu_identity": False,
             "private_profile_lists_created": False,
             "same_as_previous_43_source_set_verified": False,
             "original_sqlserver_fk_semantics_verified": False,
