@@ -18,7 +18,8 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
                  namespace="Demo.Diagnostics", version=(1, 2, 3, 4),
                  key=b"\xAB\xCD", typeref_assembly_row=1,
                  with_manifest=False, local_interface=False,
-                 reference_full_key=False):
+                 reference_full_key=False, with_methods=False,
+                 explicit_method_impl=False):
     names = bytearray(b"\x00")
     indices = {}
     for s in ("ICarComRepository", "CarComRepository", "GetInitHwSettings",
@@ -31,6 +32,9 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
     if not 0 < len(key) < 128:
         raise ValueError("fixture public key extent")
     blobs = b"\x00" + bytes([len(key)]) + key + b"\x03\x20\x01\x01"
+    method_sig_index = len(blobs)
+    if with_methods:
+        blobs += b"\x04\x20\x01\x01\x08"  # hasthis, 1 param, void / int32
     # Module 0, TypeRef 1, TypeDef 2, InterfaceImpl 9,
     # MemberRef 10, AssemblyRef 35. Tests use only a few real tables.
     tables_present = [1, 35]
@@ -38,12 +42,22 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
         tables_present += [2, 9]
     else:
         tables_present += [10]
+    if with_methods:
+        if not repo or not local_interface:
+            raise ValueError("synthetic MethodDef fixture requires local repo and interface")
+        tables_present += [6]
+    if explicit_method_impl:
+        if not with_methods:
+            raise ValueError("synthetic MethodImpl requires MethodDef fixture")
+        tables_present += [25]
     if with_manifest:
         tables_present += [32]
     valid = sum(1 << t for t in tables_present)
     data = bytearray(struct.pack("<IBBBBQQ", 0, 2, 0, 0, 1, valid, 0))
     for tab in sorted(tables_present):
-        data.extend(struct.pack("<I", 2 if tab == 2 and local_interface else 1))
+        data.extend(struct.pack("<I",
+                                2 if (tab == 2 and local_interface) or
+                                     (tab == 6 and with_methods) else 1))
     for tab in sorted(tables_present):
         if tab == 1:
             ref_scope = (typeref_assembly_row << 2) | 2
@@ -51,19 +65,27 @@ def synthetic_pe(*, repo=False, assembly_name="Demo.Contracts",
                                     indices["ICarComRepository"],
                                     indices[namespace]))
         elif tab == 2:
-            data.extend(struct.pack("<IHHHHH", 0,
+            data.extend(struct.pack("<IHHHHH", 1,
                                     indices["CarComRepository"],
                                     indices[namespace], 0, 1, 1))
             if local_interface:
-                data.extend(struct.pack("<IHHHHH", 0,
+                data.extend(struct.pack("<IHHHHH", 0xA0 if with_methods else 0,
                                         indices["ICarComRepository"],
-                                        indices[namespace], 0, 1, 1))
+                                        indices[namespace], 0, 1,
+                                        2 if with_methods else 1))
+        elif tab == 6:
+            data.extend(struct.pack("<IHHHHH", 0, 0, 0xC6,
+                                    indices["GetInitHwSettings"], method_sig_index, 1))
+            data.extend(struct.pack("<IHHHHH", 0, 0, 0x5C6,
+                                    indices["GetInitHwSettings"], method_sig_index, 1))
         elif tab == 9:
             data.extend(struct.pack("<HH", 1,
                                     (2 << 2) if local_interface else (1 << 2) | 1))
         elif tab == 10:
             data.extend(struct.pack("<HHH", (1 << 3) | 1,
                                     indices["GetInitHwSettings"], 5))
+        elif tab == 25:
+            data.extend(struct.pack("<HHH", 1, (1 << 1), (2 << 1)))
         elif tab == 32:
             data.extend(struct.pack("<IHHHHIHHH", 0, *version,
                                     1 if key else 0, 1,
