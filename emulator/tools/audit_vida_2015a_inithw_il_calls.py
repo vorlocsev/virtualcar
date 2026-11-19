@@ -28,10 +28,56 @@ MAX_TOTAL_IL_BYTES = 64 * 1024 * 1024
 MAX_METHODS = 100000
 
 
+def _compressed_uint(data: bytes, offset: int) -> tuple[int, int]:
+    """ECMA-335 compressed unsigned integer (returns value, next offset)."""
+    if not 0 <= offset < len(data):
+        raise MetadataError("invalid compressed integer index")
+    first = data[offset]
+    if first < 0x80:
+        return first, offset + 1
+    if first < 0xC0 and offset + 1 < len(data):
+        return ((first & 0x3F) << 8) | data[offset + 1], offset + 2
+    if first < 0xE0 and offset + 3 < len(data):
+        return (((first & 0x1F) << 24) | (data[offset + 1] << 16) |
+                (data[offset + 2] << 8) | data[offset + 3]), offset + 4
+    raise MetadataError("invalid compressed unsigned integer")
+
+
+def _method_signature_contract(blob_heap: bytes | None, index: int) -> dict | None:
+    """Only calling convention/hasThis/generic arity/parameter count, not types."""
+    if blob_heap is None or index == 0:
+        return None
+    size, start = _compressed_uint(blob_heap, index)
+    if size < 2 or size > 16384 or start + size > len(blob_heap):
+        raise MetadataError("invalid target method signature extent")
+    sig = blob_heap[start:start + size]
+    cc = sig[0]
+    kind = cc & 0x0F
+    if kind not in (0, 5):
+        raise MetadataError("target signature is not a method signature")
+    pos = 1
+    generic_arity = 0
+    if cc & 0x10:
+        generic_arity, pos = _compressed_uint(sig, pos)
+        if generic_arity > 64:
+            raise MetadataError("unbounded target method generic arity")
+    params, pos = _compressed_uint(sig, pos)
+    if params > 255:
+        raise MetadataError("unbounded target method param count")
+    return {
+        "parameters": params,
+        "has_this": bool(cc & 0x20),
+        "explicit_this": bool(cc & 0x40),
+        "generic_arity": generic_arity,
+        "vararg": kind == 5,
+    }
+
+
 def _metadata_tables(blob: bytes) -> dict:
     streams = _cli_metadata(blob)
     tables = streams.get("#~", streams.get("#-"))
     strings = streams["#Strings"]
+    blob_heap = streams.get("#Blob")
     if tables is None or len(tables) < 24:
         raise MetadataError("required CLR metadata tables missing")
     heaps = _u(tables, 6, 1)
@@ -100,9 +146,14 @@ def _metadata_tables(blob: bytes) -> dict:
     methods = {}
     for i in range(1, counts.get(6, 0) + 1):
         o = row(6, i)
+        method_name = name(_u(tables, o + 8, ss))
         methods[i] = {
             "rva": _u(tables, o, 4),
-            "name": name(_u(tables, o + 8, ss)),
+            "name": method_name,
+            "signature_contract": (
+                _method_signature_contract(blob_heap, _u(tables, o + 8 + ss, bs))
+                if method_name == TARGET else None
+            ),
         }
     typedefs = []
     for i in range(1, counts.get(2, 0) + 1):
@@ -123,7 +174,22 @@ def _metadata_tables(blob: bytes) -> dict:
     if any("repository_owner" not in m or "hwsettings_owner" not in m
            for m in methods.values()):
         raise MetadataError("unowned CLR method")
+    # InterfaceImpl rows: exact Class=CarComRepository TypeDef row,
+    # Interface=ICarComRepository TypeRef/TypeDef row. This still does not
+    # prove that any method was invoked or bound at runtime.
+    repo_typedefs = {i for i, (label, _) in enumerate(typedefs, 1)
+                     if label == "CarComRepository"}
+    direct_iface_impls = 0
+    for i in range(1, counts.get(9, 0) + 1):
+        o = row(9, i)
+        owner_type = _u(tables, o, idx(2))
+        iface_token = _u(tables, o + idx(2), tdor)
+        tag, num = iface_token & 3, iface_token >> 2
+        if owner_type in repo_typedefs and num and tag in (0, 1):
+            iface_name = typename(2 if tag == 0 else 1, num)
+            direct_iface_impls += int(iface_name == "ICarComRepository")
     references = {}
+    reference_signature_contracts = {}
     reference_parent_category = {}
     reference_parent_kind = {}
     reference_parent_type_family = {}
@@ -134,6 +200,9 @@ def _metadata_tables(blob: bytes) -> dict:
         refname = name(_u(tables, off + ref_parent, ss))
         if refname != TARGET:
             continue
+        signature_contract = _method_signature_contract(
+            blob_heap, _u(tables, off + ref_parent + ss, bs)
+        )
         tag, index = parent & 7, parent >> 3
         if tag not in (0, 1, 2, 3, 4) or not index:
             raise MetadataError("invalid MemberRefParent coded tag")
@@ -155,6 +224,7 @@ def _metadata_tables(blob: bytes) -> dict:
             parent_name = None
         token = 0x0A000000 | i
         references[token] = parent_name == "CarComRepository"
+        reference_signature_contracts[token] = signature_contract
         reference_parent_category[token] = (
             "carcom_repository" if parent_name == "CarComRepository" else
             "hwsettings" if parent_name == "HwSettings" else "other_or_unresolved"
@@ -183,7 +253,9 @@ def _metadata_tables(blob: bytes) -> dict:
     }
     return {
         "methods": methods,
+        "carcom_repository_direct_icarcomrepository_interfaceimpl_rows": direct_iface_impls,
         "target_references": references,
+        "target_reference_signature_contracts": reference_signature_contracts,
         "target_reference_parent_categories": reference_parent_category,
         "target_reference_parent_kinds": reference_parent_kind,
         "target_reference_parent_type_families": reference_parent_type_family,
@@ -318,8 +390,29 @@ def inspect_module(blob: bytes) -> dict:
     section_map = _sections(blob)
     ref = meta["target_references"]
     local = meta["target_definitions"]
+    def _parameter_buckets(items):
+        totals = {}
+        for item in items:
+            key = "unavailable" if item is None else "param_count_" + str(item["parameters"])
+            totals[key] = totals.get(key, 0) + 1
+        return dict(sorted(totals.items()))
+    target_definition_sigs = [
+        m["signature_contract"] for m in meta["methods"].values()
+        if m["name"] == TARGET
+    ]
+    target_reference_sigs = list(meta["target_reference_signature_contracts"].values())
     counts = {
         "method_bodies_present": 0,
+        "carcom_repository_direct_icarcomrepository_interfaceimpl_rows":
+            meta["carcom_repository_direct_icarcomrepository_interfaceimpl_rows"],
+        "getinithw_methoddef_parameter_count_categories": _parameter_buckets(target_definition_sigs),
+        "getinithw_memberref_parameter_count_categories": _parameter_buckets(target_reference_sigs),
+        "getinithw_methoddef_signature_unavailable": sum(x is None for x in target_definition_sigs),
+        "getinithw_memberref_signature_unavailable": sum(x is None for x in target_reference_sigs),
+        "getinithw_methoddef_has_this": sum(x is not None and x["has_this"] for x in target_definition_sigs),
+        "getinithw_memberref_has_this": sum(x is not None and x["has_this"] for x in target_reference_sigs),
+        "getinithw_methoddef_vararg": sum(x is not None and x["vararg"] for x in target_definition_sigs),
+        "getinithw_memberref_vararg": sum(x is not None and x["vararg"] for x in target_reference_sigs),
         "method_bodies_decoded": 0,
         "method_bodies_unsupported": 0,
         "target_name_memberref_rows": len(ref),
