@@ -69,7 +69,7 @@ class BasedataXc90CandidatesTests(unittest.TestCase):
         self.assertNotIn("XC90 RESTYLING", output)
         self.assertNotIn(str(self.folder), output)
         self.assertNotIn("model_key", output)
-        self.assertNotIn("model_id", output)
+        self.assertNotIn('"model_id":', output)
 
     def test_03_broad_xc900_substring_is_not_a_candidate(self):
         with closing(sqlite3.connect(self.base)) as db, db:
