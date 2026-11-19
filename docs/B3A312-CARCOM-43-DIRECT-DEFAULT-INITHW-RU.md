@@ -80,3 +80,35 @@ effective_inithw_inheritance_verified,
 effective_d2_baudrate_verified,
 actual_selected_vida_profile_verified, client_ecu_alive_verified,
 original_vida_readvin_accepted.
+
+
+## Фактический первый Windows-запуск и исправление (2026-11-19)
+
+Владелец обновил ветку до HEAD 075110f и исполнил новый
+test_vida_basedata_carcom_43_direct_links.py. Результат:
+**13 запущено, 2 PASS, 11 ERROR**. У всех ошибок одна причина:
+KeyError: 'T160_DefaultEcuVariant' в выборе подсхемы CarCom до
+обращения к реальным строкам. Это **дефект кода**, а не признак
+повреждённой SQLite-копии; в предоставленном журнале запуска
+на оригинальных BaseData/CarCom после тестов нет.
+
+Причина установлена по исходникам: прежняя функция
+audit_vida_profile_fk_counts._catalog() возвращала только
+NEEDED["CarCom"] (T161_Profile, T162_ProfileValue), хотя новый
+анализатор требует ещё T160_DefaultEcuVariant, T100_EcuVariant,
+T101_Ecu, T136_InitHw_Profile.
+
+Исправление: _catalog получает необязательный явный
+required_tables с лимитом на число таблиц; без этого параметра
+прошлый выбор NEEDED[name] остаётся неизменным. Новый анализатор
+передаёт фиксированный CARCOM_REQUIRED, а синтетические тесты
+проверяют, что все шесть каталогов найдены и исходная область
+выбора не расширилась неявно. Добавлен отдельный регрессионный
+тест, итого **14 тестовых методов**.
+
+Только после нового Windows результата Ran 14 tests ... OK
+разрешается запуск следующего real-data агрегатного этапа.
+
+Нет новых доказательств 9 defaults / 2 CEM / 1 ECM / 0 InitHw
+по этому последнему анализатору. Прежний 43/43 BaseData↔CarCom
+остается самостоятельным, уже выполненным gate.
