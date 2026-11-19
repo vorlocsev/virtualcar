@@ -71,6 +71,18 @@ const char *p2_hw_tx_event_name(p2_hw_tx_event event);
    Two-frame legacy F0 PN and SectorV's 15-byte F0 body are distinct formats. */
 int p2_cem_decode_legacy_b9f0_pn(const uint8_t first[8],
                                   const uint8_t second[8], uint32_t *pn);
+/* Client-side Hardware F0 body shape only (assembled 15-byte body).
+   No part number, ECU provenance, accepted session or OEM identity. */
+typedef enum {
+  P2_CEM_F0_NO_BODY = 0,
+  P2_CEM_F0_INVALID_LENGTH,
+  P2_CEM_F0_INVALID_BCD,
+  P2_CEM_F0_INVALID_REVISION,
+  P2_CEM_F0_STRUCTURAL_CANDIDATE
+} p2_cem_f0_shape;
+
+p2_cem_f0_shape p2_cem_inspect_sectorv_f0_body(const uint8_t *body, size_t len);
+const char *p2_cem_f0_shape_name(p2_cem_f0_shape status);
 int p2_cem_validate_sectorv_f0_body(const uint8_t *body, size_t size);
 int p2_cem_e3_02_candidate(const uint8_t *body, size_t size);
 #ifdef __cplusplus
