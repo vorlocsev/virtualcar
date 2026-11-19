@@ -121,3 +121,71 @@ d2_baudrate_verified и original_vida_readvin_accepted.
 Никакой PR merge, CI dispatch, изменения main/development, запуска
 оригинальных функций VIDA, оригинальной установки SQL, прошивки,
 J2534 или программирования ECU.
+
+
+## Выполненный первоначальный IL-аудит и следующее уточнение (2026-11-19)
+
+Владелец запустил предыдущий анализатор на точных SHA-pinned оригинальных
+VIDA 2015A DLL. Фактически сообщено:
+
+| Original module | Present IL | Decoded | Unsupported | Direct GetInitHwSettings MemberRef calls |
+| --- | ---: | ---: | ---: | ---: |
+| BizServices.CarCom.DB.DLL | 140 | 137 | 3 | 0 |
+| BizServices.VehicleCommProvider.DLL | 175 | 175 | 0 | 1 |
+| Workflow.DLL | 1719 | 1709 | 10 | 5 |
+
+Всего 2021/2034 тел методов декодированы, 13 не декодированы;
+найдено 6 настоящих статических call/callvirt к MemberRef с именем
+GetInitHwSettings. Ни одна из шести ссылок в прежнем классификаторе
+не имела parent **с простым именем CarComRepository**.
+Из этого нельзя сделать вывод, что связи с репозиторием не существует:
+это может быть ссылка на иной тип/интерфейс, а 13 тел не разобраны.
+Ни один CALL не означает, что он исполнился в сессии владельца.
+
+Уточнение на этом HEAD:
+- target_memberref_parent_carcom_repository_rows;
+- target_memberref_parent_hwsettings_rows;
+- target_memberref_parent_other_or_unresolved_rows;
+- target_methoddef_owner_hwsettings_rows / owner_other_rows;
+- direct_target_calls_to_hwsettings_memberref;
+- direct_target_calls_to_other_or_unresolved_memberref;
+- distinct_target_caller_methods_in_carcom_repository,
+  distinct_target_caller_methods_in_hwsettings,
+  distinct_target_caller_methods_in_other_types.
+  Последние три — число **различных методов-вызывателей**, НЕ
+  количество инструкций вызова.
+- method_bodies_unsupported_unknown_opcode,
+  method_bodies_unsupported_truncated_or_invalid_operand,
+  method_bodies_unsupported_other.
+  Эти категории суммируются в method_bodies_unsupported.
+- IL декодер также знает FE 19 no. prefix (корректный байт операнда
+  позволяет безопасно сохранить границы следующей инструкции).
+
+Никаких нестандартных имён оригинальных классов, IL-байтов или
+реальных Profile ID инструмент не печатает. Текстовые категории
+допускают только CarComRepository, HwSettings и другие/неизвестные.
+Сравнение происходит по простому имени типа, не по полному
+assembly-qualified имени и сигнатуре. Этого достаточно лишь для
+ориентации следующего source audit, НЕ для утверждения о runtime
+связывании конкретного MemberRef с CLR MethodDef.
+
+Добавлены ещё 4 синтетических теста, всего **20**. Новые Windows
+тесты и повторный анализ оригинальных DLL **ещё не выполнены**.
+Прежние подтверждённые 6 статических точек вызова и 13 IL
+декодерных пропусков относятся к **старой версии анализатора**;
+не переносить их механически на новый HEAD.
+
+Запуск на локальной машине владельца, только после обновления ветки:
+
+    git pull --ff-only
+
+    py -3 -m unittest discover -s emulator/tests -p test_vida_2015a_inithw_il_calls.py -v
+
+При Ran 20 tests ... OK:
+
+    py -3 .\emulator\tools\audit_vida_2015a_inithw_il_calls.py --folder 'E:\vida'
+
+Дальше потребуется отдельный анализ сигнатур, метаданных родителя
+MemberRef (включая namespace и assembly), аргументов callsite и
+реальной процедуры формирования списка профилей. Этим счётчиком
+наследование InitHw, скорость D2 и ReadVin не подтверждаются.
