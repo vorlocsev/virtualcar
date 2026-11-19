@@ -174,6 +174,18 @@ class OriginalVidaFieldSignatureSyntheticTests(unittest.TestCase):
                 with self.assertRaisesRegex(MetadataError, "SHA256"):
                     tool.audit(folder)
 
+    def test_19_field_address_is_not_field_value_shape(self):
+        il = b"\x7C" + struct.pack("<I", FIELDDEF) + b"\x6F" + struct.pack("<I", TARGET) + b"\x2A"
+        counts = inspect(il, field_sig=b"\x06\x08", param_sig=b"\x20\x01\x01\x08")
+        self.assertEqual(counts["field_shape_different_from_target_parameter"], 1)
+        self.assertEqual(counts["field_shape_equal_to_target_parameter_ignoring_local_type_tokens"], 0)
+
+    def test_20_field_address_matches_byref_parameter_shape_only(self):
+        il = b"\x7F" + struct.pack("<I", FIELDREF) + b"\x6F" + struct.pack("<I", TARGET) + b"\x2A"
+        counts = inspect(il, field_sig=b"\x06\x08", param_sig=b"\x20\x01\x01\x10\x08")
+        self.assertEqual(counts["field_shape_equal_to_target_parameter_ignoring_local_type_tokens"], 1)
+        self.assertEqual(counts["field_shape_different_from_target_parameter"], 0)
+
     def test_18_cli_errors_hide_owner_paths(self):
         with tempfile.TemporaryDirectory() as d:
             err = StringIO()
