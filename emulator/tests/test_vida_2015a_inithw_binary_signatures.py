@@ -110,11 +110,15 @@ class OriginalBinaryTokenCensusTests(unittest.TestCase):
         self.assertEqual(set(report), {"status", "error_class"})
         self.assertNotIn(str(self.folder), out.getvalue())
 
-    def test_13_reject_unsafe_executable_name_without_leaking(self):
+    def test_13_special_executable_basename_suppressed_but_scanned(self):
         odd = self.folder / "Bin" / "Private Name.dll"
         odd.write_bytes(b"GetInitHwSettings")
-        with self.assertRaises(EvidenceError):
-            audit(self.folder)
+        result = audit(self.folder)
+        self.assertEqual(result["binary_files_scanned"], 2)
+        self.assertEqual(result["matching_binaries"], 2)
+        basenames = [item["module_basename"] for item in result["matches"]]
+        self.assertIn("special_filename_suppressed", basenames)
+        self.assertNotIn("Private Name.dll", json.dumps(result))
 
 
 if __name__ == "__main__":
