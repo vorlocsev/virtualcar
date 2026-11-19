@@ -28,6 +28,7 @@ typedef struct {
 
 typedef struct {
     const char *label;      /* static-safe name, never raw payload */
+    p2_hw_tx_event hw_event; /* channel-scoped TX, never a positive RX */
     p2_cem_decision decision;
     uint32_t baud;
     p2_bus bus;
