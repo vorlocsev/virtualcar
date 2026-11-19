@@ -29,6 +29,8 @@ typedef unsigned int U32;
 typedef unsigned long U32; /* Windows LLP64: 32-bit unsigned long */
 #endif
 #include "p2core/p2_j2534_bridge.h"
+/* B3A19: ISO15765 29-bit UDS route observer, never creates ECU RX. */
+/* Header is included after U32/U8 and PROTO_ISO15765 below. */
 typedef unsigned char U8;
 typedef unsigned long long U64;
 typedef long long I64;
@@ -80,8 +82,26 @@ typedef void *HANDLE;
 #define ERR_NOT_UNIQUE 24u
 #define ERR_INVALID_BAUDRATE 25u
 #define ERR_INVALID_DEVICE_ID 26u
+#define PROTO_ISO9141 3u
+/* Exact 4-byte periodic keep-session payload from original VIDA2014D
+   VehCom2.DLL FieldRVA 0x040003DD. Ordinary J2534 D2-on-K path only. */
+#define VIDA_KLINE_KEEPALIVE_SIZE 4u
+#define VIDA_KLINE_KEEPALIVE_PERIOD_MS 3000u
 #define PROTO_CAN 5u
 #define PROTO_ISO15765 6u
+#define ISO9141_K_LINE_ONLY 0x00001000u
+/* J2534-1 v04.04 parameter IDs; original VIDA2014D IL confirms 4 items. */
+#define KLINE_PARITY 0x16u
+#define KLINE_W0 0x19u
+#define KLINE_W1 0x0Eu
+#define KLINE_P4_MIN 0x0Cu
+#define KLINE_FIVE_BAUD_MOD 0x21u /* Original VIDA sends 0 before Ioctl 4 */
+#define IO_FIVE_BAUD_INIT 4u
+/* VIDA J2534-2 pin-switched protocols; isolated LAB opt-in only. */
+#define PROTO_CAN_PS 0x8004u
+#define PROTO_ISO15765_PS 0x8005u
+#define J2534_PINS 0x8001u
+#define VOLVO_MS_PINS 0x030Bu
 #define IO_GET_CONFIG 1u
 #define IO_SET_CONFIG 2u
 #define IO_READ_VBATT 3u
@@ -99,6 +119,9 @@ typedef struct {
 } PASSTHRU_MSG;
 typedef struct { U32 Parameter, Value; } SCONFIG;
 typedef struct { U32 NumOfParams; SCONFIG *ConfigPtr; } SCONFIG_LIST;
+/* J2534 SBYTE_ARRAY: input target address, output ECU keyword capacity. */
+typedef struct { U32 NumOfBytes; U8 *BytePtr; } SBYTE_ARRAY;
+#include "p2core/vida_uds29_route.h"
 
 IMPORT void WINCALL Sleep(U32 ms) ALIAS(Sleep);
 IMPORT U32 WINCALL GetTickCount(void) ALIAS(GetTickCount);
@@ -114,6 +137,12 @@ IMPORT HANDLE WINCALL CreateFileA(const char *path,U32 access,U32 sharing,PTR se
 IMPORT U32 WINCALL SetFilePointer(HANDLE file,U32 low,PTR high,U32 method) ALIAS(SetFilePointer);
 IMPORT int WINCALL WriteFile(HANDLE file,const void *buf,U32 count,U32 *written,PTR overlap) ALIAS(WriteFile);
 IMPORT int WINCALL CloseHandle(HANDLE file) ALIAS(CloseHandle);
+#ifndef HOST_TEST
+/* Probe caller-owned pointers safely; never blindly dereference a J2534 ABI
+   argument from a potentially malformed external client. */
+IMPORT int WINCALL ReadProcessMemory(HANDLE process,const void *base,void *out,
+                                    U32 len,U32 *read) ALIAS(ReadProcessMemory);
+#endif
 IMPORT long WINCALL InterlockedCompareExchange(volatile long *dst,long exchange,long compare) ALIAS(InterlockedCompareExchange);
 IMPORT long WINCALL InterlockedExchange(volatile long *dst,long val) ALIAS(InterlockedExchange);
 
@@ -144,10 +173,19 @@ static U32 g_trace_count=0;
 static U32 g_iso_rx_start=0;
 /* Explicit strict receive-filter policy. Legacy behavior is the default. */
 static U32 g_strict_j2534_filters=0;
+/* Disabled by default. Only an explicit synthetic LAB profile enables PS. */
+static U32 g_vida_can_ps_lab=0;
+/* Independent, default-off ISO9141 Connect+SET_CONFIG laboratory gate. */
+static U32 g_vida_iso9141_lab=0;
+/* Separate default-off opt-in for exact source-backed virtual K-Line TX ACK.
+   This acknowledges ONLY local J2534 message submission; no bus/ECU RX. */
+static U32 g_vida_kline_tx_ack_lab=0;
+/* B3A7 read-only, independently enabled five-baud ABI observer. */
+static U32 g_vida_five_baud_observer_lab=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
-typedef struct {U32 req,resp;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
+typedef struct {U32 req,resp,observer_only;char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
 static ECU g_ecu[MAX_ECUS];
 /* Optional read-only replay fixtures: user must supply verified, non-sensitive
    CAN frames. No invented B9 FB vehicle-configuration payloads. */
@@ -173,7 +211,11 @@ typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 #define BACKEND_DROP_INVALID_SIZE 3u
 typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
-    int used; U32 id,protocol,baud,flags;
+    int used; U32 id,protocol,wire_protocol,baud,flags,ms_pins;
+    /* Channel-local ISO9141 settings: [PARITY,W0,W1,P4_MIN]. No ECU RX simulation. */
+    U32 kline_config[5]; /* fifth slot: FIVE_BAUD_MOD=0 */
+    /* protocol is internal 5/6 routing; wire_protocol retains 0x8004/0x8005
+       for J2534 messages and filters. Pin state is local to the channel. */
     /* Monotonic private connection lifetime. Reused numeric channel IDs
        must not make an in-flight ReadMsgs consume a new channel's FIFO. */
     U64 session_serial;
@@ -205,6 +247,21 @@ typedef struct {
     U32 pending_cf_active,pending_cf_credit,read_timeout_count;
 } CHANNEL;
 static CHANNEL g_ch[MAX_CHANNELS];
+static U32 channel_wire_protocol(const CHANNEL *c){return c->wire_protocol?c->wire_protocol:c->protocol;}
+static int channel_is_ps(const CHANNEL *c){
+    U32 p=channel_wire_protocol(c);
+    return p==PROTO_CAN_PS||p==PROTO_ISO15765_PS;
+}
+static int kline_config_index(U32 parameter){
+    switch(parameter){
+        case KLINE_PARITY: return 0;
+        case KLINE_W0: return 1;
+        case KLINE_W1: return 2;
+        case KLINE_P4_MIN: return 3;
+        case KLINE_FIVE_BAUD_MOD: return 4;
+        default: return -1;
+    }
+}
 /* Never reset on Open/Close: even a device reopen can reuse channel ID 1. */
 static U64 g_next_channel_serial;
 /* Read-only vehicle-state observer, serialized by g_lock. */
@@ -233,6 +290,7 @@ static void append_hex64(char *out,U32 cap,U64 value){
 }
 static U32 str_len(const char *s) { U32 i=0;if(!s)return 0;while(s[i] && i<4096)i++;return i; }
 static void bytes_copy(void *out,const void *src,U32 n) {U8 *d=(U8*)out;const U8 *s=(const U8*)src;U32 i;for(i=0;i<n;i++)d[i]=s[i];}
+static int bytes_same(const U8 *a,const U8 *b,U32 n) {U32 i;for(i=0;i<n;i++)if(a[i]!=b[i])return 0;return 1;}
 static void bytes_zero(void *out,U32 n) {U8 *d=(U8*)out;U32 i;for(i=0;i<n;i++)d[i]=0;}
 static void str_copy(char *out,const char *src,U32 cap) {U32 i=0;if(!cap)return;while(src && src[i] && i+1<cap){out[i]=src[i];i++;}out[i]=0;}
 static void str_append(char *out,const char *s,U32 cap) {U32 i=str_len(out),j=0;while(s&&s[j]&&i+1<cap)out[i++]=s[j++];out[i]=0;}
@@ -298,14 +356,14 @@ static U32 connect_result(U32 protocol,U32 flags,U32 baud,U32 status){
 }
 /* J2534 config reports distinguish implemented baud setting from accepted
    no-op options. Unknown parameter IDs and values are deliberately redacted. */
-static void log_set_config(U32 channel_id,U32 parameter,U32 value){
+static void log_set_config(U32 channel_id,U32 parameter,U32 value,U32 applied){
     U8 meta[16];U32 known=0;
     if(parameter==1u || parameter==3u || parameter==23u ||
-       parameter==30u || parameter==31u || parameter==779u)known=1;
+       parameter==30u || parameter==31u || parameter==779u || parameter==J2534_PINS)known=1;
     u32_be(meta,channel_id);
     u32_be(meta+4,known?parameter:0u);
     u32_be(meta+8,known?value:0u);
-    u32_be(meta+12,parameter==1u?1u:0u);
+    u32_be(meta+12,applied);
     logline("J2534 SET_CONFIG channel/parameter/value/applied (BE)",meta,16);
 }
 
@@ -337,7 +395,7 @@ static void backend_event_with_probe(const CHANNEL *c,U64 rid,const char *kind,c
     str_append(line,",\"tick\":",sizeof(line));append_dec64(line,sizeof(line),counter>0?(U64)counter:1u);
     str_append(line,",\"freq\":",sizeof(line));append_dec64(line,sizeof(line),(U64)freq);
     str_append(line,",\"channel\":",sizeof(line));append_dec64(line,sizeof(line),c->id);
-    str_append(line,",\"protocol\":",sizeof(line));append_dec64(line,sizeof(line),c->protocol);
+    str_append(line,",\"protocol\":",sizeof(line));append_dec64(line,sizeof(line),channel_wire_protocol(c));
     str_append(line,",\"baud\":",sizeof(line));append_dec64(line,sizeof(line),c->baud);
     str_append(line,",\"route\":\"",sizeof(line));str_append(line,route,sizeof(line));
     str_append(line,"\",\"reason\":\"",sizeof(line));str_append(line,reason,sizeof(line));
@@ -716,6 +774,14 @@ static void load_config(void) {
     g_iso_rx_start=parse_num(v,0)?1:0;
     GetPrivateProfileStringA("Diagnostics","StrictJ2534Filters","0",v,sizeof(v),g_profile_path);
     g_strict_j2534_filters=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaCanPsLab","0",v,sizeof(v),g_profile_path);
+    g_vida_can_ps_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaIso9141Lab","0",v,sizeof(v),g_profile_path);
+    g_vida_iso9141_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaKlineTxAckLab","0",v,sizeof(v),g_profile_path);
+    g_vida_kline_tx_ack_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("Diagnostics","EnableVidaFiveBaudObserverLab","0",v,sizeof(v),g_profile_path);
+    g_vida_five_baud_observer_lab=parse_num(v,0)==1u?1u:0u;
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -736,6 +802,10 @@ static void load_config(void) {
         g_ecu[i].req=parse_hex(v,i==1?0x726:0x7E0);
         GetPrivateProfileStringA(key,"ResponseId",i==1?"72E":"7E8",v,sizeof(v),g_profile_path);
         g_ecu[i].resp=parse_hex(v,i==1?0x72E:0x7E8);
+        /* B3A22: observe a known request address without pretending that
+           a response ID, DID value, or ECU identity has been verified. */
+        GetPrivateProfileStringA(key,"ObserverOnly","0",v,sizeof(v),g_profile_path);
+        g_ecu[i].observer_only=parse_num(v,0)==1u?1u:0u;
         GetPrivateProfileStringA(key,"PartNumber","VIRTUAL-ECU",g_ecu[i].part,sizeof(g_ecu[i].part),g_profile_path);
         GetPrivateProfileStringA(key,"Software","SIM-1.0",g_ecu[i].sw,sizeof(g_ecu[i].sw),g_profile_path);
         /* Opt-in read-only, synthetic laboratory replies. No assumption about
@@ -996,7 +1066,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
         return;
     }
     msg=&c->queue[c->w];bytes_zero(msg,sizeof(*msg));
-    msg->ProtocolID=c->protocol;msg->RxStatus=(response_id>0x7FF?CAN_29BIT_ID:0)|status;
+    msg->ProtocolID=channel_wire_protocol(c);msg->RxStatus=(response_id>0x7FF?CAN_29BIT_ID:0)|status;
     /* J2534 v04.04 Timestamp is in MICROSECONDS, not GetTickCount() milliseconds.
        A wrapping 32-bit free-running clock is normal for J2534. */
     msg->Timestamp=(U32)now_us();
@@ -1021,7 +1091,7 @@ static void enqueue(CHANNEL *c,U32 response_id,const U8 *payload,U32 len){enqueu
 /* Bus-specific recorded traffic. Never cross CAN-LS/HS speed boundaries. */
 static void pump_recorded_trace(CHANNEL *c){
     U32 i,now;
-    if(c->protocol!=PROTO_CAN)return;
+    if(c->protocol!=PROTO_CAN || (channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS))return;
     now=GetTickCount();
     for(i=0;i<MAX_PASSIVE_TRACES;i++){
         TRACE_FRAME *t=&g_trace[i];
@@ -1038,7 +1108,8 @@ static void pump_recorded_trace(CHANNEL *c){
 }
 static void maybe_passive_frame(CHANNEL *c){
     U32 now;
-    if(!g_passive_enabled||c->protocol!=PROTO_CAN||c->count>=MAX_QUEUE)return;
+    if(!g_passive_enabled||c->protocol!=PROTO_CAN||c->count>=MAX_QUEUE||
+       (channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS))return;
     now=GetTickCount();
     if((U32)(now-c->passive_next_tick)>=0x80000000u)return;
     c->passive_next_tick=now+g_passive_period_ms;
@@ -1584,6 +1655,18 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
               (ecu->req==0x726u?"CEM":(ecu->req==0x7E0u?"ECM":"ECU_OTHER"));
         if(!matched)backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
         matched=1;
+        /* B3A22: configured route only. Before any UDS response path,
+           suppress positive 0x62, negative 0x7F, session and VIN responses.
+           WriteMsgs still accepts the request locally; ECU RX stays empty. */
+        if(ecu->observer_only){
+            if(id!=0x7DFu){
+                backend_event(c,c->active_trace,"request_completed",route,
+                              "no_response","no_response");
+                return;
+            }
+            /* Functional requests may still reach other configured ECUs. */
+            continue;
+        }
         /* Never synthesize acknowledgments for protected functional requests:
            functional diagnostic resets and protected services are not supported.
            This also prevents the prior contradictory 'Unmatched' log line. */
@@ -1623,6 +1706,29 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
                           "unimplemented_probe","no_response");
             return;
         }
+        /* B3A19: request-only visibility of VIDA 29-bit ISO15765
+           physical addressing. A successful shape classification is NOT
+           an ECU route registration, reply CAN ID, RX or VIN acceptance.
+           Configured ECU handlers and legacy P3 CEM F114 take priority. */
+        {
+            VIDA_UDS29_REQUEST probe;
+            if(vida_uds29_request_probe(id,c->protocol,msg->Data+4u,
+                                         msg->DataSize-4u,&probe)) {
+                U8 meta[16];
+                u32_be(meta,probe.request_id);
+                u32_be(meta+4,probe.target);
+                u32_be(meta+8,probe.sid);
+                u32_be(meta+12,probe.operand);
+                /* DID for SID 22; subfunction/operand for SID 19.
+                   Metadata contains no VIN or reply contents. */
+                logline("VIDA UDS29 unconfigured route id/target/SID/operand (BE)",meta,16);
+                backend_event(c,c->active_trace,"route_selected","ECU_OTHER",
+                              "none","unknown");
+                backend_event(c,c->active_trace,"request_completed","ECU_OTHER",
+                              "missing_profile","no_response");
+                return;
+            }
+        }
         logline("Unmatched request ID / protocol, no response",msg->Data,msg->DataSize);
         backend_event(c,c->active_trace,"route_selected","UNHANDLED","none","unknown");
         backend_event(c,c->active_trace,"request_completed","UNHANDLED","unhandled_request","no_response");
@@ -1656,11 +1762,21 @@ static void pump_periodic(CHANNEL *c){
         /* Give text-log triage an exact channel/protocol/timing scope for
            scheduled TX without disguising the tick as PassThruWriteMsgs.
            The context contains no VIN, CAN payload or ECU identity. */
-        {U8 meta[20];u32_be(meta,c->id);u32_be(meta+4,c->protocol);
+        {U8 meta[20];u32_be(meta,c->id);u32_be(meta+4,channel_wire_protocol(c));
          u32_be(meta+8,p->msg.TxFlags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now);
          logline("Periodic TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 periodic TX (read-only simulator)",p->msg.Data,p->msg.DataSize);
+        if(c->protocol==PROTO_ISO9141){
+            /* These J2534 periodic jobs are only synthetic scheduled
+               evidence. The emulator has no initialized K-Line ECU and
+               performs NO physical K-Line TX, CAN bridging, or ECU RX. */
+            if(p->msg.DataSize==6u && p->interval_ms==2000u)
+                logline("ISO9141 LAB scheduled VIDA D2-on-K relay opener (NO ECU TX/RX)",0,0);
+            else
+                logline("ISO9141 LAB scheduled D2-on-K keep-session (NO ECU TX/RX)",0,0);
+            continue;
+        }
         /* Periodic D2 reads previously replayed frames with RID=0, so no
            tx_received/probe/terminal evidence could be attributed to them.
            Keep the distinct periodic log marker: this is a scheduler tick,
@@ -1711,9 +1827,21 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
        check and this allocation, creating a live channel on a closed device. */
     lock_state();
     if(!g_open){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);}
-    /* P3Tool driver-specific protocol IDs remain rejected, not aliased. */
-    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765){
-        unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
+    /* J2534-2 opt-in is limited to virtual 125 kbit/s P2 lab channels;
+       other private/vendor IDs stay rejected rather than being aliased. */
+    if(protocol==PROTO_ISO9141){
+        /* Deliberately separate from CAN_PS; never alias K-Line frames to CAN.
+           This gate supports only opening/configuring a synthetic channel.
+           INIT, filters, TX and ECU replies remain explicitly unsupported. */
+        if(!g_vida_iso9141_lab){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);}
+        if(flags!=ISO9141_K_LINE_ONLY){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_FLAGS);}
+        if(baud!=10400u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);}
+    }else if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765){
+        if(!g_vida_can_ps_lab || (protocol!=PROTO_CAN_PS&&protocol!=PROTO_ISO15765_PS)){
+            unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
+        }
+        if(baud!=125000u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);}
+        if((flags & ~CAN_29BIT_ID)!=0u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_FLAGS);}
     }
     /* Zero cannot represent a configured CAN bit rate. */
     if(baud==0u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);}
@@ -1723,12 +1851,26 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
     ++g_next_channel_serial;
     if(!g_next_channel_serial)++g_next_channel_serial;
     g_ch[i].session_serial=g_next_channel_serial;
-    g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
+    g_ch[i].wire_protocol=protocol;
+    g_ch[i].protocol=protocol==PROTO_CAN_PS?PROTO_CAN:
+                     protocol==PROTO_ISO15765_PS?PROTO_ISO15765:protocol;
+    g_ch[i].flags=flags;g_ch[i].baud=baud;
+    if(protocol==PROTO_ISO9141){
+        /* J2534 04.04 defaults, overridden by VIDA's actual 4-item list. */
+        g_ch[i].kline_config[0]=0u;
+        g_ch[i].kline_config[1]=300u;
+        g_ch[i].kline_config[2]=300u;
+        g_ch[i].kline_config[3]=10u;
+        g_ch[i].kline_config[4]=0u;
+        logline("ISO9141 LAB channel opened; ECU transport not implemented",0,0);
+    }
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
     *channel_id=i+1;
-    p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
+    /* K-Line has no CAN bridge or synthetic ECU RX in this stage. */
+    if(protocol!=PROTO_ISO9141)
+        p2_bridge_connect(&g_vehicle_bridge,i+1,g_ch[i].protocol,baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
@@ -1745,7 +1887,10 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
    must not bypass protocol, classic CAN DLC, physical ID and addressing
    guards by entering through a different scheduling API. */
 static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
-    if(m->ProtocolID!=c->protocol)return ERR_MSG_PROTOCOL_ID;
+    /* This initial gate does not implement K-Line framing or auto-checksum. */
+    if(c->protocol==PROTO_ISO9141)return ERR_NOT_SUPPORTED;
+    if(m->ProtocolID!=channel_wire_protocol(c))return ERR_MSG_PROTOCOL_ID;
+    if(channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS)return ERR_PIN_INVALID;
     if(m->DataSize>MAX_DATA||m->DataSize<5u||
        (c->protocol==PROTO_CAN && m->DataSize>12u))return ERR_INVALID_MSG;
     if((m->Data[0]&0xE0u)!=0u)return ERR_INVALID_MSG;
@@ -1753,16 +1898,81 @@ static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
        (m->TxFlags&ISO15765_ADDR_TYPE))return ERR_NOT_SUPPORTED;
     return ERR_OK;
 }
+/* Stage B3A5: original VIDA B3A4 runtime established actual D2-on-K
+   WriteMsgs returns ERR_NOT_SUPPORTED for observed ReadVIN request and
+   relay-close. Capture the caller's exact PASSTHRU_MSG ABI fields, byte
+   lengths, payload (up to 16 bytes), channel and batch index before the
+   existing *unchanged* K-Line TX rejection. The original VIDA.log gives
+   payload but not J2534 ProtocolID/TxFlags/RxStatus/Timestamp/ExtraDataIndex.
+   Observation only. No TX admission, synthesized ECU reply or keywords. */
+static void vida_b3a5_log_kline_write(U32 id,const CHANNEL *c,const PASSTHRU_MSG *msg,
+                                     U32 batch_index,U32 batch_count,U32 timeout){
+    U8 header[44];U32 len;
+    if(!g_vida_iso9141_lab || c->protocol!=PROTO_ISO9141)return;
+    u32_be(header,id);u32_be(header+4,c->baud);
+    u32_be(header+8,channel_wire_protocol(c));
+    u32_be(header+12,msg->ProtocolID);
+    u32_be(header+16,msg->RxStatus);
+    u32_be(header+20,msg->TxFlags);
+    u32_be(header+24,msg->Timestamp);
+    u32_be(header+28,msg->DataSize);
+    u32_be(header+32,msg->ExtraDataIndex);
+    u32_be(header+36,batch_index);
+    u32_be(header+40,timeout);
+    logline("VIDA B3A5 KLINE WRITE channel/baud/wire-proto/msg-proto/rx/tx/timestamp/size/extra/index/timeout (BE)",header,44);
+    {U8 info[4];u32_be(info,batch_count);
+     logline("VIDA B3A5 KLINE WRITE original batch-count (BE)",info,4);}
+    len=msg->DataSize;if(len>16u)len=16u;
+    logline("VIDA B3A5 KLINE WRITE original data (max 16 bytes)",msg->Data,len);
+}
+/* Stage B3A6 source-backed J2534 LOCAL ACK ONLY. Original VIDA B3A5
+   PID 000033E4, 2026-11-11 17:15-17:16 proved all 5 direct ISO9141
+   calls use Channel 1 / 10400 / message-protocol 3 / all flags,
+   timestamp, extra zero / batch count 1, timeout=2000:
+     three relay-close: 84 40 13 B2 F0 00
+     one ReadVIN B9F0: 83 51 13 B9 F0
+     one teardown: 82 51 13 A0
+   B3A6 requires BOTH explicit LAB flags; default B3A5 behavior remains
+   ERR_NOT_SUPPORTED. Acceptance means "stored by the virtual J2534
+   transport" only, never a claim that a physical line carried bytes or
+   an ECU acknowledged/answered them. No ReadMsgs injection and no init. */
+static int vida_b3a6_exact_kline_tx_ack(const CHANNEL *c,
+                                       const PASSTHRU_MSG *m,U32 n,U32 i,U32 timeout){
+    static const U8 relay_close[6]={0x84u,0x40u,0x13u,0xB2u,0xF0u,0x00u};
+    static const U8 b9f0[5]={0x83u,0x51u,0x13u,0xB9u,0xF0u};
+    static const U8 teardown[4]={0x82u,0x51u,0x13u,0xA0u};
+    if(!g_vida_iso9141_lab || !g_vida_kline_tx_ack_lab ||
+       c->protocol!=PROTO_ISO9141 || c->baud!=10400u ||
+       n!=1u || i!=0u || timeout!=2000u ||
+       m->ProtocolID!=PROTO_ISO9141 || m->TxFlags!=0u ||
+       m->RxStatus!=0u || m->Timestamp!=0u ||
+       m->ExtraDataIndex!=0u)return 0;
+    if(m->DataSize==6u)return bytes_same(m->Data,relay_close,6u);
+    if(m->DataSize==5u)return bytes_same(m->Data,b9f0,5u);
+    if(m->DataSize==4u)return bytes_same(m->Data,teardown,4u);
+    return 0;
+}
 EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,U32 timeout){
-    U32 i,n;(void)timeout;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
+    U32 i,n;if(!msgs||!count)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     n=*count;if(n>64){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     for(i=0;i<n;i++){
-        U32 validity=validate_tx_message(c,&msgs[i]);
+        U32 validity;
+        vida_b3a5_log_kline_write(id,c,&msgs[i],i,n,timeout);
+        if(vida_b3a6_exact_kline_tx_ack(c,&msgs[i],n,i,timeout)){
+            /* ACK is local, not physical bus success; no process_request,
+               no CAN bridge, no ECU queue and no synthesized VIN. */
+            logline("VIDA B3A6 KLINE exact original write LOCAL ACK ONLY (NO BUS/ECU TX/RX)",
+                    msgs[i].Data,msgs[i].DataSize);
+            continue;
+        }
+        validity=validate_tx_message(c,&msgs[i]);
         if(validity!=ERR_OK){
+            if(g_vida_iso9141_lab && c->protocol==PROTO_ISO9141)
+                logline("VIDA B3A5 KLINE WRITE refused; no K-Line ECU transport or RX",0,0);
             *count=i;unlock_state();return error(validity);
         }
-        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,channel_wire_protocol(c));
          u32_be(meta+8,msgs[i].TxFlags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now_us());
          logline("TX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
@@ -1797,15 +2007,21 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
             unlock_state();*count=0;return error(ERR_INVALID_CHANNEL_ID);
         }
         if(!original_session)original_session=c->session_serial;
-        maybe_passive_frame(c);
-        pump_recorded_trace(c);
-        pump_periodic(c);
-        pump_d2(c);
-        pump_can_cf(c);
+        /* The original K-Line periodic can advance while a J2534 client
+           polls ReadMsgs; no synthetic ECU RX is generated on K-Line. */
+        if(c->protocol==PROTO_ISO9141){
+            pump_periodic(c);
+        }else{
+            maybe_passive_frame(c);
+            pump_recorded_trace(c);
+            pump_periodic(c);
+            pump_d2(c);
+            pump_can_cf(c);
+        }
         while(c->count&&actual<want){
             if(c->queue_ready_us[c->r] && now_us()<c->queue_ready_us[c->r])break;
             bytes_copy(&msgs[actual],&c->queue[c->r],sizeof(PASSTHRU_MSG));
-            {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+            {U8 meta[20];u32_be(meta,id);u32_be(meta+4,channel_wire_protocol(c));
              u32_be(meta+8,msgs[actual].RxStatus);u32_be(meta+12,c->baud);
              u32_be(meta+16,(U32)now_us());
              logline("RX context channel/protocol/status/baud/time-us (BE)",meta,20);}
@@ -1877,18 +2093,152 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
         Sleep(1);
     }
 }
+/* Stage B3A.1: original VIDA B3A trace proved the three ordinary CAN
+   PASS_FILTER calls are valid but the two failing post-ISO9141 calls do NOT
+   appear in the CAN-only trace. Capture BOTH protocols before interpreting
+   ERR_INVALID_FLAGS. This function is telemetry only, opt-in and non-mutating:
+   no fabricated K-Line RX, filter success, or CAN dispatch changes. */
+static void vida_b3_log_filter(U32 channel_id,U32 type,const CHANNEL *c,
+        const PASSTHRU_MSG *mask,const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow){
+    U8 meta[28];
+    const PASSTHRU_MSG *parts[3];
+    U32 j,is_kline;
+    if(!g_vida_iso9141_lab ||
+       (c->protocol!=PROTO_CAN && c->protocol!=PROTO_ISO9141))return;
+    is_kline=(c->protocol==PROTO_ISO9141);
+    u32_be(meta,channel_id);
+    u32_be(meta+4,type);
+    u32_be(meta+8,c->wire_protocol);
+    u32_be(meta+12,c->baud);
+    u32_be(meta+16,c->flags);
+    u32_be(meta+20,g_strict_j2534_filters);
+    u32_be(meta+24,c->filters_count);
+    logline(is_kline?
+      "VIDA B3 ISO9141 filter channel/type/wire-proto/baud/flags/strict/count (BE)":
+      "VIDA B3 CAN filter channel/type/wire-proto/baud/flags/strict/count (BE)",meta,28);
+    parts[0]=mask;parts[1]=pattern;parts[2]=flow;
+    for(j=0;j<3u;j++){
+        const PASSTHRU_MSG *p=parts[j];
+        U8 header[20];
+        U32 len;
+        if(!p){
+            logline(is_kline?"VIDA B3 ISO9141 filter part absent":
+                              "VIDA B3 CAN filter part absent",0,0);
+            continue;
+        }
+        u32_be(header,p->ProtocolID);
+        u32_be(header+4,p->RxStatus);
+        u32_be(header+8,p->TxFlags);
+        u32_be(header+12,p->DataSize);
+        u32_be(header+16,p->ExtraDataIndex);
+        logline(is_kline?
+          (j==0u?"VIDA B3 ISO9141 MASK proto/rx/tx/size/extra (BE)":
+           j==1u?"VIDA B3 ISO9141 PATTERN proto/rx/tx/size/extra (BE)":
+                 "VIDA B3 ISO9141 FLOW proto/rx/tx/size/extra (BE)"):
+          (j==0u?"VIDA B3 CAN MASK proto/rx/tx/size/extra (BE)":
+           j==1u?"VIDA B3 CAN PATTERN proto/rx/tx/size/extra (BE)":
+                 "VIDA B3 CAN FLOW proto/rx/tx/size/extra (BE)"),header,20);
+        len=p->DataSize;
+        if(len>12u)len=12u;
+        logline(is_kline?
+          (j==0u?"VIDA B3 ISO9141 mask bytes":
+           j==1u?"VIDA B3 ISO9141 pattern bytes":
+                 "VIDA B3 ISO9141 flow bytes"):
+          (j==0u?"VIDA B3 CAN mask bytes":
+           j==1u?"VIDA B3 CAN pattern bytes":
+                 "VIDA B3 CAN flow bytes"),p->Data,len);
+    }
+}
 EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *mask,const PASSTHRU_MSG *pattern,const PASSTHRU_MSG *flow,U32 *filter_id){
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
+    vida_b3_log_filter(id,type,c,mask,pattern,flow);
+    if(c->protocol==PROTO_ISO9141){
+        /* B3A2 original VIDA2014D D2-on-K (same B3A1 source-PID):
+           First PASS type=1 len=2: mask [00 FF], pattern [00 13].
+           Then BLOCK type=2 len=5: mask [00 00 00 FF FF],
+           pattern [00 00 00 F2 F0], Flow=NULL, flags=0.
+           Keep ISO9141 fail-closed for any other pattern or type.
+           There is NO K-Line ECU RX or five-baud keyword simulation. */
+        static const U8 block_mask[5]={0u,0u,0u,0xFFu,0xFFu};
+        static const U8 block_pattern[5]={0u,0u,0u,0xF2u,0xF0u};
+        U32 j,length,has_pass=0u;
+        FILTER *kf;
+        if(flow || (type!=1u && type!=2u) ||
+           (type==2u && (mask->DataSize!=5u || pattern->DataSize!=5u))){
+            if(g_vida_iso9141_lab)logline("VIDA B3 ISO9141 REJECT type-or-flow: ERR_INVALID_FLAGS",0,0);
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
+        if(mask->ProtocolID!=PROTO_ISO9141 || pattern->ProtocolID!=PROTO_ISO9141){
+            unlock_state();return error(ERR_MSG_PROTOCOL_ID);
+        }
+        if(mask->TxFlags || pattern->TxFlags){
+            if(g_vida_iso9141_lab)logline("VIDA B3 ISO9141 REJECT TxFlags: ERR_INVALID_FLAGS",0,0);
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
+        if(type==2u && (mask->RxStatus || pattern->RxStatus ||
+           mask->Timestamp || pattern->Timestamp ||
+           mask->ExtraDataIndex || pattern->ExtraDataIndex)){
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
+        length=(type==2u)?5u:2u;
+        if(mask->DataSize!=length || pattern->DataSize!=length){
+            unlock_state();return error(ERR_INVALID_MSG);
+        }
+        if(type==1u){
+            if(mask->Data[0]!=0u || mask->Data[1]!=0xFFu ||
+               pattern->Data[0]!=0u || pattern->Data[1]!=0x13u){
+                unlock_state();return error(ERR_NOT_SUPPORTED);
+            }
+        }else{
+            for(j=0;j<5u;j++){
+                if(mask->Data[j]!=block_mask[j] ||
+                   pattern->Data[j]!=block_pattern[j]){
+                    unlock_state();return error(ERR_NOT_SUPPORTED);
+                }
+            }
+        }
+        for(j=0;j<c->filters_count;j++){
+            const FILTER *prior=&c->filters[j];
+            if(prior->type==1u && prior->length==2u &&
+               prior->mask[0]==0u && prior->mask[1]==0xFFu &&
+               prior->pattern[0]==0u && prior->pattern[1]==0x13u)
+                has_pass=1u;
+            if(prior->type==type && prior->length==length &&
+               bytes_same(prior->mask,mask->Data,length) &&
+               bytes_same(prior->pattern,pattern->Data,length)){
+                unlock_state();return error(ERR_NOT_UNIQUE);
+            }
+        }
+        if(type==2u && !has_pass){
+            /* Observe exact VIDA order; do not install a standalone
+               K-Line block filter before the corresponding PASS filter. */
+            unlock_state();return error(ERR_NOT_SUPPORTED);
+        }
+        if(c->filters_count>=MAX_FILTERS){
+            unlock_state();return error(ERR_EXCEEDED_LIMIT);
+        }
+        *filter_id=g_filter_counter++;
+        kf=&c->filters[c->filters_count++];
+        bytes_zero(kf,sizeof(*kf));
+        kf->id=*filter_id;kf->type=type;kf->length=length;
+        bytes_copy(kf->mask,mask->Data,length);
+        bytes_copy(kf->pattern,pattern->Data,length);
+        logline(type==1u?
+            "ISO9141 LAB VIDA D2-on-K PASS filter [00 FF]/[00 13]":
+            "ISO9141 LAB VIDA D2-on-K BLOCK filter [00 00 00 FF FF]/[00 00 00 F2 F0]",0,0);
+        unlock_state();return error(ERR_OK);
+    }
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
+    if(channel_is_ps(c)&&c->ms_pins!=VOLVO_MS_PINS){unlock_state();return error(ERR_PIN_INVALID);}
     if(g_strict_j2534_filters){
         if(c->protocol==PROTO_CAN && type==3u){unlock_state();return error(ERR_NO_FLOW_CONTROL);}
         if(c->protocol==PROTO_ISO15765 && type!=3u){unlock_state();return error(ERR_INVALID_FLAGS);}
-        if(mask->ProtocolID!=c->protocol||pattern->ProtocolID!=c->protocol){
+        if(mask->ProtocolID!=channel_wire_protocol(c)||pattern->ProtocolID!=channel_wire_protocol(c)){
             unlock_state();return error(ERR_MSG_PROTOCOL_ID);
         }
         if(type==3u && !flow){unlock_state();return error(ERR_NULL_PARAMETER);}
-        if(type==3u && flow->ProtocolID!=c->protocol){unlock_state();return error(ERR_MSG_PROTOCOL_ID);}
+        if(type==3u && flow->ProtocolID!=channel_wire_protocol(c)){unlock_state();return error(ERR_MSG_PROTOCOL_ID);}
         if(c->protocol==PROTO_ISO15765 &&
            ((mask->TxFlags|pattern->TxFlags|(flow?flow->TxFlags:0u))&ISO15765_ADDR_TYPE)){
             unlock_state();return error(ERR_NOT_SUPPORTED);
@@ -1958,14 +2308,79 @@ EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
     }
     unlock_state();return error(ERR_INVALID_FILTER_ID);
 }
+/* Stage B3A3 observer (not a J2534 behavior change). B3A2 original
+   VIDA showed two 'periodic relay opener' failures after a secondary
+   CAN channel was opened. The B3A3 trace resolved both calls to actual
+   ISO9141 ChannelId=1 / 2000ms / 84 40 13 B2 F0 03. Retain this raw
+   ABI observer for all opted-in lab channel calls, before legacy guards.
+   It never allocates a slot, transmits or fabricates ECU RX itself. */
+static void vida_b3a3_log_periodic(U32 channel_id,const PASSTHRU_MSG *msg,U32 interval){
+    U8 header[32];
+    U32 payload_size;
+    if(!g_vida_iso9141_lab || !msg)return;
+    u32_be(header,channel_id);
+    u32_be(header+4,interval);
+    u32_be(header+8,msg->ProtocolID);
+    u32_be(header+12,msg->RxStatus);
+    u32_be(header+16,msg->TxFlags);
+    u32_be(header+20,msg->Timestamp);
+    u32_be(header+24,msg->DataSize);
+    u32_be(header+28,msg->ExtraDataIndex);
+    logline("VIDA B3A3 PERIODIC channel/interval/protocol/rx/tx/timestamp/size/extra (BE)",header,32);
+    payload_size=msg->DataSize;
+    if(payload_size>16u)payload_size=16u;
+    logline("VIDA B3A3 PERIODIC original data (max 16 bytes)",msg->Data,payload_size);
+}
 EXPORT U32 WINCALL PassThruStartPeriodicMsg(U32 id,const PASSTHRU_MSG *msg,U32 *period_id,U32 interval){
     U32 i;if(!msg||!period_id)return error(ERR_NULL_PARAMETER);
-    if(interval<5 || interval>60000)return error(ERR_INVALID_TIME_INTERVAL);
-    if(msg->DataSize<5 || msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
+    vida_b3a3_log_periodic(id,msg,interval);
+    if(interval<5 || interval>60000){
+        if(g_vida_iso9141_lab)logline("VIDA B3A3 PERIODIC reject interval out-of-range (no state)",0,0);
+        return error(ERR_INVALID_TIME_INTERVAL);
+    }
+    if(msg->DataSize>MAX_DATA)return error(ERR_INVALID_MSG);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
-    /* Validate before reserving a slot or incrementing the periodic ID. */
-    {U32 validity=validate_tx_message(c,msg);
-     if(validity!=ERR_OK){unlock_state();return error(validity);}}
+    /* Stage B3A4: source-backed *two* exact original VIDA D2-on-K
+       periodic jobs from IEXPLORE.EXE PID 000007EC, 2026-11-11 12:53:
+         keep-session  : 3000 ms, len 4, 82 33 13 D0
+         relay opener  : 2000 ms, len 6, 84 40 13 B2 F0 03
+       Both are ProtocolID=3, TxFlags/RxStatus/Timestamp/Extra=0,
+       ChannelId=1, ISO9141 10400. No general ISO9141 interval
+       relaxation, fake physical TX, ECU keywords or RX. */
+    if(c->protocol==PROTO_ISO9141){
+        static const U8 keepalive[VIDA_KLINE_KEEPALIVE_SIZE]={0x82u,0x33u,0x13u,0xD0u};
+        static const U8 relay_opener[6]={0x84u,0x40u,0x13u,0xB2u,0xF0u,0x03u};
+        const U8 *expected=keepalive;
+        U32 j,expected_size=VIDA_KLINE_KEEPALIVE_SIZE,is_relay=0u;
+        if(interval==2000u && msg->DataSize==6u){
+            expected=relay_opener;expected_size=6u;is_relay=1u;
+        }else if(interval!=VIDA_KLINE_KEEPALIVE_PERIOD_MS){
+            /* Preserve B2: a keepalive at 2000 ms is invalid time. */
+            unlock_state();return error(ERR_INVALID_TIME_INTERVAL);
+        }
+        if(msg->ProtocolID!=PROTO_ISO9141){
+            unlock_state();return error(ERR_MSG_PROTOCOL_ID);
+        }
+        if(msg->TxFlags!=0u || msg->RxStatus!=0u ||
+           msg->ExtraDataIndex!=0u || msg->Timestamp!=0u){
+            unlock_state();return error(ERR_INVALID_FLAGS);
+        }
+        if(msg->DataSize!=expected_size){
+            unlock_state();return error(ERR_INVALID_MSG);
+        }
+        for(j=0;j<expected_size;j++){
+            if(msg->Data[j]!=expected[j]){
+                unlock_state();return error(ERR_NOT_SUPPORTED);
+            }
+        }
+        if(is_relay)
+            logline("ISO9141 LAB VIDA D2-on-K relay opener 84 40 13 B2 F0 03 at 2000ms accepted (NO ECU TX/RX)",0,0);
+    }else{
+        if(msg->DataSize<5u){unlock_state();return error(ERR_INVALID_MSG);}
+        /* Preserve the preexisting CAN/ISO15765/PS validation path. */
+        {U32 validity=validate_tx_message(c,msg);
+         if(validity!=ERR_OK){unlock_state();return error(validity);}}
+    }
     for(i=0;i<MAX_PERIODIC;i++)if(!c->periodic[i].used)break;
     if(i==MAX_PERIODIC){unlock_state();return error(ERR_EXCEEDED_LIMIT);}
     PERIODIC *p=&c->periodic[i];bytes_zero(p,sizeof(*p));
@@ -1993,6 +2408,50 @@ EXPORT U32 WINCALL PassThruGetLastError(char *description){
     static const char *names[]={"STATUS_NOERROR","ERR_NOT_SUPPORTED","ERR_INVALID_CHANNEL_ID","ERR_INVALID_PROTOCOL_ID","ERR_NULL_PARAMETER","ERR_INVALID_IOCTL_VALUE","ERR_INVALID_FLAGS","ERR_FAILED","ERR_DEVICE_NOT_CONNECTED","ERR_TIMEOUT","ERR_INVALID_MSG","ERR_INVALID_TIME_INTERVAL","ERR_EXCEEDED_LIMIT","ERR_INVALID_MSG_ID","ERR_DEVICE_IN_USE","ERR_INVALID_IOCTL_ID","ERR_BUFFER_EMPTY","ERR_BUFFER_FULL","ERR_BUFFER_OVERFLOW","ERR_PIN_INVALID","ERR_CHANNEL_IN_USE","ERR_MSG_PROTOCOL_ID","ERR_INVALID_FILTER_ID","ERR_NO_FLOW_CONTROL","ERR_NOT_UNIQUE","ERR_INVALID_BAUDRATE","ERR_INVALID_DEVICE_ID"};
     if(!description)return ERR_NULL_PARAMETER;
     str_copy(description,g_last<=26?names[g_last]:"UNKNOWN",80);return ERR_OK;
+}
+/* B3A7 observer: B3A6 original VIDA continued to send B9F0 after
+   unsupported FIVE_BAUD_INIT. Observe exact ABI without asserting ECU RX.
+   Native caller memory is read only via ReadProcessMemory. HOST_TEST uses
+   well-formed fixtures or NULL, never unmapped pointers. */
+static int vida_b3a7_safe_read(void *dst,const void *src,U32 len){
+    if(!src || !dst || !len)return 0;
+#ifdef HOST_TEST
+    bytes_copy(dst,src,len);return 1;
+#else
+    U32 got=0u;
+    return ReadProcessMemory((HANDLE)(-1),src,dst,len,&got)!=0 && got==len;
+#endif
+}
+static void vida_b3a7_observe_init(const CHANNEL *c,const void *input,const void *output){
+    SBYTE_ARRAY in_arr,out_arr;
+    U8 values[48],target=0u;
+    U32 fields[12],i;
+    int input_ok,output_ok;
+    if(!g_vida_iso9141_lab || !g_vida_five_baud_observer_lab)return;
+    bytes_zero(&in_arr,sizeof(in_arr));bytes_zero(&out_arr,sizeof(out_arr));
+    input_ok=vida_b3a7_safe_read(&in_arr,input,sizeof(in_arr));
+    output_ok=vida_b3a7_safe_read(&out_arr,output,sizeof(out_arr));
+    fields[0]=c->id;
+    fields[1]=channel_wire_protocol(c);
+    fields[2]=c->baud;
+    fields[3]=c->kline_config[4]; /* FIVE_BAUD_MOD */
+    fields[4]=input!=0;fields[5]=output!=0;
+    fields[6]=(U32)input_ok;fields[7]=(U32)output_ok;
+    fields[8]=input_ok?in_arr.NumOfBytes:0xFFFFFFFFu;
+    fields[9]=output_ok?out_arr.NumOfBytes:0xFFFFFFFFu;
+    fields[10]=input_ok && in_arr.BytePtr!=0;
+    fields[11]=output_ok && out_arr.BytePtr!=0;
+    for(i=0u;i<12u;i++)u32_be(values+i*4u,fields[i]);
+    logline("VIDA B3A7 FIVE_BAUD_INIT ABI channel/proto/baud/mod/pointers/lengths (BE)",
+            values,sizeof(values));
+    /* Only read the known one-byte input address; never inspect the caller's
+       potentially uninitialized ECU keyword output BytePtr. */
+    if(input_ok && in_arr.NumOfBytes==1u && in_arr.BytePtr &&
+       vida_b3a7_safe_read(&target,in_arr.BytePtr,1u))
+        logline("VIDA B3A7 FIVE_BAUD_INIT original target (1 byte)",&target,1u);
+    else
+        logline("VIDA B3A7 FIVE_BAUD_INIT no validated input byte",0,0);
+    logline("VIDA B3A7 FIVE_BAUD_INIT OBSERVE ONLY: no output/ECU RX",0,0);
 }
 EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     U32 i;
@@ -2022,13 +2481,21 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
         bytes_zero(c->queue_raw_response_baud,sizeof(c->queue_raw_response_baud));
         bytes_zero(c->queue_raw_exchange,sizeof(c->queue_raw_exchange));
         bytes_zero(c->queue_trace,sizeof(c->queue_trace));
-        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,c->protocol);
+        {U8 meta[20];u32_be(meta,id);u32_be(meta+4,channel_wire_protocol(c));
          u32_be(meta+8,c->flags);u32_be(meta+12,c->baud);
          u32_be(meta+16,(U32)now_us());
          logline("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)",meta,20);}
         logline("J2534 CLEAR_RX_BUFFER: queued D2/raw ISO-TP and staged CF dropped",0,0);
         unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_MSG_FILTERS){c->filters_count=0;unlock_state();return error(ERR_OK);}
+    if(ioctl==IO_FIVE_BAUD_INIT && c->protocol==PROTO_ISO9141){
+        vida_b3a7_observe_init(c,input,output);
+        /* The original VIDA requests ECU key words via ioctl 4, but no
+           verified OEM keywords are available to replay. Do not claim
+           physical/synthetic 5-baud success or modify OutputPtr. */
+        logline("ISO9141 LAB FIVE_BAUD_INIT: no verified ECU keywords; unsupported",0,0);
+        unlock_state();return error(ERR_NOT_SUPPORTED);
+    }
     if(ioctl==IO_CLEAR_PERIODIC_MSGS){bytes_zero(c->periodic,sizeof(c->periodic));unlock_state();return error(ERR_OK);}
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
@@ -2040,19 +2507,50 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
            speed is invalid, including when it appears after a valid rate
            in the same list; leave baud and observer state unchanged. */
         if(ioctl==IO_SET_CONFIG){
-            for(i=0;i<list->NumOfParams;i++)
-                if(list->ConfigPtr[i].Parameter==1u &&
-                   list->ConfigPtr[i].Value==0u){
+            for(i=0;i<list->NumOfParams;i++){
+                const SCONFIG *opt=&list->ConfigPtr[i];
+                if(opt->Parameter==1u &&
+                   (opt->Value==0u || (channel_is_ps(c)&&opt->Value!=125000u))){
                     unlock_state();return error(ERR_INVALID_BAUDRATE);
                 }
+                if(channel_is_ps(c)&&opt->Parameter==J2534_PINS&&opt->Value!=VOLVO_MS_PINS){
+                    unlock_state();return error(ERR_PIN_INVALID);
+                }
+                if(c->protocol==PROTO_ISO9141){
+                    int slot=kline_config_index(opt->Parameter);
+                    if((opt->Parameter==1u && opt->Value!=10400u)){
+                        unlock_state();return error(ERR_INVALID_BAUDRATE);
+                    }
+                    if(opt->Parameter!=1u && (slot<0 || (slot==0 && opt->Value>2u) ||
+                       (slot>0 && opt->Value>65535u) ||
+                       (slot==4 && opt->Value!=0u))){
+                        unlock_state();return error(ERR_INVALID_IOCTL_VALUE);
+                    }
+                }
+            }
         }
         for(i=0;i<list->NumOfParams;i++){
             SCONFIG *s=&list->ConfigPtr[i];
-            if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
-                log_set_config(id,s->Parameter,s->Value);
+            if(c->protocol==PROTO_ISO9141){
+                int slot=kline_config_index(s->Parameter);
+                if(s->Parameter!=1u && slot<0){
+                    unlock_state();return error(ERR_INVALID_IOCTL_VALUE);
+                }
+                if(ioctl==IO_SET_CONFIG){
+                    if(s->Parameter==1u)c->baud=s->Value;
+                    else c->kline_config[slot]=s->Value;
+                    log_set_config(id,s->Parameter,s->Value,1);
+                }else s->Value=s->Parameter==1u?c->baud:c->kline_config[slot];
+            }else{
+                if(ioctl==IO_SET_CONFIG){
+                    if(s->Parameter==1)c->baud=s->Value;
+                    if(channel_is_ps(c)&&s->Parameter==J2534_PINS)c->ms_pins=s->Value;
+                    log_set_config(id,s->Parameter,s->Value,
+                                   s->Parameter==1u || (channel_is_ps(c)&&s->Parameter==J2534_PINS));
+                }
+                if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1u?c->baud:
+                    (channel_is_ps(c)&&s->Parameter==J2534_PINS?c->ms_pins:0u);
             }
-            if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
         }
         /* A staged or queued D2 reply belongs to the baud of the original
            B9 request. Re-tuning this channel must not release those frames

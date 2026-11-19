@@ -2892,6 +2892,818 @@ static void test_clear_rx_raw_iso_lifetime(U32 dev){
  puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
 }
 
+/* VIDA2014D J2534-2 CAN_MS LAB only. Deterministic synthetic ECU,
+   not a physical J2534 device, proprietary VIDA or a genuine vehicle. */
+static void test_vida_can_ps_lab(U32 dev){
+ U32 can=0,iso=0,other=0,count,filter=0,old_strict=g_strict_j2534_filters;
+ U32 old_enabled=g_vida_can_ps_lab;
+ const U8 raw_vin[8]={3u,0x22u,0xF1u,0x90u,0,0,0,0};
+ const U8 iso_vin[3]={0x22u,0xF1u,0x90u};
+ const U8 protected_req[4]={0x2Eu,0xF1u,0x90u,0};
+ SCONFIG values[3]={{J2534_PINS,VOLVO_MS_PINS},{1u,125000u},{23u,68u}};
+ SCONFIG_LIST cfg={3u,values},single={1u,values};
+ PASSTHRU_MSG m,rx,mask,pattern;
+ REQUIRE(g_vida_can_ps_lab==0u);
+ g_vida_can_ps_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,500000u,&other)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0x800u,125000u,&other)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(dev,0x10000001u,0,125000u,&other)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(other==0u);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,CAN_29BIT_ID,125000u,&can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,125000u,&iso)==ERR_OK);
+ REQUIRE(can!=iso);
+ REQUIRE(channel(can)->protocol==PROTO_CAN&&channel_wire_protocol(channel(can))==PROTO_CAN_PS);
+ REQUIRE(channel(iso)->protocol==PROTO_ISO15765&&channel_wire_protocol(channel(iso))==PROTO_ISO15765_PS);
+ REQUIRE(channel(can)->ms_pins==0&&channel(iso)->ms_pins==0);
+ /* Before pins3/11 are configured, neither write nor filter may succeed. */
+ m=frame(PROTO_CAN_PS,0x7E0u,raw_vin,8);
+ count=1u;
+ REQUIRE(PassThruWriteMsgs(can,&m,&count,10u)==ERR_PIN_INVALID&&count==0u);
+ mask=frame(PROTO_CAN_PS,0xFFFFFFFFu,0,0);
+ pattern=frame(PROTO_CAN_PS,0x7E8u,0,0);
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pattern,0,&filter)==ERR_PIN_INVALID);
+ values[0].Value=0x060Eu;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&single,0)==ERR_PIN_INVALID);
+ REQUIRE(channel(can)->ms_pins==0u);
+ values[0].Value=VOLVO_MS_PINS;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(channel(can)->ms_pins==VOLVO_MS_PINS&&channel(can)->baud==125000u);
+ values[0].Value=0u;
+ REQUIRE(PassThruIoctl(can,IO_GET_CONFIG,&single,0)==ERR_OK);
+ REQUIRE(values[0].Value==VOLVO_MS_PINS);
+ values[0].Value=VOLVO_MS_PINS;
+ values[1].Value=500000u;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&cfg,0)==ERR_INVALID_BAUDRATE);
+ REQUIRE(channel(can)->baud==125000u&&channel(can)->ms_pins==VOLVO_MS_PINS);
+ values[1].Value=125000u;
+ REQUIRE(PassThruIoctl(iso,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(channel(iso)->ms_pins==VOLVO_MS_PINS);
+ /* J2534 RX must use PS IDs, with strict per-channel filter enforcement. */
+ g_strict_j2534_filters=1u;
+ pattern.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pattern,0,&filter)==ERR_MSG_PROTOCOL_ID);
+ pattern.ProtocolID=PROTO_CAN_PS;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pattern,0,&filter)==ERR_OK);
+ send(can,&m);
+ rx=readmsg(can);
+ REQUIRE(rx.ProtocolID==PROTO_CAN_PS&&rx.DataSize==12u&&rx.Data[4]==0x10u);
+ REQUIRE(PassThruStopMsgFilter(can,filter)==ERR_OK);
+ REQUIRE(PassThruIoctl(can,IO_CLEAR_RX_BUFFER,0,0)==ERR_OK);
+ g_strict_j2534_filters=0u;
+ m=frame(PROTO_ISO15765_PS,0x7E0u,iso_vin,3u);
+ send(iso,&m);
+ rx=readmsg(iso);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765_PS&&rx.Data[4]==0x62u&&rx.Data[5]==0xF1u&&rx.Data[6]==0x90u);
+ /* Read-only guard must survive the canonical-protocol simulator bridge. */
+ m=frame(PROTO_ISO15765_PS,0x7E0u,protected_req,4u);
+ send(iso,&m);
+ rx=readmsg(iso);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765_PS&&rx.Data[4]==0x7Fu&&rx.Data[5]==0x2Eu&&rx.Data[6]==0x33u);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,125000u,&other)==ERR_OK);
+ REQUIRE(channel(other)->ms_pins==0u);
+ REQUIRE(PassThruDisconnect(other)==ERR_OK);
+ g_vida_can_ps_lab=old_enabled;
+ g_strict_j2534_filters=old_strict;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,125000u,&other)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,125000u,&other)==ERR_INVALID_PROTOCOL_ID);
+ puts("PASS VIDA CAN_PS LAB: 0x8004/0x8005, J1962 pins, RX, strict filters and read-only");
+}
+
+/* VIDA2014D ISO9141 stage A. No verified K-Line ECU RX: deliberately inert. */
+static void test_vida_iso9141_lab(U32 dev){
+ U32 ch=0,peer=0,n=1,period=0,old_enabled=g_vida_iso9141_lab;
+ SCONFIG expected[4]={{KLINE_PARITY,0},{KLINE_W0,60},{KLINE_W1,600},{KLINE_P4_MIN,0}};
+ SCONFIG_LIST cfg={4,expected};
+ SCONFIG values[4]={{KLINE_PARITY,99},{KLINE_W0,99},{KLINE_W1,99},{KLINE_P4_MIN,99}};
+ SCONFIG_LIST get={4,values};
+ PASSTHRU_MSG m=frame(PROTO_ISO9141,0x7E0,0,0),rx;
+ PASSTHRU_MSG mask=frame(PROTO_ISO9141,0xFFFFFFFFu,0,0),pat=frame(PROTO_ISO9141,0x7E8,0,0);
+ REQUIRE(g_vida_iso9141_lab==0);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&ch)==ERR_INVALID_PROTOCOL_ID);
+ g_vida_iso9141_lab=1;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,0,10400,&ch)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY|CAN_29BIT_ID,10400,&ch)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,9600,&ch)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&ch)==ERR_OK);
+ REQUIRE(channel(ch)->protocol==PROTO_ISO9141);
+ REQUIRE(channel(ch)->kline_config[1]==300 && channel(ch)->kline_config[2]==300);
+ REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&cfg,0)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_GET_CONFIG,&get,0)==ERR_OK);
+ REQUIRE(values[0].Value==0 && values[1].Value==60 && values[2].Value==600 && values[3].Value==0);
+ expected[0].Value=3;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&cfg,0)==ERR_INVALID_IOCTL_VALUE);
+ REQUIRE(channel(ch)->kline_config[1]==60);
+ expected[0].Value=0;
+ expected[2].Value=65536;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&cfg,0)==ERR_INVALID_IOCTL_VALUE);
+ REQUIRE(channel(ch)->kline_config[2]==600);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->kline_config[1]==300 && channel(peer)->kline_config[3]==10);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ m.DataSize=8;REQUIRE(PassThruWriteMsgs(ch,&m,&n,10)==ERR_NOT_SUPPORTED && n==0);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&period,3000)==ERR_INVALID_MSG); /* K-Line 8-byte periodic is not original VIDA 4-byte keepalive */
+ REQUIRE(PassThruStartMsgFilter(ch,1,&mask,&pat,0,&period)==ERR_INVALID_MSG); /* 4-byte CAN style is invalid on ISO9141 */
+ n=1;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0);
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,0,0)==ERR_NOT_SUPPORTED); /* ECU keywords absent */
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->kline_config[1]==300);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ g_vida_iso9141_lab=old_enabled;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400,&peer)==ERR_INVALID_PROTOCOL_ID);
+ puts("PASS VIDA ISO9141 LAB stage A: isolated Connect/SET_CONFIG; data/init not implemented");
+}
+
+/* Original VIDA2014D J2534D2onKFilter::StartD2onKFilter,
+   VehCom2.DLL 0x060001E8. Capture/silent LAB, NOT a K-Line ECU. */
+static void test_vida_kline_filter_lab(U32 dev){
+ U32 old=g_vida_iso9141_lab,ch=0,peer=0,filter=0,id2=0,n=1;
+ PASSTHRU_MSG mask=frame(PROTO_ISO9141,0u,0,0),pat=frame(PROTO_ISO9141,0u,0,0),rx;
+ PASSTHRU_MSG tx=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ mask.DataSize=pat.DataSize=2u;
+ mask.Data[0]=0u;mask.Data[1]=0xFFu;
+ pat.Data[0]=0u;pat.Data[1]=0x13u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&filter)==ERR_OK && filter!=0);
+ REQUIRE(channel(ch)->filters_count==1u && channel(ch)->filters[0].length==2u);
+ puts("PASS VIDA KLINE B1 1: exact original two-byte D2-on-K PASS filter");
+ REQUIRE(PassThruStartMsgFilter(ch,2u,&mask,&pat,0,&id2)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(ch,3u,&mask,&pat,0,&id2)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,&tx,&id2)==ERR_INVALID_FLAGS);
+ puts("PASS VIDA KLINE B1 2: reject unsupported filter types/flow");
+ pat.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_MSG_PROTOCOL_ID);
+ pat.ProtocolID=PROTO_ISO9141;
+ puts("PASS VIDA KLINE B1 3: wire protocol isolation");
+ mask.DataSize=4u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_INVALID_MSG);
+ mask.DataSize=2u;
+ pat.DataSize=1u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_INVALID_MSG);
+ pat.DataSize=2u;
+ puts("PASS VIDA KLINE B1 4: reject CAN-sized or short filter");
+ pat.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_INVALID_FLAGS);
+ pat.TxFlags=0u;pat.Data[1]=0x12u;
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_NOT_SUPPORTED);
+ pat.Data[1]=0x13u;
+ puts("PASS VIDA KLINE B1 5: no CAN flags or unverified D2 patterns");
+ {
+  SCONFIG kmod={KLINE_FIVE_BAUD_MOD,0u};SCONFIG_LIST modlist={1u,&kmod};
+  REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&modlist,0)==ERR_OK);
+  kmod.Value=99u;REQUIRE(PassThruIoctl(ch,IO_GET_CONFIG,&modlist,0)==ERR_OK&&kmod.Value==0u);
+  kmod.Value=1u;REQUIRE(PassThruIoctl(ch,IO_SET_CONFIG,&modlist,0)==ERR_INVALID_IOCTL_VALUE);
+  REQUIRE(channel(ch)->kline_config[4]==0u);
+  REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,0,0)==ERR_NOT_SUPPORTED);
+  puts("PASS VIDA KLINE B1 5b: original FIVE_BAUD_MOD=0 and no fabricated init keywords");
+ }
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_NOT_UNIQUE);
+ REQUIRE(channel(ch)->filters_count==1u);
+ puts("PASS VIDA KLINE B1 6: duplicate preserves filter state");
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->filters_count==0u);
+ REQUIRE(channel(peer)->kline_config[4]==0u);
+ REQUIRE(PassThruStopMsgFilter(peer,filter)==ERR_INVALID_FILTER_ID);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA KLINE B1 7: peer channel isolation");
+ REQUIRE(PassThruStopMsgFilter(ch,filter)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(ch,filter)==ERR_INVALID_FILTER_ID);
+ REQUIRE(PassThruStartMsgFilter(ch,1u,&mask,&pat,0,&id2)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_MSG_FILTERS,0,0)==ERR_OK);
+ REQUIRE(channel(ch)->filters_count==0u);
+ n=1u;tx.DataSize=5u;
+ REQUIRE(PassThruWriteMsgs(ch,&tx,&n,5u)==ERR_NOT_SUPPORTED && n==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_vida_iso9141_lab=old;
+ puts("PASS VIDA KLINE B1 8: stop/clear, no invented TX/RX, clean close");
+}
+
+/* Stage B2: original unmodified VIDA2014D ordinary J2534 D2-on-K
+   FieldRVA 0x040003DD = 82 33 13 D0, DataSize=4, period=3000ms,
+   RxStatus/TxFlags/Timestamp/ExtraDataIndex=0. No K-Line ECU wire RX. */
+static void test_vida_kline_periodic_b2(U32 dev){
+ U32 old=g_vida_iso9141_lab,ch=0,peer=0,pid=0,id2=0,n=1;
+ PASSTHRU_MSG m=frame(PROTO_ISO9141,0u,0,0),rx;
+ PERIODIC *p;
+ g_vida_iso9141_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ m.ProtocolID=PROTO_ISO9141;m.RxStatus=0;m.TxFlags=0;
+ m.Timestamp=0;m.ExtraDataIndex=0;m.DataSize=4u;
+ m.Data[0]=0x82u;m.Data[1]=0x33u;m.Data[2]=0x13u;m.Data[3]=0xD0u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&pid,3000u)==ERR_OK&&pid!=0u);
+ REQUIRE(channel(ch)->periodic[0].used && channel(ch)->periodic[0].interval_ms==3000u);
+ REQUIRE(channel(ch)->periodic[0].msg.DataSize==4u);
+ REQUIRE(channel(ch)->periodic[0].msg.Data[0]==0x82u &&
+         channel(ch)->periodic[0].msg.Data[1]==0x33u &&
+         channel(ch)->periodic[0].msg.Data[2]==0x13u &&
+         channel(ch)->periodic[0].msg.Data[3]==0xD0u);
+ puts("PASS VIDA KLINE B2 1: original four bytes and 3000 ms accepted");
+ m.DataSize=3u;REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_MSG);
+ m.DataSize=5u;REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_MSG);
+ m.DataSize=4u;
+ puts("PASS VIDA KLINE B2 2: short and CAN-sized periodic refused");
+ m.Data[3]=0x3Eu;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_NOT_SUPPORTED);
+ m.Data[3]=0xD0u;m.Data[0]=0x81u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_NOT_SUPPORTED);
+ m.Data[0]=0x82u;
+ puts("PASS VIDA KLINE B2 3: RS2000 and unverified payloads refused");
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,2000u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,4000u)==ERR_INVALID_TIME_INTERVAL);
+ puts("PASS VIDA KLINE B2 4: wrong DiCE/CAN periodic intervals refused");
+ m.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_MSG_PROTOCOL_ID);
+ m.ProtocolID=PROTO_ISO9141;m.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_FLAGS);
+ m.TxFlags=0;m.ExtraDataIndex=4u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_FLAGS);
+ m.ExtraDataIndex=0;m.RxStatus=START_OF_MESSAGE;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_INVALID_FLAGS);
+ m.RxStatus=0;
+ puts("PASS VIDA KLINE B2 5: exact J2534 metadata and protocol enforced");
+ REQUIRE(channel(ch)->periodic[0].used && channel(ch)->periodic[0].id==pid);
+ REQUIRE(!channel(ch)->periodic[1].used);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(!channel(peer)->periodic[0].used);
+ REQUIRE(PassThruStopPeriodicMsg(peer,pid)==ERR_INVALID_MSG_ID);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA KLINE B2 6: bad requests are atomic; peer isolation");
+ p=&channel(ch)->periodic[0];
+ p->next_us=0u; /* force one simulator scheduler tick */
+ pump_periodic(channel(ch));
+ REQUIRE(p->used && p->next_us>0u && channel(ch)->count==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruStopPeriodicMsg(ch,pid)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(ch,pid)==ERR_INVALID_MSG_ID);
+ puts("PASS VIDA KLINE B2 7: scheduled event cannot synthesize CAN/ECU RX");
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_PERIODIC_MSGS,0,0)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&m,&id2,3000u)==ERR_OK);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);ch=0;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);ch=0;
+ g_vida_iso9141_lab=old;
+ puts("PASS VIDA KLINE B2 8: stop, clear and channel reopen leave no periodic");
+}
+
+
+/* Stage B3 observer-only capture. Original VIDA B2 10:56:36 called a
+   CAN 0x05 250k filter after ISO9141 periodic; its FilterType was not
+   present in VIDA.log. Do not alter FilterType acceptance to guess it. */
+static void test_vida_b3_can_filter_observer(U32 dev){
+ U32 old_lab=g_vida_iso9141_lab,old_strict=g_strict_j2534_filters;
+ U32 old_passive=g_passive_enabled,old_trace_count=g_trace_count;
+ U32 can=0,peer=0,fid=0,n=1;U32 before=0;
+ PASSTHRU_MSG mask=frame(PROTO_CAN,0u,0,0),pat=frame(PROTO_CAN,0u,0,0),rx;
+ g_vida_iso9141_lab=1u;g_strict_j2534_filters=1u;
+ g_passive_enabled=0u;g_trace_count=0u;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&can)==ERR_OK);
+ REQUIRE(channel(can)->filters_count==0u);
+ puts("PASS VIDA B3 CAN OBS 1: original secondary 0x05/250000 channel opens");
+ mask.DataSize=pat.DataSize=4u;
+ mask.Data[0]=0xFFu;mask.Data[1]=0xFFu;mask.Data[2]=0xFFu;mask.Data[3]=0xFFu;
+ pat.Data[0]=0x00u;pat.Data[1]=0x00u;pat.Data[2]=0x00u;pat.Data[3]=0x51u;
+ before=channel(can)->filters_count;
+ REQUIRE(PassThruStartMsgFilter(can,0u,&mask,&pat,0,&fid)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 2: unknown filter type 0 is logged and rejected");
+ REQUIRE(PassThruStartMsgFilter(can,4u,&mask,&pat,0,&fid)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(can,0xFFFFFFFFu,&mask,&pat,0,&fid)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 3: out-of-range types cannot allocate state");
+ pat.ProtocolID=PROTO_ISO15765;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pat,0,&fid)==ERR_MSG_PROTOCOL_ID);
+ pat.ProtocolID=PROTO_CAN;
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 4: wrong wire protocol rejected");
+ mask.DataSize=3u;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pat,0,&fid)==ERR_INVALID_MSG);
+ mask.DataSize=4u;
+ REQUIRE(channel(can)->filters_count==before);
+ puts("PASS VIDA B3 CAN OBS 5: short mask rejected");
+ REQUIRE(PassThruStartMsgFilter(can,1u,&mask,&pat,0,&fid)==ERR_OK && fid!=0u);
+ REQUIRE(channel(can)->filters_count==1u);
+ REQUIRE(channel(can)->filters[0].type==1u);
+ puts("PASS VIDA B3 CAN OBS 6: valid CAN PASS filter behavior unchanged");
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->filters_count==0u);
+ REQUIRE(PassThruStopMsgFilter(peer,fid)==ERR_INVALID_FILTER_ID);
+ REQUIRE(channel(can)->filters_count==1u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA B3 CAN OBS 7: observer has no cross-channel filter effects");
+ n=1u;
+ REQUIRE(PassThruReadMsgs(can,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruStopMsgFilter(can,fid)==ERR_OK);
+ REQUIRE(channel(can)->filters_count==0u);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ g_vida_iso9141_lab=old_lab;g_strict_j2534_filters=old_strict;
+ g_passive_enabled=old_passive;g_trace_count=old_trace_count;
+ puts("PASS VIDA B3 CAN OBS 8: no synthetic RX, filter stop and cleanup");
+}
+
+/* Stage B3A.1: original VIDA 11:19 capture exposed valid CAN PASS_FILTER=1,
+   but later K-Line+CAN errors were absent from CAN-only telemetry. This test
+   asserts both channels' existing behavior while B3 tracing is expanded. */
+static void test_vida_b3a1_kline_filter_evidence(U32 dev){
+ U32 prior=g_vida_iso9141_lab,strict=g_strict_j2534_filters;
+ U32 kline=0,can=0,kfilter=0,cf=0,bad=0,pid=0;
+ PASSTHRU_MSG km=frame(PROTO_ISO9141,0u,0,0),kp=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG cm=frame(PROTO_CAN,0u,0,0),cp=frame(PROTO_CAN,0u,0,0);
+ PASSTHRU_MSG period=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;g_strict_j2534_filters=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&kline)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&can)==ERR_OK);
+ REQUIRE(kline!=can && channel(kline)->filters_count==0u && channel(can)->filters_count==0u);
+ puts("PASS VIDA B3A1 1: original concurrent K-Line/CAN channels isolated");
+ km.DataSize=kp.DataSize=2u;km.Data[0]=0u;km.Data[1]=0xFFu;
+ kp.Data[0]=0u;kp.Data[1]=0x13u;
+ REQUIRE(PassThruStartMsgFilter(kline,1u,&km,&kp,0,&kfilter)==ERR_OK);
+ REQUIRE(channel(kline)->filters_count==1u && channel(can)->filters_count==0u);
+ puts("PASS VIDA B3A1 2: original D2-on-K PASS filter unaffected");
+ period.DataSize=4u;period.Data[0]=0x82u;period.Data[1]=0x33u;
+ period.Data[2]=0x13u;period.Data[3]=0xD0u;
+ REQUIRE(PassThruStartPeriodicMsg(kline,&period,&pid,3000u)==ERR_OK);
+ puts("PASS VIDA B3A1 3: original B2 keep-session still works with dual channels");
+ REQUIRE(PassThruStartMsgFilter(kline,2u,&km,&kp,0,&bad)==ERR_INVALID_FLAGS);
+ REQUIRE(PassThruStartMsgFilter(kline,3u,&km,&kp,0,&bad)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 4: K-Line non-PASS types still fail closed");
+ REQUIRE(PassThruStartMsgFilter(kline,1u,&km,&kp,&period,&bad)==ERR_INVALID_FLAGS);
+ kp.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartMsgFilter(kline,1u,&km,&kp,0,&bad)==ERR_INVALID_FLAGS);
+ kp.TxFlags=0u;
+ REQUIRE(channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 5: flow/flags rejected on K-Line with no side effects");
+ cm.DataSize=cp.DataSize=4u;
+ cm.Data[0]=0u;cm.Data[1]=0u;cm.Data[2]=0u;cm.Data[3]=1u;
+ cp.Data[0]=0u;cp.Data[1]=0u;cp.Data[2]=0u;cp.Data[3]=1u;
+ cm.TxFlags=cp.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartMsgFilter(can,1u,&cm,&cp,0,&cf)==ERR_OK);
+ REQUIRE(channel(can)->filters_count==1u && channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 6: exact observed CAN PASS_FILTER mask/pattern accepted");
+ REQUIRE(PassThruStartMsgFilter(can,4u,&cm,&cp,0,&bad)==ERR_INVALID_FLAGS);
+ REQUIRE(channel(can)->filters_count==1u && channel(kline)->filters_count==1u);
+ puts("PASS VIDA B3A1 7: bad CAN type still rejected, no filter leak");
+ REQUIRE(PassThruStopPeriodicMsg(kline,pid)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(kline,kfilter)==ERR_OK);
+ REQUIRE(PassThruStopMsgFilter(can,cf)==ERR_OK);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(PassThruDisconnect(kline)==ERR_OK);
+ g_vida_iso9141_lab=prior;g_strict_j2534_filters=strict;
+ puts("PASS VIDA B3A1 8: no fabricated ECU RX or stale filter state");
+}
+
+/* Stage B3A2. Exact original B3A1 IEXPLORE PID=00001A70:
+   ISO9141 PASS type=1 [00 FF]/[00 13] then BLOCK type=2
+   [00 00 00 FF FF]/[00 00 00 F2 F0], DataSize=5, no flow.
+   This only registers the filters, never invents an ECU RX. */
+static void test_vida_b3a2_kline_block_filter(U32 dev){
+ U32 old=g_vida_iso9141_lab,chan=0,peer=0,pass_id=0,block_id=0,bad=0,n=1;
+ PASSTHRU_MSG pass_mask=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG pass_pat=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG block_mask=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG block_pat=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ U32 i;
+ g_vida_iso9141_lab=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&chan)==ERR_OK);
+ REQUIRE(channel(chan)->filters_count==0u);
+ pass_mask.DataSize=pass_pat.DataSize=2u;
+ pass_mask.Data[0]=0u;pass_mask.Data[1]=0xFFu;
+ pass_pat.Data[0]=0u;pass_pat.Data[1]=0x13u;
+ block_mask.DataSize=block_pat.DataSize=5u;
+ block_mask.Data[3]=0xFFu;block_mask.Data[4]=0xFFu;
+ block_pat.Data[3]=0xF2u;block_pat.Data[4]=0xF0u;
+ puts("PASS VIDA B3A2 1: lab ISO9141 opened with no filter state");
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&bad)==ERR_NOT_SUPPORTED);
+ REQUIRE(channel(chan)->filters_count==0u);
+ REQUIRE(PassThruStartMsgFilter(chan,1u,&pass_mask,&pass_pat,0,&pass_id)==ERR_OK);
+ REQUIRE(channel(chan)->filters_count==1u);
+ puts("PASS VIDA B3A2 2: BLOCK cannot precede exact D2-on-K PASS");
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&block_id)==ERR_OK);
+ REQUIRE(block_id!=0u && block_id!=pass_id);
+ REQUIRE(channel(chan)->filters_count==2u && channel(chan)->filters[1].type==2u);
+ REQUIRE(channel(chan)->filters[1].length==5u);
+ for(i=0u;i<5u;i++){
+  REQUIRE(channel(chan)->filters[1].mask[i]==block_mask.Data[i]);
+  REQUIRE(channel(chan)->filters[1].pattern[i]==block_pat.Data[i]);
+ }
+ puts("PASS VIDA B3A2 3: original 5-byte BLOCK_FILTER accepted byte-for-byte");
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&bad)==ERR_NOT_UNIQUE);
+ REQUIRE(channel(chan)->filters_count==2u);
+ puts("PASS VIDA B3A2 4: duplicate original BLOCK filter atomic");
+ block_pat.Data[4]=0xF1u;
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&bad)==ERR_NOT_SUPPORTED);
+ block_pat.Data[4]=0xF0u;
+ block_mask.Data[3]=0xFEu;
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&bad)==ERR_NOT_SUPPORTED);
+ block_mask.Data[3]=0xFFu;
+ REQUIRE(channel(chan)->filters_count==2u);
+ puts("PASS VIDA B3A2 5: unknown five-byte K-Line block patterns refused");
+ block_pat.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&bad)==ERR_INVALID_FLAGS);
+ block_pat.TxFlags=0u;
+ block_pat.RxStatus=START_OF_MESSAGE;
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&bad)==ERR_INVALID_FLAGS);
+ block_pat.RxStatus=0u;
+ block_pat.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartMsgFilter(chan,2u,&block_mask,&block_pat,0,&bad)==ERR_MSG_PROTOCOL_ID);
+ block_pat.ProtocolID=PROTO_ISO9141;
+ REQUIRE(channel(chan)->filters_count==2u);
+ puts("PASS VIDA B3A2 6: metadata, flags and protocol remain strict");
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->filters_count==0u);
+ REQUIRE(PassThruStopMsgFilter(peer,block_id)==ERR_INVALID_FILTER_ID);
+ REQUIRE(PassThruStopMsgFilter(peer,pass_id)==ERR_INVALID_FILTER_ID);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ REQUIRE(channel(chan)->filters_count==2u);
+ puts("PASS VIDA B3A2 7: peer ISO9141 filter isolation");
+ n=1u;REQUIRE(PassThruReadMsgs(chan,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruStopMsgFilter(chan,block_id)==ERR_OK);
+ REQUIRE(channel(chan)->filters_count==1u);
+ REQUIRE(PassThruStopMsgFilter(chan,pass_id)==ERR_OK);
+ REQUIRE(channel(chan)->filters_count==0u);
+ REQUIRE(PassThruDisconnect(chan)==ERR_OK);
+ g_vida_iso9141_lab=old;
+ puts("PASS VIDA B3A2 8: no synthetic RX and clean STOP/DISCONNECT");
+}
+
+/* B3A3 observer regression is still valuable for secondary CAN
+   calls, but the subsequent original B3A3 VIDA evidence located the
+   two failing relay-opener calls on ISO9141 ChannelId=1, not CAN.
+   B3A4 below tests that exact six-byte 2000-ms K-Line source data.
+   Preserve full legacy CAN interval validation and output parity. */
+static void test_vida_b3a3_periodic_relay_observer(U32 dev){
+ U32 old_lab=g_vida_iso9141_lab,old_capture=capture_connect_log;
+ U32 can=0,kline=0,period=0,seq=g_periodic_counter,offset;
+ const U8 can_payload[8]={0x53u,0x49u,0x4Du,0x2Du,0x54u,0x45u,0x53u,0x54u};
+ PASSTHRU_MSG cm=frame(PROTO_CAN,0x555u,can_payload,8u);
+ PASSTHRU_MSG km=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;capture_connect_log=1;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,250000u,&can)==ERR_OK);
+ REQUIRE(channel(can)->protocol==PROTO_CAN && channel(can)->baud==250000u);
+ REQUIRE(g_periodic_counter==seq);
+ puts("PASS VIDA B3A3 1: source-backed secondary CAN relay observer isolated");
+ cm.TxFlags=CAN_29BIT_ID;
+ offset=connect_log_len;
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,0u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,4u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(strstr(connect_log_lines+offset,"VIDA B3A3 PERIODIC channel/interval/protocol")!=0);
+ puts("PASS VIDA B3A3 2: zero/short intervals remain rejected and traced");
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,60001u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,0xFFFFFFFFu)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(g_periodic_counter==seq);
+ puts("PASS VIDA B3A3 3: overlong and overflow intervals still rejected");
+ REQUIRE(strstr(connect_log_lines+offset,"VIDA B3A3 PERIODIC original data")!=0);
+ REQUIRE(strstr(connect_log_lines+offset,"53 49 4D 2D 54 45 53 54")!=0);
+ REQUIRE(strstr(connect_log_lines+offset,
+       "VIDA B3A3 PERIODIC reject interval out-of-range")!=0);
+ puts("PASS VIDA B3A3 4: original metadata and bytes logged unaltered");
+ REQUIRE(channel(can)->periodic[0].used==0 && channel(can)->count==0);
+ REQUIRE(PassThruStartPeriodicMsg(0xFFFFFFFFu,&cm,&period,4u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(g_periodic_counter==seq);
+ puts("PASS VIDA B3A3 5: failures allocate no periodic and preserve error ordering");
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,50u)==ERR_OK);
+ REQUIRE(period!=0 && channel(can)->periodic[0].used);
+ REQUIRE(PassThruStopPeriodicMsg(can,period)==ERR_OK);
+ REQUIRE(!channel(can)->periodic[0].used);
+ puts("PASS VIDA B3A3 6: existing valid CAN periodic remains accepted");
+ km.DataSize=4u;km.Data[0]=0x82u;km.Data[1]=0x33u;
+ km.Data[2]=0x13u;km.Data[3]=0xD0u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&kline)==ERR_OK);
+ REQUIRE(PassThruStartPeriodicMsg(kline,&km,&period,3000u)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(kline,period)==ERR_OK);
+ REQUIRE(PassThruDisconnect(kline)==ERR_OK);
+ puts("PASS VIDA B3A3 7: original four-byte 3000-ms K-Line untouched");
+ g_vida_iso9141_lab=0u;
+ offset=connect_log_len;
+ REQUIRE(PassThruStartPeriodicMsg(can,&cm,&period,4u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(strstr(connect_log_lines+offset,"VIDA B3A3 PERIODIC")==0);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ capture_connect_log=old_capture;g_vida_iso9141_lab=old_lab;
+ puts("PASS VIDA B3A3 8: default-off trace, no synthetic RX, clean close");
+}
+
+
+/* Stage B3A4: unredacted original VIDA B3A3 IEXPLORE.EXE PID=000007EC
+   captured exact ISO9141 period=2000, size=6, bytes 84 40 13 B2 F0 03
+   twice after a 3000-ms D2-on-K keep-session. This is only J2534
+   scheduler acceptance; no physical K-Line ECU/keywords or reply. */
+static void test_vida_b3a4_kline_relay_periodic(U32 dev){
+ U32 old_lab=g_vida_iso9141_lab,old_capture=capture_connect_log;
+ U32 ch=0,peer=0,keep_id=0,relay_id=0,bad=0,n=1,offset=0;
+ U32 old_counter=g_periodic_counter;
+ PASSTHRU_MSG keep=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG relay=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ const U8 original_relay[6]={0x84u,0x40u,0x13u,0xB2u,0xF0u,0x03u};
+ U32 i;
+ g_vida_iso9141_lab=1u;capture_connect_log=1;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ keep.DataSize=4u;keep.Data[0]=0x82u;keep.Data[1]=0x33u;
+ keep.Data[2]=0x13u;keep.Data[3]=0xD0u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&keep,&keep_id,3000u)==ERR_OK);
+ REQUIRE(keep_id!=0u&&channel(ch)->periodic[0].interval_ms==3000u);
+ puts("PASS VIDA B3A4 1: original 3000-ms keep-session unchanged");
+ relay.DataSize=6u;
+ for(i=0;i<6u;i++)relay.Data[i]=original_relay[i];
+ offset=connect_log_len;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&relay_id,2000u)==ERR_OK);
+ REQUIRE(relay_id!=0u && relay_id!=keep_id);
+ REQUIRE(channel(ch)->periodic[1].used &&
+         channel(ch)->periodic[1].interval_ms==2000u);
+ REQUIRE(channel(ch)->periodic[1].msg.DataSize==6u);
+ for(i=0;i<6u;i++)REQUIRE(channel(ch)->periodic[1].msg.Data[i]==original_relay[i]);
+ REQUIRE(strstr(connect_log_lines+offset,"relay opener 84 40 13 B2 F0 03 at 2000ms accepted")!=0);
+ puts("PASS VIDA B3A4 2: exact original six-byte 2000-ms relay accepted");
+ REQUIRE(PassThruStartPeriodicMsg(ch,&keep,&bad,2000u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,1999u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2001u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,4000u)==ERR_INVALID_TIME_INTERVAL);
+ REQUIRE(g_periodic_counter==old_counter+2u);
+ puts("PASS VIDA B3A4 3: mismatched K-Line intervals still rejected");
+ relay.Data[5]=0x04u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_NOT_SUPPORTED);
+ relay.Data[5]=0x03u;relay.Data[0]=0x85u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_NOT_SUPPORTED);
+ relay.Data[0]=0x84u;relay.DataSize=5u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_TIME_INTERVAL);
+ relay.DataSize=6u;
+ REQUIRE(g_periodic_counter==old_counter+2u && !channel(ch)->periodic[2].used);
+ puts("PASS VIDA B3A4 4: unknown bytes and sizes cannot allocate slots");
+ relay.ProtocolID=PROTO_CAN;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_MSG_PROTOCOL_ID);
+ relay.ProtocolID=PROTO_ISO9141;relay.TxFlags=CAN_29BIT_ID;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.TxFlags=0u;relay.RxStatus=START_OF_MESSAGE;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.RxStatus=0u;relay.ExtraDataIndex=6u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.ExtraDataIndex=0u;relay.Timestamp=1u;
+ REQUIRE(PassThruStartPeriodicMsg(ch,&relay,&bad,2000u)==ERR_INVALID_FLAGS);
+ relay.Timestamp=0u;
+ puts("PASS VIDA B3A4 5: J2534 protocol and metadata remain strict");
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(peer,relay_id)==ERR_INVALID_MSG_ID);
+ REQUIRE(PassThruStopPeriodicMsg(peer,keep_id)==ERR_INVALID_MSG_ID);
+ REQUIRE(!channel(peer)->periodic[0].used &&
+         channel(ch)->periodic[0].used && channel(ch)->periodic[1].used);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA B3A4 6: peer cannot see or cancel relay periodic");
+ channel(ch)->periodic[0].next_us=0u;channel(ch)->periodic[1].next_us=0u;
+ offset=connect_log_len;
+ pump_periodic(channel(ch));
+ REQUIRE(channel(ch)->periodic[0].used && channel(ch)->periodic[1].used);
+ REQUIRE(channel(ch)->count==0u);
+ REQUIRE(strstr(connect_log_lines+offset,"scheduled D2-on-K keep-session (NO ECU TX/RX)")!=0);
+ REQUIRE(strstr(connect_log_lines+offset,"scheduled VIDA D2-on-K relay opener (NO ECU TX/RX)")!=0);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ puts("PASS VIDA B3A4 7: both scheduler jobs have no fabricated RX");
+ REQUIRE(PassThruStopPeriodicMsg(ch,relay_id)==ERR_OK);
+ REQUIRE(PassThruStopPeriodicMsg(ch,relay_id)==ERR_INVALID_MSG_ID);
+ REQUIRE(PassThruIoctl(ch,IO_CLEAR_PERIODIC_MSGS,0,0)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used && !channel(ch)->periodic[1].used);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ REQUIRE(!channel(ch)->periodic[0].used);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ capture_connect_log=old_capture;g_vida_iso9141_lab=old_lab;
+ puts("PASS VIDA B3A4 8: stop/clear/reconnect leave no stale periodic");
+}
+
+/* B3A5 source-backed observation only: exact original 16:49:56-57 VIDA
+   K-Line direct messages 84 40 13 B2 F0 00, 83 51 13 B9 F0,
+   82 51 13 A0, with J2534 metadata still unknown. Preserve full
+   ERR_NOT_SUPPORTED parity and no unverified K-Line ECU replies. */
+static void test_vida_b3a5_kline_write_observer(U32 dev){
+ U32 old_lab=g_vida_iso9141_lab,old_capture=capture_connect_log;
+ U32 ch=0,peer=0,can=0,n=1,at=0,periods=g_periodic_counter;
+ PASSTHRU_MSG request=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG close_relay=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG end=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG unknown=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG cm=frame(PROTO_CAN,0u,0,0);
+ PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG batch[2];
+ g_vida_iso9141_lab=1u;capture_connect_log=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ REQUIRE(channel(ch)->count==0u);
+ puts("PASS VIDA B3A5 1: original opt-in ISO9141 channel preserved");
+ request.DataSize=5u;
+ request.Data[0]=0x83u;request.Data[1]=0x51u;
+ request.Data[2]=0x13u;request.Data[3]=0xB9u;request.Data[4]=0xF0u;
+ at=connect_log_len;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED);
+ REQUIRE(n==0u);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A5 KLINE WRITE channel/baud/wire-proto")!=0);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A5 KLINE WRITE original data")!=0);
+ REQUIRE(strstr(connect_log_lines+at,"83 51 13 B9 F0")!=0);
+ puts("PASS VIDA B3A5 2: ReadVIN 83 51 13 B9 F0 ABI logged, status unchanged");
+ close_relay.DataSize=6u;
+ close_relay.Data[0]=0x84u;close_relay.Data[1]=0x40u;
+ close_relay.Data[2]=0x13u;close_relay.Data[3]=0xB2u;
+ close_relay.Data[4]=0xF0u;close_relay.Data[5]=0x00u;
+ at=connect_log_len;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&close_relay,&n,2000u)==ERR_NOT_SUPPORTED);
+ REQUIRE(n==0u && strstr(connect_log_lines+at,"84 40 13 B2 F0 00")!=0);
+ puts("PASS VIDA B3A5 3: original relay-close six-byte command logged fail-closed");
+ end.DataSize=4u;
+ end.Data[0]=0x82u;end.Data[1]=0x51u;
+ end.Data[2]=0x13u;end.Data[3]=0xA0u;
+ at=connect_log_len;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&end,&n,2000u)==ERR_NOT_SUPPORTED);
+ REQUIRE(n==0u && strstr(connect_log_lines+at,"82 51 13 A0")!=0);
+ puts("PASS VIDA B3A5 4: original K-Line teardown logged fail-closed");
+ unknown.DataSize=5u;
+ unknown.Data[0]=0x83u;unknown.Data[1]=0x52u;
+ unknown.Data[2]=0x13u;unknown.Data[3]=0xB9u;unknown.Data[4]=0xF0u;
+ unknown.TxFlags=CAN_29BIT_ID;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&unknown,&n,2000u)==ERR_NOT_SUPPORTED);
+ REQUIRE(n==0u);
+ batch[0]=unknown;batch[1]=end;
+ n=2u;REQUIRE(PassThruWriteMsgs(ch,batch,&n,1000u)==ERR_NOT_SUPPORTED);
+ REQUIRE(n==0u);
+ REQUIRE(g_periodic_counter==periods);
+ puts("PASS VIDA B3A5 5: unknown bytes/metadata/batch still cannot transmit");
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(channel(peer)->count==0u);
+ n=0u;REQUIRE(PassThruReadMsgs(peer,&rx,&n,0u)==ERR_INVALID_MSG);
+ n=1u;REQUIRE(PassThruReadMsgs(peer,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(channel(ch)->count==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA B3A5 6: peer K-Line RX and scheduling unaffected");
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000u,&can)==ERR_OK);
+ cm.ProtocolID=PROTO_CAN;cm.DataSize=4u;
+ at=connect_log_len;n=1u;
+ REQUIRE(PassThruWriteMsgs(can,&cm,&n,100u)==ERR_INVALID_MSG);
+ REQUIRE(n==0u);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A5 KLINE WRITE")==0);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ puts("PASS VIDA B3A5 7: CAN validation and no cross-protocol logs");
+ g_vida_iso9141_lab=0u;at=connect_log_len;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED);
+ REQUIRE(n==0u && strstr(connect_log_lines+at,"VIDA B3A5 KLINE WRITE")==0);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ capture_connect_log=old_capture;g_vida_iso9141_lab=old_lab;
+ puts("PASS VIDA B3A5 8: default-off trace, no invented RX, clean close");
+}
+
+
+/* Stage B3A6: five exact unredacted original VIDA 2014D J2534 ISO9141
+   WriteMsgs from B3A5 (same PID and original DLL) are eligible for
+   explicitly opted-in LOCAL ACK only, with no K-Line physical transport,
+   ECU reply, unvalidated 5-baud keywords, or VIN fabrication. */
+static void test_vida_b3a6_exact_kline_local_ack(U32 dev){
+ U32 old_iso=g_vida_iso9141_lab,old_ack=g_vida_kline_tx_ack_lab;
+ U32 old_capture=capture_connect_log,ch=0,peer=0,can=0,n=1,at=0;
+ PASSTHRU_MSG request=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG close_relay=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG teardown=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG unknown=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ PASSTHRU_MSG batch[2];
+ const U8 close_bytes[6]={0x84u,0x40u,0x13u,0xB2u,0xF0u,0x00u};
+ U32 i;
+ g_vida_iso9141_lab=1u;g_vida_kline_tx_ack_lab=0u;capture_connect_log=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ request.DataSize=5u;
+ request.Data[0]=0x83u;request.Data[1]=0x51u;
+ request.Data[2]=0x13u;request.Data[3]=0xB9u;request.Data[4]=0xF0u;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ puts("PASS VIDA B3A6 1: additional ACK gate defaults off independently");
+ g_vida_kline_tx_ack_lab=1u;
+ close_relay.DataSize=6u;for(i=0;i<6u;i++)close_relay.Data[i]=close_bytes[i];
+ at=connect_log_len;n=1u;
+ REQUIRE(PassThruWriteMsgs(ch,&close_relay,&n,2000u)==ERR_OK && n==1u);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A6 KLINE exact original write LOCAL ACK ONLY")!=0);
+ REQUIRE(channel(ch)->count==0u);
+ puts("PASS VIDA B3A6 2: exact six-byte relay close receives local ACK without RX");
+ at=connect_log_len;n=1u;
+ REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_OK && n==1u);
+ REQUIRE(strstr(connect_log_lines+at,"83 51 13 B9 F0")!=0);
+ REQUIRE(channel(ch)->count==0u);
+ puts("PASS VIDA B3A6 3: exact ReadVIN B9F0 local ACK, no VIN response");
+ teardown.DataSize=4u;teardown.Data[0]=0x82u;teardown.Data[1]=0x51u;
+ teardown.Data[2]=0x13u;teardown.Data[3]=0xA0u;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&teardown,&n,2000u)==ERR_OK&&n==1u);
+ REQUIRE(channel(ch)->count==0u);
+ puts("PASS VIDA B3A6 4: exact four-byte session teardown local ACK");
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,1000u)==ERR_NOT_SUPPORTED&&n==0u);
+ request.TxFlags=CAN_29BIT_ID;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ request.TxFlags=0u;request.RxStatus=START_OF_MESSAGE;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ request.RxStatus=0u;request.Timestamp=1u;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ request.Timestamp=0u;request.ExtraDataIndex=1u;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ request.ExtraDataIndex=0u;request.ProtocolID=PROTO_CAN;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ request.ProtocolID=PROTO_ISO9141;
+ puts("PASS VIDA B3A6 5: original timeout and exact J2534 ABI fields required");
+ unknown=request;unknown.Data[1]=0x52u;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&unknown,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ close_relay.Data[5]=0x01u;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&close_relay,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ close_relay.Data[5]=0x00u;
+ teardown.Data[3]=0xA1u;
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&teardown,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ teardown.Data[3]=0xA0u;
+ batch[0]=request;batch[1]=teardown;
+ n=2u;REQUIRE(PassThruWriteMsgs(ch,batch,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ REQUIRE(channel(ch)->count==0u);
+ puts("PASS VIDA B3A6 6: unverified data and multi-message batch fail atomically");
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ n=1u;REQUIRE(PassThruReadMsgs(peer,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000u,&can)==ERR_OK);
+ n=1u;REQUIRE(PassThruWriteMsgs(can,&request,&n,2000u)==ERR_MSG_PROTOCOL_ID&&n==0u);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ puts("PASS VIDA B3A6 7: no peer RX, no CAN alias, no fake ECU response");
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ g_vida_kline_tx_ack_lab=0u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ n=1u;REQUIRE(PassThruWriteMsgs(ch,&request,&n,2000u)==ERR_NOT_SUPPORTED&&n==0u);
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY&&n==0u);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ capture_connect_log=old_capture;
+ g_vida_kline_tx_ack_lab=old_ack;g_vida_iso9141_lab=old_iso;
+ puts("PASS VIDA B3A6 8: explicit opt-out restores B3A5 and clean channel state");
+}
+
+
+/* B3A7 native J2534 ABI observer, never an ECU/init acknowledgement. */
+static void test_vida_b3a7_five_baud_observer(U32 dev){
+ U32 iso=g_vida_iso9141_lab,obs=g_vida_five_baud_observer_lab;
+ U32 cap=capture_connect_log,ch=0,peer=0,can=0,n=1,at;
+ U8 address=0x51u,keyword[2]={0xA5u,0x5Au};
+ SBYTE_ARRAY in={1u,&address},out={2u,keyword};
+ PASSTHRU_MSG rx=frame(PROTO_ISO9141,0u,0,0);
+ g_vida_iso9141_lab=1u;g_vida_five_baud_observer_lab=0u;capture_connect_log=1u;
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT")==0);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 1: default-off and prior unsupported return preserved");
+ g_vida_five_baud_observer_lab=1u;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT ABI")!=0);
+ REQUIRE(strstr(connect_log_lines+at,"original target (1 byte) 51")!=0);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 2: exact original address and output capacity observed");
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,0,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"no validated input byte")!=0);
+ REQUIRE(strstr(connect_log_lines+at,"original target (1 byte)")==0);
+ puts("PASS VIDA B3A7 3: NULL input safely observed with no ECU reply");
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,0)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT ABI")!=0);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 4: NULL output preserves client-owned memory");
+ in.NumOfBytes=2u;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"no validated input byte")!=0);
+ in.NumOfBytes=1u;in.BytePtr=0;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"no validated input byte")!=0);
+ in.BytePtr=&address;out.NumOfBytes=1u;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(out.NumOfBytes==1u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ out.NumOfBytes=2u;
+ puts("PASS VIDA B3A7 5: malformed lengths do not synthesize keywords");
+ REQUIRE(PassThruConnect(dev,PROTO_CAN,CAN_29BIT_ID,500000u,&can)==ERR_OK);
+ at=connect_log_len;
+ REQUIRE(PassThruIoctl(can,IO_FIVE_BAUD_INIT,&in,&out)!=ERR_OK);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT")==0);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&peer)==ERR_OK);
+ REQUIRE(PassThruIoctl(peer,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(channel(ch)->count==0u && channel(peer)->count==0u);
+ REQUIRE(PassThruDisconnect(peer)==ERR_OK);
+ puts("PASS VIDA B3A7 6: CAN rejection and separate channel isolation");
+ n=1u;REQUIRE(PassThruReadMsgs(ch,&rx,&n,0u)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(channel(ch)->count==0u && !channel(ch)->periodic[0].used);
+ REQUIRE(out.NumOfBytes==2u && keyword[0]==0xA5u && keyword[1]==0x5Au);
+ puts("PASS VIDA B3A7 7: no fake ECU RX/keywords/periodic side effects");
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO9141,ISO9141_K_LINE_ONLY,10400u,&ch)==ERR_OK);
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ g_vida_five_baud_observer_lab=0u;at=connect_log_len;
+ REQUIRE(PassThruIoctl(ch,IO_FIVE_BAUD_INIT,&in,&out)==ERR_NOT_SUPPORTED);
+ REQUIRE(strstr(connect_log_lines+at,"VIDA B3A7 FIVE_BAUD_INIT")==0);
+ REQUIRE(PassThruDisconnect(ch)==ERR_OK);
+ capture_connect_log=cap;g_vida_five_baud_observer_lab=obs;g_vida_iso9141_lab=iso;
+ puts("PASS VIDA B3A7 8: reconnect and opt-out retain B3A6 behavior");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_j2534_lifecycle_lock_races();
@@ -2920,6 +3732,18 @@ int main(){
  test_vmware_route_evidence(dev);
  test_p2_informer_observer(dev);
  test_p3tool_j2534_preflight(dev);
+ test_vida_can_ps_lab(dev);
+ test_vida_iso9141_lab(dev);
+ test_vida_kline_filter_lab(dev);
+ test_vida_kline_periodic_b2(dev);
+ test_vida_b3_can_filter_observer(dev);
+ test_vida_b3a1_kline_filter_evidence(dev);
+ test_vida_b3a2_kline_block_filter(dev);
+ test_vida_b3a3_periodic_relay_observer(dev);
+ test_vida_b3a4_kline_relay_periodic(dev);
+ test_vida_b3a5_kline_write_observer(dev);
+ test_vida_b3a6_exact_kline_local_ack(dev);
+ test_vida_b3a7_five_baud_observer(dev);
  REQUIRE(PassThruIoctl(dev,IO_READ_VBATT,0,&batt)==ERR_OK);REQUIRE(batt==12500);
  REQUIRE(PassThruConnect(dev,PROTO_ISO15765,0,500000,&cid)==ERR_OK);
  const U8 vin_req[]={0x22,0xF1,0x90};PASSTHRU_MSG m=frame(PROTO_ISO15765,0x7E0,vin_req,3);
@@ -3648,8 +4472,10 @@ int main(){
  n=1;REQUIRE(PassThruReadMsgs(cid,&r,&n,0)==ERR_BUFFER_EMPTY);
  g_iso_rx_start=0;
  /* P3 F114 evidence matrix using a MY2005-style profile without CEM.
-    Exact known P3 probes are classified CEM/unimplemented with zero RX;
-    nearby or malformed requests remain UNHANDLED. All bytes are synthetic. */
+    Known P3 probes retain CEM/unimplemented priority. Valid unconfigured
+    ISO15765 18DAxxF1 SID22/SID19 requests are request-only ECU_OTHER/
+    missing_profile after B3A19; invalid sizes, service and CAN mode stay
+    UNHANDLED. All requests are synthetic, with zero ECU RX. */
  {
   U32 saved_count=g_ecu_count,p3cid=0,canid=0,k;
   ECU saved_ecus[MAX_ECUS];
@@ -3659,6 +4485,8 @@ int main(){
   const U8 f190[]={0x22,0xF1,0x90};
   const U8 trailing[]={0x22,0xF1,0x14,0x00};
   const U8 short_req[]={0x22,0xF1};
+  const U8 dtc_req[]={0x19,0x02,0xFF};
+  const U8 write_req[]={0x2E,0xF1,0x14};
   const U8 can_sf[]={0x03,0x22,0xF1,0x14,0,0,0,0};
   struct p3_case {U32 proto,id;const U8 *data;U32 len;const char *route,*reason;} cases[]={
    /* 1 */ {PROTO_ISO15765,0x726,f114,3,"CEM","unimplemented_probe"},
@@ -3666,8 +4494,14 @@ int main(){
    /* 3 */ {PROTO_ISO15765,0x726,f190,3,"UNHANDLED","unhandled_request"},
    /* 4 */ {PROTO_ISO15765,0x726,trailing,4,"UNHANDLED","unhandled_request"},
    /* 5 */ {PROTO_ISO15765,0x726,short_req,2,"UNHANDLED","unhandled_request"},
-   /* 6 */ {PROTO_ISO15765,0x18DA51F1,f114,3,"UNHANDLED","unhandled_request"},
-   /* 7 */ {PROTO_CAN,0x726,can_sf,8,"UNHANDLED","unhandled_request"}
+   /* 6 */ {PROTO_ISO15765,0x18DA51F1,f114,3,"ECU_OTHER","missing_profile"},
+   /* 7 */ {PROTO_CAN,0x726,can_sf,8,"UNHANDLED","unhandled_request"},
+   /* 8 */ {PROTO_ISO15765,0x18DA51F1,short_req,2,"UNHANDLED","unhandled_request"},
+   /* 9 */ {PROTO_ISO15765,0x18DA51F1,trailing,4,"UNHANDLED","unhandled_request"},
+   /* 10 */ {PROTO_ISO15765,0x18DA51F1,f190,3,"ECU_OTHER","missing_profile"},
+   /* 11 */ {PROTO_ISO15765,0x18DA51F1,dtc_req,3,"ECU_OTHER","missing_profile"},
+   /* 12 */ {PROTO_ISO15765,0x18DA51F1,write_req,3,"UNHANDLED","unhandled_request"},
+   /* 13 */ {PROTO_CAN,0x18DA51F1,f114,3,"UNHANDLED","unhandled_request"}
   };
   g_ecu_count=1; /* MY2005 donor profile has ECM only; no CEM fixture. */
   g_ecu[0].req=0x7E0;g_ecu[0].resp=0x7E8;
@@ -3693,6 +4527,32 @@ int main(){
   REQUIRE(r.DataSize==24&&r.Data[4]==0x62&&r.Data[5]==0xF1&&r.Data[6]==0x14);
   require_route(p3_log,"CEM",1);
   REQUIRE(terminal_for(p3_log,last_tx_request(p3_log),"none","responded")==1);
+  /* B3A22: a configured 29-bit diagnostic target is OBSERVER ONLY.
+     Neither synthetic VIN nor default NRC 7F is an OEM response. */
+  {
+   const U8 did_d91a[]={0x22,0xD9,0x1A};
+   const U8 vin_f190[]={0x22,0xF1,0x90};
+   const U8 dtc_status[]={0x19,0x02,0xFF};
+   const U8 tester[]={0x3E,0x00};
+   const U8 session[]={0x10,0x03};
+   const U8 write_did[]={0x2E,0xF1,0x90,0x01};
+   const U8 *queries[]={did_d91a,vin_f190,dtc_status,tester,session,write_did};
+   const U32 lengths[]={3,3,3,2,2,4};
+   U32 z;
+   g_ecu[0].req=0x18DA10F1u;
+   g_ecu[0].observer_only=1u;
+   for(z=0;z<sizeof(queries)/sizeof(queries[0]);z++){
+    p3_log=backend_lines+backend_len;
+    m=frame(PROTO_ISO15765,0x18DA10F1u,queries[z],lengths[z]);
+    send(p3cid,&m);
+    require_route(p3_log,"ECU_OTHER",1);
+    REQUIRE(terminal_for(p3_log,last_tx_request(p3_log),"no_response","no_response")==1);
+    REQUIRE(event_count_since(p3_log,"\"kind\":\"rx_queued\"")==0);
+    n=1;REQUIRE(PassThruReadMsgs(p3cid,&r,&n,0)==ERR_BUFFER_EMPTY&&n==0);
+   }
+   g_ecu[0].observer_only=0u;
+   puts("PASS VIDA B3A22: six configured 29-bit observer-only routes, zero ECU RX");
+  }
   REQUIRE(PassThruDisconnect(p3cid)==ERR_OK);
   memcpy(g_ecu,saved_ecus,sizeof(saved_ecus));g_ecu_count=saved_count;
  }

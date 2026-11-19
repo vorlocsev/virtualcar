@@ -16,3 +16,4 @@ EXPORTS
  InterlockedExchange
  QueryPerformanceCounter
  QueryPerformanceFrequency
+ ReadProcessMemory

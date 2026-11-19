@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "source": {
+    "sha256": "FILL_WITH_SHA256_OF_UNMODIFIED_ORIGINAL_LOG",
+    "size_bytes": 0,
+    "raw_unchanged": true,
+    "origin": "original_vehicle_dice",
+    "format": "dice_j2534_text",
+    "transformation": "none"
+  },
+  "vehicle": {
+    "make": "Volvo",
+    "model": "XC90",
+    "platform": "P2",
+    "model_year": 2009,
+    "engine": "V8",
+    "identity_basis": "original_vehicle_record",
+    "identity_record_sha256": "FILL_WITH_SHA256_OF_INDEPENDENT_IDENTITY_DOCUMENT"
+  },
+  "route": {
+    "ecu": "50",
+    "service": "B9FB",
+    "protocol": "CAN",
+    "baud_bps": 125000
+  },
+  "events": {
+    "request": {"line": 0, "line_sha256": "FILL_WITH_RAW_LINE_SHA256"},
+    "responses": []
+  }
+}
