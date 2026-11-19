@@ -27,7 +27,7 @@ from audit_vida_2015a_inithw_metadata import (
     EXPECTED, MAX_FILE, MAX_FILES_WALK, MetadataError, _u,
 )
 from audit_vida_2015a_inithw_il_calls import _metadata_tables, _sections, _body
-from audit_vida_2015a_inithw_callsite_adjacent import _instructions
+from audit_vida_2015a_inithw_callsite_adjacent import _instructions, _fixed_adjacent_class
 from audit_vida_2015a_inithw_assembly_identity import _table_layout
 from audit_vida_2015a_inithw_signature_shapes import _SigReader, UnsupportedSignature
 
@@ -104,6 +104,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
     if len(methods) > MAX_METHODS:
         raise MetadataError("bounded MethodDef limit exceeded")
     callsite_fielddef_tokens = []
+    callsite_method_indices = set()
     all_instructions = []
     counts = {
         "cil_method_bodies_examined": 0,
@@ -120,6 +121,21 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
         "distinct_target_fielddefs_with_any_stfld": 0,
         "distinct_target_fielddefs_without_local_stfld": 0,
         "distinct_methods_writing_target_fielddefs": 0,
+        "distinct_target_call_methods_in_module": 0,
+        "distinct_target_call_methods_with_local_field_write": 0,
+        "distinct_target_call_methods_without_local_field_write": 0,
+        "target_field_write_sites_in_target_call_methods": 0,
+        "target_field_write_sites_outside_target_call_methods": 0,
+        "immediately_preceding_stfld_opcode_family_counts": {
+            name: 0 for name in (
+                "none", "load_arg_or_address", "load_local_or_address",
+                "load_field_or_address", "nested_call_or_calli_unresolved_return",
+                "new_object_or_array", "load_null", "load_string",
+                "load_numeric", "duplicate_stack_item", "type_cast_or_transform",
+                "array_element_or_length", "load_method_or_type_handle",
+                "prefix_not_value_producer", "nop", "other_or_unresolved",
+            )
+        },
         "writer_method_family_counts": {
             "instance_constructor": 0,
             "type_initializer": 0,
@@ -137,6 +153,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
             if op not in (0x28, 0x6F) or token not in targets:
                 continue
             key = "target_callvirt_sites" if op == 0x6F else "target_call_sites"
+            callsite_method_indices.add(len(all_instructions) - 1)
             counts[key] += 1
             if counts["target_callvirt_sites"] + counts["target_call_sites"] > MAX_SITES_PER_MODULE:
                 raise MetadataError("bounded target callsite limit exceeded")
@@ -166,7 +183,7 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
     fields_written = set()
     for method_index, (method_name, code, ins) in enumerate(all_instructions):
         matched_writes = 0
-        for start, op, _, end in ins:
+        for instruction_index, (start, op, _, end) in enumerate(ins):
             if op not in (0x7D, 0x80):  # stfld / stsfld
                 continue
             if end - start != 5:
@@ -181,6 +198,14 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
                 "target_fielddef_stfld_write_sites" if op == 0x7D
                 else "target_fielddef_stsfld_write_sites"
             ] += 1
+            predecessor = ins[instruction_index - 1][1] if instruction_index else None
+            category = _fixed_adjacent_class(predecessor)
+            counts["immediately_preceding_stfld_opcode_family_counts"][category] += 1
+            counts[
+                "target_field_write_sites_in_target_call_methods"
+                if method_index in callsite_method_indices else
+                "target_field_write_sites_outside_target_call_methods"
+            ] += 1
             fields_written.add(token)
         if matched_writes:
             writers.add(method_index)
@@ -192,6 +217,13 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
                 label = "other_named_method"
             counts["writer_method_family_counts"][label] += 1
     counts["distinct_methods_writing_target_fielddefs"] = len(writers)
+    counts["distinct_target_call_methods_in_module"] = len(callsite_method_indices)
+    counts["distinct_target_call_methods_with_local_field_write"] = len(
+        callsite_method_indices & writers
+    )
+    counts["distinct_target_call_methods_without_local_field_write"] = len(
+        callsite_method_indices - writers
+    )
     counts["distinct_target_fielddefs_with_any_stfld"] = len(fields_written)
     counts["distinct_target_fielddefs_without_local_stfld"] = len(fields - fields_written)
 
@@ -204,7 +236,17 @@ def inspect_module(blob: bytes, *, require_interface_memberref: bool) -> dict:
         counts["exact_type_token_unclassified_sites"] != field_sites or
         counts["distinct_target_fielddefs_with_any_stfld"] +
         counts["distinct_target_fielddefs_without_local_stfld"] != len(fields) or
-        sum(counts["writer_method_family_counts"].values()) != len(writers)
+        sum(counts["writer_method_family_counts"].values()) != len(writers) or
+        sum(counts["immediately_preceding_stfld_opcode_family_counts"].values()) !=
+            counts["target_fielddef_stfld_write_sites"] +
+            counts["target_fielddef_stsfld_write_sites"] or
+        counts["target_field_write_sites_in_target_call_methods"] +
+        counts["target_field_write_sites_outside_target_call_methods"] !=
+            counts["target_fielddef_stfld_write_sites"] +
+            counts["target_fielddef_stsfld_write_sites"] or
+        counts["distinct_target_call_methods_with_local_field_write"] +
+        counts["distinct_target_call_methods_without_local_field_write"] !=
+            counts["distinct_target_call_methods_in_module"]
     ):
         raise MetadataError("original field source aggregate counts did not reconcile")
     return counts
@@ -258,6 +300,8 @@ def audit(folder: Path) -> dict:
         "observed_field_writes_exhaustive_across_all_assemblies": False,
         "control_flow_stack_or_exception_handlers_traced": False,
         "field_assignments_or_runtime_values_verified": False,
+        "preceding_stfld_opcode_proves_value_source": False,
+        "writer_and_caller_same_method_proves_write_reaches_call": False,
         "profile_identifiers_argument_proven": False,
         "original_vida_2015a_generic_profile_inheritance_verified": False,
         "d2_baudrate_verified": False,
