@@ -32,7 +32,6 @@ p2_vehicle_tx_assessment p2_vehicle_observe_tx(p2_vehicle *v,
     if (!v) return out;
     out.bus_matches_config = bus_correct(v, bus, bitrate);
     out.classified = p2_cem_classify(can_id, bitrate, data, n);
-    (void)p2_hw_observe_tx(&v->hw_tx, can_id, bitrate, data, n);
     if (out.classified.request != P2_CEM_NOT_D2) {
         ++v->d2_tx_seen;
         if (!out.bus_matches_config || out.classified.decision == P2_CEM_ROUTE_MISMATCH) {
