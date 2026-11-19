@@ -344,6 +344,72 @@ class VidaOriginalStaticCilCallTests(unittest.TestCase):
         with self.assertRaises(MetadataError):
             tool._method_signature_contract(b"\x00\xFF", 1)
 
+    def _synthetic_contract_meta(self, *,
+                                 ref_namespace="Vcc.Contract",
+                                 ref_sig=b"\x20\x01\x01",
+                                 repo_namespace="Vcc.Contract",
+                                 repo_sig=b"\x20\x01\x01"):
+        repo = {
+            "methods": {1: {
+                "name": "GetInitHwSettings",
+                "repository_owner": True,
+                "signature_bytes_private": repo_sig,
+            }},
+            "carcom_repository_interfaceimpl_namespaces_private": [repo_namespace],
+        }
+        external = {
+            "target_reference_icarcom_namespaces_private": {0x0A000001: ref_namespace},
+            "target_reference_signature_bytes_private": {0x0A000001: ref_sig},
+        }
+        return {
+            "bizservices.carcom.db.dll": repo,
+            "bizservices.vehiclecommprovider.dll": external,
+            "workflow.dll": external,
+        }
+
+    def test_34_namespace_and_signature_equality_only_counted(self):
+        counts = tool._compare_original_interface_contract(self._synthetic_contract_meta())
+        self.assertEqual(counts["caller_icarcom_typeref_memberref_candidates"], 2)
+        self.assertEqual(counts["stored_namespace_equal_nonempty"], 2)
+        self.assertEqual(counts["signature_blob_bytes_equal"], 2)
+        self.assertEqual(counts["signature_blob_bytes_different"], 0)
+        self.assertNotIn("Vcc.Contract", json.dumps(counts))
+
+    def test_35_different_sig_is_not_inferred_equivalent(self):
+        counts = tool._compare_original_interface_contract(
+            self._synthetic_contract_meta(ref_sig=b"\x20\x01\x02")
+        )
+        self.assertEqual(counts["stored_namespace_equal_nonempty"], 2)
+        self.assertEqual(counts["signature_blob_bytes_different"], 2)
+
+    def test_36_missing_namespaces_and_signature_are_unavailable(self):
+        counts = tool._compare_original_interface_contract(
+            self._synthetic_contract_meta(ref_namespace="", repo_sig=None)
+        )
+        self.assertEqual(counts["stored_namespace_missing_or_ambiguous"], 2)
+        self.assertEqual(counts["signature_blob_bytes_missing_or_ambiguous"], 2)
+        self.assertNotIn("Vcc.Contract", json.dumps(counts))
+
+    def test_37_exact_original_signature_slice_only_private_memory(self):
+        fake_heap = b"\x00\x03\x20\x01\x01\x00"
+        self.assertEqual(tool._method_signature_raw(fake_heap, 1), b"\x20\x01\x01")
+        self.assertIsNone(tool._method_signature_raw(None, 0))
+        with self.assertRaises(MetadataError):
+            tool._method_signature_raw(b"\x00\x10", 1)
+
+    def test_38_owner_audit_outputs_only_aggregates_not_raw_relation(self):
+        pe = with_first_method_body(b"\x2A")
+        pins = self._sources(pe)
+        with patch.object(tool, "EXPECTED", pins):
+            result = tool.audit(self.folder)
+        self.assertIn("stored_interface_relation_counts", result)
+        self.assertFalse(result["stored_namespace_match_proves_assembly_identity"])
+        self.assertFalse(result["raw_signature_blob_byte_match_proves_semantic_equivalence"])
+        doc = json.dumps(result)
+        self.assertNotIn("signature_bytes_private", doc)
+        self.assertNotIn("namespaces_private", doc)
+        self.assertNotIn(str(self.folder), doc)
+
     def test_16_first_layer_stored_scope_not_runtime_profile_list(self):
         result = tool.inspect_module(with_first_method_body(b"\x2A"))
         self.assertEqual(result["method_bodies_present"], 1)
