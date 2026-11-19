@@ -74,8 +74,8 @@ function Get-Counts($con,[string[]]$names) {
   cem_ggd_config_rows=0; cem_other_protocol_config_rows=0; cem_config_missing_bitrate_rows=0
  }
  foreach($name in $names){
-  $pid=Unique-Row $con 'SELECT TOP (2) [id] FROM [dbo].[T161_Profile] WHERE [identifier]=@value' $name
-  $defaults=Read-SqlTable $con 'SELECT TOP (33) [fkT100_EcuVariant] FROM [dbo].[T160_DefaultEcuVariant] WHERE [fkT161_Profile]=@value' $pid[0]
+  $profileDbId=Unique-Row $con 'SELECT TOP (2) [id] FROM [dbo].[T161_Profile] WHERE [identifier]=@value' $name
+  $defaults=Read-SqlTable $con 'SELECT TOP (33) [fkT100_EcuVariant] FROM [dbo].[T160_DefaultEcuVariant] WHERE [fkT161_Profile]=@value' $profileDbId[0]
   if($defaults.Rows.Count -gt 32){throw 'unbounded default references'}
   if($defaults.Rows.Count -gt 0){$r.profiles_with_defaults++}
   else {$r.profiles_without_defaults++}
