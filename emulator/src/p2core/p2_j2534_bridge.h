@@ -42,6 +42,13 @@ void p2_bridge_disconnect(p2_j2534_bridge *bridge, uint32_t channel);
 bool p2_bridge_inspect_tx(p2_j2534_bridge *bridge, uint32_t channel,
                           uint32_t tx_flags, const uint8_t *data,
                           size_t data_size, p2_bridge_tx_result *out);
+/* Inspect J2534-delivered raw CAN RX only, as candidate header metadata.
+   Does not mutate TX state, emit RX or assert successful CEM session. */
+p2_hw_rx_event p2_bridge_inspect_hw_rx(p2_j2534_bridge *bridge,
+                                        uint32_t channel,
+                                        uint32_t rx_status,
+                                        const uint8_t *data,
+                                        size_t data_size);
 /* Returns static label for an opt-in, observed raw LS CAN frame or NULL.
  * Never extracts or logs key position / actual frame bytes. */
 const char *p2_bridge_inspect_rx(p2_j2534_bridge *bridge, uint32_t channel,

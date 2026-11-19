@@ -1810,6 +1810,15 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
              u32_be(meta+16,(U32)now_us());
              logline("RX context channel/protocol/status/baud/time-us (BE)",meta,20);}
             logline("PassThruReadMsgs -> delivered",msgs[actual].Data,msgs[actual].DataSize);
+            /* Observe delivered RX only: E3 remains an unverified header,
+               not ECU authentication or a generated positive reply. */
+            {
+                p2_hw_rx_event hw_rx=p2_bridge_inspect_hw_rx(
+                    &g_vehicle_bridge,id,msgs[actual].RxStatus,
+                    msgs[actual].Data,msgs[actual].DataSize);
+                if(hw_rx!=P2_HW_RX_UNRELATED)
+                    logline(p2_hw_rx_event_name(hw_rx),0,0);
+            }
             /* Community LS signal inference is disabled by default. */
             if(g_vehicle_bridge.vehicle.cfg.enable_community_ls_signals)
                 (void)p2_bridge_inspect_rx(&g_vehicle_bridge,id,msgs[actual].RxStatus,

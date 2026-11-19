@@ -122,6 +122,42 @@ const char *p2_hw_tx_event_name(p2_hw_tx_event event) {
   }
 }
 
+/* Observe a *candidate* E3/02 RX header only. Only raw CAN receipt
+   follows from this check. The 2005-era response CAN IDs are tentative:
+   matching one is NOT a MY2009 CEM identity or successful Security Access.
+   Never inspect or log remaining payload bytes containing private material. */
+p2_hw_rx_event p2_hw_inspect_e3_rx_candidate(const p2_hw_tx_trace *tx,
+                                             uint32_t baud, uint32_t id,
+                                             const uint8_t *p,size_t n) {
+  uint32_t legacy_id;
+  if(!p || n<3u || p[2]!=0xE3u)return P2_HW_RX_UNRELATED;
+  if(!tx || tx->last_request!=1u ||
+     (tx->last_target!=0x40u && tx->last_target!=0x50u))
+    return P2_HW_RX_ORPHAN_E3_CANDIDATE;
+  if(n!=8u || p[0]<0xCBu || p[0]>0xCFu)
+    return P2_HW_RX_INVALID_FRAME_CANDIDATE;
+  if(p[1]!=tx->last_target)return P2_HW_RX_ROUTE_MISMATCH_CANDIDATE;
+  if(p[3]!=0x02u)return P2_HW_RX_SUBCOMMAND_MISMATCH_CANDIDATE;
+  if((tx->last_target==0x50u && baud!=500000u) ||
+     (tx->last_target==0x40u && baud!=125000u))
+    return P2_HW_RX_WRONG_BUS_CANDIDATE;
+  legacy_id=tx->last_target==0x50u?0x01200003u:0x00800003u;
+  if(id!=legacy_id)return P2_HW_RX_OTHER_ID_CANDIDATE;
+  return P2_HW_RX_LEGACY_ID_CANDIDATE_UNVERIFIED;
+}
+const char *p2_hw_rx_event_name(p2_hw_rx_event e) {
+  switch(e) {
+    case P2_HW_RX_ORPHAN_E3_CANDIDATE:return "P2_HW_RX_ORPHAN_E3_CANDIDATE";
+    case P2_HW_RX_INVALID_FRAME_CANDIDATE:return "P2_HW_RX_INVALID_FRAME_CANDIDATE";
+    case P2_HW_RX_ROUTE_MISMATCH_CANDIDATE:return "P2_HW_RX_ROUTE_MISMATCH_CANDIDATE";
+    case P2_HW_RX_SUBCOMMAND_MISMATCH_CANDIDATE:return "P2_HW_RX_SUBCOMMAND_MISMATCH_CANDIDATE";
+    case P2_HW_RX_WRONG_BUS_CANDIDATE:return "P2_HW_RX_WRONG_BUS_CANDIDATE";
+    case P2_HW_RX_OTHER_ID_CANDIDATE:return "P2_HW_RX_OTHER_ID_CANDIDATE";
+    case P2_HW_RX_LEGACY_ID_CANDIDATE_UNVERIFIED:return "P2_HW_RX_LEGACY_ID_CANDIDATE_UNVERIFIED";
+    default:return "P2_HW_RX_UNRELATED";
+  }
+}
+
 int p2_cem_decode_legacy_b9f0_pn(const uint8_t first[8],
                                  const uint8_t second[8],uint32_t *pn) {
   const uint8_t b[4] = {first?first[5]:0,first?first[6]:0,

@@ -96,5 +96,24 @@ class SectorVHardwareTests(unittest.TestCase):
             self.assertNotIn(str(native), out.getvalue())
 
 
+    def test_11_all_rx_candidate_labels_never_attest_session(self):
+        r = audit.analyze(n(*audit.NATIVE_RX_CANDIDATES.values()), [])
+        for key in audit.NATIVE_RX_CANDIDATES:
+            self.assertEqual(r["native_rx_candidate_counts"][key], 1)
+        self.assertFalse(r["positive_hardware_session_verified"])
+        self.assertFalse(r["native_and_client_same_session_attested"])
+        self.assertFalse(r["vehicle_identity_verified"])
+
+    def test_12_rx_candidate_marker_does_not_override_client_no_reply(self):
+        r = audit.analyze(
+            n("P2_HW_TX_A3_OBSERVED",
+              "P2_HW_RX_LEGACY_ID_CANDIDATE_UNVERIFIED"),
+            c(VIN, HW50, HW40, FAILURE))
+        self.assertEqual(r["native_rx_candidate_counts"]["LEGACY_ID_UNVERIFIED"], 1)
+        self.assertEqual(r["client_event_counts"]["HW_50_no_reply"], 1)
+        self.assertEqual(r["client_ordered_vin50_rx_then_hw50_no_reply_then_hardware_failure"], 1)
+        self.assertFalse(r["positive_hardware_session_verified"])
+
+
 if __name__ == "__main__":
     unittest.main()

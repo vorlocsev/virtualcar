@@ -10,7 +10,7 @@ import argparse
 import json
 import re
 
-SCHEMA = "b3a314-sectorv-hardware-observation-v1"
+SCHEMA = "b3a314-sectorv-hardware-observation-v2"
 MAX_ROWS = 100000
 MAX_LINE = 2048
 NATIVE_PREFIX = re.compile(r"^\[PID=[0-9A-Fa-f]{8} [A-Za-z0-9_.-]{1,48}\] ")
@@ -22,6 +22,15 @@ NATIVE_HARDWARE_MARKERS = {
     "INVALID_SHAPE": "P2_HW_TX_INVALID_SHAPE",
     "WRONG_BUS": "P2_HW_TX_WRONG_BUS",
     "OUT_OF_ORDER": "P2_HW_TX_OUT_OF_ORDER",
+}
+NATIVE_RX_CANDIDATES = {
+    "ORPHAN_E3": "P2_HW_RX_ORPHAN_E3_CANDIDATE",
+    "INVALID_FRAME": "P2_HW_RX_INVALID_FRAME_CANDIDATE",
+    "ROUTE_MISMATCH": "P2_HW_RX_ROUTE_MISMATCH_CANDIDATE",
+    "SUBCOMMAND_MISMATCH": "P2_HW_RX_SUBCOMMAND_MISMATCH_CANDIDATE",
+    "WRONG_BUS": "P2_HW_RX_WRONG_BUS_CANDIDATE",
+    "OTHER_ID": "P2_HW_RX_OTHER_ID_CANDIDATE",
+    "LEGACY_ID_UNVERIFIED": "P2_HW_RX_LEGACY_ID_CANDIDATE_UNVERIFIED",
 }
 NATIVE_UNIMPLEMENTED = "P2 D2 CEM A3/A6: no verified response implementation"
 NATIVE_BUS_MISMATCH = "P2 D2 CEM A3/A6 strict bus mismatch: no response"
@@ -70,7 +79,7 @@ def analyze(native_lines, client_lines):
             # Native records without a verified logger prefix cannot be ascribed.
             continue
         event = line[m.end():]
-        for kind, marker in NATIVE_HARDWARE_MARKERS.items():
+        for kind, marker in {**NATIVE_HARDWARE_MARKERS, **{("RX_" + k): v for k, v in NATIVE_RX_CANDIDATES.items()}}.items():
             if event == marker:
                 native[kind] += 1
                 break
@@ -81,7 +90,7 @@ def analyze(native_lines, client_lines):
                 native["A3_A6_BUS_MISMATCH"] += 1
             elif event == NATIVE_B9FB:
                 native["B9FB_50_STAGED"] += 1
-            elif event.startswith("P2_HW_TX_"):
+            elif event.startswith(("P2_HW_TX_", "P2_HW_RX_")):
                 malformed_native += 1
     client = Counter()
     malformed_client = 0
@@ -122,6 +131,7 @@ def analyze(native_lines, client_lines):
         "native_event_counts": {k: native[k] for k in (
             *NATIVE_HARDWARE_MARKERS.keys(), "A3_A6_UNIMPLEMENTED",
             "A3_A6_BUS_MISMATCH", "B9FB_50_STAGED")},
+        "native_rx_candidate_counts": {k: native["RX_" + k] for k in NATIVE_RX_CANDIDATES},
         "client_event_counts": {k: client[k] for k in (
             "VIN_40_received", "VIN_40_no_reply", "VIN_50_received",
             "VIN_50_no_reply", "HW_40_received", "HW_40_partial",
@@ -137,6 +147,7 @@ def analyze(native_lines, client_lines):
         "notes": [
             "A staged B9FB or matching VIN RX is a transport observation, not decoded VIN acceptance.",
             "A Hardware TX marker is not an ECU response or accepted session.",
+            "Any E3 RX candidate is an observed delivered frame header, NOT an accepted session or OEM provenance.",
             "Hardware no-reply records are client observations; no authentic CEM data is inferred.",
             "No PID, VIN, paths, full timestamps, ECU key or CAN payload is exported.",
             "Input log windows may contain different attempts; cross-log pairing is NOT asserted.",
