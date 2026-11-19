@@ -11,13 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from audit_vida_basedata_carcom_43_direct_links import (
     CARCOM_REQUIRED, SchemaError, audit, main,
 )
-from test_vida_basedata_carcom_43_equality import BaseDataCarCom43Tests
+import test_vida_basedata_carcom_43_equality as fixture
 
 
 class DirectLinksTests(unittest.TestCase):
     def setUp(self):
         # Only synthetic 43-profile fixture, no original private SQLITE.
-        BaseDataCarCom43Tests.setUp(self)
+        fixture.BaseDataCarCom43Tests.setUp(self)
         with closing(sqlite3.connect(self.carcom)) as db, db:
             for table in ("T160_DefaultEcuVariant", "T100_EcuVariant",
                           "T101_Ecu", "T136_InitHw_Profile"):
