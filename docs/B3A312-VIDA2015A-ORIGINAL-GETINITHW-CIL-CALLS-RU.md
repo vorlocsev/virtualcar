@@ -272,3 +272,99 @@ d2_baudrate_verified, original_vida_readvin_accepted.
 
 Никаких изменений оригинальных DLL, SQL, VIDA,
 автомобиля/J2534, main/development и CI/job/release.
+
+
+## Следующий исходный результат: ICarComRepository + исправление leave (2026-11-19)
+
+Фактический owner-private запуск предыдущей 26-тестовой версии:
+
+- BizServices.CarCom.DB.DLL: 0 обнаруженных call/callvirt в 137/140
+  декодированных телах, 3 ошибки неизвестного opcode
+  (0x24, 0xA9, 0xE3), два MethodDef GetInitHwSettings,
+  один из них CarComRepository.
+- BizServices.VehicleCommProvider.DLL: 1/1 GetInitHwSettings MemberRef
+  имеет родитель TypeRef с простым именем **ICarComRepository**,
+  ResolutionScope категории AssemblyRef; найден ровно один
+  статический call/callvirt к этому MemberRef в 175/175 телах.
+- Workflow.DLL: тот же класс MemberRef TypeRef ICarComRepository,
+  ResolutionScope AssemblyRef; найдено пять статических
+  call/callvirt в 1709/1719 декодированных телах. Неизвестные
+  opcode-категории: 0x24, 0xA6, 0xA9, 0xBF, 0xC7, 0xF2,
+  0xF3, 0xFC по одной, плюс две ошибки operand/switch.
+
+Результат означает шесть статических инструкций через
+**интерфейс ICarComRepository** по простому имени TypeRef.
+Ни полный AssemblyRef identity, ни полный namespace,
+ни бинарная сигнатура, ни фактическая реализация интерфейса
+на рантайме пока не сопоставлены. Не утверждать, что все
+шесть исполняются или доходят до нужного экземпляра CEM.
+
+### Найдена ошибка нашего декодера
+
+Таблица размеров CIL операндов неправильно относила
+leave (0xDD) и leave.s (0xDE) к безоперандным операциям.
+Согласно Microsoft Learn, leave имеет 4-байтовый
+целевой offset, leave.s — 1-байтовый offset:
+
+- https://learn.microsoft.com/en-us/dotnet/api/system.reflection.emit.opcodes.leave
+- https://learn.microsoft.com/en-us/dotnet/api/system.reflection.emit.opcodes.leave_s
+
+Это могло создавать ложные неизвестные opcode в байтах
+переходов или нарушать границы следующих инструкций.
+Исправлено: 0xDD теперь 4-байтовый operand; 0xDE 1-байтовый.
+Добавлены 3 синтетических регрессии на boundary/callsite
+(27–29). Старые числа 13 недекодированных тел относятся
+к ошибочной версии декодера и **не могут служить вердиктом
+о содержимом исходных бинарных файлов**.
+
+### Дополнительная контрактная проверка
+
+В тот же анализатор добавлены:
+- carcom_repository_direct_icarcomrepository_interfaceimpl_rows:
+  количество оригинальных CLR InterfaceImpl записей, где
+  TypeDef называется CarComRepository, а присоединённый
+  TypeDef/TypeRef — ICarComRepository. Только статическое
+  имя, не runtime binding/MethodImpl resolution.
+- getinithw_methoddef_parameter_count_categories
+  и getinithw_memberref_parameter_count_categories:
+  категории числа параметров Methods по заголовку
+  Blob method signature, без публикации реальных сигнатур,
+  имён/значений типов и аргументов.
+- getinithw_methoddef_has_this,
+  getinithw_memberref_has_this и vararg counts.
+  Заполненные сигнатуры берутся из оригинального #Blob,
+  недоступность считается отдельно, ничего не угадывается.
+
+Добавлены ещё 4 synthetic tests (30–33) для
+InterfaceImpl и двух вариантов сжатой method signature,
+всего **33** тестовых метода в файле.
+**Ни новый Windows тестовый запуск 33/33, ни повторный
+аудит исходных SHA-256 сборок пока не проведены.**
+
+Из корня PR checkout, по одной строке:
+
+    git pull --ff-only
+
+    py -3 -m unittest discover -s emulator/tests -p test_vida_2015a_inithw_il_calls.py -v
+
+Только при Ran 33 tests ... OK:
+
+    py -3 .\emulator\tools\audit_vida_2015a_inithw_il_calls.py --folder 'E:\vida'
+
+В новом результате важны: all_present_cil_method_bodies_decoded,
+method_bodies_unsupported, unsupported_unknown_opcode_histogram,
+carcom_repository_direct_icarcomrepository_interfaceimpl_rows,
+два словаря getinithw_*_parameter_count_categories, а также
+прежние шесть прямых call/callvirt.
+
+Даже совпадение InterfaceImpl и parameterCount **не докажет**
+точную связку вызываемый MemberRef → исходный MethodDef:
+нужны полные TypeRef/AssemblyRef и сигнатуры с токенами типов,
+MethodImpl/implicit interface method mapping и доказательство
+реального формирования списка T161 profile identifiers
+в caller. Никакое заполненное значение GGD нельзя автоматически
+считать D2 bitrate, а ReadVin original VIDA не подтверждён
+для виртуального VIN в зафиксированных результатах.
+
+Оригинальные DLL, VIDA/SQL, J2534/CEM, main/development
+и релизы в этом этапе не изменяются.
