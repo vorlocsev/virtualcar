@@ -177,6 +177,52 @@ class FieldDefProvenanceSyntheticTests(unittest.TestCase):
             self.assertFalse(result["profile_identifiers_argument_proven"])
             self.assertNotIn(str(base), json.dumps(result))
 
+    def test_20_first_instruction_stfld_has_no_preceding_value_proof(self):
+        r = inspect(_write() + _load() + _call() + b"\x2A")
+        self.assertEqual(
+            r["immediately_preceding_stfld_opcode_family_counts"]["none"], 1
+        )
+        self.assertEqual(r["distinct_target_call_methods_with_local_field_write"], 1)
+
+    def test_21_ldarg_before_stfld_is_category_not_stack_source(self):
+        r = inspect(b"\x02" + _write() + _load() + _call() + b"\x2A")
+        self.assertEqual(
+            r["immediately_preceding_stfld_opcode_family_counts"]["load_arg_or_address"], 1
+        )
+        self.assertEqual(r["target_field_write_sites_in_target_call_methods"], 1)
+        self.assertEqual(r["target_field_write_sites_outside_target_call_methods"], 0)
+
+    def test_22_ldloc_preceding_stfld_classified_separately(self):
+        r = inspect(b"\x06" + _write() + _load() + _call() + b"\x2A")
+        self.assertEqual(
+            r["immediately_preceding_stfld_opcode_family_counts"]["load_local_or_address"], 1
+        )
+
+    def test_23_nested_call_before_stfld_is_unknown_return_value(self):
+        nested = b"\x28" + struct.pack("<I", 0x0A000002)
+        r = inspect(nested + _write() + _load() + _call() + b"\x2A")
+        self.assertEqual(
+            r["immediately_preceding_stfld_opcode_family_counts"][
+                "nested_call_or_calli_unresolved_return"], 1
+        )
+        self.assertEqual(r["distinct_target_call_methods_with_local_field_write"], 1)
+
+    def test_24_target_caller_without_local_stfld_is_counted(self):
+        r = inspect(_load() + _call() + b"\x2A")
+        self.assertEqual(r["distinct_target_call_methods_in_module"], 1)
+        self.assertEqual(r["distinct_target_call_methods_with_local_field_write"], 0)
+        self.assertEqual(r["distinct_target_call_methods_without_local_field_write"], 1)
+        self.assertEqual(r["target_field_write_sites_outside_target_call_methods"], 0)
+
+    def test_25_two_stfld_predecessors_have_reconciled_totals(self):
+        r = inspect(b"\x02" + _write() + b"\x06" + _write() +
+                    _load() + _call() + b"\x2A")
+        histogram = r["immediately_preceding_stfld_opcode_family_counts"]
+        self.assertEqual(sum(histogram.values()), 2)
+        self.assertEqual(histogram["load_arg_or_address"], 1)
+        self.assertEqual(histogram["load_local_or_address"], 1)
+        self.assertEqual(r["target_field_write_sites_in_target_call_methods"], 2)
+
     def test_19_cli_errors_only_class_no_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = StringIO()
