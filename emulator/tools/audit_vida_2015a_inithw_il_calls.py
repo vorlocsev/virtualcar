@@ -32,9 +32,8 @@ def _metadata_tables(blob: bytes) -> dict:
     streams = _cli_metadata(blob)
     tables = streams.get("#~", streams.get("#-"))
     strings = streams["#Strings"]
-    sigs = streams.get("#Blob")
-    if tables is None or len(tables) < 24 or sigs is None:
-        raise MetadataError("required CLR table or signature heap missing")
+    if tables is None or len(tables) < 24:
+        raise MetadataError("required CLR metadata tables missing")
     heaps = _u(tables, 6, 1)
     valid = _u(tables, 8, 8)
     counts, pos = {}, 24
@@ -145,7 +144,7 @@ def _metadata_tables(blob: bytes) -> dict:
         "methods": methods,
         "target_references": references,
         "target_definitions": target_defs,
-        "signature_heap_present": True,
+        "fixed_name_tables_parsed": True,
     }
 
 
