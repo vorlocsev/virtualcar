@@ -10,7 +10,7 @@ import argparse
 import json
 import re
 
-SCHEMA = "b3a314-sectorv-hardware-observation-v2"
+SCHEMA = "b3a314-sectorv-hardware-observation-v3"
 MAX_ROWS = 100000
 MAX_LINE = 2048
 NATIVE_PREFIX = re.compile(r"^\[PID=[0-9A-Fa-f]{8} [A-Za-z0-9_.-]{1,48}\] ")
@@ -31,6 +31,11 @@ NATIVE_RX_CANDIDATES = {
     "WRONG_BUS": "P2_HW_RX_WRONG_BUS_CANDIDATE",
     "OTHER_ID": "P2_HW_RX_OTHER_ID_CANDIDATE",
     "LEGACY_ID_UNVERIFIED": "P2_HW_RX_LEGACY_ID_CANDIDATE_UNVERIFIED",
+    "NO_TX_CLOCK": "P2_HW_RX_NO_TX_CLOCK_CANDIDATE",
+    "BEFORE_A3_TX": "P2_HW_RX_BEFORE_A3_TX_CANDIDATE",
+    "EXPIRED_A3_WINDOW": "P2_HW_RX_EXPIRED_A3_WINDOW_CANDIDATE",
+    "TIMED_LEGACY_ID_UNVERIFIED": "P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED",
+    "DUPLICATE_E3": "P2_HW_RX_DUPLICATE_E3_CANDIDATE",
 }
 NATIVE_UNIMPLEMENTED = "P2 D2 CEM A3/A6: no verified response implementation"
 NATIVE_BUS_MISMATCH = "P2 D2 CEM A3/A6 strict bus mismatch: no response"
@@ -148,6 +153,8 @@ def analyze(native_lines, client_lines):
             "A staged B9FB or matching VIN RX is a transport observation, not decoded VIN acceptance.",
             "A Hardware TX marker is not an ECU response or accepted session.",
             "Any E3 RX candidate is an observed delivered frame header, NOT an accepted session or OEM provenance.",
+            "Timing uses a local monotonic 5s window; a time-matched E3 remains unverified and is not OEM evidence.",
+            "Clock mismatch, duplicate E3 and missing A3 timestamp cannot be upgraded to a successful session.",
             "Hardware no-reply records are client observations; no authentic CEM data is inferred.",
             "No PID, VIN, paths, full timestamps, ECU key or CAN payload is exported.",
             "Input log windows may contain different attempts; cross-log pairing is NOT asserted.",
