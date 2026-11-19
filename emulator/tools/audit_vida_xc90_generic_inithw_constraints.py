@@ -83,11 +83,16 @@ def _summarize(carcom, tables: dict, exact_ids: list, general_ids: list) -> tupl
              ' WHERE "fkT161_Profile"=? LIMIT ' +
              str(MAX_INITHW_PER_PROFILE + 1))
     matched_general = 0
+    seen_general_keys = set()
     init_bearing: list[tuple] = []
     for raw in general_ids:
         row = _profile_query(carcom, p, _normalized_key(raw))
         if row is None:
             continue
+        key_tag = (type(row[0]).__name__, row[0])
+        if key_tag in seen_general_keys:
+            raise SchemaError("duplicate matched generic CarCom profile")
+        seen_general_keys.add(key_tag)
         matched_general += 1
         direct = _bounded(carcom, qlink, (row[0],), MAX_INITHW_PER_PROFILE)
         if direct:
