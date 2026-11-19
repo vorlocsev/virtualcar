@@ -152,9 +152,15 @@ def inspect_module(blob, *, require_interface_memberref):
         for i, inst in enumerate(ins):
             if inst[1] != 0x7D:
                 continue
-            field = _field_token(code, inst, 0x7D)
+            start, _, _, end = inst
+            if end - start != 5:
+                raise MetadataError("invalid stfld operand width")
+            field = _u(code, start + 1, 4)
+            # Ignore unrelated writes, including MemberRef field writes.
             if field not in fields:
                 continue
+            if field >> 24 != 4 or not field & 0xFFFFFF:
+                raise MetadataError("target stfld operand is not local FieldDef")
             counts["target_stfld_writes"] += 1
             if counts["target_stfld_writes"] > 10000:
                 raise MetadataError("unbounded target writer count")
