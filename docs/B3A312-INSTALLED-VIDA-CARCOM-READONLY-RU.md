@@ -31,6 +31,7 @@ Safety:
 - SQL connection ApplicationIntent=ReadOnly is only a hint, not database permission enforcement; script itself performs only SELECT. Prefer SELECT-only SQL account.
 - No UPDATE, DELETE, INSERT, EXEC, ALTER, database configuration, J2534, security, PIN or ECU programming.
 - New report FileMode.CreateNew; refuse outputs inside the original VIDA root, repo or over original input files.
+- Also refuse a missing report parent directory and any NTFS reparse point (junction or symlink) in its ancestor chain. `GetFullPath` lexical normalization alone does not resolve those aliases. This guard is designed to prevent report writes redirected through a link into VIDA or the repository; it does not establish sandboxing against an actively changing filesystem.
 - No consistent SQL Server snapshot guarantee: multiple separate SELECTs. No change to server SNAPSHOT isolation.
 
 Original source may differ in columns, permissions or SQL instance. Schema mismatch is a stop condition, not permission to edit originals.
