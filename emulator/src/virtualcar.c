@@ -1668,9 +1668,12 @@ static void pump_periodic(CHANNEL *c){
         {
             p2_bridge_tx_result observed;
             if(p2_bridge_inspect_tx(&g_vehicle_bridge,c->id,p->msg.TxFlags,
-                    p->msg.Data,p->msg.DataSize,&observed) &&
-               observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
-                logline(observed.label,0,0);
+                    p->msg.Data,p->msg.DataSize,&observed)) {
+                if(observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
+                    logline(observed.label,0,0);
+                if(observed.hw_event!=P2_HW_UNRELATED)
+                    logline(p2_hw_tx_event_name(observed.hw_event),0,0);
+            }
         }
         begin_tx_evidence(c,&p->msg);
         process_request(c,&p->msg);
@@ -1768,9 +1771,12 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
         {
             p2_bridge_tx_result observed;
             if (p2_bridge_inspect_tx(&g_vehicle_bridge,id,msgs[i].TxFlags,
-                    msgs[i].Data,msgs[i].DataSize,&observed) &&
-                observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
-                logline(observed.label,0,0);
+                    msgs[i].Data,msgs[i].DataSize,&observed)) {
+                if(observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
+                    logline(observed.label,0,0);
+                if(observed.hw_event!=P2_HW_UNRELATED)
+                    logline(p2_hw_tx_event_name(observed.hw_event),0,0);
+            }
         }
         begin_tx_evidence(c,&msgs[i]);
         process_request(c,&msgs[i]);
