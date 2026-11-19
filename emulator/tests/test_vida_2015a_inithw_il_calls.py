@@ -36,6 +36,52 @@ def with_first_method_body(code: bytes) -> bytes:
     return bytes(binary)
 
 
+def with_typeref_parent(binary: bytes) -> bytes:
+    """Rebuild the fully synthetic BSJB streams to add one TypeRef row."""
+    image = bytearray(binary)
+    streams = tool._cli_metadata(binary)
+    old = streams["#~"]
+    old_strings = streams["#Strings"]
+    new_name = len(old_strings)
+    new_strings = old_strings + b"ICarComRepository\x00"
+    old_rows = old[24 + 16:]
+    selfmodule = old_rows[:10]
+    typedef = old_rows[10:24]
+    methods = old_rows[24:66]
+    memberrefs = bytearray(old_rows[66:78])
+    struct.pack_into("<H", memberrefs, 0, (1 << 3) | 1)  # TypeRef row 1, tag 1
+    new_valid = struct.unpack_from("<Q", old, 8)[0] | (1 << 1)
+    new_tables = (
+        old[:8] + struct.pack("<Q", new_valid) + old[16:24] +
+        struct.pack("<IIIII", 1, 1, 1, 3, 2) +
+        selfmodule + struct.pack("<HHH", (1 << 2) | 0, new_name, 0) +
+        typedef + methods + memberrefs
+    )
+    version = b"v4.0.30319\x00"
+    version += b"\x00" * (-len(version) % 4)
+    root = bytearray(
+        b"BSJB" + struct.pack("<HHII", 1, 1, 0, len(version)) +
+        version + struct.pack("<HH", 0, 2)
+    )
+    headers = []
+    for name in (b"#~", b"#Strings"):
+        padded = name + b"\x00"
+        padded += b"\x00" * (-len(padded) % 4)
+        headers.append(padded)
+    start = len(root) + sum(8 + len(x) for x in headers)
+    for off, blob, name in (
+        (start, new_tables, headers[0]),
+        (start + len(new_tables), new_strings, headers[1]),
+    ):
+        root.extend(struct.pack("<II", off, len(blob)) + name)
+    root.extend(new_tables)
+    root.extend(new_strings)
+    assert len(root) < 0x100, "synthetic metadata must not overlap test IL"
+    image[0x300:0x300 + len(root)] = root
+    struct.pack_into("<I", image, 0x200 + 12, len(root))
+    return bytes(image)
+
+
 class VidaOriginalStaticCilCallTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -199,6 +245,49 @@ class VidaOriginalStaticCilCallTests(unittest.TestCase):
         self.assertEqual(r["method_bodies_unsupported_unknown_opcode"], 1)
         self.assertEqual(r["method_bodies_unsupported_truncated_or_invalid_operand"], 0)
         self.assertEqual(r["method_bodies_unsupported_other"], 0)
+
+    def test_21_memberref_parent_tag_typedef_and_fixed_type_family(self):
+        il = b"\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A"
+        r = tool.inspect_module(with_first_method_body(il))
+        self.assertEqual(r["target_memberref_parent_kind_counts"]["typedef"], 1)
+        self.assertEqual(r["target_memberref_parent_type_family_counts"]["carcom_repository"], 1)
+        self.assertEqual(r["target_memberref_typeref_scope_counts"]["not_typeref"], 1)
+
+    def test_22_pinned_type_ref_can_classify_interface_name_not_bind(self):
+        il = b"\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A"
+        pe = with_typeref_parent(with_first_method_body(il))
+        r = tool.inspect_module(pe)
+        self.assertEqual(r["target_memberref_parent_kind_counts"]["typeref"], 1)
+        self.assertEqual(r["target_memberref_parent_type_family_counts"]["icarcom_repository"], 1)
+        self.assertEqual(r["target_memberref_typeref_scope_counts"]["module"], 1)
+        self.assertEqual(r["direct_target_calls_to_other_or_unresolved_memberref"], 1)
+        self.assertEqual(r["direct_call_to_repository_memberref_sites"], 0)
+
+    def test_23_one_byte_unknown_opcodes_histogram_is_aggregate_only(self):
+        r = tool.inspect_module(with_first_method_body(b"\xFF\x2A"))
+        self.assertEqual(r["unsupported_unknown_opcode_histogram"], {"cil_opcode_FF": 1})
+        self.assertEqual(r["method_bodies_unsupported_unknown_opcode"], 1)
+
+    def test_24_two_byte_unknown_opcodes_histogram_is_aggregate_only(self):
+        r = tool.inspect_module(with_first_method_body(b"\xFE\xFF\x2A"))
+        self.assertEqual(r["unsupported_unknown_opcode_histogram"], {"cil_opcode_FE_FF": 1})
+
+    def test_25_token_in_wrong_memberref_row_not_counted(self):
+        il = b"\x28" + struct.pack("<I", 0x0A0000FF) + b"\x2A"
+        r = tool.inspect_module(with_first_method_body(il))
+        self.assertEqual(r["direct_call_memberref_sites"], 0)
+        self.assertEqual(r["distinct_methods_with_target_calls"], 0)
+
+    def test_26_zero_memberref_parent_index_fails_closed(self):
+        il = b"\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A"
+        pe = bytearray(with_first_method_body(il))
+        # Synthetic MemberRef table starts after the synthetic table rows.
+        marker = struct.pack("<HHH", 8, 1 + len("CarComRepository") + 1, 0)
+        i = pe.find(marker, 0x300, 0x400)
+        self.assertGreater(i, 0)
+        struct.pack_into("<H", pe, i, 0)
+        with self.assertRaises(MetadataError):
+            tool.inspect_module(bytes(pe))
 
     def test_16_first_layer_stored_scope_not_runtime_profile_list(self):
         result = tool.inspect_module(with_first_method_body(b"\x2A"))
