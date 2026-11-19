@@ -98,6 +98,22 @@ class B9F0NativeRxTests(unittest.TestCase):
                     audit.main(["--native", str(src)])
             self.assertEqual(ctx.exception.code, 2)
 
+    def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
+        import audit_j2534_discovery as general
+        legacy = general._native_d2_delivery_tags(delivered(frames()))
+        self.assertNotIn("b9f0_emitter_rx_groups", legacy)
+        self.assertNotIn("b9f0_emitter_rx_groups_with_contiguous_terminal", legacy)
+        expanded = general._native_d2_delivery_tags(
+            delivered(frames()), include_b9f0=True)
+        self.assertEqual(expanded["b9f0_emitter_rx_groups_with_contiguous_terminal"], 1)
+        self.assertEqual(set(expanded) - set(legacy), {
+            "b9f0_emitter_rx_groups",
+            "b9f0_emitter_rx_groups_with_positive_first_echo",
+            "b9f0_emitter_rx_groups_with_contiguous_terminal",
+            "b9f0_replay_stage_correlated_to_rx",
+            "b9f0_original_client_ecu_identity_accepted",
+        })
+
     def test_07_staged_marker_cannot_confirm_client_identity(self):
         records = [event("P2 D2 read-only recorded frames staged",
                          bytes((0xCB, 0x40, 0xB9, 0xF0)))]

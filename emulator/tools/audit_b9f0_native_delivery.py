@@ -39,7 +39,7 @@ def analyze_source(lines):
                     raise ValueError("bounded_native_tag_rows_exceeded")
             yield line
 
-    report = _native_d2_delivery_tags(bounded())
+    report = _native_d2_delivery_tags(bounded(), include_b9f0=True)
     return {
         "schema_version": SCHEMA,
         "complete_source_scan": True,
