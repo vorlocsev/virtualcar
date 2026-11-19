@@ -20,6 +20,7 @@ typedef struct {
     p2_hw_tx_trace hw_tx; /* per-channel TX chronology, never an ECU ACK */
     uint64_t hw_a3_tx_us; /* local monotonic time, not in public logs */
     bool hw_a3_clock_valid; /* reset on retune/reconnect/another TX */
+    bool hw_e3_candidate_seen; /* duplicate label only, never ECU ACK */
 } p2_bridge_channel;
 
 typedef struct {
