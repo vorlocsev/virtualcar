@@ -82,11 +82,13 @@ p2_hw_tx_event p2_hw_observe_tx(p2_hw_tx_trace *t, uint32_t id,
   if(n!=8u || p[0]!=(kind==1u?0xCFu:0xCBu) ||
      !bytes_equal(p+2,kind==1u?a3_suffix:(kind==2u?e0_suffix:f0_suffix),6u)) {
     t->invalid_shapes++;
+    t->last_request=0; t->last_target=0;
     return P2_HW_INVALID_SHAPE;
   }
   if((target==0x40u && baud!=125000u) ||
      (target==0x50u && baud!=500000u)) {
     t->wrong_bus++;
+    t->last_request=0; t->last_target=0;
     return P2_HW_WRONG_BUS;
   }
   if(kind==1u) {
@@ -99,11 +101,25 @@ p2_hw_tx_event p2_hw_observe_tx(p2_hw_tx_trace *t, uint32_t id,
   else t->f0_tx++;
   if(t->last_target!=target || t->last_request!=kind-1u) {
     t->out_of_order++;
+    t->last_request=0; t->last_target=0;
     return P2_HW_OUT_OF_ORDER;
   }
   t->last_request=kind;
   return kind==2u?P2_HW_E0_TX_AFTER_A3_TX_UNVERIFIED:
                   P2_HW_F0_TX_AFTER_E0_TX_UNVERIFIED;
+}
+
+/* Safe fixed labels only: never disclose a key, VIN, or original request. */
+const char *p2_hw_tx_event_name(p2_hw_tx_event event) {
+  switch(event) {
+    case P2_HW_INVALID_SHAPE:return "P2_HW_TX_INVALID_SHAPE";
+    case P2_HW_WRONG_BUS:return "P2_HW_TX_WRONG_BUS";
+    case P2_HW_A3_TX:return "P2_HW_TX_A3_OBSERVED";
+    case P2_HW_E0_TX_AFTER_A3_TX_UNVERIFIED:return "P2_HW_TX_E0_AFTER_A3_UNVERIFIED";
+    case P2_HW_F0_TX_AFTER_E0_TX_UNVERIFIED:return "P2_HW_TX_F0_AFTER_E0_UNVERIFIED";
+    case P2_HW_OUT_OF_ORDER:return "P2_HW_TX_OUT_OF_ORDER";
+    default:return "P2_HW_TX_UNRELATED";
+  }
 }
 
 int p2_cem_decode_legacy_b9f0_pn(const uint8_t first[8],
