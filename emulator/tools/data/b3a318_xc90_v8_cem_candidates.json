@@ -1,0 +1,13 @@
+{
+  "schema_version": "b3a318-cem-public-catalog-candidates-v1",
+  "target_vehicle": "XC90 MY2009 B8444S",
+  "source_kind": "third_party_diagnostic_coverage_matrix_not_oem_session",
+  "source_url": "https://widnesautoelectrical.co.uk/wp-content/uploads/2019/02/DriveRAP-VOLVO-web-1.pdf",
+  "individual_vehicle_variant_known": false,
+  "a3_02_real_response_known": false,
+  "candidates": [
+    {"module": "CEM", "protocol": "D2 v7", "catalog_part_number": "31296075 AA", "confidence": "catalog_candidate_not_live_vehicle", "source_proves_live_response": false},
+    {"module": "CEM", "protocol": "GGD v2", "catalog_part_number": "30682825 A", "confidence": "catalog_candidate_not_live_vehicle", "source_proves_live_response": false},
+    {"module": "ECM", "protocol": "GGD v2", "catalog_part_number": "30670321 AA", "confidence": "catalog_candidate_not_live_vehicle", "source_proves_live_response": false}
+  ]
+}
