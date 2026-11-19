@@ -36,7 +36,7 @@ def with_first_method_body(code: bytes) -> bytes:
     return bytes(binary)
 
 
-def with_typeref_parent(binary: bytes) -> bytes:
+def with_typeref_parent(binary: bytes, implements: bool = False) -> bytes:
     """Rebuild the fully synthetic BSJB streams to add one TypeRef row."""
     image = bytearray(binary)
     streams = tool._cli_metadata(binary)
@@ -53,11 +53,16 @@ def with_typeref_parent(binary: bytes) -> bytes:
     memberrefs = bytearray(old_rows[66:78])
     struct.pack_into("<H", memberrefs, 0, (1 << 3) | 1)  # TypeRef row 1, tag 1
     new_valid = struct.unpack_from("<Q", old, 8)[0] | (1 << 1)
+    if implements:
+        new_valid |= 1 << 9
     new_tables = (
         old[:8] + struct.pack("<Q", new_valid) + old[16:24] +
-        struct.pack("<IIIII", 1, 1, 1, 3, 2) +
+        (struct.pack("<IIIIII", 1, 1, 1, 3, 1, 2) if implements else
+         struct.pack("<IIIII", 1, 1, 1, 3, 2)) +
         selfmodule + struct.pack("<HHH", (1 << 2) | 0, new_name, 0) +
-        typedef + methods + memberrefs
+        typedef + methods +
+        (struct.pack("<HH", 1, (1 << 2) | 1) if implements else b"") +
+        memberrefs
     )
     version = b"v4.0.30319\x00"
     version += b"\x00" * (-len(version) % 4)
@@ -309,6 +314,35 @@ class VidaOriginalStaticCilCallTests(unittest.TestCase):
     def test_29_branch_operands_with_fake_call_token_not_counted(self):
         il = b"\xDD\x28\x00\x00\x0A\xDE\x28\x2A"
         self.assertEqual(tool._calls(il), [])
+
+    def test_30_repository_interfaceimpl_row_is_metadata_not_runtime_binding(self):
+        il = b"\x28" + struct.pack("<I", TARGET_MEMBERREF) + b"\x2A"
+        pe = with_typeref_parent(with_first_method_body(il), implements=True)
+        r = tool.inspect_module(pe)
+        self.assertEqual(r["carcom_repository_direct_icarcomrepository_interfaceimpl_rows"], 1)
+        self.assertEqual(r["direct_call_memberref_sites"], 1)
+        self.assertEqual(r["target_memberref_parent_type_family_counts"]["icarcom_repository"], 1)
+
+    def test_31_method_signature_default_has_this_parameter_arity(self):
+        sig = b"\x00\x03\x20\x02\x01"
+        r = tool._method_signature_contract(sig, 1)
+        self.assertEqual(r["parameters"], 2)
+        self.assertTrue(r["has_this"])
+        self.assertFalse(r["vararg"])
+        self.assertEqual(r["generic_arity"], 0)
+
+    def test_32_generic_target_signature_arity_is_bounded(self):
+        sig = b"\x00\x04\x30\x01\x03\x01"
+        r = tool._method_signature_contract(sig, 1)
+        self.assertEqual(r["parameters"], 3)
+        self.assertEqual(r["generic_arity"], 1)
+        self.assertTrue(r["has_this"])
+
+    def test_33_target_signature_missing_heap_does_not_invent_values(self):
+        self.assertIsNone(tool._method_signature_contract(None, 0))
+        self.assertIsNone(tool._method_signature_contract(b"\x00", 0))
+        with self.assertRaises(MetadataError):
+            tool._method_signature_contract(b"\x00\xFF", 1)
 
     def test_16_first_layer_stored_scope_not_runtime_profile_list(self):
         result = tool.inspect_module(with_first_method_body(b"\x2A"))
