@@ -240,12 +240,30 @@ WHERE s.[name]=N'dbo' AND t.[name] IN
  }
  $phase='report'
  $json=ConvertTo-Json -InputObject $report -Depth 6
- $stream=[System.IO.File]::Open($out,[System.IO.FileMode]::CreateNew,
-                               [System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
+ # Stage the full report in the same verified parent directory. Do not
+ # expose a partial JSON at the final path on failed writes.
+ $parent=[System.IO.Path]::GetDirectoryName($out)
+ $tempOut=[System.IO.Path]::Combine($parent,
+       ('.vc-carcom-'+[Guid]::NewGuid().ToString('N')+'.tmp'))
+ $tempCreated=$false
  try{
-  $data=([System.Text.UTF8Encoding]::new($false)).GetBytes($json+[Environment]::NewLine)
-  $stream.Write($data,0,$data.Length)
- }finally{$stream.Dispose()}
+  $stream=[System.IO.File]::Open($tempOut,[System.IO.FileMode]::CreateNew,
+                               [System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
+  $tempCreated=$true
+  try{
+   $data=([System.Text.UTF8Encoding]::new($false)).GetBytes($json+[Environment]::NewLine)
+   $stream.Write($data,0,$data.Length)
+   $stream.Flush($true)
+  }finally{$stream.Dispose()}
+  # File.Move in Windows/.NET Framework does not overwrite an existing
+  # destination; the finished file becomes visible only after this step.
+  [System.IO.File]::Move($tempOut,$out)
+  $tempCreated=$false
+ }finally{
+  if($tempCreated -and [System.IO.File]::Exists($tempOut)){
+   [System.IO.File]::Delete($tempOut)
+  }
+ }
  [pscustomobject]@{
   status='aggregate_report_saved';source='installed_local_vida'
   original_vida_modified=$false;runtime_profile_proven=$false
