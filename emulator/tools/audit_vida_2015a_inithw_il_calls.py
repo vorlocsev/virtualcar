@@ -119,9 +119,12 @@ def _metadata_tables(blob: bytes) -> dict:
             raise MetadataError("invalid TypeDef method range")
         for k in range(first, stop):
             methods[k]["repository_owner"] = type_name == "CarComRepository"
-    if any("repository_owner" not in m for m in methods.values()):
+            methods[k]["hwsettings_owner"] = type_name == "HwSettings"
+    if any("repository_owner" not in m or "hwsettings_owner" not in m
+           for m in methods.values()):
         raise MetadataError("unowned CLR method")
     references = {}
+    reference_parent_category = {}
     for i in range(1, counts.get(10, 0) + 1):
         off = row(10, i)
         parent = _u(tables, off, ref_parent)
@@ -135,15 +138,29 @@ def _metadata_tables(blob: bytes) -> dict:
             parent_name = typename(1, index)
         else:
             parent_name = None
-        references[0x0A000000 | i] = parent_name == "CarComRepository"
+        token = 0x0A000000 | i
+        references[token] = parent_name == "CarComRepository"
+        reference_parent_category[token] = (
+            "carcom_repository" if parent_name == "CarComRepository" else
+            "hwsettings" if parent_name == "HwSettings" else "other_or_unresolved"
+        )
     target_defs = {
         0x06000000 | i: m["repository_owner"]
+        for i, m in methods.items() if m["name"] == TARGET
+    }
+    definition_owner_category = {
+        0x06000000 | i: (
+            "carcom_repository" if m["repository_owner"] else
+            "hwsettings" if m["hwsettings_owner"] else "other"
+        )
         for i, m in methods.items() if m["name"] == TARGET
     }
     return {
         "methods": methods,
         "target_references": references,
+        "target_reference_parent_categories": reference_parent_category,
         "target_definitions": target_defs,
+        "target_definition_owner_categories": definition_owner_category,
         "fixed_name_tables_parsed": True,
     }
 
@@ -207,7 +224,7 @@ _INLINE = (
     set(range(0x7B, 0x82))
 )
 _FE_ZERO = set(range(0x00, 0x06)) | {0x0F, 0x11, 0x13, 0x14, 0x17, 0x18, 0x1A, 0x1D, 0x1E}
-_FE_SHORT = {0x12}
+_FE_SHORT = {0x12, 0x19}  # unaligned. and no. prefixes (ECMA-335)
 _FE_WORD = set(range(0x09, 0x0F))
 _FE_INLINE = {0x06, 0x07, 0x15, 0x16, 0x1C}
 
@@ -280,12 +297,35 @@ def inspect_module(blob: bytes) -> dict:
         "target_name_memberrefs_on_repository_type": sum(ref.values()),
         "target_name_methoddef_rows": len(local),
         "target_name_methoddefs_on_repository_type": sum(local.values()),
+        "target_memberref_parent_carcom_repository_rows": sum(
+            cat == "carcom_repository" for cat in meta["target_reference_parent_categories"].values()
+        ),
+        "target_memberref_parent_hwsettings_rows": sum(
+            cat == "hwsettings" for cat in meta["target_reference_parent_categories"].values()
+        ),
+        "target_memberref_parent_other_or_unresolved_rows": sum(
+            cat == "other_or_unresolved" for cat in meta["target_reference_parent_categories"].values()
+        ),
+        "target_methoddef_owner_hwsettings_rows": sum(
+            cat == "hwsettings" for cat in meta["target_definition_owner_categories"].values()
+        ),
+        "target_methoddef_owner_other_rows": sum(
+            cat == "other" for cat in meta["target_definition_owner_categories"].values()
+        ),
         "direct_call_memberref_sites": 0,
         "direct_call_local_methoddef_sites": 0,
         "direct_call_to_repository_memberref_sites": 0,
         "direct_call_to_repository_local_methoddef_sites": 0,
         "ldftn_reference_sites_not_calls": 0,
         "distinct_methods_with_target_calls": 0,
+        "direct_target_calls_from_carcom_repository": 0,
+        "direct_target_calls_from_hwsettings": 0,
+        "direct_target_calls_from_other_types": 0,
+        "direct_target_calls_to_hwsettings_memberref": 0,
+        "direct_target_calls_to_other_or_unresolved_memberref": 0,
+        "method_bodies_unsupported_unknown_opcode": 0,
+        "method_bodies_unsupported_truncated_or_invalid_operand": 0,
+        "method_bodies_unsupported_other": 0,
     }
     total_bytes = 0
     for method in meta["methods"].values():
@@ -298,8 +338,15 @@ def inspect_module(blob: bytes) -> dict:
             raise MetadataError("total original CIL scan bound exceeded")
         try:
             calls = _calls(body)
-        except MetadataError:
+        except MetadataError as exc:
             counts["method_bodies_unsupported"] += 1
+            reason = str(exc)
+            if "opcode" in reason:
+                counts["method_bodies_unsupported_unknown_opcode"] += 1
+            elif "operand" in reason or "switch" in reason:
+                counts["method_bodies_unsupported_truncated_or_invalid_operand"] += 1
+            else:
+                counts["method_bodies_unsupported_other"] += 1
             continue
         counts["method_bodies_decoded"] += 1
         has_call = False
@@ -308,6 +355,9 @@ def inspect_module(blob: bytes) -> dict:
                 if kind in ("call", "callvirt"):
                     counts["direct_call_memberref_sites"] += 1
                     counts["direct_call_to_repository_memberref_sites"] += int(ref[target_token])
+                    category = meta["target_reference_parent_categories"][target_token]
+                    counts["direct_target_calls_to_hwsettings_memberref"] += int(category == "hwsettings")
+                    counts["direct_target_calls_to_other_or_unresolved_memberref"] += int(category == "other_or_unresolved")
                     has_call = True
                 elif kind in ("ldftn", "ldvirtftn"):
                     counts["ldftn_reference_sites_not_calls"] += 1
@@ -319,8 +369,27 @@ def inspect_module(blob: bytes) -> dict:
                 elif kind in ("ldftn", "ldvirtftn"):
                     counts["ldftn_reference_sites_not_calls"] += 1
         counts["distinct_methods_with_target_calls"] += int(has_call)
+        if has_call:
+            category = ("direct_target_calls_from_carcom_repository" if method["repository_owner"] else
+                        "direct_target_calls_from_hwsettings" if method["hwsettings_owner"] else
+                        "direct_target_calls_from_other_types")
+            # For caller provenance, count distinct methods here; a method
+            # containing multiple callsites still counts only once.
+            counts[category] += 1
     if (counts["method_bodies_decoded"] + counts["method_bodies_unsupported"]
-            != counts["method_bodies_present"]):
+            != counts["method_bodies_present"] or
+            counts["method_bodies_unsupported"] !=
+            counts["method_bodies_unsupported_unknown_opcode"] +
+            counts["method_bodies_unsupported_truncated_or_invalid_operand"] +
+            counts["method_bodies_unsupported_other"] or
+            counts["distinct_methods_with_target_calls"] !=
+            counts["direct_target_calls_from_carcom_repository"] +
+            counts["direct_target_calls_from_hwsettings"] +
+            counts["direct_target_calls_from_other_types"] or
+            counts["target_name_memberref_rows"] !=
+            counts["target_memberref_parent_carcom_repository_rows"] +
+            counts["target_memberref_parent_hwsettings_rows"] +
+            counts["target_memberref_parent_other_or_unresolved_rows"]):
         raise MetadataError("unreconciled CIL decoder scope")
     counts["all_present_cil_method_bodies_decoded"] = (
         counts["method_bodies_unsupported"] == 0
