@@ -40,6 +40,33 @@ p2_cem_result p2_cem_classify(uint32_t tx_can_id, uint32_t bitrate,
                               const uint8_t *payload, size_t size);
 const char *p2_cem_request_name(p2_cem_request r);
 
+/* Hardware-phase TX evidence only. This never authorizes ECU access and
+   never confirms a positive CEM reply. No received payload is used here. */
+typedef enum {
+  P2_HW_UNRELATED = 0,
+  P2_HW_INVALID_SHAPE,
+  P2_HW_WRONG_BUS,
+  P2_HW_A3_TX,
+  P2_HW_E0_TX_AFTER_A3_TX_UNVERIFIED,
+  P2_HW_F0_TX_AFTER_E0_TX_UNVERIFIED,
+  P2_HW_OUT_OF_ORDER
+} p2_hw_tx_event;
+
+typedef struct {
+  uint32_t a3_tx, e0_tx, f0_tx, invalid_shapes, wrong_bus, out_of_order;
+  uint8_t last_target;
+  uint8_t last_request; /* 0=none, 1=A3 TX, 2=E0 TX, 3=F0 TX; NOT ECU-ACK */
+} p2_hw_tx_trace;
+
+/* Input is eight classic-CAN data bytes, without 4-byte J2534 CAN ID.
+   Distinguishes observed TX chronology from accepted ECU/session state. */
+p2_hw_tx_event p2_hw_observe_tx(p2_hw_tx_trace *trace, uint32_t can_id,
+                                 uint32_t bitrate, const uint8_t *data,
+                                 size_t data_size);
+
+/* Static-safe event labels for native J2534 logs (no payload). */
+const char *p2_hw_tx_event_name(p2_hw_tx_event event);
+
 /* Independent passive readers: do not convert the following into responses.
    Two-frame legacy F0 PN and SectorV's 15-byte F0 body are distinct formats. */
 int p2_cem_decode_legacy_b9f0_pn(const uint8_t first[8],

@@ -28,12 +28,13 @@ void p2_bridge_connect(p2_j2534_bridge *b,uint32_t id,
     if (!c) {++b->channels_overflow;return;}
     c->active=true; c->id=id; c->protocol_id=protocol_id;
     c->baud=baud; c->generation=++b->next_generation;
+    c->hw_tx=(p2_hw_tx_trace){0}; /* stale TX never crosses reconnect */
 }
 void p2_bridge_disconnect(p2_j2534_bridge *b,uint32_t id) {
     p2_bridge_channel *c;
     if (!b) return;
     c=find_channel(b,id);
-    if(c) c->active=false;
+    if(c) {c->active=false; c->hw_tx=(p2_hw_tx_trace){0};}
 }
 bool p2_bridge_inspect_tx(p2_j2534_bridge *b,uint32_t id,uint32_t flags,
                           const uint8_t *data,size_t size,
@@ -54,6 +55,9 @@ bool p2_bridge_inspect_tx(p2_j2534_bridge *b,uint32_t id,uint32_t flags,
     extended=(flags&P2_BRIDGE_CAN_29BIT_FLAG)!=0 || can_id>0x7FFu;
     if(!p2_vehicle_observe_passthru_tx(&b->vehicle,c->protocol_id,c->baud,
                                        extended,data,size,&a)) return false;
+    /* CAN-only metadata. Neither a positive reply nor CEM authentication. */
+    if(c->protocol_id==5u)
+        out->hw_event=p2_hw_observe_tx(&c->hw_tx,can_id,c->baud,data+4,size-4);
     out->label=p2_cem_request_name(a.classified.request);
     out->decision=a.classified.decision;
     out->baud=c->baud;
