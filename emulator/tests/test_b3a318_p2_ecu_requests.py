@@ -113,10 +113,10 @@ class B3A318Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / 'native-big-unrelated-private.log'
             with log.open('w', encoding='utf-8') as out:
-                out.write('unrelated native log line\\n' * (audit.MAX_ROWS + 3))
-                out.write(req(P1, 0x50, op=0xFB, baud=500000) + '\\n')
-                out.write(req(P1, 0x64) + '\\n')
-                out.write(missing(P1, 0x64) + '\\n')
+                out.write('unrelated native log line\n' * (audit.MAX_ROWS + 3))
+                out.write(req(P1, 0x50, op=0xFB, baud=500000) + '\n')
+                out.write(req(P1, 0x64) + '\n')
+                out.write(missing(P1, 0x64) + '\n')
             capture = io.StringIO()
             with redirect_stdout(capture):
                 self.assertEqual(audit.main(['--native', str(log)]), 0)
