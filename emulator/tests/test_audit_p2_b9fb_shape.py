@@ -29,10 +29,10 @@ def content(vin=LAB_VIN, suffix=b"000001", marker=b"\x57\x00", fields=True):
 
 def frames(blob=None, target=0x50, can_id=0x01200003):
     raw = bytes((target, 0xF9, 0xFB)) + (content() if blob is None else blob)
-    pieces = [raw[i:i + 7].ljust(7, b"\x00") for i in range(0, len(raw), 7)]
-    return [(can_id, bytes((0x8F if i == 0 else
-                            0x4F if i == len(pieces) - 1 else
-                            (0x08 | (i & 7)),)) + piece)
+    pieces = [raw[i:i + 7] for i in range(0, len(raw), 7)]
+    return [(can_id, bytes([0x8F if i == 0 else
+                             0x48 + len(piece) if i == len(pieces) - 1
+                             else 0x08 | (i & 7)]) + piece.ljust(7, bytes([0]))
             for i, piece in enumerate(pieces)]
 
 
@@ -103,6 +103,18 @@ class B9FBShapeEvidenceTests(unittest.TestCase):
                 self.assertFalse(out["vehicle_identity_verified"])
                 self.assertFalse(out["replay_approved"])
                 self.assertNotIn(LAB_VIN.decode(), json.dumps(out))
+
+    def test_10_terminal_marker_length_excludes_padding(self):
+        # A 166-byte blob is the *catalog-declared size*, not a real ECU
+        # capture. Exercise 0x49/0x4A terminal lengths without fake identity.
+        for size in (88, 89, 166, 167):
+            with self.subTest(size=size):
+                out = audit.audit_frames(frames(blob=bytes(size)))
+                self.assertEqual(out["transport"], "complete")
+                self.assertEqual(out["payload_byte_count"], size)
+                self.assertEqual(out["published_88_byte_shape"], "unknown")
+                self.assertFalse(out["vehicle_identity_verified"])
+                self.assertFalse(out["replay_approved"])
 
     def test_05_negative_reply_not_taken_as_positive_b9fb(self):
         negative = [(0x01200003, bytes.fromhex("CB 50 7F B9 11 00 00 00"))]

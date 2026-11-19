@@ -77,7 +77,23 @@ def audit_frames(frames, target=0x50):
     # The D2 sequence is valid, but this is NOT evidence of actual VIDA
     # filter installation, 29-bit RxStatus or a client's acceptance.
     out["vida2014d_d2_rx_filter_candidate"] = vida_2014d_d2_response_id_candidate(frames[0][0])
-    full = b"".join(data[1:] for _, data in frames)
+    # The final D2 control byte 0x48..0x4F gives its real byte count.
+    # Exclude last-frame padding (and single-frame padding) from evidence.
+    # The published 13-frame 0x4F example remains exactly as before.
+    if any((data[0] & 0xF8) == 0x50 for _, data in frames):
+        # The validator handles sub-block control sequences; this simple
+        # audit does not reassemble them into application content. Fail
+        # closed instead of reporting an inflated or misaligned VIN offset.
+        out["transport"] = "complete"
+        out["transport_reason"] = "validated_subblock_sequence_content_not_reassembled"
+        return out
+    full = b"".join(
+        data[1:1 + (data[0] & 0x07)]
+        if (index == len(frames) - 1 and
+            (len(frames) == 1 or (data[0] & 0xF8) == 0x48))
+        else data[1:]
+        for index, (_, data) in enumerate(frames)
+    )
     if not full.startswith(bytes((target, 0xF9, 0xFB))):
         # The existing importer accepts some single-frame negative replies.
         # An error reply must never be classified as a positive B9FB identity.
