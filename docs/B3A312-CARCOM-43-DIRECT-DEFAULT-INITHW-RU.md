@@ -112,3 +112,43 @@ required_tables с лимитом на число таблиц; без этог�
 Нет новых доказательств 9 defaults / 2 CEM / 1 ECM / 0 InitHw
 по этому последнему анализатору. Прежний 43/43 BaseData↔CarCom
 остается самостоятельным, уже выполненным gate.
+
+
+## Реальная проверка исходных копий и расхождение ECM (2026-11-19)
+
+Владелец предоставил результат:
+- gate=all_43_direct_links_counted, matched_exact_profile_count=43;
+- profiles_with_direct_defaults=2, direct_default_link_rows=9;
+- direct_default_cem_rows=2, **direct_default_ecm_rows=0**,
+  direct_default_other_ecu_rows=7;
+- profiles_with_direct_inithw=0, direct_inithw_link_rows=0,
+  profiles_without_direct_inithw=43;
+- source_rows_read=true, source_writes_performed=false,
+  original_source_identifiers_or_values_emitted=false.
+
+Это **подтверждает** итог 9 прямых defaults / 2 профиля /
+2 CEM / 0 прямых InitHw. Это **НЕ подтверждает** исторический
+отчёт «1 ECM». Его правило классификации не сохранилось;
+проверенная реализация считала ECM только при точном
+T101_Ecu.identifier.strip().upper() == ECM, поэтому 7 записей
+оставались в категории other. Нельзя приравнивать CEM или любой
+other к ECM по предположению, а также считать найденные ECU живыми.
+
+Для узкого следующего этапа добавлены три дополнительные
+**лексические** категории только внутри other:
+direct_default_other_ecm_prefix_rows (идентификатор начинается
+с токена ECM), direct_default_other_ecm_token_rows (токен ECM
+в любом месте) и direct_default_other_ecm_substring_rows
+(встречается подстрока ECM). Категории пересекаются и НЕ
+являются признаками настоящего ECM: возможны ложные совпадения,
+а название двигателя/ECU может не содержать ECM вовсе.
+Сырой идентификатор не выдаётся. Отдельный флаг
+ecm_lexical_name_matches_prove_ecu_identity=false.
+
+Добавлены два синтетических теста; всего **16** в
+test_vida_basedata_carcom_43_direct_links.py. Существующие
+счётчики прямых defaults и InitHw неизменны. Данные
+самостоятельного нового тестового прогона и расширенного JSON
+на момент записи отсутствуют — не заявлять 16/16 PASS.
+Новые исходники необходимо проверить на Windows перед
+повторным ограниченным локальным аудитом.
