@@ -57,7 +57,7 @@ bool p2_bridge_inspect_tx(p2_j2534_bridge *b,uint32_t id,uint32_t flags,
                                        extended,data,size,&a)) return false;
     /* CAN-only metadata. Neither a positive reply nor CEM authentication. */
     if(c->protocol_id==5u)
-        (void)p2_hw_observe_tx(&c->hw_tx,can_id,c->baud,data+4,size-4);
+        out->hw_event=p2_hw_observe_tx(&c->hw_tx,can_id,c->baud,data+4,size-4);
     out->label=p2_cem_request_name(a.classified.request);
     out->decision=a.classified.decision;
     out->baud=c->baud;
