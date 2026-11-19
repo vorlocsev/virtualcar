@@ -10,7 +10,7 @@ Mode Probe checks local connectivity and exact schema metadata. It does not read
 
     powershell.exe -NoProfile -File .\emulator\tools\connect_installed_vida_carcom.ps1 -Mode Probe -VidaRoot 'E:\vida' -ServerInstance '.\VIDA'
 
-The successful result is a small JSON with status=connected, CarCom, and seven_expected_tables_present. A failure prints only the exception class; no SQL connection string or original data.
+The successful result is a small JSON with status=connected, CarCom, and seven_expected_tables_present. A failure emits a bounded JSON object to stderr with `status=failed`, a fixed phase (`preflight`, `connection`, `database`, `schema`, `private_input`, `aggregation`, or `report`), and an exception class; the script exits with code 2. It does not emit SQL strings, original profile identifiers, connection strings, or original data. A `Probe` success does not prove the `Analyze` phase, actual VIDA profile selection, or ReadVin acceptance.
 
 Mode Analyze performs SELECT-only aggregation over original owner-selected profiles:
 
