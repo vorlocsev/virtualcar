@@ -53,7 +53,8 @@ def _quoted(name: str) -> str:
     return '"' + name + '"'
 
 
-def _catalog(db: sqlite3.Connection, name: str) -> dict:
+def _catalog(db: sqlite3.Connection, name: str,
+             required_tables: dict[str, tuple[str, ...]] | None = None) -> dict:
     _ordinary_catalog(db)
     meta_rows = db.execute(
         'SELECT "key","value" FROM "_vida_meta"').fetchmany(65)
@@ -97,7 +98,13 @@ def _catalog(db: sqlite3.Connection, name: str) -> dict:
     if any(not v["cols"] for v in all_tables.values()):
         raise SchemaError("missing source column inventory")
     selected = {}
-    for table, needed in NEEDED[name].items():
+    # Allow callers with an explicit, fixed table allowlist to reuse the same
+    # exporter identity and physical-row verification gates. Existing callers
+    # keep the original strict NEEDED[name] selection by default.
+    requested = NEEDED[name] if required_tables is None else required_tables
+    if not requested or len(requested) > 32:
+        raise SchemaError("invalid table selection scope")
+    for table, needed in requested.items():
         candidates = [v for k, v in all_tables.items() if k[1] == table.casefold()]
         if len(candidates) != 1:
             raise SchemaError("missing or ambiguous required table")
