@@ -43,14 +43,21 @@ def _compressed_uint(data: bytes, offset: int) -> tuple[int, int]:
     raise MetadataError("invalid compressed unsigned integer")
 
 
-def _method_signature_contract(blob_heap: bytes | None, index: int) -> dict | None:
-    """Only calling convention/hasThis/generic arity/parameter count, not types."""
+def _method_signature_raw(blob_heap: bytes | None, index: int) -> bytes | None:
+    """Original ECMA-335 blob is kept only in memory, never exported."""
     if blob_heap is None or index == 0:
         return None
     size, start = _compressed_uint(blob_heap, index)
     if size < 2 or size > 16384 or start + size > len(blob_heap):
         raise MetadataError("invalid target method signature extent")
-    sig = blob_heap[start:start + size]
+    return blob_heap[start:start + size]
+
+
+def _method_signature_contract(blob_heap: bytes | None, index: int) -> dict | None:
+    """Only calling convention/hasThis/generic arity/parameter count, not types."""
+    sig = _method_signature_raw(blob_heap, index)
+    if sig is None:
+        return None
     cc = sig[0]
     kind = cc & 0x0F
     if kind not in (0, 5):
@@ -143,15 +150,27 @@ def _metadata_tables(blob: bytes) -> dict:
         c = 4 if tid == 2 else coded((0, 26, 35, 1), 2)
         return name(_u(tables, o + c, ss))
 
+    def typenamespacename(tid, num):
+        # Read in memory: namespace is never printed to owner JSON.
+        o = row(tid, num)
+        c = 4 if tid == 2 else coded((0, 26, 35, 1), 2)
+        namespace_index = _u(tables, o + c + ss, ss)
+        return name(namespace_index) if namespace_index else ""
+
     methods = {}
     for i in range(1, counts.get(6, 0) + 1):
         o = row(6, i)
         method_name = name(_u(tables, o + 8, ss))
+        signature_index = _u(tables, o + 8 + ss, bs)
         methods[i] = {
             "rva": _u(tables, o, 4),
             "name": method_name,
             "signature_contract": (
-                _method_signature_contract(blob_heap, _u(tables, o + 8 + ss, bs))
+                _method_signature_contract(blob_heap, signature_index)
+                if method_name == TARGET else None
+            ),
+            "signature_bytes_private": (
+                _method_signature_raw(blob_heap, signature_index)
                 if method_name == TARGET else None
             ),
         }
@@ -180,6 +199,7 @@ def _metadata_tables(blob: bytes) -> dict:
     repo_typedefs = {i for i, (label, _) in enumerate(typedefs, 1)
                      if label == "CarComRepository"}
     direct_iface_impls = 0
+    direct_iface_namespaces_private = []
     for i in range(1, counts.get(9, 0) + 1):
         o = row(9, i)
         owner_type = _u(tables, o, idx(2))
@@ -187,9 +207,15 @@ def _metadata_tables(blob: bytes) -> dict:
         tag, num = iface_token & 3, iface_token >> 2
         if owner_type in repo_typedefs and num and tag in (0, 1):
             iface_name = typename(2 if tag == 0 else 1, num)
-            direct_iface_impls += int(iface_name == "ICarComRepository")
+            if iface_name == "ICarComRepository":
+                direct_iface_impls += 1
+                direct_iface_namespaces_private.append(
+                    typenamespacename(2 if tag == 0 else 1, num)
+                )
     references = {}
     reference_signature_contracts = {}
+    reference_signature_bytes_private = {}
+    reference_icarcom_namespaces_private = {}
     reference_parent_category = {}
     reference_parent_kind = {}
     reference_parent_type_family = {}
@@ -200,9 +226,8 @@ def _metadata_tables(blob: bytes) -> dict:
         refname = name(_u(tables, off + ref_parent, ss))
         if refname != TARGET:
             continue
-        signature_contract = _method_signature_contract(
-            blob_heap, _u(tables, off + ref_parent + ss, bs)
-        )
+        signature_index = _u(tables, off + ref_parent + ss, bs)
+        signature_contract = _method_signature_contract(blob_heap, signature_index)
         tag, index = parent & 7, parent >> 3
         if tag not in (0, 1, 2, 3, 4) or not index:
             raise MetadataError("invalid MemberRefParent coded tag")
@@ -225,6 +250,13 @@ def _metadata_tables(blob: bytes) -> dict:
         token = 0x0A000000 | i
         references[token] = parent_name == "CarComRepository"
         reference_signature_contracts[token] = signature_contract
+        reference_signature_bytes_private[token] = _method_signature_raw(
+            blob_heap, signature_index
+        )
+        reference_icarcom_namespaces_private[token] = (
+            typenamespacename(1, index)
+            if tag == 1 and parent_name == "ICarComRepository" else None
+        )
         reference_parent_category[token] = (
             "carcom_repository" if parent_name == "CarComRepository" else
             "hwsettings" if parent_name == "HwSettings" else "other_or_unresolved"
@@ -254,7 +286,10 @@ def _metadata_tables(blob: bytes) -> dict:
     return {
         "methods": methods,
         "carcom_repository_direct_icarcomrepository_interfaceimpl_rows": direct_iface_impls,
+        "carcom_repository_interfaceimpl_namespaces_private": direct_iface_namespaces_private,
         "target_references": references,
+        "target_reference_icarcom_namespaces_private": reference_icarcom_namespaces_private,
+        "target_reference_signature_bytes_private": reference_signature_bytes_private,
         "target_reference_signature_contracts": reference_signature_contracts,
         "target_reference_parent_categories": reference_parent_category,
         "target_reference_parent_kinds": reference_parent_kind,
