@@ -98,6 +98,60 @@ class B9F0NativeRxTests(unittest.TestCase):
                     audit.main(["--native", str(src)])
             self.assertEqual(ctx.exception.code, 2)
 
+
+    def test_09_categorical_diagnostics_match_native_tag_totals(self):
+        r = audit.analyze_source(delivered(frames()))
+        d = r["tag_adjacency_diagnostics"]
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+        self.assertEqual(d["categories"]["paired_strict_native_rx_tag"], 3)
+        self.assertEqual(d["total_tag_records_classified"], 3)
+        self.assertFalse(d["b9f0_specific_causal_attribution_verified"])
+
+    def test_10_known_hw_rx_observer_between_delivery_and_tag(self):
+        items = delivered(frames()[:1])
+        items.insert(2, event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"))
+        r = audit.analyze_source(items)
+        diag = r["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            diag["categories"]["unpaired_intervening_hardware_observer"], 1)
+        self.assertEqual(r["native_d2_delivery_tags"]["unpaired_tag_records"], 1)
+        self.assertTrue(diag["category_totals_agree_with_legacy_auditor"])
+
+    def test_11_delivery_without_context_is_not_paired(self):
+        r = audit.analyze_source(delivered(frames()[:1])[1:])
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            d["categories"]["unpaired_delivery_without_valid_rx_context"], 1)
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_12_short_raw_rx_is_not_complete_delivery(self):
+        items = delivered(frames()[:1])
+        items[1] = event("PassThruReadMsgs -> delivered", bytes(11))
+        r = audit.analyze_source(items)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            d["categories"]["unpaired_nonclassic_or_invalid_rx_record"], 1)
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_13_protocol_mismatch_and_privacy(self):
+        items = delivered(frames()[:1])
+        items[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                         be(1, 6, 0, 125000, 102000))
+        r = audit.analyze_source(items)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["categories"]["mismatch_protocol_not_can"], 1)
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+        contents = json.dumps(r)
+        self.assertNotIn("ABCD1234", contents)
+        self.assertNotIn("PrivateDiagnosticClient", contents)
+
+    def test_14_other_pid_events_leave_same_pid_adjacency(self):
+        items = delivered(frames()[:1])
+        items.insert(2, "[PID=0BADF00D Other.exe] unrelated event\n")
+        d = audit.analyze_source(items)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["categories"]["paired_strict_native_rx_tag"], 1)
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
     def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
         import audit_j2534_discovery as general
         legacy = general._native_d2_delivery_tags(delivered(frames()))

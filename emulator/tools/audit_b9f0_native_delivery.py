@@ -8,6 +8,7 @@ import argparse
 import json
 from pathlib import Path
 from audit_j2534_discovery import PREFIX, _native_d2_delivery_tags
+from audit_b9f0_tag_gap_attribution import TagGapAttribution
 
 SCHEMA = "virtualcar-b9f0-emitter-rx-v1"
 MAX_SOURCE_BYTES = 256 * 1024 * 1024
@@ -21,6 +22,8 @@ def analyze_source(lines):
     scan = {"source_rows_scanned": 0, "tag_rows": 0,
             "oversized_rows_ignored": 0}
 
+    adjacency = TagGapAttribution()
+
     def bounded():
         for line in lines:
             scan["source_rows_scanned"] += 1
@@ -30,13 +33,16 @@ def analyze_source(lines):
                 scan["oversized_rows_ignored"] += 1
                 # Preserve same-PID interruption of an adjacent RX/tag pair.
                 m = PREFIX.match(line[:512])
-                yield (line[:m.end()] + "overlong record excluded\n"
-                       if m else "\n")
+                safe = (line[:m.end()] + "overlong record excluded\n"
+                        if m else "\n")
+                adjacency.observe(safe)
+                yield safe
                 continue
             if TAG in line:
                 scan["tag_rows"] += 1
                 if scan["tag_rows"] > MAX_TAG_ROWS:
                     raise ValueError("bounded_native_tag_rows_exceeded")
+            adjacency.observe(line)
             yield line
 
     report = _native_d2_delivery_tags(bounded(), include_b9f0=True)
@@ -45,6 +51,7 @@ def analyze_source(lines):
         "complete_source_scan": True,
         "source_scan_counts": scan,
         "native_d2_delivery_tags": report,
+        "tag_adjacency_diagnostics": adjacency.summary(report),
         "real_ecu_response_verified": False,
         "sectorv_ecu_identity_accepted_verified": False,
         "limitations": [
