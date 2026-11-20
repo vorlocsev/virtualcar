@@ -86,7 +86,8 @@ class VidaProcmonConfigReadTests(unittest.TestCase):
         self.assertFalse(multiple_pids["original_vida_process_authenticity_verified"])
 
     def test_06_path_basenames_process_allowlist_and_no_leak(self):
-        report = assess(row(123, "CreateFile", path=PRIVATE + ".bak"),
+        report = assess(row(123, "ReadFile", path=r"\\relative\\diagnostic.config.xml"),
+                        row(123, "CreateFile", path=PRIVATE + ".bak"),
                         row(123, "ReadFile", path=PRIVATE + ":stream"),
                         row(123, "ReadFile", path=r"C:\Private\diagnostic.config.xml2"),
                         row(123, "ReadFile", process="other.exe"),
