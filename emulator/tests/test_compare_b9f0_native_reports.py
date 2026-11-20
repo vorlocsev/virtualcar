@@ -29,6 +29,12 @@ def sample(paired=2, *, protocol_mismatch=0, observer=0, rows=100):
             "source_rows_scanned": rows,
             "tag_rows": tags,
             "oversized_rows_ignored": 0,
+            "native_prefix_rows": rows,
+            "non_native_prefix_rows": 0,
+            "repeated_pid_marker_rows": 0,
+            "non_crlf_rows": 0,
+            "unterminated_rows": 0,
+            "replacement_character_rows": 0,
         },
         "native_d2_delivery_tags": {
             "source": "local_emulator_native_d2_delivery_tags_only",
@@ -183,6 +189,53 @@ class BeforeAfterTests(unittest.TestCase):
             after.write_text("x" * (tool.MAX_INPUT_BYTES + 1), encoding="utf-8")
             with self.assertRaises(tool.CompareError):
                 tool.read_report(after)
+
+
+    def test_09_source_line_integrity_has_own_denominator(self):
+        before, after = sample(rows=100), sample(rows=200)
+        before["source_scan_counts"].update(
+            native_prefix_rows=90, non_native_prefix_rows=10,
+            repeated_pid_marker_rows=2, non_crlf_rows=3,
+            unterminated_rows=1, replacement_character_rows=1)
+        after["source_scan_counts"].update(
+            native_prefix_rows=196, non_native_prefix_rows=4)
+        result = tool.compare(before, after)
+        integrity = result["source_integrity_differences"]
+        self.assertEqual(integrity["non_native_prefix_rows"]["delta"], -6)
+        self.assertEqual(
+            integrity["non_native_prefix_rows"]["before_per_1000_source_rows"], 100)
+        self.assertEqual(
+            integrity["non_native_prefix_rows"]["after_per_1000_source_rows"], 20)
+        self.assertFalse(result["logger_fix_causal_effect_verified"])
+        self.assertFalse(result["after_capture_uses_append_only_logger_verified"])
+
+    def test_10_forged_integrity_count_is_rejected(self):
+        for key, value in (
+            ("native_prefix_rows", 99),
+            ("non_native_prefix_rows", 1),
+            ("repeated_pid_marker_rows", 101),
+            ("non_crlf_rows", 101),
+            ("unterminated_rows", 1),
+            ("replacement_character_rows", True),
+        ):
+            with self.subTest(field=key):
+                bad = sample()
+                bad["source_scan_counts"][key] = value
+                with self.assertRaises(tool.CompareError):
+                    tool.compare(bad, sample())
+
+    def test_11_zero_source_rows_do_not_divide_by_zero(self):
+        r = tool.compare(sample(paired=0, rows=0), sample(paired=1))
+        integrity = r["source_integrity_differences"]
+        self.assertIsNone(
+            integrity["native_prefix_rows"]["before_per_1000_source_rows"])
+        self.assertFalse(r["same_diagnostic_workload_verified"])
+
+    def test_12_stale_report_missing_integrity_fields_is_not_comparable(self):
+        old = sample()
+        old["source_scan_counts"].pop("native_prefix_rows")
+        with self.assertRaises(tool.CompareError):
+            tool.compare(old, sample())
 
 
 if __name__ == "__main__":
