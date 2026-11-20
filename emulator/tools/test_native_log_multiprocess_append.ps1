@@ -121,7 +121,8 @@ public static class SyntheticAppendWorker {
   }
 }
 
-function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
+function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount,
+                        [bool]$CheckD2) {
   $file=Join-Path $Root 'SectorVVirtualCar.log'
   if (-not [IO.File]::Exists($file)) { throw 'no_native_log' }
   $bytes=[IO.File]::ReadAllBytes($file)
@@ -147,7 +148,9 @@ function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
     $tracePid=$m.Groups[1].Value
     $event=$m.Groups[3].Value
     if (-not $sessions.ContainsKey($tracePid)) {
-      $sessions[$tracePid]=@{Open=0;Close=0;Balance=0}
+      $sessions[$tracePid]=@{
+        Open=0;Close=0;Balance=0;D2=0;RxCtx=0;RxDelivered=0;Tx=0
+      }
     }
     $item=$sessions[$tracePid]
     if ($event -ceq 'PassThruOpen -> device 1') {
@@ -156,9 +159,25 @@ function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
     } elseif ($event -ceq 'PassThruClose') {
       if ($item.Balance -ne 1) { throw 'close_order' }
       $item.Close++; $item.Balance--; $closes++
-    } elseif ($event.StartsWith('TX (app request)') -or
-              $event.StartsWith('P2 D2 delivered')) {
-      throw 'unexpected_transport_activity'
+    } elseif ($event.StartsWith('TX (app request)')) {
+      $item.Tx++
+      if (-not $CheckD2) { throw 'unexpected_transport_activity' }
+    } elseif ($event.StartsWith('P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)')) {
+      $item.D2++
+      if (-not $CheckD2) { throw 'unexpected_transport_activity' }
+    } elseif ($event.StartsWith('PassThruReadMsgs -> delivered')) {
+      $item.RxDelivered++
+      if (-not $CheckD2) { throw 'unexpected_transport_activity' }
+    } elseif ($event.StartsWith('RX context channel/protocol/status/baud/time-us (BE)')) {
+      $item.RxCtx++
+      if (-not $CheckD2) { throw 'unexpected_transport_activity' }
+      $word=$event.Substring(
+        'RX context channel/protocol/status/baud/time-us (BE)'.Length).Trim()
+      $octets=$word.Split(@(' '),[StringSplitOptions]::RemoveEmptyEntries)
+      if ($octets.Count -ne 20) { throw 'invalid_synthetic_rx_context_words' }
+      if (($octets[4..7] -join ' ') -cne '00 00 00 05') {
+        throw 'synthetic_rx_protocol_not_can'
+      }
     }
   }
   $expected=$WorkerCount*$LoopCount
@@ -168,9 +187,20 @@ function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
     $s=$sessions[$tracePid]
     if ($s.Open -ne $LoopCount -or $s.Close -ne $LoopCount -or
         $s.Balance -ne 0) { throw 'per_process_log_sequence' }
+    $wantD2=if ($CheckD2) {13*$LoopCount} else {0}
+    $wantTx=if ($CheckD2) {$LoopCount} else {0}
+    if ($s.D2 -ne $wantD2 -or $s.RxCtx -ne $wantD2 -or
+        $s.RxDelivered -ne $wantD2 -or $s.Tx -ne $wantTx) {
+      throw 'missing_synthetic_d2_rx_metadata'
+    }
   }
-  Write-Host ('PASS B3A325: {0} native x86 processes, {1} Open/Close pairs, {2} complete CRLF rows' -f
-              $WorkerCount,$expected,($rows.Count-1))
+  if($CheckD2) {
+    Write-Host ('PASS B3A330: {0} independent x86 processes, {1} synthetic B9FB transactions, {2} native RX context/tag pairs, all ProtocolID=5, complete CRLF records' -f
+                $WorkerCount,$expected,(13*$expected))
+  } else {
+    Write-Host ('PASS B3A325: {0} native x86 processes, {1} Open/Close pairs, {2} complete CRLF rows' -f
+                $WorkerCount,$expected,($rows.Count-1))
+  }
   Write-Host 'Synthetic shared Win32 logger only; no real client, CAN device or VIN acceptance.'
 }
 
@@ -305,7 +335,7 @@ B9FBFrameC=4F 30 36 39 33 31 0D 0A
     }
   }
   $stage='assert_log_shape'
-  Assert-Results -Root $root -WorkerCount $Workers -LoopCount $Iterations
+  Assert-Results -Root $root -WorkerCount $Workers -LoopCount $Iterations -CheckD2 ([bool]$D2Replay)
 } catch {
   $code=Get-BoundedFailure ([string]$_.Exception.Message)
   Write-Host ('B3A325_FAILURE_CATEGORY='+$code)
