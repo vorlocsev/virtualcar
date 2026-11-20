@@ -188,7 +188,9 @@ function Get-BoundedFailure([string]$Reason) {
     'built_x86_dll_missing','isolated_dll_bytes_mismatch',
     'x86_powershell_missing','worker_spawn_failure',
     'worker_ended_before_gate','worker_readiness_timeout',
-    'worker_failed_or_timed_out'
+    'worker_failed_or_timed_out',
+    'child_native_d2_replay_failed','invalid_synthetic_rx_context_words',
+    'synthetic_rx_protocol_not_can','missing_synthetic_d2_rx_metadata'
   )
   if ($allowed -ccontains $Reason) { return $Reason }
   return 'other_unclassified_failure'
@@ -227,7 +229,7 @@ try {
     throw 'isolated_dll_bytes_mismatch'
   }
   $ini=@'
-; SYNTHETIC lab only. No ECU fixture or physical J2534.
+; SYNTHETIC lab only. No physical J2534 or original diagnostic client.
 [Diagnostics]
 BackendTelemetryEnabled=0
 [Vehicle]
@@ -235,12 +237,34 @@ ECUCount=1
 [D2_40]
 B9FBFrameCount=0
 [D2_50]
-B9FBFrameCount=0
+B9FBFrameCount=__FRAME_COUNT__
+__D2_FRAMES__
 [PassiveCAN]
 Enabled=0
 [PassiveTrace]
 Enabled=0
 '@
+  if ($D2Replay) {
+    # Same PUBLIC synthetic fixture as verify_native_routes.ps1; no real VIN.
+    $frames=@'
+B9FBFrame0=8F 50 F9 FB 57 00 30 66
+B9FBFrame1=09 70 28 30 30 35 0D 0A
+B9FBFrame2=0A 59 56 31 43 5A 30 30
+B9FBFrame3=0B 30 32 41 30 30 30 30
+B9FBFrame4=0C 30 30 31 0D 0A 32 35
+B9FBFrame5=0D 31 35 36 38 39 35 32
+B9FBFrame6=0E 0D 0A 32 39 35 0D 0A
+B9FBFrame7=0F 31 39 38 36 32 35 0D
+B9FBFrame8=08 0A 32 31 0D 0A 32 30
+B9FBFrame9=09 30 35 31 32 0D 0A 30
+B9FBFrameA=0A 30 30 30 34 33 33 38
+B9FBFrameB=0B 36 30 34 30 38 32 32
+B9FBFrameC=4F 30 36 39 33 31 0D 0A
+'@
+    $ini=$ini.Replace('__FRAME_COUNT__','13').Replace('__D2_FRAMES__',$frames.Trim())
+  } else {
+    $ini=$ini.Replace('__FRAME_COUNT__','0').Replace('__D2_FRAMES__','')
+  }
   $stage='write_synthetic_profile'
   [IO.File]::WriteAllText((Join-Path $root 'virtualcar.ini'),$ini,[Text.Encoding]::ASCII)
   $ps32=Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
@@ -249,8 +273,9 @@ Enabled=0
   for($i=0;$i -lt $Workers;$i++){
     $start=New-Object Diagnostics.ProcessStartInfo
     $start.FileName=$ps32
-    $start.Arguments=('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -DllPath "{1}" -Scratch "{2}" -Child -ChildIndex {3} -Iterations {4}' -f
-                      $PSCommandPath,$dll,$root,$i,$Iterations)
+    $mode=if ($D2Replay) {' -D2Replay'} else {''}
+    $start.Arguments=('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -DllPath "{1}" -Scratch "{2}" -Child -ChildIndex {3} -Iterations {4}{5}' -f
+                      $PSCommandPath,$dll,$root,$i,$Iterations,$mode)
     $start.WorkingDirectory=$root
     $start.UseShellExecute=$false; $start.CreateNoWindow=$true
     $start.EnvironmentVariables['TEMP']=$root
