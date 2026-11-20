@@ -143,6 +143,7 @@ if($Child) {
 }
 $procs=New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
 $root=$null
+$stage='preflight'
 try {
   if (-not $env:RUNNER_TEMP -or -not [IO.Directory]::Exists($env:RUNNER_TEMP)) {
     throw 'runner_temp_missing'
@@ -150,9 +151,12 @@ try {
   $original=[IO.Path]::GetFullPath($DllPath)
   if (-not [IO.File]::Exists($original)) { throw 'built_x86_dll_missing' }
   $root=Join-Path $env:RUNNER_TEMP ('virtualcar-b3a325-'+[Guid]::NewGuid().ToString('N'))
+  $stage='create_scratch'
   [void][IO.Directory]::CreateDirectory($root)
   $dll=Join-Path $root 'VirtualCarJ2534.dll'
+  $stage='copy_dll'
   [IO.File]::Copy($original,$dll,$false)
+  $stage='hash_compare'
   if ((Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash -cne
       (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash) {
     throw 'isolated_dll_bytes_mismatch'
@@ -172,9 +176,11 @@ Enabled=0
 [PassiveTrace]
 Enabled=0
 '@
+  $stage='write_synthetic_profile'
   [IO.File]::WriteAllText((Join-Path $root 'virtualcar.ini'),$ini,[Text.Encoding]::ASCII)
   $ps32=Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
   if (-not [IO.File]::Exists($ps32)) { throw 'x86_powershell_missing' }
+  $stage='launch_workers'
   for($i=0;$i -lt $Workers;$i++){
     $start=New-Object Diagnostics.ProcessStartInfo
     $start.FileName=$ps32
@@ -189,6 +195,7 @@ Enabled=0
     if ($null -eq $p) { throw 'worker_spawn_failure' }
     $procs.Add($p)
   }
+  $stage='wait_ready'
   $until=[DateTime]::UtcNow.AddSeconds(90)
   while($true){
     $ready=0
@@ -200,16 +207,40 @@ Enabled=0
     if ([DateTime]::UtcNow -ge $until) { throw 'worker_readiness_timeout' }
     Start-Sleep -Milliseconds 50
   }
+  $stage='wait_workers'
   [IO.File]::WriteAllText((Join-Path $root 'start'),'go')
   foreach($p in $procs) {
     if (-not $p.WaitForExit(90000) -or $p.ExitCode -ne 0) {
       throw 'worker_failed_or_timed_out'
     }
   }
+  $stage='assert_log_shape'
   Assert-Results -Root $root -WorkerCount $Workers -LoopCount $Iterations
 } catch {
   $code=Get-BoundedFailure ([string]$_.Exception.Message)
   Write-Host ('B3A325_FAILURE_CATEGORY='+$code)
+  # Stage and source line are bounded numeric/enum metadata, never a path
+  # or private exception message. They identify harness errors deterministically.
+  $safeStages=@('preflight','create_scratch','copy_dll','hash_compare',
+                'write_synthetic_profile','launch_workers','wait_ready',
+                'wait_workers','assert_log_shape')
+  if ($safeStages -ccontains $stage) {
+    Write-Host ('B3A325_FAILURE_STAGE='+$stage)
+  }
+  $safeLine=0
+  try { $safeLine=[int]$_.InvocationInfo.ScriptLineNumber } catch {}
+  if ($safeLine -ge 1 -and $safeLine -le 260) {
+    Write-Host ('B3A325_FAILURE_SOURCE_LINE='+$safeLine)
+  }
+  $typeName=$_.Exception.GetType().Name
+  if (@('RuntimeException','MethodException','MethodInvocationException',
+        'ParameterBindingException','PropertyAssignmentException',
+        'ArgumentException','IOException','InvalidOperationException',
+        'ItemNotFoundException') -ccontains $typeName) {
+    Write-Host ('B3A325_FAILURE_EXCEPTION_CLASS='+$typeName)
+  } else {
+    Write-Host 'B3A325_FAILURE_EXCEPTION_CLASS=other'
+  }
   if ($root -and [IO.Directory]::Exists($root)) {
     for($i=0;$i -lt $Workers;$i++) {
       try {
