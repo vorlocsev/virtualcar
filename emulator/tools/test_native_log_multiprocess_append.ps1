@@ -4,7 +4,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$DllPath,
   [ValidateRange(2,6)][int]$Workers=4,
-  [ValidateRange(4,64)][int]$Iterations=16,
+  [ValidateRange(1,64)][int]$Iterations=16,
+  [switch]$D2Replay,
   [switch]$Child,
   [ValidateRange(0,5)][int]$ChildIndex=0,
   [string]$Scratch=''
@@ -28,11 +29,72 @@ public static class SyntheticAppendWorker {
   static extern uint PassThruOpen(IntPtr ignored,out uint device);
   [DllImport(@"__DLL__",CallingConvention=CallingConvention.StdCall,ExactSpelling=true)]
   static extern uint PassThruClose(uint device);
-  public static void Run(int loops) {
+  [DllImport(@"__DLL__",CallingConvention=CallingConvention.StdCall,ExactSpelling=true)]
+  static extern uint PassThruConnect(uint device,uint protocol,uint flags,uint baud,out uint channel);
+  [DllImport(@"__DLL__",CallingConvention=CallingConvention.StdCall,ExactSpelling=true)]
+  static extern uint PassThruDisconnect(uint channel);
+  [DllImport(@"__DLL__",CallingConvention=CallingConvention.StdCall,ExactSpelling=true)]
+  static extern uint PassThruWriteMsgs(uint channel,ref Msg message,ref uint count,uint timeout);
+  [DllImport(@"__DLL__",CallingConvention=CallingConvention.StdCall,ExactSpelling=true)]
+  static extern uint PassThruReadMsgs(uint channel,IntPtr messages,ref uint count,uint timeout);
+  [StructLayout(LayoutKind.Sequential)]
+  public struct Msg {
+    public uint ProtocolID,RxStatus,TxFlags,Timestamp,DataSize,ExtraDataIndex;
+    [MarshalAs(UnmanagedType.ByValArray,SizeConst=4128)] public byte[] Data;
+  }
+  static readonly byte[,] D2Frames=new byte[13,8] {
+    {0x8F,0x50,0xF9,0xFB,0x57,0x00,0x30,0x66},
+    {0x09,0x70,0x28,0x30,0x30,0x35,0x0D,0x0A},
+    {0x0A,0x59,0x56,0x31,0x43,0x5A,0x30,0x30},
+    {0x0B,0x30,0x32,0x41,0x30,0x30,0x30,0x30},
+    {0x0C,0x30,0x30,0x31,0x0D,0x0A,0x32,0x35},
+    {0x0D,0x31,0x35,0x36,0x38,0x39,0x35,0x32},
+    {0x0E,0x0D,0x0A,0x32,0x39,0x35,0x0D,0x0A},
+    {0x0F,0x31,0x39,0x38,0x36,0x32,0x35,0x0D},
+    {0x08,0x0A,0x32,0x31,0x0D,0x0A,0x32,0x30},
+    {0x09,0x30,0x35,0x31,0x32,0x0D,0x0A,0x30},
+    {0x0A,0x30,0x30,0x30,0x34,0x33,0x33,0x38},
+    {0x0B,0x36,0x30,0x34,0x30,0x38,0x32,0x32},
+    {0x4F,0x30,0x36,0x39,0x33,0x31,0x0D,0x0A}
+  };
+  static void Check(bool ok) {
+    if(!ok) throw new InvalidOperationException("synthetic_d2_frame_mismatch");
+  }
+  static void ReadSyntheticB9FB(uint channel) {
+    Msg tx=new Msg();
+    tx.ProtocolID=5;tx.TxFlags=0x100;tx.DataSize=12;tx.Data=new byte[4128];
+    byte[] req=new byte[]{0x00,0x0F,0xFF,0xFE,0xCB,0x50,0xB9,0xFB,0,0,0,0};
+    Array.Copy(req,tx.Data,req.Length);
+    uint written=1;
+    Check(PassThruWriteMsgs(channel,ref tx,ref written,100)==0 && written==1);
+    uint prior=0;
+    IntPtr memory=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+    try {
+      for(int frame=0;frame<13;frame++) {
+        uint got=1;
+        Check(PassThruReadMsgs(channel,memory,ref got,300)==0 && got==1);
+        Msg rx=(Msg)Marshal.PtrToStructure(memory,typeof(Msg));
+        Check(rx.ProtocolID==5 && rx.DataSize==12 && rx.ExtraDataIndex==12
+              && rx.RxStatus==0x100 && rx.Data!=null && rx.Data.Length==4128);
+        Check(rx.Data[0]==1 && rx.Data[1]==0x20 && rx.Data[2]==0 && rx.Data[3]==3);
+        for(int b=0;b<8;b++) Check(rx.Data[4+b]==D2Frames[frame,b]);
+        if(frame>0) Check(rx.Timestamp!=prior);
+        prior=rx.Timestamp;
+      }
+    } finally { Marshal.FreeHGlobal(memory); }
+  }
+  public static void Run(int loops,bool d2Replay) {
+    Check(Marshal.SizeOf(typeof(Msg))==4152);
     for(int i=0;i<loops;i++) {
       uint device;
       if(PassThruOpen(IntPtr.Zero,out device)!=0 || device!=1)
         throw new InvalidOperationException("open_failed");
+      if(d2Replay) {
+        uint channel;
+        Check(PassThruConnect(device,5,0x800,500000,out channel)==0 && channel!=0);
+        ReadSyntheticB9FB(channel);
+        Check(PassThruDisconnect(channel)==0);
+      }
       if(PassThruClose(device)!=0)
         throw new InvalidOperationException("close_failed");
     }
@@ -52,8 +114,9 @@ public static class SyntheticAppendWorker {
     Start-Sleep -Milliseconds 30
   }
   try {
-    [SyntheticAppendWorker]::Run($Iterations)
+    [SyntheticAppendWorker]::Run($Iterations,[bool]$D2Replay)
   } catch {
+    if ($D2Replay) { throw 'child_native_d2_replay_failed' }
     throw 'child_native_open_close_failed'
   }
 }
