@@ -72,6 +72,8 @@ function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
   if ($rows.Count -lt 2 -or $rows[$rows.Count-1] -cne '') {
     throw 'invalid_crlf_records'
   }
+  # $PID is a read-only automatic variable in Windows PowerShell 5.1.
+  # Keep the trace PID scoped to a different local identifier.
   $sessions=@{}; $opens=0; $closes=0
   foreach($line in $rows[0..($rows.Count-2)]) {
     if (-not $line -or $line.IndexOf('[PID=',5) -ge 0) {
@@ -79,12 +81,12 @@ function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
     }
     $m=[regex]::Match($line,'^\[PID=([0-9A-F]{8}) ([^\]\r\n]{1,64})\] (.+)$')
     if (-not $m.Success) { throw 'bad_native_prefix' }
-    $pid=$m.Groups[1].Value
+    $tracePid=$m.Groups[1].Value
     $event=$m.Groups[3].Value
-    if (-not $sessions.ContainsKey($pid)) {
-      $sessions[$pid]=@{Open=0;Close=0;Balance=0}
+    if (-not $sessions.ContainsKey($tracePid)) {
+      $sessions[$tracePid]=@{Open=0;Close=0;Balance=0}
     }
-    $item=$sessions[$pid]
+    $item=$sessions[$tracePid]
     if ($event -ceq 'PassThruOpen -> device 1') {
       if ($item.Balance -ne 0) { throw 'open_order' }
       $item.Open++; $item.Balance++; $opens++
@@ -99,8 +101,8 @@ function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
   $expected=$WorkerCount*$LoopCount
   if ($sessions.Count -ne $WorkerCount -or $opens -ne $expected -or
       $closes -ne $expected) { throw 'lost_or_duplicated_log_records' }
-  foreach($pid in $sessions.Keys) {
-    $s=$sessions[$pid]
+  foreach($tracePid in $sessions.Keys) {
+    $s=$sessions[$tracePid]
     if ($s.Open -ne $LoopCount -or $s.Close -ne $LoopCount -or
         $s.Balance -ne 0) { throw 'per_process_log_sequence' }
   }
