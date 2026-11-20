@@ -234,6 +234,100 @@ class B9F0NativeRxTests(unittest.TestCase):
         self.assertNotIn("F123ABCD", json.dumps(r))
         self.assertTrue(diag["non_CAN_other_values_reconcile"])
 
+
+    def test_24_hw_rx_observer_is_bounded_prior_event_not_lost_frame(self):
+        rows = [event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED")]
+        rows += delivered(frames()[:1])[1:]
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["no_prior_rx_previous_event_classes"],
+                         {"hardware_rx_observer": 1})
+        self.assertEqual(d["categories"]["unpaired_delivery_without_valid_rx_context"], 1)
+        self.assertEqual(r["native_d2_delivery_tags"]["paired_tag_records"], 0)
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_25_hw_tx_observer_is_distinct_from_unclassified_native(self):
+        rows = [event("P2_HW_A3_TX")] + delivered(frames()[:1])[1:]
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["no_prior_rx_previous_event_classes"],
+                         {"hardware_other_observer": 1})
+        self.assertTrue(d["no_prior_rx_previous_events_reconcile"])
+
+    def test_26_tx_request_predecessors_remain_unpaired(self):
+        for label, expected in (
+            ("TX context channel/protocol/flags/baud/time-us (BE)", "tx_context"),
+            ("TX (app request)", "tx_request"),
+        ):
+            with self.subTest(label=expected):
+                rows = [event(label)] + delivered(frames()[:1])[1:]
+                d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+                self.assertEqual(d["no_prior_rx_previous_event_classes"],
+                                 {expected: 1})
+                self.assertEqual(d["categories"]
+                                 ["unpaired_delivery_without_valid_rx_context"], 1)
+
+    def test_27_periodic_context_predecessor(self):
+        rows = [event("Periodic TX context channel/protocol/flags/baud/time-us (BE)")]
+        rows += delivered(frames()[:1])[1:]
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["no_prior_rx_previous_event_classes"],
+                         {"periodic_tx_context": 1})
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_28_clear_rx_context_predecessor(self):
+        rows = [event("CLEAR_RX context channel/protocol/flags/baud/time-us (BE)")]
+        rows += delivered(frames()[:1])[1:]
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["no_prior_rx_previous_event_classes"],
+                         {"clear_rx_context": 1})
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_29_byte_swapped_protocol_shape_is_not_CAN_success(self):
+        rows = delivered(frames()[:1])
+        rows[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                        be(1, 0x05000000, 0, 125000, 102000))
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["non_CAN_other_protocol_values"],
+                         {"other_protocol_value": 1})
+        self.assertEqual(d["non_CAN_wide_protocol_shapes"],
+                         {"byte_swapped_known_id_shape": 1})
+        self.assertTrue(d["non_CAN_wide_protocol_shapes_reconcile"])
+        self.assertEqual(r["native_d2_delivery_tags"]["paired_tag_records"], 0)
+
+    def test_30_all_bits_set_protocol_keeps_private_bytes_private(self):
+        rows = delivered(frames()[:1])
+        rows[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                        be(1, 0xFFFFFFFF, 0, 125000, 102000))
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["non_CAN_wide_protocol_shapes"], {"all_bits_set": 1})
+        self.assertNotIn("FFFFFFFF", json.dumps(r))
+        self.assertNotIn("ABCD1234", json.dumps(r))
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_31_wide_protocol_shapes_reconcile_without_changing_categories(self):
+        rows = []
+        for value in (13, 0x12340000, 0x12345678, 0x05000000):
+            part = delivered(frames()[:1])
+            part[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                            be(1, value, 0, 125000, 102000))
+            rows.extend(part)
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["non_CAN_wide_protocol_shapes"], {
+            "byte_swapped_known_id_shape": 1,
+            "low_word_zero": 1,
+            "other_16bit_value": 1,
+            "other_32bit_value": 1,
+        })
+        self.assertEqual(d["non_CAN_other_protocol_values"],
+                         {"other_protocol_value": 4})
+        self.assertEqual(d["categories"], {"mismatch_protocol_not_can": 4})
+        self.assertTrue(d["non_CAN_wide_protocol_shapes_reconcile"])
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+        self.assertFalse(r["sectorv_ecu_identity_accepted_verified"])
+
     def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
         import audit_j2534_discovery as general
         legacy = general._native_d2_delivery_tags(delivered(frames()))
