@@ -22,6 +22,8 @@ class TagGapAttribution:
         self.other_protocol_values = Counter()
         self.wide_protocol_shapes = Counter()
         self.no_prior_previous_event_classes = Counter()
+        self.observer_bridge_started = 0
+        self.observer_bridge_outcomes = Counter()
 
     @staticmethod
     def _interruption(event):
@@ -102,10 +104,18 @@ class TagGapAttribution:
             "ctx": None, "pending": None, "cause": "unpaired_no_prior_rx",
             "missing_context_reason": None,
             "prior_delivery_event_class": None,
-            "last_event_class": "none"
+            "last_event_class": "none",
+            "observer_bridge": None
         })
         previous_class = scope["last_event_class"]
         scope["last_event_class"] = self._event_class(event)
+        # Keep a second, diagnostic-only chain for one observer event inserted
+        # by the current native DLL between delivery and a D2 tag. Any further
+        # same-PID event breaks this candidate. Strict pairing is unchanged.
+        if (scope["observer_bridge"] is not None
+                and not event.startswith("P2 D2 delivered ")):
+            self.observer_bridge_outcomes["interrupted_before_tag"] += 1
+            scope["observer_bridge"] = None
         if event.startswith(("PassThruOpen ->", "PassThruClose",
                              "PassThruDisconnect")):
             scope.update(ctx=None, pending=None,
@@ -158,6 +168,26 @@ class TagGapAttribution:
         if event.startswith("P2 D2 delivered "):
             metadata = _context(event, D2_DELIVERY, True)
             pending = scope["pending"]
+            bridged = scope["observer_bridge"]
+            scope["observer_bridge"] = None
+            if bridged is not None:
+                ctx_bridge, raw_bridge = bridged
+                if metadata is None:
+                    outcome = "malformed_tag"
+                else:
+                    channel, generation, frame, _rx_us, _delivery_us = metadata
+                    if (channel != 0 and generation != 0
+                            and 1 <= frame <= 64
+                            and channel == ctx_bridge[0]
+                            and ctx_bridge[1] == 5
+                            and ctx_bridge[3] != 0
+                            and not (ctx_bridge[2] & 0x0B)
+                            and raw_bridge is not None
+                            and len(raw_bridge) == 12):
+                        outcome = "native_shape_consistent_only"
+                    else:
+                        outcome = "metadata_mismatch"
+                self.observer_bridge_outcomes[outcome] += 1
             scope["ctx"] = scope["pending"] = None
             cause = scope["cause"]
             missing_reason = scope["missing_context_reason"]
@@ -201,6 +231,17 @@ class TagGapAttribution:
                 else:
                     category = "paired_strict_native_rx_tag"
             self.counts[category] += 1
+            return
+        if event.startswith("P2_HW_RX_") and scope["pending"] is not None:
+            # The emitter calls this observer after logging RX delivery and
+            # before logging the generation tag. This cannot prove that the
+            # client consumed or parsed the payload.
+            scope["observer_bridge"] = scope["pending"]
+            self.observer_bridge_started += 1
+            scope.update(ctx=None, pending=None,
+                         cause="unpaired_intervening_hardware_observer",
+                         missing_context_reason=None,
+                         prior_delivery_event_class=None)
             return
         if scope["ctx"] is not None or scope["pending"] is not None:
             scope.update(ctx=None, pending=None,
@@ -251,6 +292,18 @@ class TagGapAttribution:
             "no_prior_rx_previous_events_reconcile": (
                 sum(self.no_prior_previous_event_classes.values())
                 == self.missing_context_reasons["unpaired_no_prior_rx"]),
+            "observer_only_bridge_candidates_started": self.observer_bridge_started,
+            "observer_only_bridge_outcomes": dict(
+                sorted(self.observer_bridge_outcomes.items())),
+            "observer_only_bridge_incomplete_at_scan_end": sum(
+                scope["observer_bridge"] is not None
+                for scope in self.scopes.values()),
+            "observer_only_bridge_counts_reconcile": (
+                self.observer_bridge_started
+                == sum(self.observer_bridge_outcomes.values()) + sum(
+                    scope["observer_bridge"] is not None
+                    for scope in self.scopes.values())),
+            "observer_only_bridge_is_strict_delivery_evidence": False,
             "b9f0_specific_causal_attribution_verified": False,
             "notes": [
                 "Missing strict logger adjacency does not prove a lost J2534 frame.",
@@ -261,6 +314,8 @@ class TagGapAttribution:
                 "A protocol number in RX metadata is not proof of a physical bus or original SectorV client behavior.",
                 "The current emulator accepts only protocol 5/6 at Connect; wide RX protocol metadata require checking the exact DLL version and log integrity.",
                 "Known observer classes and numeric word shapes do not reclassify any unpaired or mismatched D2 delivery as successfully paired.",
+                "A single exact native RX observer between delivery and D2 tag can form a shape-only bridge; it does not change strict adjacency, VIN acceptance or ECU identity.",
+                "A second same-PID record before the tag interrupts an observer-only bridge, even when it is another observer.",
                 "No raw CAN, VIN, PID, path, timestamp or secret appears in the report.",
             ],
         }
