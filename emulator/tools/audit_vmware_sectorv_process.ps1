@@ -12,6 +12,8 @@ param(
     [switch]$OperatorSession,
     [ValidateSet('iexplore','java','VidaMonitor','w3wp')]
     [string]$VidaProcessName = '',
+    [ValidateRange(1,2147483647)]
+    [int]$VidaProcessId = 0,
     [string]$ReferenceDll,
     [string]$OutputFile
 )
@@ -257,6 +259,37 @@ function Get-OperatorNextGate {
 # process name is an operator hint, NOT an authenticated VIDA executable.
 # An exact registered DLL path at one instant does not show whether an XML
 # config was loaded, J2534 was invoked, or a ReadVin script was selected.
+# B3A338. Process PID and birth time stay in memory; identity is untrusted.
+function Select-VidaExactPidCandidate {
+    param([object[]]$NameMatches, [int]$SelectedProcessId)
+    $matches=@($NameMatches | Where-Object { $_.Id -eq $SelectedProcessId })
+    if ($matches.Count -eq 0) {
+        return [pscustomobject]@{Category='selected_pid_not_in_name_matches';Client=$null;BirthTicks=[long]0}
+    }
+    if ($matches.Count -ne 1) {
+        return [pscustomobject]@{Category='selected_pid_ambiguous_in_name_matches';Client=$null;BirthTicks=[long]0}
+    }
+    try {
+        $candidate=$matches[0]
+        if ($candidate.HasExited) { throw 'candidate_exited' }
+        [long]$ticks=$candidate.StartTime.ToUniversalTime().Ticks
+        if ($ticks -le 0) { throw 'invalid_process_start' }
+        return [pscustomobject]@{Category='pid_name_and_starttime_observed';Client=$candidate;BirthTicks=$ticks}
+    } catch {
+        return [pscustomobject]@{Category='selected_pid_starttime_unavailable';Client=$null;BirthTicks=[long]0}
+    }
+}
+function Test-VidaExactPidSnapshotStable {
+    param([object]$Client, [long]$ExpectedBirthTicks)
+    if ($null -eq $Client -or $ExpectedBirthTicks -le 0) { return 'unverifiable' }
+    try {
+        if ($Client.HasExited) { return 'process_exited_after_snapshot' }
+        [long]$actual=$Client.StartTime.ToUniversalTime().Ticks
+        if ($actual -ne $ExpectedBirthTicks) { return 'process_starttime_changed' }
+        return 'same_pid_process_starttime_after_snapshot'
+    } catch { return 'unverifiable' }
+}
+
 function Get-VidaNextGate {
     param([string]$Observation, [string]$Comparison,
           [string]$ReferencePe32)
@@ -281,7 +314,9 @@ function Get-VidaNextGate {
 
 function New-VidaModuleReport {
     param([string]$ProcessName, [string]$Observation,
-          [string]$Comparison, [string]$ReferencePe32)
+          [string]$Comparison, [string]$ReferencePe32,
+          [string]$PidSelection = 'not_requested',
+          [string]$StarttimeStability = 'not_assessed')
     if (@('iexplore','java','VidaMonitor','w3wp') -cnotcontains $ProcessName) {
         throw 'Unsupported VIDA process name category'
     }
@@ -295,6 +330,9 @@ function New-VidaModuleReport {
         registered_virtual_module_observation = $Observation
         installed_vs_reference_dll = $Comparison
         reference_dll_pe32 = $ReferencePe32
+        selected_private_pid_name_starttime_observation = $PidSelection
+        selected_private_pid_starttime_snapshot_stability = $StarttimeStability
+        selected_pid_is_authenticated_original_vida = $false
         registered_dll_module_path_seen_in_name_matched_process = $loaded
         selected_process_is_authenticated_original_vida = $false
         loaded_binary_memory_matches_disk_verified = $false
