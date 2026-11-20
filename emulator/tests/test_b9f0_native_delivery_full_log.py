@@ -328,6 +328,96 @@ class B9F0NativeRxTests(unittest.TestCase):
         self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
         self.assertFalse(r["sectorv_ecu_identity_accepted_verified"])
 
+
+    def test_32_exact_single_hw_rx_observer_bridge_is_shape_only(self):
+        rows = delivered(frames()[:1])
+        rows.insert(2, event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"))
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["categories"],
+                         {"unpaired_intervening_hardware_observer": 1})
+        self.assertEqual(r["native_d2_delivery_tags"]["paired_tag_records"], 0)
+        self.assertEqual(d["observer_only_bridge_candidates_started"], 1)
+        self.assertEqual(d["observer_only_bridge_outcomes"],
+                         {"native_shape_consistent_only": 1})
+        self.assertFalse(d["observer_only_bridge_is_strict_delivery_evidence"])
+        self.assertTrue(d["observer_only_bridge_counts_reconcile"])
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_33_observer_without_valid_rx_delivery_never_bridges(self):
+        rows = delivered(frames()[:1])[1:]
+        rows.insert(1, event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"))
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["observer_only_bridge_candidates_started"], 0)
+        self.assertEqual(d["observer_only_bridge_outcomes"], {})
+        self.assertTrue(d["observer_only_bridge_counts_reconcile"])
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_34_observer_bridge_wrong_channel_is_metadata_mismatch(self):
+        rows = delivered(frames()[:1])
+        rows.insert(2, event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"))
+        rows[-1] = event(
+            "P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)",
+            be(2, 1, 1, 102000, 104000))
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["observer_only_bridge_outcomes"],
+                         {"metadata_mismatch": 1})
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_35_non_can_protocol_cannot_be_promoted_by_observer(self):
+        rows = delivered(frames()[:1])
+        rows[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                        be(1, 6, 0, 125000, 102000))
+        rows.insert(2, event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"))
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["observer_only_bridge_outcomes"],
+                         {"metadata_mismatch": 1})
+        self.assertEqual(r["native_d2_delivery_tags"]["paired_tag_records"], 0)
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_36_second_observer_interrupts_first_bridge(self):
+        rows = delivered(frames()[:1])
+        rows[2:2] = [
+            event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"),
+            event("P2_HW_RX_DUPLICATE_E3_CANDIDATE")]
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["observer_only_bridge_outcomes"],
+                         {"interrupted_before_tag": 1})
+        self.assertEqual(d["observer_only_bridge_candidates_started"], 1)
+        self.assertTrue(d["observer_only_bridge_counts_reconcile"])
+
+    def test_37_intervening_same_pid_event_clears_bridge(self):
+        rows = delivered(frames()[:1])
+        rows[2:2] = [event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"),
+                     event("J2534 unrelated local event")]
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["observer_only_bridge_outcomes"],
+                         {"interrupted_before_tag": 1})
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_38_other_pid_event_does_not_interrupt_bridge(self):
+        rows = delivered(frames()[:1])
+        rows[2:2] = [event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"),
+                     "[PID=0BADF00D Other.exe] unrelated event\\n"]
+        d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["observer_only_bridge_outcomes"],
+                         {"native_shape_consistent_only": 1})
+        self.assertTrue(d["observer_only_bridge_counts_reconcile"])
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
+    def test_39_incomplete_bridge_at_end_is_not_completion(self):
+        rows = delivered(frames()[:1])[:2]
+        rows.append(event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"))
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["observer_only_bridge_candidates_started"], 1)
+        self.assertEqual(d["observer_only_bridge_incomplete_at_scan_end"], 1)
+        self.assertEqual(d["observer_only_bridge_outcomes"], {})
+        self.assertTrue(d["observer_only_bridge_counts_reconcile"])
+        self.assertNotIn("ABCD1234", json.dumps(r))
+        self.assertFalse(r["sectorv_ecu_identity_accepted_verified"])
+
     def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
         import audit_j2534_discovery as general
         legacy = general._native_d2_delivery_tags(delivered(frames()))
