@@ -37,6 +37,14 @@ def _candidate_path(raw):
     if (not isinstance(raw, str) or not 1 <= len(raw) <= 2048
             or "\0" in raw or not ntpath.isabs(raw)):
         return None
+    # Procmon normally shows drive-qualified or UNC paths. Root-relative
+    # strings alone must not be promoted to an observed concrete file.
+    drive, tail = ntpath.splitdrive(raw)
+    qualified_drive = (len(drive) == 2 and drive[1] == ":"
+                       and tail.startswith(("\\", "/")))
+    qualified_unc = raw.startswith("\\\\") and len(drive) > 2
+    if not qualified_drive and not qualified_unc:
+        return None
     if ntpath.basename(raw).casefold() != TARGET:
         return None
     return ntpath.normcase(ntpath.normpath(raw))
