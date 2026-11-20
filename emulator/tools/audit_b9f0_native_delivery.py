@@ -20,7 +20,13 @@ TAG = "P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)"
 
 def analyze_source(lines):
     scan = {"source_rows_scanned": 0, "tag_rows": 0,
-            "oversized_rows_ignored": 0}
+            "oversized_rows_ignored": 0,
+            "native_prefix_rows": 0,
+            "non_native_prefix_rows": 0,
+            "repeated_pid_marker_rows": 0,
+            "non_crlf_rows": 0,
+            "unterminated_rows": 0,
+            "replacement_character_rows": 0}
 
     adjacency = TagGapAttribution()
 
@@ -29,6 +35,18 @@ def analyze_source(lines):
             scan["source_rows_scanned"] += 1
             if scan["source_rows_scanned"] > MAX_SOURCE_ROWS:
                 raise ValueError("bounded_source_rows_exceeded")
+            # Assess text integrity before any parser truncation. Count fixed
+            # categories only: no original PID, bytes, paths, host or line.
+            native = PREFIX.match(line) is not None
+            scan["native_prefix_rows" if native else "non_native_prefix_rows"] += 1
+            if line.count("[PID=") > 1:
+                scan["repeated_pid_marker_rows"] += 1
+            if not line.endswith("\r\n"):
+                scan["non_crlf_rows"] += 1
+            if not line.endswith(("\r", "\n")):
+                scan["unterminated_rows"] += 1
+            if "\ufffd" in line:
+                scan["replacement_character_rows"] += 1
             if len(line) > MAX_LINE:
                 scan["oversized_rows_ignored"] += 1
                 # Preserve same-PID interruption of an adjacent RX/tag pair.
@@ -38,7 +56,9 @@ def analyze_source(lines):
                 adjacency.observe(safe)
                 yield safe
                 continue
-            if TAG in line:
+            # A text fragment mentioning the label is not an emitted tag.
+            # Match the same native prefix and tag-start rule as both auditors.
+            if native and PREFIX.match(line).group(2).startswith(TAG):
                 scan["tag_rows"] += 1
                 if scan["tag_rows"] > MAX_TAG_ROWS:
                     raise ValueError("bounded_native_tag_rows_exceeded")
@@ -58,6 +78,8 @@ def analyze_source(lines):
             "Native RX evidence comes from the simulated J2534 DLL, not a physical ECU.",
             "A complete shape does not confirm a specific B9F0 stage or client decoding.",
             "B9F0 stages lack shared request IDs; source-level stage/delivery correlation is not verified.",
+            "Non-CRLF, unprefixed, repeated PID-marker or replacement-character rows are structural observations, not proof of corruption or lost CAN packets.",
+            "Only native-prefixed emitted D2 tag-start records contribute to tag_rows; oversized rows remain excluded.",
             "No VIN, PID, private path, timestamp, CAN payload or key is exported.",
         ],
     }
@@ -72,7 +94,10 @@ def main(argv=None):
         if (not src.is_file() or src.is_symlink()
                 or src.stat().st_size > MAX_SOURCE_BYTES):
             raise ValueError("invalid_or_excessive_source")
-        with src.open("r", encoding="utf-8-sig", errors="replace") as reader:
+        # Preserve CRLF to distinguish native logline() from copied/altered
+        # text. Python's default universal-newline mode hides this signal.
+        with src.open("r", encoding="utf-8-sig", errors="replace",
+                      newline="") as reader:
             report = analyze_source(reader)
     except (OSError, ValueError):
         p.exit(2, "ERROR: invalid_or_unreadable_bounded_input\n")

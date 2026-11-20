@@ -123,7 +123,15 @@ def validate_report(report):
     rows = _counter(scan.get("source_rows_scanned"), MAX_ROWS)
     tag_rows = _counter(scan.get("tag_rows"), MAX_TAGS)
     oversized = _counter(scan.get("oversized_rows_ignored"), MAX_ROWS)
-    if tag_rows > rows or oversized > rows:
+    prefix = _counter(scan.get("native_prefix_rows"), MAX_ROWS)
+    non_prefix = _counter(scan.get("non_native_prefix_rows"), MAX_ROWS)
+    repeated = _counter(scan.get("repeated_pid_marker_rows"), MAX_ROWS)
+    non_crlf = _counter(scan.get("non_crlf_rows"), MAX_ROWS)
+    unterminated = _counter(scan.get("unterminated_rows"), MAX_ROWS)
+    replacement = _counter(scan.get("replacement_character_rows"), MAX_ROWS)
+    if (tag_rows > rows or oversized > rows or prefix + non_prefix != rows
+            or tag_rows > prefix or repeated > rows or non_crlf > rows
+            or unterminated > non_crlf or replacement > rows):
         raise CompareError("inconsistent_source_counts")
 
     native = _must_dict(r.get("native_d2_delivery_tags"))
@@ -226,6 +234,15 @@ def validate_report(report):
         raise CompareError("inconsistent_adjacency_totals")
     return {
         "rows": rows, "tags": tag_rows, "oversized": oversized,
+        "source_integrity": {
+            "native_prefix_rows": prefix,
+            "non_native_prefix_rows": non_prefix,
+            "repeated_pid_marker_rows": repeated,
+            "non_crlf_rows": non_crlf,
+            "unterminated_rows": unterminated,
+            "replacement_character_rows": replacement,
+            "oversized_rows_ignored": oversized,
+        },
         "metrics": {
             "strict_paired": n["paired_tag_records"],
             "unpaired": n["unpaired_tag_records"],
@@ -266,6 +283,19 @@ def compare(before, after):
                        "oversized_rows_ignored": right["oversized"]},
         "sample_sizes_equal": left["tags"] == right["tags"],
         "insufficient_tag_evidence": not (left["tags"] and right["tags"]),
+        # Structural rows use source-row denominators, not D2-tag counts:
+        # unprefixed rows do not necessarily belong to D2 traffic.
+        "source_integrity_differences": {
+            key: {"before": left["source_integrity"][key],
+                  "after": right["source_integrity"][key],
+                  "delta": right["source_integrity"][key]
+                           - left["source_integrity"][key],
+                  "before_per_1000_source_rows": _per_1000(
+                      left["source_integrity"][key], left["rows"]),
+                  "after_per_1000_source_rows": _per_1000(
+                      right["source_integrity"][key], right["rows"])}
+            for key in left["source_integrity"]
+        },
         "metric_differences": {
             key: {"before": left["metrics"][key], "after": right["metrics"][key],
                   "delta": right["metrics"][key] - left["metrics"][key],
@@ -277,6 +307,8 @@ def compare(before, after):
             "Re-audit both private native logs using the same current analyzer before comparing.",
             "The after scan must be captured after installing the append-only DLL; reports cannot attest installed binaries.",
             "Changes in rates can reflect different clients, sessions, workloads or logging, not necessarily the patch.",
+            "Line-integrity counters are source-level diagnostics; a malformed or concatenated line alone is not evidence of a dropped J2534 frame.",
+            "Line-integrity rates use scanned source rows, not D2 tags; older reports must be regenerated with the current auditor.",
             "An observer-only bridge never upgrades a strict D2 delivery or B9F0 ECU identity.",
             "No source filename, raw CAN, VIN, PID, original timestamp or client identity is exported.",
         ],
