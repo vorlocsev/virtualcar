@@ -399,7 +399,7 @@ class B9F0NativeRxTests(unittest.TestCase):
     def test_38_other_pid_event_does_not_interrupt_bridge(self):
         rows = delivered(frames()[:1])
         rows[2:2] = [event("P2_HW_RX_TIMED_LEGACY_ID_CANDIDATE_UNVERIFIED"),
-                     "[PID=0BADF00D Other.exe] unrelated event\\n"]
+                     "[PID=0BADF00D Other.exe] unrelated event\n"]
         d = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
         self.assertEqual(d["observer_only_bridge_outcomes"],
                          {"native_shape_consistent_only": 1})
