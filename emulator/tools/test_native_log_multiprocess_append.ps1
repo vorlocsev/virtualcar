@@ -39,7 +39,11 @@ public static class SyntheticAppendWorker {
   }
 }
 '@
-  Add-Type -TypeDefinition ($cs.Replace('__DLL__',$dll.Replace('"','""'))) -Language CSharp
+  try {
+    Add-Type -TypeDefinition ($cs.Replace('__DLL__',$dll.Replace('"','""'))) -Language CSharp
+  } catch {
+    throw 'child_csharp_compile_failed'
+  }
   [IO.File]::WriteAllText((Join-Path $root ('ready-'+$ChildIndex)),'ready')
   $start=Join-Path $root 'start'
   $until=[DateTime]::UtcNow.AddSeconds(90)
@@ -47,7 +51,11 @@ public static class SyntheticAppendWorker {
     if ([DateTime]::UtcNow -ge $until) { throw 'gate_timeout' }
     Start-Sleep -Milliseconds 30
   }
-  [SyntheticAppendWorker]::Run($Iterations)
+  try {
+    [SyntheticAppendWorker]::Run($Iterations)
+  } catch {
+    throw 'child_native_open_close_failed'
+  }
 }
 
 function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
@@ -101,9 +109,37 @@ function Assert-Results([string]$Root,[int]$WorkerCount,[int]$LoopCount) {
   Write-Host 'Synthetic shared Win32 logger only; no real client, CAN device or VIN acceptance.'
 }
 
+# Exact, closed error vocabulary: no local files, DLL paths, PIDs, or
+# PowerShell exception details may appear in either CI or child status.
+function Get-BoundedFailure([string]$Reason) {
+  $allowed=@(
+    'invalid_x86_child','dll_outside_disposable_lab','gate_timeout',
+    'child_csharp_compile_failed','child_native_open_close_failed',
+    'no_native_log','log_length','incomplete_or_binary_log',
+    'invalid_crlf_records','split_or_concatenated_record',
+    'bad_native_prefix','open_order','close_order',
+    'unexpected_transport_activity','lost_or_duplicated_log_records',
+    'per_process_log_sequence','runner_temp_missing',
+    'built_x86_dll_missing','isolated_dll_bytes_mismatch',
+    'x86_powershell_missing','worker_spawn_failure',
+    'worker_ended_before_gate','worker_readiness_timeout',
+    'worker_failed_or_timed_out'
+  )
+  if ($allowed -ccontains $Reason) { return $Reason }
+  return 'other_unclassified_failure'
+}
+
 if($Child) {
   try { Invoke-Child; exit 0 }
-  catch { exit 2 }
+  catch {
+    $reason=Get-BoundedFailure ([string]$_.Exception.Message)
+    try {
+      if ($Scratch -and [IO.Directory]::Exists($Scratch)) {
+        [IO.File]::WriteAllText((Join-Path $Scratch ('child-status-'+$ChildIndex)),$reason)
+      }
+    } catch {}
+    exit 2
+  }
 }
 $procs=New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
 $root=$null
@@ -172,6 +208,19 @@ Enabled=0
   }
   Assert-Results -Root $root -WorkerCount $Workers -LoopCount $Iterations
 } catch {
+  $code=Get-BoundedFailure ([string]$_.Exception.Message)
+  Write-Host ('B3A325_FAILURE_CATEGORY='+$code)
+  if ($root -and [IO.Directory]::Exists($root)) {
+    for($i=0;$i -lt $Workers;$i++) {
+      try {
+        $status=Join-Path $root ('child-status-'+$i)
+        if ([IO.File]::Exists($status)) {
+          $safe=Get-BoundedFailure ([IO.File]::ReadAllText($status).Trim())
+          Write-Host ('B3A325_CHILD_CATEGORY='+$safe)
+        }
+      } catch {}
+    }
+  }
   throw 'B3A325 isolated multiprocess native logging regression FAILED'
 } finally {
   foreach($p in $procs) {
