@@ -22,7 +22,7 @@ MODES = frozenset((
     "J2534DiagnosticConnection", "DiCEDiagnosticConnection",
     "VirtualDiagnosticConnection", "NoCommConnection", "unrecognized_mode",
 ))
-MODULE_NAMES = frozenset(("iexplore", "java", "vidamonitor", "w3wp"))
+MODULE_NAMES = frozenset(("iexplore", "java", "VidaMonitor", "w3wp"))
 MODULE_STATES = frozenset((
     "registered_library_loaded_in_name_matched_client",
     "registered_library_not_in_enumerated_modules",
@@ -152,7 +152,7 @@ def validate(role, report):
             raise ReportError("inconsistent_module_report")
         if report.get("scope") != "operator_requested_current_host_name_match_only":
             raise ReportError("unsupported_module_scope")
-        return {"name": name + ".exe", "state": state, "comparison": comparison,
+        return {"name": name.casefold() + ".exe", "state": state, "comparison": comparison,
                 "pe": pe, "loaded": loaded}
     process = _category(report, "selected_process_name_category",
                         frozenset(name + ".exe" for name in MODULE_NAMES))
