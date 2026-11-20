@@ -647,14 +647,17 @@ function Invoke-ModuleSnapshotSelfTests {
 }
 
 if ($SelfTest) {
-    if ($OperatorSession -or $ReferenceDll -or $OutputFile -or $VidaProcessName) {
+    if ($OperatorSession -or $ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId) {
         throw 'Self-test cannot combine with operator collection'
     }
     Invoke-LocalSelfTests
     exit 0
 }
-if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile -or $VidaProcessName)) {
+if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId)) {
     throw 'Operator-only parameters require -OperatorSession'
+}
+if ($VidaProcessId -and -not $VidaProcessName) {
+    throw 'Exact VIDA PID selection requires -VidaProcessName'
 }
 if ($VidaProcessName -and [string]::IsNullOrWhiteSpace($ReferenceDll)) {
     throw 'VIDA operator module observation requires an explicit reference DLL'
@@ -695,8 +698,40 @@ try {
     $processes = @()
     $processObservation = 'client_process_listing_unavailable'
 }
+$vidaPidSelection='not_requested'
+$vidaPidStability='not_assessed'
+$vidaChosenClient=$null
+[long]$vidaBirthTicks=0
+if ($VidaProcessId) {
+    if ($processObservation -eq 'client_process_listing_unavailable') {
+        $vidaPidSelection='client_process_listing_unavailable'
+    } else {
+        $selection=Select-VidaExactPidCandidate -NameMatches $processes -SelectedProcessId $VidaProcessId
+        $vidaPidSelection=$selection.Category
+        if ($vidaPidSelection -eq 'pid_name_and_starttime_observed') {
+            $vidaChosenClient=$selection.Client
+            $vidaBirthTicks=$selection.BirthTicks
+            $processes=@($vidaChosenClient)
+        } else {
+            # Never fall back to another process if the explicit PID failed.
+            $processes=@()
+            if ($vidaPidSelection -eq 'selected_pid_starttime_unavailable') {
+                $processObservation='client_process_listing_unavailable'
+            } else {
+                $processObservation='client_not_observed_in_local_snapshot'
+            }
+        }
+    }
+}
 if (-not $processObservation) {
     $processObservation = Get-ClientBindingState -Clients $processes -RegisteredPath $library
+}
+if ($VidaProcessId -and $null -ne $vidaChosenClient) {
+    $vidaPidStability=Test-VidaExactPidSnapshotStable -Client $vidaChosenClient -ExpectedBirthTicks $vidaBirthTicks
+    if ($vidaPidStability -ne 'same_pid_process_starttime_after_snapshot') {
+        # A process exit or changed birth time invalidates its module snapshot.
+        $processObservation='client_module_list_unavailable'
+    }
 }
 
 # Default CI mode is backward compatible and scoped only to that runner.
@@ -709,7 +744,7 @@ if ($OperatorSession) {
     $comparison = Get-ByteEquivalence -RegisteredPath $library -ReferencePath $ReferenceDll
     $referencePe32 = Get-ReferencePe32State -ReferencePath $ReferenceDll
     if ($VidaProcessName) {
-        $result=New-VidaModuleReport -ProcessName $VidaProcessName -Observation $processObservation -Comparison $comparison -ReferencePe32 $referencePe32
+        $result=New-VidaModuleReport -ProcessName $VidaProcessName -Observation $processObservation -Comparison $comparison -ReferencePe32 $referencePe32 -PidSelection $vidaPidSelection -StarttimeStability $vidaPidStability
     } else {
     $result = [ordered]@{
         schema_version = 'virtualcar-sectorv-process-binding-operator-v1'
