@@ -111,7 +111,6 @@ IMPORT U32 WINCALL GetTempPathA(U32 n, char *out) ALIAS(GetTempPathA);
 IMPORT U32 WINCALL GetEnvironmentVariableA(const char *name, char *out, U32 n) ALIAS(GetEnvironmentVariableA);
 IMPORT int WINCALL CreateDirectoryA(const char *name, PTR sec) ALIAS(CreateDirectoryA);
 IMPORT HANDLE WINCALL CreateFileA(const char *path,U32 access,U32 sharing,PTR security,U32 creation,U32 flags,HANDLE templateFile) ALIAS(CreateFileA);
-IMPORT U32 WINCALL SetFilePointer(HANDLE file,U32 low,PTR high,U32 method) ALIAS(SetFilePointer);
 IMPORT int WINCALL WriteFile(HANDLE file,const void *buf,U32 count,U32 *written,PTR overlap) ALIAS(WriteFile);
 IMPORT int WINCALL CloseHandle(HANDLE file) ALIAS(CloseHandle);
 IMPORT long WINCALL InterlockedCompareExchange(volatile long *dst,long exchange,long compare) ALIAS(InterlockedCompareExchange);
@@ -281,9 +280,13 @@ static void logline(const char *message,const U8 *data,U32 len) {
     str_append(line,"] ",sizeof(line));str_append(line,message,sizeof(line));p=str_len(line);
     if(data&&len&&p+1<sizeof(line)){line[p++]=' ';hex_bytes(line+p,sizeof(line)-p,data,len>52?52:len);p=str_len(line);}
     if(p+2<sizeof(line)){line[p++]='\r';line[p++]='\n';line[p]=0;}
-    f=CreateFileA(g_log_path,0x40000000u,3,0,4,0x80,0); /* FILE_APPEND_DATA, OPEN_ALWAYS */
+    /* FILE_APPEND_DATA without FILE_WRITE_DATA makes each WriteFile append.
+       The former GENERIC_WRITE + SetFilePointer(FILE_END) pair could race
+       with other processes sharing the same native trace file. Preserve
+       exactly one write per CRLF-terminated record. */
+    f=CreateFileA(g_log_path,0x00100004u,3,0,4,0x80,0); /* SYNCHRONIZE|FILE_APPEND_DATA, OPEN_ALWAYS */
     if(f==INVALID_HANDLE)return;
-    SetFilePointer(f,0,0,2);WriteFile(f,line,p,&written,0);CloseHandle(f);
+    WriteFile(f,line,p,&written,0);CloseHandle(f);
 }
 
 /* P3Tool IL evidence: expose Connect's actual outcome even when no channel
