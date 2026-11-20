@@ -155,7 +155,7 @@ def validate(role, report):
         return {"name": name.casefold() + ".exe", "state": state, "comparison": comparison,
                 "pe": pe, "loaded": loaded}
     process = _category(report, "selected_process_name_category",
-                        frozenset(name + ".exe" for name in MODULE_NAMES))
+                        frozenset(name.casefold() + ".exe" for name in MODULE_NAMES))
     category = _category(report, "file_io_category", IO_CATEGORIES)
     opens = _required(report, "candidate_createfile_success_events", "int")
     reads = _required(report, "candidate_readfile_success_events", "int")
