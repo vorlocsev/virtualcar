@@ -19,6 +19,8 @@ class TagGapAttribution:
         self.counts = Counter()
         self.missing_context_reasons = Counter()
         self.non_can_protocols = Counter()
+        self.other_protocol_values = Counter()
+        self.no_prior_previous_event_classes = Counter()
 
     @staticmethod
     def _interruption(event):
@@ -30,6 +32,38 @@ class TagGapAttribution:
             return "unpaired_intervening_j2534_event"
         return "unpaired_intervening_other_same_pid_event"
 
+    @staticmethod
+    def _event_class(event):
+        # Bounded fixed labels only; do not export native event text.
+        if event.startswith("RX context "):
+            return "rx_context"
+        if event.startswith(RX_DELIVERY):
+            return "rx_delivery"
+        if event.startswith("P2 D2 delivered "):
+            return "d2_delivery_tag"
+        if event.startswith("PassThruOpen ->"):
+            return "open_boundary"
+        if event.startswith("PassThruClose"):
+            return "close_boundary"
+        if event.startswith("PassThruDisconnect"):
+            return "disconnect_boundary"
+        if event.startswith("P2 D2 request "):
+            return "d2_request"
+        if event.startswith("P2 D2 "):
+            return "other_d2_marker"
+        if event.startswith("PassThru"):
+            return "other_passthru_marker"
+        if event.startswith("J2534"):
+            return "other_j2534_marker"
+        return "other_native_event"
+
+    @staticmethod
+    def _protocol_value_class(protocol):
+        # J2534 protocol numbers are public enums, but bound output to
+        # known small categorical values; never export an arbitrary word.
+        return ("protocol_" + str(protocol)
+                if 0 <= protocol <= 12 else "other_protocol_value")
+
     def observe(self, line):
         match = PREFIX.match(line)
         if match is None:
@@ -37,20 +71,26 @@ class TagGapAttribution:
         pid, event = match.group(1), match.group(2).rstrip("\r\n")
         scope = self.scopes.setdefault(pid, {
             "ctx": None, "pending": None, "cause": "unpaired_no_prior_rx",
-            "missing_context_reason": None
+            "missing_context_reason": None,
+            "prior_delivery_event_class": None,
+            "last_event_class": "none"
         })
+        previous_class = scope["last_event_class"]
+        scope["last_event_class"] = self._event_class(event)
         if event.startswith(("PassThruOpen ->", "PassThruClose",
                              "PassThruDisconnect")):
             scope.update(ctx=None, pending=None,
                          cause="unpaired_session_or_channel_boundary",
-                         missing_context_reason=None)
+                         missing_context_reason=None,
+                         prior_delivery_event_class=None)
             return
         if event.startswith("RX context "):
             ctx = _context(event, RX_CONTEXT, True)
             scope.update(ctx=ctx, pending=None,
                          cause=("unpaired_rx_context_without_delivery" if ctx
                                 else "unpaired_invalid_rx_context"),
-                         missing_context_reason=None)
+                         missing_context_reason=None,
+                         prior_delivery_event_class=None)
             return
         if event.startswith(RX_DELIVERY):
             suffix = event[len(RX_DELIVERY):].strip()
@@ -73,15 +113,18 @@ class TagGapAttribution:
                 scope.update(
                     pending=None,
                     cause="unpaired_delivery_without_valid_rx_context",
-                    missing_context_reason=predecessor)
+                    missing_context_reason=predecessor,
+                    prior_delivery_event_class=previous_class)
             elif raw is None:
                 scope.update(pending=None,
                              cause="unpaired_nonclassic_or_invalid_rx_record",
-                             missing_context_reason=None)
+                             missing_context_reason=None,
+                             prior_delivery_event_class=None)
             else:
                 scope.update(pending=(ctx, raw),
                              cause="unpaired_pending_rx_without_tag",
-                             missing_context_reason=None)
+                             missing_context_reason=None,
+                             prior_delivery_event_class=None)
             return
         if event.startswith("P2 D2 delivered "):
             metadata = _context(event, D2_DELIVERY, True)
@@ -89,8 +132,10 @@ class TagGapAttribution:
             scope["ctx"] = scope["pending"] = None
             cause = scope["cause"]
             missing_reason = scope["missing_context_reason"]
+            missing_previous_class = scope["prior_delivery_event_class"]
             scope["cause"] = "unpaired_no_prior_rx"
             scope["missing_context_reason"] = None
+            scope["prior_delivery_event_class"] = None
             if metadata is None:
                 category = "malformed_tag"
             elif pending is None:
@@ -98,6 +143,9 @@ class TagGapAttribution:
                 if category == "unpaired_delivery_without_valid_rx_context":
                     self.missing_context_reasons[
                         missing_reason or "unpaired_other_unverified_predecessor"] += 1
+                    if missing_reason == "unpaired_no_prior_rx":
+                        self.no_prior_previous_event_classes[
+                            missing_previous_class or "none"] += 1
             else:
                 ctx, raw = pending
                 channel, generation, frame, _rx_us, _delivery_us = metadata
@@ -109,6 +157,9 @@ class TagGapAttribution:
                     category = "mismatch_protocol_not_can"
                     self.non_can_protocols[
                         "ISO15765_6" if ctx[1] == 6 else "other_non_CAN"] += 1
+                    if ctx[1] != 6:
+                        self.other_protocol_values[
+                            self._protocol_value_class(ctx[1])] += 1
                 elif ctx[3] == 0:
                     category = "mismatch_zero_baud"
                 elif ctx[2] & 0x0B:
@@ -122,7 +173,8 @@ class TagGapAttribution:
         if scope["ctx"] is not None or scope["pending"] is not None:
             scope.update(ctx=None, pending=None,
                          cause=self._interruption(event),
-                         missing_context_reason=None)
+                         missing_context_reason=None,
+                         prior_delivery_event_class=None)
 
     def summary(self, shared):
         paired = self.counts["paired_strict_native_rx_tag"]
@@ -152,12 +204,24 @@ class TagGapAttribution:
             "non_CAN_protocol_counts_reconcile": (
                 sum(self.non_can_protocols.values())
                 == self.counts["mismatch_protocol_not_can"]),
+            "non_CAN_other_protocol_values": dict(
+                sorted(self.other_protocol_values.items())),
+            "non_CAN_other_values_reconcile": (
+                sum(self.other_protocol_values.values())
+                == self.non_can_protocols["other_non_CAN"]),
+            "no_prior_rx_previous_event_classes": dict(
+                sorted(self.no_prior_previous_event_classes.items())),
+            "no_prior_rx_previous_events_reconcile": (
+                sum(self.no_prior_previous_event_classes.values())
+                == self.missing_context_reasons["unpaired_no_prior_rx"]),
             "b9f0_specific_causal_attribution_verified": False,
             "notes": [
                 "Missing strict logger adjacency does not prove a lost J2534 frame.",
                 "This is all D2 generation tags, not proven per-command B9F0 traffic.",
                 "Predecessor categories describe why the logger parser lacked a valid RX context immediately before a delivery record.",
                 "J2534 protocol 6 denotes ISO15765 metadata but is not by itself evidence of a D2 message sent over ISO15765.",
+                "Previous event class is only the most recent same-PID native logger event; it is not a verified transaction boundary.",
+                "A protocol number in RX metadata is not proof of a physical bus or original SectorV client behavior.",
                 "No raw CAN, VIN, PID, path, timestamp or secret appears in the report.",
             ],
         }
