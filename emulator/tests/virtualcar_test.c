@@ -38,6 +38,9 @@ static char backend_lines[2000000];static U32 backend_len=0;
 static U32 backend_capture_overflows=0;
 static int capture_connect_log=0;
 static char connect_log_lines[32000];static U32 connect_log_len=0;
+/* Native trace Win32 append-only handle contract. Synthetic host shim only. */
+static U32 native_log_open_access=0,native_log_open_share=0,native_log_open_count=0;
+static U32 native_log_write_count=0,native_log_seek_count=0;
 static U32 event_count_since(const char *start,const char *pattern){
  U32 count=0;const char *p=start;
  while((p=strstr(p,pattern))!=0){++count;p+=strlen(pattern);}
@@ -158,13 +161,20 @@ int CreateDirectoryA(const char *p,PTR sec){(void)p;(void)sec;return 1;}
 HANDLE CreateFileA(const char *p,U32 a,U32 sh,PTR sec,U32 creation,U32 flags,HANDLE template){
  (void)a;(void)sh;(void)sec;(void)creation;(void)flags;(void)template;
  if(strstr(p,"dev47-backend.jsonl"))return (HANDLE)1;
- if(capture_connect_log && strstr(p,"SectorVVirtualCar.log"))return (HANDLE)2;
+ if(capture_connect_log && strstr(p,"SectorVVirtualCar.log")){
+  native_log_open_access=a;native_log_open_share=sh;native_log_open_count++;
+  return (HANDLE)2;
+ }
  return INVALID_HANDLE;
 }
-U32 SetFilePointer(HANDLE file,U32 low,PTR high,U32 method){(void)file;(void)low;(void)high;(void)method;return 0;}
+U32 SetFilePointer(HANDLE file,U32 low,PTR high,U32 method){
+ (void)file;(void)low;(void)high;(void)method;
+ native_log_seek_count++;return 0;
+}
 int WriteFile(HANDLE f,const void*b,U32 n,U32*w,PTR o){
  (void)o;
  if(f==(HANDLE)2){
+  native_log_write_count++;
   if(n+connect_log_len>=sizeof(connect_log_lines))return 0;
   memcpy(connect_log_lines+connect_log_len,b,n);connect_log_len+=n;
   connect_log_lines[connect_log_len]=0;
@@ -2892,8 +2902,44 @@ static void test_clear_rx_raw_iso_lifetime(U32 dev){
  puts("PASS P0 CLEAR_RX 8: new ISO-TP and tester-present recovery");
 }
 
+/* One WriteFile call and FILE_APPEND_DATA for every native trace record.
+   This is a deterministic access/format test, not a physical cross-process
+   concurrency claim. The production DLL keeps its CAN/J2534 behavior. */
+static void test_native_log_append_only(void){
+ char saved_path[sizeof(g_log_path)];
+ const U8 sample[]={0x12,0xAB};
+ U32 start_count,initial_length,seek_before;
+ bytes_copy(saved_path,g_log_path,sizeof(saved_path));
+ capture_connect_log=1;connect_log_len=0;connect_log_lines[0]=0;
+ native_log_open_count=native_log_write_count=native_log_seek_count=0;
+ /* A disabled log must not touch a Win32 file handle. */
+ g_log_path[0]=0;
+ logline("APPEND disabled",sample,sizeof(sample));
+ REQUIRE(native_log_open_count==0&&native_log_write_count==0);
+ str_copy(g_log_path,"C:\\Lab\\SectorVVirtualCar.log",sizeof(g_log_path));
+ logline("APPEND synthetic probe",sample,sizeof(sample));
+ REQUIRE(native_log_open_count==1&&native_log_write_count==1);
+ REQUIRE(native_log_open_access==0x00100004u); /* SYNCHRONIZE|FILE_APPEND_DATA */
+ REQUIRE(native_log_open_share==3u);            /* FILE_SHARE_READ|FILE_SHARE_WRITE */
+ REQUIRE(native_log_seek_count==0);
+ REQUIRE(strstr(connect_log_lines,"APPEND synthetic probe 12 AB ")!=0);
+ REQUIRE(strstr(connect_log_lines,"\r\n")!=0);
+ initial_length=connect_log_len;
+ start_count=native_log_write_count;
+ seek_before=native_log_seek_count;
+ logline("APPEND second line",0,0);
+ REQUIRE(native_log_open_count==2);
+ REQUIRE(native_log_write_count==start_count+1);
+ REQUIRE(native_log_seek_count==seek_before);
+ REQUIRE(connect_log_len>initial_length);
+ REQUIRE(strstr(connect_log_lines+initial_length,"APPEND second line\r\n")!=0);
+ REQUIRE(strstr(connect_log_lines,"YV1CZ0002A0000001")==0);
+ capture_connect_log=0;
+ bytes_copy(g_log_path,saved_path,sizeof(saved_path));
+}
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
+ test_native_log_append_only();
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
