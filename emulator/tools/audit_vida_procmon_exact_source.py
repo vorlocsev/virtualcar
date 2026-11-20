@@ -36,7 +36,12 @@ def _pid(raw):
 
 def analyze_text(text, process_name, pid, selected_path, xml_report):
     """Compare private exact path and PID without returning either value."""
-    name = procmon._process_name(process_name)
+    # The shared B3A334 validator uses its own error class. Normalize it
+    # here so the exact-source audit exposes one fail-closed API to callers.
+    try:
+        name = procmon._process_name(process_name)
+    except procmon.AuditError:
+        raise SourceError("unsupported_process_name") from None
     selected_pid = _pid(pid)
     selected = procmon._candidate_path(selected_path)
     if selected is None:
