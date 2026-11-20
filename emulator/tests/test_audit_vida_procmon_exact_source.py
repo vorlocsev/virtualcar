@@ -184,7 +184,7 @@ class VidaExactProcmonSourceTests(unittest.TestCase):
             else:
                 with self.assertRaises(tool.SourceError):
                     tool.analyze_files(log_path, xml_path, "iexplore.exe", "1033")
-            invalid = home / "wrong.csv"
+            invalid = home / "wrong.txt"
             invalid.write_bytes(b"x" * 400)
             with self.assertRaises(tool.SourceError):
                 tool._read_owner_csv(invalid)
