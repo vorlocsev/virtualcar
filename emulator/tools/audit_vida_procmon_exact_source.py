@@ -26,7 +26,7 @@ class SourceError(Exception):
 
 def _pid(raw):
     value = str(raw)
-    if not value.isascii() or not value.isdecimal():
+    if not value.isascii() or not value.isdecimal() or len(value) > 10:
         raise SourceError("invalid_selected_pid")
     number = int(value)
     if not 1 <= number <= 0xFFFFFFFF:
@@ -46,6 +46,7 @@ def analyze_text(text, process_name, pid, selected_path, xml_report):
             xml_report.get("original_vida_vin_accepted_verified") is not False or
             xml_report.get("actual_diagnostic_connection_mode_verified") is not False or
             xml_report.get("xml_structure_read_only") is not True or
+            type(xml_report.get("use_client_settings_candidate")) is not bool or
             xml_report.get("mode_candidate") not in (
                 *xml_audit.MODES, "unrecognized_mode")):
         raise SourceError("untrusted_xml_candidate")
