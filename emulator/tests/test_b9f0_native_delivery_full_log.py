@@ -418,6 +418,61 @@ class B9F0NativeRxTests(unittest.TestCase):
         self.assertNotIn("ABCD1234", json.dumps(r))
         self.assertFalse(r["sectorv_ecu_identity_accepted_verified"])
 
+
+    def test_40_non_native_tag_text_is_not_a_d2_generation_tag(self):
+        fake = "unrelated line: P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)\n"
+        rows = [fake] + delivered(frames()[:1])
+        result = audit.analyze_source(rows)
+        scan = result["source_scan_counts"]
+        self.assertEqual(scan["source_rows_scanned"], 4)
+        self.assertEqual(scan["non_native_prefix_rows"], 1)
+        self.assertEqual(scan["native_prefix_rows"], 3)
+        self.assertEqual(scan["tag_rows"], 1)
+        self.assertEqual(result["native_d2_delivery_tags"]["tag_records"], 1)
+        self.assertTrue(result["tag_adjacency_diagnostics"]
+                        ["category_totals_agree_with_legacy_auditor"])
+
+    def test_41_native_crlf_and_unterminated_rows_are_separate(self):
+        rows = [line.replace("\n", "\r\n") for line in delivered(frames()[:1])]
+        rows += ["external note\n", "unterminated note"]
+        result = audit.analyze_source(rows)
+        scan = result["source_scan_counts"]
+        self.assertEqual(scan["source_rows_scanned"], 5)
+        self.assertEqual(scan["native_prefix_rows"], 3)
+        self.assertEqual(scan["non_native_prefix_rows"], 2)
+        self.assertEqual(scan["non_crlf_rows"], 2)
+        self.assertEqual(scan["unterminated_rows"], 1)
+        self.assertEqual(scan["tag_rows"], 1)
+
+    def test_42_repeated_pid_and_replacement_counts_redacted(self):
+        malformed = event("unrelated note [PID=0BADF00D \ufffd")
+        result = audit.analyze_source([malformed] + delivered(frames()[:1]))
+        scan = result["source_scan_counts"]
+        self.assertEqual(scan["repeated_pid_marker_rows"], 1)
+        self.assertEqual(scan["replacement_character_rows"], 1)
+        self.assertEqual(scan["native_prefix_rows"], 4)
+        self.assertEqual(scan["tag_rows"], 1)
+        output = json.dumps(result)
+        self.assertNotIn("0BADF00D", output)
+        self.assertNotIn("ABCD1234", output)
+        self.assertFalse(result["real_ecu_response_verified"])
+
+    def test_43_cli_preserves_crlf_for_native_logger_audit(self):
+        with tempfile.TemporaryDirectory() as td:
+            logfile = Path(td) / "PRIVATE_NATIVE.log"
+            lines = [line.replace("\n", "\r\n") for line in delivered(frames()[:1])]
+            logfile.write_bytes("".join(lines).encode("utf-8"))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(audit.main(["--native", str(logfile)]), 0)
+            result = json.loads(output.getvalue())
+            scan = result["source_scan_counts"]
+            self.assertEqual(scan["source_rows_scanned"], 3)
+            self.assertEqual(scan["non_crlf_rows"], 0)
+            self.assertEqual(scan["unterminated_rows"], 0)
+            self.assertEqual(scan["tag_rows"], 1)
+            self.assertNotIn(str(logfile), output.getvalue())
+
     def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
         import audit_j2534_discovery as general
         legacy = general._native_d2_delivery_tags(delivered(frames()))
