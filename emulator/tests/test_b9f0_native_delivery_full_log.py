@@ -196,6 +196,44 @@ class B9F0NativeRxTests(unittest.TestCase):
         self.assertEqual(d["missing_rx_context_predecessor_categories"], {})
         self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
 
+
+    def test_20_no_prior_rx_last_event_class_is_bounded(self):
+        rows = delivered(frames()[:1])[1:]
+        r = audit.analyze_source(rows)
+        diag = r["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            diag["no_prior_rx_previous_event_classes"]["none"], 1)
+        self.assertTrue(diag["no_prior_rx_previous_events_reconcile"])
+        self.assertNotIn("ABCD1234", json.dumps(r))
+
+    def test_21_no_prior_rx_from_previous_same_pid_d2_tag(self):
+        rows = [event("P2 D2 delivered channel/generation/frame/rx-us/delivery-us (BE)",
+                      be(1, 7, 1, 102000, 104000))]
+        rows += delivered(frames()[:1])[1:]
+        diag = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            diag["no_prior_rx_previous_event_classes"]["d2_delivery_tag"], 1)
+        self.assertTrue(diag["no_prior_rx_previous_events_reconcile"])
+
+    def test_22_unrecognized_protocol_zero_is_not_iso15765(self):
+        rows = delivered(frames()[:1])
+        rows[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                        be(1, 0, 0, 125000, 102000))
+        diag = audit.analyze_source(rows)["tag_adjacency_diagnostics"]
+        self.assertEqual(diag["non_CAN_other_protocol_values"]["protocol_0"], 1)
+        self.assertEqual(diag["non_CAN_protocol_categories"]["other_non_CAN"], 1)
+        self.assertTrue(diag["non_CAN_other_values_reconcile"])
+
+    def test_23_unknown_wide_protocol_buckets_safely(self):
+        rows = delivered(frames()[:1])
+        rows[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                        be(1, 0xF123ABCD, 0, 125000, 102000))
+        r = audit.analyze_source(rows)
+        diag = r["tag_adjacency_diagnostics"]
+        self.assertEqual(diag["non_CAN_other_protocol_values"]["other_protocol_value"], 1)
+        self.assertNotIn("F123ABCD", json.dumps(r))
+        self.assertTrue(diag["non_CAN_other_values_reconcile"])
+
     def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
         import audit_j2534_discovery as general
         legacy = general._native_d2_delivery_tags(delivered(frames()))
