@@ -20,6 +20,7 @@ class TagGapAttribution:
         self.missing_context_reasons = Counter()
         self.non_can_protocols = Counter()
         self.other_protocol_values = Counter()
+        self.wide_protocol_shapes = Counter()
         self.no_prior_previous_event_classes = Counter()
 
     @staticmethod
@@ -41,6 +42,20 @@ class TagGapAttribution:
             return "rx_delivery"
         if event.startswith("P2 D2 delivered "):
             return "d2_delivery_tag"
+        # These bounded labels are emitted by the current DLL's RX observer.
+        # They can interrupt a strict RX-delivery/tag chain, not prove frame loss.
+        if event.startswith("P2_HW_RX_"):
+            return "hardware_rx_observer"
+        if event.startswith("P2_HW_"):
+            return "hardware_other_observer"
+        if event.startswith("TX context "):
+            return "tx_context"
+        if event.startswith("TX (app request)"):
+            return "tx_request"
+        if event.startswith("Periodic TX context "):
+            return "periodic_tx_context"
+        if event.startswith("CLEAR_RX context "):
+            return "clear_rx_context"
         if event.startswith("PassThruOpen ->"):
             return "open_boundary"
         if event.startswith("PassThruClose"):
@@ -63,6 +78,20 @@ class TagGapAttribution:
         # known small categorical values; never export an arbitrary word.
         return ("protocol_" + str(protocol)
                 if 0 <= protocol <= 12 else "other_protocol_value")
+
+    @staticmethod
+    def _wide_protocol_shape(protocol):
+        # Public metadata only, but never return a source-specific arbitrary
+        # 32-bit word. Shape is not proof of a byte-order or memory defect.
+        if protocol in (0x05000000, 0x06000000):
+            return "byte_swapped_known_id_shape"
+        if protocol == 0xFFFFFFFF:
+            return "all_bits_set"
+        if protocol <= 0xFFFF:
+            return "other_16bit_value"
+        if (protocol & 0xFFFF) == 0:
+            return "low_word_zero"
+        return "other_32bit_value"
 
     def observe(self, line):
         match = PREFIX.match(line)
@@ -160,6 +189,9 @@ class TagGapAttribution:
                     if ctx[1] != 6:
                         self.other_protocol_values[
                             self._protocol_value_class(ctx[1])] += 1
+                        if ctx[1] > 12:
+                            self.wide_protocol_shapes[
+                                self._wide_protocol_shape(ctx[1])] += 1
                 elif ctx[3] == 0:
                     category = "mismatch_zero_baud"
                 elif ctx[2] & 0x0B:
@@ -209,6 +241,11 @@ class TagGapAttribution:
             "non_CAN_other_values_reconcile": (
                 sum(self.other_protocol_values.values())
                 == self.non_can_protocols["other_non_CAN"]),
+            "non_CAN_wide_protocol_shapes": dict(
+                sorted(self.wide_protocol_shapes.items())),
+            "non_CAN_wide_protocol_shapes_reconcile": (
+                sum(self.wide_protocol_shapes.values())
+                == self.other_protocol_values["other_protocol_value"]),
             "no_prior_rx_previous_event_classes": dict(
                 sorted(self.no_prior_previous_event_classes.items())),
             "no_prior_rx_previous_events_reconcile": (
@@ -222,6 +259,8 @@ class TagGapAttribution:
                 "J2534 protocol 6 denotes ISO15765 metadata but is not by itself evidence of a D2 message sent over ISO15765.",
                 "Previous event class is only the most recent same-PID native logger event; it is not a verified transaction boundary.",
                 "A protocol number in RX metadata is not proof of a physical bus or original SectorV client behavior.",
+                "The current emulator accepts only protocol 5/6 at Connect; wide RX protocol metadata require checking the exact DLL version and log integrity.",
+                "Known observer classes and numeric word shapes do not reclassify any unpaired or mismatched D2 delivery as successfully paired.",
                 "No raw CAN, VIN, PID, path, timestamp or secret appears in the report.",
             ],
         }
