@@ -108,7 +108,7 @@ class VidaProcmonConfigReadTests(unittest.TestCase):
 
     def test_07_reject_bad_columns_pid_broken_or_huge_csv(self):
         bad_texts = [
-            "Process Name,PID,Operation,Path,Result\n",
+            "Process Name,PID,Operation,Result\n",
             "Process Name,PID,PID,Operation,Path,Result\n",
             HEADER + row("PRIVATE", "ReadFile"),
             HEADER + row(0, "ReadFile"),
