@@ -152,6 +152,50 @@ class B9F0NativeRxTests(unittest.TestCase):
         self.assertEqual(d["categories"]["paired_strict_native_rx_tag"], 1)
         self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
 
+
+    def test_15_missing_context_from_no_prior_rx_is_categorized(self):
+        r = audit.analyze_source(delivered(frames()[:1])[1:])
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            d["missing_rx_context_predecessor_categories"]["unpaired_no_prior_rx"], 1)
+        self.assertTrue(d["missing_rx_context_predecessor_counts_reconcile"])
+        self.assertTrue(d["non_CAN_protocol_counts_reconcile"])
+
+    def test_16_missing_context_due_to_malformed_context_is_categorized(self):
+        items = delivered(frames()[:1])
+        items[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                         be(1, 5, 0, 125000))
+        d = audit.analyze_source(items)["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            d["missing_rx_context_predecessor_categories"]["unpaired_invalid_rx_context"], 1)
+        self.assertTrue(d["missing_rx_context_predecessor_counts_reconcile"])
+
+    def test_17_missing_context_due_to_intervening_same_pid(self):
+        items = delivered(frames()[:1])
+        items.insert(1, event("J2534 unrelated local native event"))
+        d = audit.analyze_source(items)["tag_adjacency_diagnostics"]
+        self.assertEqual(
+            d["missing_rx_context_predecessor_categories"][
+                "unpaired_intervening_j2534_event"], 1)
+        self.assertTrue(d["missing_rx_context_predecessor_counts_reconcile"])
+
+    def test_18_protocol_6_is_counted_separately_without_promoting_d2(self):
+        items = delivered(frames()[:1])
+        items[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                         be(1, 6, 0, 125000, 102000))
+        d = audit.analyze_source(items)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["non_CAN_protocol_categories"]["ISO15765_6"], 1)
+        self.assertTrue(d["non_CAN_protocol_counts_reconcile"])
+        self.assertFalse(d["b9f0_specific_causal_attribution_verified"])
+
+    def test_19_other_pid_between_context_and_delivery_does_not_break(self):
+        items = delivered(frames()[:1])
+        items.insert(1, "[PID=0BADF00D External.exe] unrelated record\n")
+        d = audit.analyze_source(items)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["categories"]["paired_strict_native_rx_tag"], 1)
+        self.assertEqual(d["missing_rx_context_predecessor_categories"], {})
+        self.assertTrue(d["category_totals_agree_with_legacy_auditor"])
+
     def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
         import audit_j2534_discovery as general
         legacy = general._native_d2_delivery_tags(delivered(frames()))
