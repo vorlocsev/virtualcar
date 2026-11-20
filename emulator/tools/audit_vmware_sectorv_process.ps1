@@ -348,6 +348,53 @@ function New-VidaModuleReport {
     }
 }
 
+function Invoke-VidaExactPidSelfTests {
+    # Entirely synthetic processes; no original VIDA or J2534 is invoked.
+    $birth=[datetime]'2026-01-01T00:00:00Z'
+    $match=[pscustomobject]@{Id=321;HasExited=$false;StartTime=$birth}
+    $other=[pscustomobject]@{Id=987;HasExited=$false;StartTime=$birth}
+    $exited=[pscustomobject]@{Id=321;HasExited=$true;StartTime=$birth}
+    $missingTime=[pscustomobject]@{Id=321;HasExited=$false;StartTime=$null}
+    $count=0
+    if ((Select-VidaExactPidCandidate @() 321).Category -cne
+            'selected_pid_not_in_name_matches') { throw 'VIDA PID gate 1' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($other) 321).Category -cne
+            'selected_pid_not_in_name_matches') { throw 'VIDA PID gate 2' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($match,$match) 321).Category -cne
+            'selected_pid_ambiguous_in_name_matches') { throw 'VIDA PID gate 3' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($exited) 321).Category -cne
+            'selected_pid_starttime_unavailable') { throw 'VIDA PID gate 4' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($missingTime) 321).Category -cne
+            'selected_pid_starttime_unavailable') { throw 'VIDA PID gate 5' }
+    $count++
+    $chosen=Select-VidaExactPidCandidate @($other,$match) 321
+    if ($chosen.Category -cne 'pid_name_and_starttime_observed' -or
+        $chosen.Client.Id -ne 321 -or $chosen.BirthTicks -le 0) {
+        throw 'VIDA PID gate 6'
+    }
+    $count++
+    if ((Test-VidaExactPidSnapshotStable $match $chosen.BirthTicks) -cne
+            'same_pid_process_starttime_after_snapshot' -or
+        (Test-VidaExactPidSnapshotStable $exited $chosen.BirthTicks) -cne
+            'process_exited_after_snapshot') { throw 'VIDA PID gate 7' }
+    $count++
+    $report=New-VidaModuleReport 'iexplore' 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot' 'x86_pe32_header' $chosen.Category 'same_pid_process_starttime_after_snapshot'
+    $safe=$report | ConvertTo-Json -Compress
+    if ((Test-VidaExactPidSnapshotStable $match ($chosen.BirthTicks+1)) -cne
+            'process_starttime_changed' -or
+        $safe.Contains('321') -or $safe.Contains('2026-01-01') -or
+        $report.selected_pid_is_authenticated_original_vida -ne $false -or
+        $report.original_vida_vin_accepted_verified -ne $false) {
+        throw 'VIDA PID gate 8'
+    }
+    $count++
+    Write-Host ('PASS: {0}/{0} synthetic VIDA exact-PID/starttime and redaction gates' -f $count)
+}
+
 function Invoke-VidaBindingSelfTests {
     $loaded='registered_library_loaded_in_name_matched_client'
     $absent='registered_library_not_in_enumerated_modules'
@@ -489,6 +536,7 @@ function Invoke-LocalSelfTests {
     Write-Host ("PASS: {0}/{0} redacted SectorV process-binding tests" -f $passed)
     Invoke-ModuleSnapshotSelfTests
     Invoke-VidaBindingSelfTests
+    Invoke-VidaExactPidSelfTests
 
     # Eight additional no-client, no-registry, synthetic operator-mode tests.
     $operatorChecks=0
