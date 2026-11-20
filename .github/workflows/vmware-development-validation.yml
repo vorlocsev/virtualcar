@@ -291,6 +291,37 @@ jobs:
           }
           Write-Host 'PASS: native x86 synthetic 13-frame D2 and ISO15765 ECM F190 wire'
           
+      # B3A331: owner-independent, read-only source-shaped VIDA CAN-MS
+      # channel lifecycle. Built x86 virtual DLL only. No original VIDA, CAN TX,
+      # physical J2534, provider registry modification or accepted VIN claim.
+      - name: Check native x86 VIDA-shaped CAN-MS J2534-2 channel lifecycle
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $root = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          $probeDir = Join-Path $root ('virtualcar-b3a331-' + [guid]::NewGuid().ToString('N'))
+          if (Test-Path -LiteralPath $probeDir) {
+            throw 'Refusing to reuse a CAN-MS preflight directory'
+          }
+          try {
+            & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll -OutputDirectory $probeDir -CanMsPreflight
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Synthetic x86 CAN-MS channel lifecycle preflight failed'
+            }
+          } finally {
+            # The runner is persistent: remove only the unique direct child
+            # of RUNNER_TEMP created by this CI step.
+            $parent = [IO.Path]::GetFullPath((Split-Path -Parent $probeDir)).TrimEnd('\')
+            if (-not [String]::Equals($parent, $root,
+                    [StringComparison]::OrdinalIgnoreCase)) {
+              throw 'Refusing CAN-MS cleanup outside RUNNER_TEMP'
+            }
+            if (Test-Path -LiteralPath $probeDir -PathType Container) {
+              Remove-Item -LiteralPath $probeDir -Recurse -Force
+            }
+          }
+
       # B3A325: exercise the actual just-built x86 emulator DLL from four
       # isolated synthetic host processes writing the same temporary trace.
       # Unlike the host shim, this validates real Win32 multi-process append.
