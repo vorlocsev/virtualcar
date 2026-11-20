@@ -70,6 +70,14 @@ def sample(paired=2, *, protocol_mismatch=0, observer=0, rows=100):
             "non_CAN_other_values_reconcile": True,
             "non_CAN_wide_protocol_shapes": {"other_32bit_value": protocol_mismatch} if protocol_mismatch else {},
             "non_CAN_wide_protocol_shapes_reconcile": True,
+            "wide_protocol_rx_context_line_endings": (
+                {"non_crlf": protocol_mismatch} if protocol_mismatch else {}),
+            "wide_protocol_rx_context_previous_event_classes": (
+                {"none": protocol_mismatch} if protocol_mismatch else {}),
+            "wide_protocol_rx_status_shapes": (
+                {"zero_rx_status": protocol_mismatch} if protocol_mismatch else {}),
+            "wide_protocol_affected_native_pid_count": 1 if protocol_mismatch else 0,
+            "wide_protocol_context_fingerprints_reconcile": True,
             "no_prior_rx_previous_event_classes": {},
             "no_prior_rx_previous_events_reconcile": True,
             "observer_only_bridge_candidates_started": observer,
@@ -236,6 +244,66 @@ class BeforeAfterTests(unittest.TestCase):
         old["source_scan_counts"].pop("native_prefix_rows")
         with self.assertRaises(tool.CompareError):
             tool.compare(old, sample())
+
+
+    def test_13_wide_protocol_fingerprints_are_observations_only(self):
+        report = sample(paired=1, protocol_mismatch=2)
+        result = tool.compare(report, report)
+        shapes = result["wide_protocol_context_fingerprint_differences"]
+        self.assertEqual(shapes["line_endings"]["non_crlf"]["before"], 2)
+        self.assertEqual(
+            shapes["line_endings"]["non_crlf"]["before_per_1000_wide_protocol_tags"],
+            1000.0)
+        self.assertEqual(shapes["affected_native_pid_count"]["before"], 1)
+        self.assertFalse(result["logger_fix_causal_effect_verified"])
+        self.assertFalse(result["original_vida_or_sectorv_vin_accepted_verified"])
+
+    def test_14_fingerprint_rate_uses_wide_tags_not_all_d2(self):
+        result = tool.compare(sample(paired=1, protocol_mismatch=2),
+                              sample(paired=10, protocol_mismatch=0))
+        shape = result["wide_protocol_context_fingerprint_differences"]
+        self.assertEqual(shape["rx_status_shapes"]["zero_rx_status"]["delta"], -2)
+        self.assertEqual(
+            shape["rx_status_shapes"]["zero_rx_status"]
+                 ["before_per_1000_wide_protocol_tags"], 1000.0)
+        self.assertIsNone(shape["rx_status_shapes"]["zero_rx_status"]
+                               ["after_per_1000_wide_protocol_tags"])
+        self.assertEqual(shape["affected_native_pid_count"]["delta"], -1)
+        self.assertFalse(result["same_diagnostic_workload_verified"])
+
+    def test_15_wrong_wide_fingerprint_counts_fail_closed(self):
+        def wrong_total(v):
+            v["tag_adjacency_diagnostics"]["wide_protocol_rx_status_shapes"] = {}
+        def absent_line(v):
+            del v["tag_adjacency_diagnostics"]["wide_protocol_rx_context_line_endings"]
+        def unknown_predecessor(v):
+            v["tag_adjacency_diagnostics"][
+                "wide_protocol_rx_context_previous_event_classes"] = {
+                    "secret_original_pid": 2}
+        def impossible_cohort(v):
+            v["tag_adjacency_diagnostics"]["wide_protocol_affected_native_pid_count"] = 3
+        def forged_reconcile(v):
+            v["tag_adjacency_diagnostics"]["wide_protocol_context_fingerprints_reconcile"] = False
+        for action in (wrong_total, absent_line, unknown_predecessor,
+                       impossible_cohort, forged_reconcile):
+            with self.subTest(action=action.__name__):
+                bad = sample(paired=1, protocol_mismatch=2)
+                action(bad)
+                with self.assertRaises(tool.CompareError):
+                    tool.compare(bad, sample())
+
+    def test_16_no_raw_pid_or_private_fields_from_wide_fingerprints(self):
+        private = "YV1PRIVATE17BYTES"
+        before = sample(protocol_mismatch=2)
+        before["tag_adjacency_diagnostics"]["raw_protocol_word"] = private
+        before["tag_adjacency_diagnostics"]["raw_host_pid"] = "DEADBEEF"
+        result = json.dumps(tool.compare(before, sample()))
+        self.assertNotIn(private, result)
+        self.assertNotIn("DEADBEEF", result)
+        self.assertNotIn("raw_protocol_word", result)
+        self.assertEqual(
+            json.loads(result)["wide_protocol_context_fingerprint_differences"]
+                              ["line_endings"]["non_crlf"]["delta"], -2)
 
 
 if __name__ == "__main__":

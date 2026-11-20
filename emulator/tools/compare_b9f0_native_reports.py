@@ -53,6 +53,13 @@ WIDE_KEYS = frozenset((
     "byte_swapped_known_id_shape", "all_bits_set", "other_16bit_value",
     "low_word_zero", "other_32bit_value",
 ))
+WIDE_CONTEXT_LINE_ENDINGS = frozenset((
+    "native_crlf", "non_crlf", "not_observed",
+))
+WIDE_CONTEXT_RX_STATUS = frozenset((
+    "zero_rx_status", "j2534_indication_bits_present",
+    "other_nonzero_rx_status",
+))
 NON_CAN_KEYS = frozenset(("ISO15765_6", "other_non_CAN"))
 OTHER_PROTOCOL_KEYS = frozenset(("other_protocol_value",) +
                                tuple("protocol_" + str(i) for i in range(13)))
@@ -202,6 +209,7 @@ def validate_report(report):
         "non_CAN_wide_protocol_shapes_reconcile",
         "no_prior_rx_previous_events_reconcile",
         "observer_only_bridge_counts_reconcile",
+        "wide_protocol_context_fingerprints_reconcile",
     ):
         _flag(d.get(key), True)
     _flag(d.get("observer_only_bridge_is_strict_delivery_evidence"), False)
@@ -211,6 +219,15 @@ def validate_report(report):
     non_can = _mapping(d.get("non_CAN_protocol_categories"), NON_CAN_KEYS)
     other = _mapping(d.get("non_CAN_other_protocol_values"), OTHER_PROTOCOL_KEYS)
     wide = _mapping(d.get("non_CAN_wide_protocol_shapes"), WIDE_KEYS)
+    wide_lines = _mapping(d.get("wide_protocol_rx_context_line_endings"),
+                          WIDE_CONTEXT_LINE_ENDINGS)
+    wide_previous = _mapping(
+        d.get("wide_protocol_rx_context_previous_event_classes"),
+        PREVIOUS_EVENT_KEYS)
+    wide_status = _mapping(d.get("wide_protocol_rx_status_shapes"),
+                           WIDE_CONTEXT_RX_STATUS)
+    wide_affected_pids = _counter(
+        d.get("wide_protocol_affected_native_pid_count"), MAX_TAGS)
     previous_events = _mapping(d.get("no_prior_rx_previous_event_classes"), PREVIOUS_EVENT_KEYS)
     bridges = _mapping(d.get("observer_only_bridge_outcomes"), BRIDGE_KEYS)
     started = _counter(d.get("observer_only_bridge_candidates_started"), MAX_TAGS)
@@ -227,6 +244,12 @@ def validate_report(report):
             or sum(non_can.values()) != cats.get("mismatch_protocol_not_can", 0)
             or sum(other.values()) != non_can.get("other_non_CAN", 0)
             or sum(wide.values()) != other.get("other_protocol_value", 0)
+            or sum(wide_lines.values()) != other.get("other_protocol_value", 0)
+            or sum(wide_previous.values()) != other.get("other_protocol_value", 0)
+            or sum(wide_status.values()) != other.get("other_protocol_value", 0)
+            or wide_affected_pids > other.get("other_protocol_value", 0)
+            or (other.get("other_protocol_value", 0) > 0
+                and wide_affected_pids == 0)
             or sum(previous_events.values()) != prev.get("unpaired_no_prior_rx", 0)
             or started != sum(bridges.values()) + incomplete
             or bridges.get("native_shape_consistent_only", 0)
@@ -242,6 +265,13 @@ def validate_report(report):
             "unterminated_rows": unterminated,
             "replacement_character_rows": replacement,
             "oversized_rows_ignored": oversized,
+        },
+        "wide_context_fingerprints": {
+            "line_endings": wide_lines,
+            "previous_event_classes": wide_previous,
+            "rx_status_shapes": wide_status,
+            "affected_native_pid_count": wide_affected_pids,
+            "total_wide_protocol_tags": other.get("other_protocol_value", 0),
         },
         "metrics": {
             "strict_paired": n["paired_tag_records"],
@@ -265,6 +295,23 @@ def _per_1000(count, tags):
     return round(1000 * count / tags, 3) if tags else None
 
 
+def _compare_bounded_buckets(before, after, allowed):
+    total_before = before["total_wide_protocol_tags"]
+    total_after = after["total_wide_protocol_tags"]
+    return {
+        key: {
+            "before": before.get(key, 0),
+            "after": after.get(key, 0),
+            "delta": after.get(key, 0) - before.get(key, 0),
+            "before_per_1000_wide_protocol_tags": _per_1000(
+                before.get(key, 0), total_before),
+            "after_per_1000_wide_protocol_tags": _per_1000(
+                after.get(key, 0), total_after),
+        }
+        for key in sorted(allowed)
+    }
+
+
 def compare(before, after):
     left, right = validate_report(before), validate_report(after)
     return {
@@ -285,6 +332,32 @@ def compare(before, after):
         "insufficient_tag_evidence": not (left["tags"] and right["tags"]),
         # Structural rows use source-row denominators, not D2-tag counts:
         # unprefixed rows do not necessarily belong to D2 traffic.
+        "wide_protocol_context_fingerprint_differences": {
+            "line_endings": _compare_bounded_buckets(
+                dict(left["wide_context_fingerprints"]["line_endings"],
+                     total_wide_protocol_tags=left["wide_context_fingerprints"]["total_wide_protocol_tags"]),
+                dict(right["wide_context_fingerprints"]["line_endings"],
+                     total_wide_protocol_tags=right["wide_context_fingerprints"]["total_wide_protocol_tags"]),
+                WIDE_CONTEXT_LINE_ENDINGS),
+            "previous_event_classes": _compare_bounded_buckets(
+                dict(left["wide_context_fingerprints"]["previous_event_classes"],
+                     total_wide_protocol_tags=left["wide_context_fingerprints"]["total_wide_protocol_tags"]),
+                dict(right["wide_context_fingerprints"]["previous_event_classes"],
+                     total_wide_protocol_tags=right["wide_context_fingerprints"]["total_wide_protocol_tags"]),
+                PREVIOUS_EVENT_KEYS),
+            "rx_status_shapes": _compare_bounded_buckets(
+                dict(left["wide_context_fingerprints"]["rx_status_shapes"],
+                     total_wide_protocol_tags=left["wide_context_fingerprints"]["total_wide_protocol_tags"]),
+                dict(right["wide_context_fingerprints"]["rx_status_shapes"],
+                     total_wide_protocol_tags=right["wide_context_fingerprints"]["total_wide_protocol_tags"]),
+                WIDE_CONTEXT_RX_STATUS),
+            "affected_native_pid_count": {
+                "before": left["wide_context_fingerprints"]["affected_native_pid_count"],
+                "after": right["wide_context_fingerprints"]["affected_native_pid_count"],
+                "delta": right["wide_context_fingerprints"]["affected_native_pid_count"]
+                         - left["wide_context_fingerprints"]["affected_native_pid_count"],
+            },
+        },
         "source_integrity_differences": {
             key: {"before": left["source_integrity"][key],
                   "after": right["source_integrity"][key],
@@ -309,6 +382,8 @@ def compare(before, after):
             "Changes in rates can reflect different clients, sessions, workloads or logging, not necessarily the patch.",
             "Line-integrity counters are source-level diagnostics; a malformed or concatenated line alone is not evidence of a dropped J2534 frame.",
             "Line-integrity rates use scanned source rows, not D2 tags; older reports must be regenerated with the current auditor.",
+            "Wide-protocol line ending, preceding event and RX status are bounded context hints; their rates use only wide-protocol tag counts.",
+            "Affected native PID count is an aggregate number of log prefixes and cannot authenticate a client process or firmware version.",
             "An observer-only bridge never upgrades a strict D2 delivery or B9F0 ECU identity.",
             "No source filename, raw CAN, VIN, PID, original timestamp or client identity is exported.",
         ],

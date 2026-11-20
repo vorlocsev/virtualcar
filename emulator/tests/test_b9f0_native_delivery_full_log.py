@@ -473,6 +473,81 @@ class B9F0NativeRxTests(unittest.TestCase):
             self.assertEqual(scan["tag_rows"], 1)
             self.assertNotIn(str(logfile), output.getvalue())
 
+
+    def test_44_wide_protocol_clean_crlf_and_zero_status(self):
+        rows = delivered(frames()[:1])
+        rows[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                        be(1, 0x05000000, 0, 125000, 102000)
+                        ).replace("\n", "\r\n")
+        r = audit.analyze_source(rows)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["non_CAN_wide_protocol_shapes"],
+                         {"byte_swapped_known_id_shape": 1})
+        self.assertEqual(d["wide_protocol_rx_context_line_endings"],
+                         {"native_crlf": 1})
+        self.assertEqual(d["wide_protocol_rx_context_previous_event_classes"],
+                         {"none": 1})
+        self.assertEqual(d["wide_protocol_rx_status_shapes"],
+                         {"zero_rx_status": 1})
+        self.assertEqual(d["wide_protocol_affected_native_pid_count"], 1)
+        self.assertTrue(d["wide_protocol_context_fingerprints_reconcile"])
+        self.assertEqual(d["categories"]["mismatch_protocol_not_can"], 1)
+        self.assertEqual(r["native_d2_delivery_tags"]["paired_tag_records"], 0)
+
+    def test_45_wide_protocol_lf_previous_event_and_indication_status(self):
+        rows = [event("P2 D2 request unverified predecessor")]
+        case = delivered(frames()[:1])
+        case[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                        be(1, 0xF123ABCD, 0x02, 125000, 102000))
+        r = audit.analyze_source(rows + case)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["wide_protocol_rx_context_line_endings"],
+                         {"non_crlf": 1})
+        self.assertEqual(d["wide_protocol_rx_context_previous_event_classes"],
+                         {"d2_request": 1})
+        self.assertEqual(d["wide_protocol_rx_status_shapes"],
+                         {"j2534_indication_bits_present": 1})
+        self.assertTrue(d["wide_protocol_context_fingerprints_reconcile"])
+        self.assertFalse(d["b9f0_specific_causal_attribution_verified"])
+        self.assertNotIn("F123ABCD", json.dumps(r))
+
+    def test_46_wide_protocol_counts_distinct_native_pid_cohorts_only(self):
+        first = delivered(frames()[:1])
+        first[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                         be(1, 0x99990001, 0, 125000, 102000))
+        second = delivered(frames()[:1])
+        second[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                          be(1, 0x99990002, 0, 125000, 102000))
+        third = [line.replace("ABCD1234", "0BADF00D") for line in first]
+        r = audit.analyze_source(first + second + third)
+        d = r["tag_adjacency_diagnostics"]
+        self.assertEqual(d["wide_protocol_affected_native_pid_count"], 2)
+        self.assertEqual(sum(d["wide_protocol_rx_context_line_endings"].values()), 3)
+        self.assertEqual(d["non_CAN_other_protocol_values"],
+                         {"other_protocol_value": 3})
+        self.assertEqual(d["wide_protocol_rx_status_shapes"],
+                         {"zero_rx_status": 3})
+        self.assertTrue(d["wide_protocol_context_fingerprints_reconcile"])
+        self.assertNotIn("0BADF00D", json.dumps(r))
+        self.assertNotIn("ABCD1234", json.dumps(r))
+
+    def test_47_known_iso_and_nonwide_values_do_not_make_wide_context(self):
+        cases = []
+        for proto in (6, 12):
+            rows = delivered(frames()[:1])
+            rows[0] = event("RX context channel/protocol/status/baud/time-us (BE)",
+                            be(1, proto, 0, 125000, 102000))
+            cases.extend(rows)
+        d = audit.analyze_source(cases)["tag_adjacency_diagnostics"]
+        self.assertEqual(d["categories"]["mismatch_protocol_not_can"], 2)
+        self.assertEqual(d["non_CAN_protocol_categories"],
+                         {"ISO15765_6": 1, "other_non_CAN": 1})
+        self.assertEqual(d["wide_protocol_rx_context_line_endings"], {})
+        self.assertEqual(d["wide_protocol_rx_context_previous_event_classes"], {})
+        self.assertEqual(d["wide_protocol_rx_status_shapes"], {})
+        self.assertEqual(d["wide_protocol_affected_native_pid_count"], 0)
+        self.assertTrue(d["wide_protocol_context_fingerprints_reconcile"])
+
     def test_08_existing_general_j2534_schema_remains_identical_by_default(self):
         import audit_j2534_discovery as general
         legacy = general._native_d2_delivery_tags(delivered(frames()))
