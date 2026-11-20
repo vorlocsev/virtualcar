@@ -306,6 +306,20 @@ jobs:
             throw 'Native x86 multi-process append test failed'
           }
 
+      # B3A330: same native x86 DLL, four simultaneous isolated producers
+      # of synthetic 13-frame D2 B9FB. Distinguish source protocol metadata
+      # and append fidelity from original VIDA/SectorV ECU acceptance.
+      - name: Stress native x86 D2 RX context and tags across four processes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $script = 'emulator/tools/test_native_log_multiprocess_append.ps1'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -DllPath $dll -Workers 4 -Iterations 2 -D2Replay
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Native x86 synthetic multi-process D2 metadata regression failed'
+          }
+
       # Read-only provenance probe: inspect canonical J2534 registry32 metadata
       # on THIS CI runner only. No DLL load or diagnostic-client execution;
       # the runner may be different from the SectorV GUI test guest.
