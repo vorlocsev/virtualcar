@@ -21,6 +21,13 @@ class TagGapAttribution:
         self.non_can_protocols = Counter()
         self.other_protocol_values = Counter()
         self.wide_protocol_shapes = Counter()
+        # Only bounded, aggregate fingerprints of the ORIGINAL RX-context
+        # record behind a strict wide-ProtocolID D2 tag mismatch. No PID or
+        # malformed line is ever exported.
+        self.wide_protocol_context_line_endings = Counter()
+        self.wide_protocol_context_previous_events = Counter()
+        self.wide_protocol_rx_status_shapes = Counter()
+        self._wide_protocol_affected_pids = set()
         self.no_prior_previous_event_classes = Counter()
         self.observer_bridge_started = 0
         self.observer_bridge_outcomes = Counter()
@@ -95,6 +102,14 @@ class TagGapAttribution:
             return "low_word_zero"
         return "other_32bit_value"
 
+    @staticmethod
+    def _rx_status_shape(status):
+        if status == 0:
+            return "zero_rx_status"
+        if status & 0x0B:
+            return "j2534_indication_bits_present"
+        return "other_nonzero_rx_status"
+
     def observe(self, line):
         match = PREFIX.match(line)
         if match is None:
@@ -105,6 +120,10 @@ class TagGapAttribution:
             "missing_context_reason": None,
             "prior_delivery_event_class": None,
             "last_event_class": "none",
+            "rx_context_line_ending": None,
+            "rx_context_preceding_class": None,
+            "pending_context_line_ending": None,
+            "pending_context_preceding_class": None,
             "observer_bridge": None
         })
         previous_class = scope["last_event_class"]
@@ -125,6 +144,12 @@ class TagGapAttribution:
             return
         if event.startswith("RX context "):
             ctx = _context(event, RX_CONTEXT, True)
+            # Preserve the original source line ending (the CLI uses
+            # newline=""). A successful BE parse does not imply a clean
+            # log: LF-normalized records remain a separate observation.
+            scope["rx_context_line_ending"] = (
+                "native_crlf" if line.endswith("\r\n") else "non_crlf")
+            scope["rx_context_preceding_class"] = previous_class
             scope.update(ctx=ctx, pending=None,
                          cause=("unpaired_rx_context_without_delivery" if ctx
                                 else "unpaired_invalid_rx_context"),
@@ -136,6 +161,15 @@ class TagGapAttribution:
             raw = bytes.fromhex(suffix) if RAW_CAN.fullmatch(suffix) else None
             ctx = scope["ctx"]
             scope["ctx"] = None
+            # These bounded hints are carried only along a valid immediate
+            # same-PID RX context -> delivered pair. The primary evidence
+            # classification remains identical to the legacy strict auditor.
+            scope["pending_context_line_ending"] = (
+                scope["rx_context_line_ending"]
+                if ctx is not None and raw is not None else None)
+            scope["pending_context_preceding_class"] = (
+                scope["rx_context_preceding_class"]
+                if ctx is not None and raw is not None else None)
             if ctx is None:
                 # Retain the PRE-delivery reason. The existing primary
                 # category is deliberately unchanged for compatibility.
@@ -222,6 +256,15 @@ class TagGapAttribution:
                         if ctx[1] > 12:
                             self.wide_protocol_shapes[
                                 self._wide_protocol_shape(ctx[1])] += 1
+                            self.wide_protocol_context_line_endings[
+                                scope["pending_context_line_ending"]
+                                or "not_observed"] += 1
+                            self.wide_protocol_context_previous_events[
+                                scope["pending_context_preceding_class"]
+                                or "none"] += 1
+                            self.wide_protocol_rx_status_shapes[
+                                self._rx_status_shape(ctx[2])] += 1
+                            self._wide_protocol_affected_pids.add(pid)
                 elif ctx[3] == 0:
                     category = "mismatch_zero_baud"
                 elif ctx[2] & 0x0B:
@@ -287,6 +330,21 @@ class TagGapAttribution:
             "non_CAN_wide_protocol_shapes_reconcile": (
                 sum(self.wide_protocol_shapes.values())
                 == self.other_protocol_values["other_protocol_value"]),
+            "wide_protocol_rx_context_line_endings": dict(
+                sorted(self.wide_protocol_context_line_endings.items())),
+            "wide_protocol_rx_context_previous_event_classes": dict(
+                sorted(self.wide_protocol_context_previous_events.items())),
+            "wide_protocol_rx_status_shapes": dict(
+                sorted(self.wide_protocol_rx_status_shapes.items())),
+            "wide_protocol_affected_native_pid_count": len(
+                self._wide_protocol_affected_pids),
+            "wide_protocol_context_fingerprints_reconcile": (
+                sum(self.wide_protocol_context_line_endings.values())
+                == sum(self.wide_protocol_context_previous_events.values())
+                == sum(self.wide_protocol_rx_status_shapes.values())
+                == self.other_protocol_values["other_protocol_value"]
+                and len(self._wide_protocol_affected_pids)
+                <= self.other_protocol_values["other_protocol_value"]),
             "no_prior_rx_previous_event_classes": dict(
                 sorted(self.no_prior_previous_event_classes.items())),
             "no_prior_rx_previous_events_reconcile": (
@@ -314,6 +372,8 @@ class TagGapAttribution:
                 "A protocol number in RX metadata is not proof of a physical bus or original SectorV client behavior.",
                 "The current emulator accepts only protocol 5/6 at Connect; wide RX protocol metadata require checking the exact DLL version and log integrity.",
                 "Known observer classes and numeric word shapes do not reclassify any unpaired or mismatched D2 delivery as successfully paired.",
+                "Wide RX protocol fingerprints count context line endings, predecessor event classes, RX status shapes and distinct affected same-PID scopes, never source values.",
+                "A well-formed CRLF RX context or zero RX status does not authenticate metadata, exclude memory errors or establish causality for the logger fix.",
                 "A single exact native RX observer between delivery and D2 tag can form a shape-only bridge; it does not change strict adjacency, VIN acceptance or ECU identity.",
                 "A second same-PID record before the tag interrupts an observer-only bridge, even when it is another observer.",
                 "No raw CAN, VIN, PID, path, timestamp or secret appears in the report.",
