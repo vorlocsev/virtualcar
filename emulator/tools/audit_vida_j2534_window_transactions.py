@@ -92,8 +92,9 @@ def analyze_window(virtual_log, baseline_path, host_class):
             groups.items(),
             key=lambda pair: tuple("" if value is None else str(value)
                                    for value in pair[0])):
-        route, service, protocol, baud, status, reason, origin = key
+        can_id, target, route, service, protocol, baud, status, reason, origin = key
         transaction_groups.append({
+            "can_id": can_id, "target": target,
             "route": route, "service": service, "protocol": protocol,
             "baud_bps": baud, "status": status, "reason": reason,
             "request_origin": origin, "count": count,
