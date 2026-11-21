@@ -106,7 +106,7 @@ def analyze(records, *, expected_dll=DEFAULT_DLL, expected_sha256=PINNED_SHA256,
 
 
 def _windows_records(host_exe):
-    """Enumerate process/module paths with Toolhelp; never export PIDs or paths."""
+    """Keep PID/module path private in returned records; no PID/path in report."""
     if sys.platform != "win32":
         raise RuntimeError("B3A56 live enumeration requires Windows")
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
