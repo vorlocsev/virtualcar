@@ -109,9 +109,11 @@ def analyze(history, appended, processes, *, host="iexplore.exe",
     result["native_loaded_b9fb_cem40"] = native["loaded_d2_b9fb"]["CEM_40"]
     result["native_loaded_b9fb_cem50"] = native["loaded_d2_b9fb"]["CEM_50"]
     result["native_loaded_fixture_metadata"] = native["init_fixture_metadata"]
-    result["status"] = ("CORRELATED_SAME_TEXT_PID_EPOCH_NOT_ATTESTED"
-                        if native["init_fixture_metadata"] == "14_native_fixture_records_classified"
-                        else "MATCHED_PATH_WITH_INCOMPLETE_INIT_METADATA")
+    result["status"] = ("MATCHED_PATH_WITH_INCOMPLETE_INIT_METADATA"
+                        if native["init_fixture_metadata"] != "14_native_fixture_records_classified"
+                        else "CORRELATED_SAME_TEXT_PID_EPOCH_NOT_ATTESTED"
+                        if result["disk_sha_matches_pinned"] is True
+                        else "SAME_TEXT_PID_INIT_PATH_BUT_DISK_SHA_UNVERIFIED")
     return result
 
 
