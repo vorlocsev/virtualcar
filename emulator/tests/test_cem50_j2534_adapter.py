@@ -4,6 +4,7 @@ Eight synthetic/offline regression groups. NOT original VIDA acceptance.
 """
 import configparser
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -110,6 +111,28 @@ class CEM50J2534AdapterTests(unittest.TestCase):
         self.assertIn("d->frame_count=valid", source)
         self.assertIn("str_append(g_profile_path,\"virtualcar.ini\"", source)
         self.assertIn("0x01200003u", source)
+
+
+    def test_09_native_x86_smoke_matches_all_published_frames(self):
+        ps = (ADAPTER / "Verify-J2534CEM50.ps1").read_text(encoding="utf-8")
+        self.assertIn("SysWOW64", ps)
+        self.assertIn("PassThruOpen", ps)
+        self.assertIn("PassThruConnect", ps)
+        self.assertIn("PassThruWriteMsgs", ps)
+        self.assertIn("PassThruReadMsgs", ps)
+        self.assertIn("CEM50_NATIVE_PASS", ps)
+        self.assertNotIn("CreateSubKey", ps)
+        self.assertIn("ExpectedSha256", ps)
+        match = re.search(
+            r"static readonly byte\[,\] Frames = new byte\[13,8\] \{(.*?)\n    \};",
+            ps, re.S)
+        self.assertIsNotNone(match, "native frame matrix must be explicit")
+        native = [
+            bytes(int(value.strip(), 16) for value in row.split(","))
+            for row in re.findall(r"\{([^{}]+)\}", match.group(1))
+        ]
+        self.assertEqual(len(native), 13)
+        self.assertEqual(native, [frame for _, frame in frames(profile())])
 
 
 if __name__ == "__main__":
