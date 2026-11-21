@@ -85,6 +85,7 @@ def main():
         "vin": VIN,
         "python_suite": "NOT_RUN",
         "c_host_suite": "NOT_RUN",
+        "route_evidence_suite": "NOT_RUN",
         "windows_x86_build": "NOT_RUN",
         "can_ps_native": "NOT_RUN",
         "vida_readvin_verified": False,
@@ -96,7 +97,8 @@ def main():
     env["LOCALAPPDATA"] = str(output)
     env["TEMP"] = str(output)
     env["TMP"] = str(output)
-    env["VIRTUALCAR_ROUTE_EVIDENCE"] = str(output / "host-evidence.jsonl")
+    # Python suite runs before C emitter; stale/inherited evidence must not enable its integration gate.
+    env.pop("VIRTUALCAR_ROUTE_EVIDENCE", None)
     try:
         print("SOURCE_HEAD", head)
         command(["git", "clone", "--no-local", "--no-checkout", "--", origin, tree],
@@ -107,6 +109,7 @@ def main():
             raise RuntimeError("Cloned source does not match exact HEAD")
 
         print("RUN full Python suite")
+        summary["python_suite"] = "RUNNING"
         command([sys.executable, "-m", "unittest", "discover",
                  "-s", "emulator/tests", "-p", "test_*.py", "-v"],
                 cwd=tree, log=output / "python.log", env=env)
@@ -114,6 +117,7 @@ def main():
         print("PYTHON_PASS")
 
         print("COMPILE AND RUN C host suite")
+        summary["c_host_suite"] = "RUNNING"
         host = output / "virtualcar-host-test.exe"
         core = tree / "emulator" / "src" / "p2core"
         sources = [tree / "emulator/tests/virtualcar_test.c"] + [
@@ -124,13 +128,26 @@ def main():
         command(["clang", "-std=c11", "-O2", "-Wall", "-Wextra",
                  "-D_CRT_SECURE_NO_WARNINGS", "-o", host] + sources,
                 cwd=tree, log=output / "clang-host.log", env=env)
+        evidence = output / "host-evidence.jsonl"
+        env["VIRTUALCAR_ROUTE_EVIDENCE"] = str(evidence)
         host_output = command([host], cwd=tree, log=output / "c-host.log", env=env)
         if "PASS J2534-2 PS: explicit pins, 13/13 CEM50" not in host_output:
             raise RuntimeError("CEM50 PS host C test success marker absent")
         summary["c_host_suite"] = "PASS"
         print("C_HOST_PASS")
 
+        if not evidence.is_file() or evidence.stat().st_size == 0:
+            raise RuntimeError("C host did not produce nonempty route evidence")
+        print("RUN C emitter -> Python route evidence integration")
+        summary["route_evidence_suite"] = "RUNNING"
+        command([sys.executable, "-m", "unittest", "discover",
+                 "-s", "emulator/tests", "-p", "test_vmware_route_evidence.py", "-v"],
+                cwd=tree, log=output / "route-evidence-test.log", env=env)
+        summary["route_evidence_suite"] = "PASS"
+        print("ROUTE_EVIDENCE_PASS")
+
         print("CROSS BUILD Windows x86 J2534 DLL")
+        summary["windows_x86_build"] = "RUNNING"
         command(["bash", "./build-cross.sh"], cwd=tree / "emulator",
                 log=output / "cross-build.log", env=env)
         dll = tree / "emulator" / "VirtualCarJ2534.dll"
@@ -144,6 +161,7 @@ def main():
         print("X86_BUILD_PASS sha256=" + sha)
 
         print("RUN isolated x86 J2534 CAN_PS native smoke")
+        summary["can_ps_native"] = "RUNNING"
         win = Path(os.environ.get("WINDIR", "C:/Windows"))
         ps32 = win / "SysWOW64/WindowsPowerShell/v1.0/powershell.exe"
         if not ps32.is_file():
@@ -171,6 +189,10 @@ def main():
         summary["can_ps_native"] = "PASS"
         print("CEM50_PS_ALL_PASS: 13/13 exact frames, SHA=" + head)
     except Exception as exc:
+        for stage in ("python_suite", "c_host_suite", "route_evidence_suite",
+                      "windows_x86_build", "can_ps_native"):
+            if summary[stage] == "RUNNING":
+                summary[stage] = "FAILED"
         summary["error"] = str(exc)
         print("FAILED:", exc, file=sys.stderr)
         raise
