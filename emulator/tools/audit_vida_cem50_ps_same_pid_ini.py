@@ -6,7 +6,6 @@ load J2534, change registry/INI, or export PID, VIN, paths or raw frames.
 The same text PID is not proof of the same process creation epoch.
 """
 import argparse
-import hashlib
 import json
 import ntpath
 from pathlib import Path
