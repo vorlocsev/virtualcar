@@ -95,7 +95,7 @@ def _base(host):
             "A preceding filter record is not proof that it remained installed during the request; StopMsgFilter is not logged.",
             "A CAN ID candidate match says nothing about the original VIDA-selected RX mask, 29-bit flags or channel.",
             "J1962_PINS parameter 0x8001 is deliberately redacted from native SET_CONFIG metadata.",
-            "The 0x00800003 CAN response ID is a synthetic CEM40 lab candidate, not an OEM-attested value.",
+            "The configured CEM40 response CAN ID is a synthetic lab candidate, not an OEM-attested value.",
             "Old append windows may start after filter install, Open or Connect.",
         ],
     }
@@ -162,7 +162,9 @@ def analyze(history, appended, host="iexplore.exe"):
             connects[_connect_class(con)] += 1
         if _metadata(event, LABEL_CONFIG) is not None:
             result["set_config_records_preceding"] += 1
-        filt = _metadata(event, LABEL_FILTER)
+        # This marker logs TWO big-endian U32 words (8 bytes), unlike
+        # 16-byte D2 request/connect/config markers.
+        filt = _hex_bytes(event, LABEL_FILTER, minlen=8, maxlen=8)
         if filt is not None:
             result["filter_start_records_preceding"] += 1
             ftype = int.from_bytes(filt[:4], "big")
