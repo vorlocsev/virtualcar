@@ -203,11 +203,12 @@ D2 staged/missing/rejected, P3 CEM no-fixture/synthetic-reply/unmatched
 в память модуля**). Если каталог содержит `virtualcar.ini`, отмечается
 только **наличие файла**, но не прочтение его содержания приложением.
 
-Запускать в активной VMware, когда открыта оригинальная VIDA и выбран
-PS-провайдер. PowerShell 5.1, **ровно одна строка**:
+Запускать из **корня актуального checkout PR #419** в активной VMware,
+когда открыта оригинальная VIDA и выбран PS-провайдер.
+PowerShell 5.1, **ровно одна строка**:
 
 ```powershell
-$repo='C:\Users\vorloc\Downloads\CEM50-PS-PR419'; py -3.12 (Join-Path $repo 'emulator\tools\audit_vida_cem50_loaded_module.py') --host-exe iexplore.exe
+py -3.12 (Join-Path (Get-Location).Path 'emulator\tools\audit_vida_cem50_loaded_module.py') --host-exe iexplore.exe
 ```
 
 Используйте checkout **точной ветки PR #419**, содержащий новый скрипт,
