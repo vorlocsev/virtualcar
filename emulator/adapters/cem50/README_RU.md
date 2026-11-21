@@ -39,13 +39,23 @@ The existing `emulator/tools/verify_native_routes.ps1` provides a synthetic, iso
 
 The report `native-check.json` records the DLL digest and exact 13/13 delivery, but explicitly keeps VIDA, ECU identification and physical hardware gates false. This smoke is **prepared, not executed**, until an actual Windows x86 DLL is supplied.
 
+## Owner-local exact-development native test from GitHub
+
+If the hosted PR workflow cannot start, use the authenticated GitHub CLI on the owner's Windows VMware system. From this PR branch, run in Windows PowerShell 5.1 (no administrator rights):
+
+    .\emulator\adapters\cem50\Run-CEM50FromTrustedArtifact.ps1
+
+The command downloads **only** artifact #14598404967 from successful development workflow run #44669574171, then verifies the inner package SHA256, BUILDINFO exact SHA `9553d87d400f9baf80fa16fb4a30d163551a6bbb`, PE32 x86 source and the full binary SHA256 `c636baf8c66266bca80009a2efbc729f0d6db00a3a7be1384068f5e180f01528`. It stages an isolated copy, runs the exact 13-frame native probe, and prints the path to `native-check.json`. All paths are unique/exclusive; it refuses overwrite, Registry32 modifications and any original VIDA/physical ECU work. The existing `gh` login must have access to the private repository.
+
+A native PASS means that a pinned x86 DLL returned the synthetic CEM50 B9FB frames; **not** that original VIDA accepted this VIN.
+
 ## Offline gates / runtime gates
 
 Run from repository root:
 
     py -3 -m unittest discover -s emulator/tests -p test_cem50_j2534_adapter.py -v
 
-Eleven synthetic offline tests verify the identity, 13-frame D2 response, published 88-byte shape, VIN/chassis consistency, silence of unrelated routes, explicit synthetic provenance, installer guardrails, and existing native CEM50 route.
+Twelve synthetic offline tests verify the identity, 13-frame D2 response, published 88-byte shape, VIN/chassis consistency, silence of unrelated routes, explicit synthetic provenance, installer guardrails, and existing native CEM50 route.
 
 Still unverified until a separately authorized owner-machine experiment: exact DLL binary provenance, correct x86 provider selection in original VIDA, 500-kbit/s CAN D2 request to target 0x50, J2534 RX of all 13 frames, VIDA ResponseHandler extraction, VIN acceptance, ECU identification and T111/T122. Original VIDA previously observed 0x726 F114 and ResultGet(59790) empty. This B9FB-only adapter is an isolated alternative, not a fix for the F114 parser.
 
