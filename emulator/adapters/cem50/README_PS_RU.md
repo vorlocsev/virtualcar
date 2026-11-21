@@ -67,3 +67,62 @@ Remove-J2534CEM50-PS.ps1 тоже по умолчанию только пров�
 - Этот PS provider — экспериментальная интеграция поверх проверенного кода PR #418. Оба PR остаются Draft до независимого ревью и реальных тестов VIDA.
 
 Источники: https://opusivs.com/support/oem-customer-support/program-sae-j2534/discovery-of-the-dll/ ; https://github.com/diamondman/J2534-PassThru-Logger/blob/master/PassThruLogger/J2534_v0404.h ; https://manualzz.com/doc/23472941/volvo-all-in-one-vida-help
+
+
+## Следующий критерий: реальное окно связи VIDA и PS provider
+
+После установки и проверки Registry32 оригинальная VIDA 2014D/2015A на VMware20,1 отобразила
+провайдер J2534 Diagnostic Interface CEM50 PS в выпадающем списке и связала его
+с сохранённым профилем XC90 V8 2009. Открылось окно Diagnostics > Network,
+однако ECU identification оставалось пустым. Схема сети/надпись Disconnect
+**не доказывают** что PassThruOpen/Connect или ReadVin успешно выполнялись.
+Это отдельные ступени: выбор адаптера, загрузка DLL, канал, TX/RX, полученный
+VIN, обработка сценария ReadVin, идентификация ECU.
+
+Для следующей одного контролируемого read-only GUI-испытания повторно собирать
+эмулятор и переустанавливать DLL не нужно. Используйте существующие **не
+исполняющие J2534** инструменты B3A46 и B3A45 из этого репозитория:
+
+1. Найти только ожидаемый файл SectorVVirtualCar.log в ограниченных TEMP
+   каталогах через tools/audit_vida_b3a46_log_source.py. Приватный
+   candidate-paths.private.json оставлять **за пределами** Git checkout.
+   Скрипт выводит только порядковые номера и категории кандидатов, но
+   не доказывает процессную принадлежность VIDA.
+2. Открыть приватный manifest **локально** и выбрать индекс (с 1)
+   кандидата со статусом native_marker_in_tail. Если нет ни одного —
+   записать NO_BOUNDED_MATCH; это не доказывает, что VIDA DLL не загружала.
+3. До теста VIDA создать новый baseline через
+   tools/audit_vida_j2534_session_window.py baseline с параметрами
+   --vida-log "C:\Vida\System\Log\Diagnostics\VIDA.log",
+   --candidate-manifest <private_manifest>, --candidate-index <index>,
+   --private-baseline <new_private_baseline>. Пути проверять локально.
+   Оба журнала допускаются отсутствующими и могут появиться позже.
+4. В оригинальной VIDA с выбранным **новым** PS provider нажать только
+   TEST COMMUNICATION TOOL, сохранить скриншот результата. Если это
+   безопасная операция чтения, после успеха можно отдельно обновить
+   Diagnostics > Network. Не использовать вкладку SOFTWARE, кодирование,
+   SecurityAccess, программирование или физический автомобиль.
+5. Запустить B3A45 delta с **тем же** manifest/index и baseline,
+   указав новый --output <private_delta>. Оригинальные логи и baseline
+   не загружать в GitHub; в обсуждение можно переносить лишь выведенные
+   счётчики и категории, без путей/метаданных владельца.
+6. Ключевое различие: PassThruOpen, успешный CAN_PS/ISO15765_PS
+   PassThruConnect, TX и delivered RX в **том же окне** свидетельствуют
+   о работе транспортной части, но не доказывают выполнение именно
+   сценария VIDA ReadVin, принятый VIN или список живых ECU.
+   B3A45 не удостоверяет PID или загрузку именно выделенной DLL.
+
+Важное ограничение старого B3A45: его аудитор набора SET_CONFIG
+создавался до этой PS сборки. Текущая DLL редактирует неизвестные
+J1962_PINS metadata при выводе; **отсутствие значения HS 0x060E
+в отчёте не является отрицательным результатом pin selection**.
+Если необходимо доказать именно выбор пинов клиентом, понадобится
+отдельный одобренный instrumentation build и повторная проверка его
+SHA, но не переписывание установленной DLL.
+
+Не считать VIN из списка Latest identified vehicles автоматическим
+результатом J2534 ReadVin: профиль/история могли быть заполнены вручную.
+Раздельные ReadVin (ScriptType=4) и EcuIdentification High/Low
+(ScriptType=19/20) подтверждены только предыдущим статическим
+исследованием оригинальной VIDA 2015A. Если ECU identification пуст,
+этап идентификации не пройден.
