@@ -98,6 +98,14 @@ class CEM50LoadedModuleTests(unittest.TestCase):
         self.assertEqual(r["exact_module_path_instances"], 1)
         self.assertEqual(r["same_basename_other_path_instances"], 1)
 
+    def test_12_private_toolhelp_pid_never_enters_categorical_report(self):
+        record = rec(modules=(DLL,))
+        record["pid"] = 31415927
+        r = tool.analyze([record], disk_digest=SHA, ini_present=True)
+        self.assertEqual(r["status"], "EXACT_DLL_IN_HOST_SHA_MATCH")
+        self.assertNotIn("31415927", json.dumps(r, sort_keys=True))
+        self.assertFalse(r["raw_paths_pids_modules_or_vin_exported"])
+
 
 if __name__ == "__main__":
     unittest.main()
