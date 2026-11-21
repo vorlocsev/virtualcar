@@ -129,19 +129,28 @@ SHA, но не переписывание установленной DLL.
 
 ## Анализировать запросы в том же окне (B3A55)
 
-После того как B3A45 создал baseline.private.json и выполнил один тест VIDA, можно
-без вывода сырых CAN/UDS данных классифицировать именно добавленные строки
-SectorVVirtualCar.log. Это важно, если PassThruOpen/Connect произошли
-до baseline, а в текущем окне появились TX (app request).
+Используйте **тот же точный путь к журналу**, который передали в B3A45
+при создании baseline. Если baseline был создан командой с
+`--virtual-log (Join-Path $env:TEMP 'SectorVVirtualCar.log')`,
+то B3A55 нужно запускать с тем же путём через `--virtual-log`.
 
-Из каталога репозитория выполните:
+B3A46-манифест можно использовать только если выбранная запись имеет статус
+`native_marker_in_tail` и именно этот манифест/индекс использовались для
+создания baseline. При `NO_BOUNDED_MATCH` кандидат со статусом
+`present_no_marker_in_tail` **не проходит** строгий resolver B3A46 и не
+должен подставляться как подтверждённый кандидат. В этом случае используйте
+явный путь, совпадающий с B3A45 baseline.
+
+Для ранее созданного baseline из инструкции выше:
 
     $repo = 'C:\Users\vorloc\Downloads\CEM50-PS-PR419'
     $priv = Join-Path $env:LOCALAPPDATA 'VirtualCar\OwnerPrivate\CEM50PS-VIDA-Window'
-    $manifest = Join-Path $priv 'candidate-paths.private.json'
-    $index = 1  # замените на тот же индекс, который использовали в B3A45
+    $log = Join-Path $env:TEMP 'SectorVVirtualCar.log'
+    $base = Join-Path $priv 'baseline.private.json'
     $out = Join-Path $priv ('transaction-delta-' + [guid]::NewGuid().ToString('N') + '.private.json')
-    py -3 (Join-Path $repo 'emulator\tools\audit_vida_j2534_window_transactions.py') --candidate-manifest $manifest --candidate-index $index --private-baseline (Join-Path $priv 'baseline.private.json') --host-class iexplore --output $out
+    if (-not (Test-Path -LiteralPath $log -PathType Leaf)) { throw 'Original B3A45 virtual log path is unavailable' }
+    if (-not (Test-Path -LiteralPath $base -PathType Leaf)) { throw 'B3A45 private baseline is unavailable' }
+    py -3.12 (Join-Path $repo 'emulator\tools\audit_vida_j2534_window_transactions.py') --virtual-log $log --private-baseline $base --host-class iexplore --output $out
 
 B3A55 использует точную границу B3A45 (размер, SHA256 исторического префикса,
 идентичность пути, завершённые строки) и существующий J2534 transaction auditor.
