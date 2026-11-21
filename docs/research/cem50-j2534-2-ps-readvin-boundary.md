@@ -32,6 +32,18 @@ Sources: https://www.scandoc.org/en/develop/j2534/pt_ioctl_config.html and https
 6. [ ] Prove exact provider selected in original VIDA (expanded dropdown), observed `PassThruOpen/Connect`, actual TX/RX, and removal or persistence of the J2534-1 warning.
 7. [ ] Only after the above: independent original VIDA `ReadVin`, ECU recognition, and T111/T122, each with direct evidence.
 
+## Owner-local full exact-head validation (Python, Clang, LLD, native x86)
+
+Use the committed wrapper `emulator/adapters/cem50/run_cem50_ps_validation.py`, not the previous development DLL or permanent VMware. From a **clean checkout of PR #418** in Windows PowerShell 5.1:
+
+```powershell
+py -3 emulator/adapters/cem50/run_cem50_ps_validation.py
+```
+
+It requires `git`, `clang`, `lld-link`, `bash`, `llvm-readobj`, and Python 3 on PATH. The wrapper verifies the checked-out branch and immutable HEAD SHA, refuses a dirty tree, clones that exact HEAD into a fresh TEMP directory, runs the **full** Python suite, compiles and executes the original C host suite with the new PS regression, cross-builds the actual Windows x86 DLL, then launches the isolated `Verify-J2534CEM50-PS.ps1`. Each stage must pass before the next one starts; no Registry32 key or original VIDA is touched.
+
+Evidence: a new TEMP directory contains `summary.json` (source SHA, DLL SHA, separate gate results), `python.log`, `clang-host.log`, `c-host.log`, `cross-build.log`, `pe-exports.txt`, `native-ps.log`, and `native-ps/ps-native-check.json`. **This runner is prepared but no owner Windows execution has been reported for PR #418.**
+
 ## Owner-local native proof before any registry changes
 
 Use a freshly built x86 **feature-branch DLL**, not the older trusted development artifact: the old DLL does not contain PS support. After review, on a Windows machine with Git Bash and the Clang/LLD tools used by `emulator/build-cross.sh`:
