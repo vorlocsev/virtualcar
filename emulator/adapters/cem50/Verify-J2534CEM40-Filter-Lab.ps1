@@ -99,11 +99,13 @@ if ((Get-FileHash -LiteralPath $stagedDll -Algorithm SHA256).Hash -ine $sha) { t
 if ((Get-FileHash -LiteralPath $stagedIni -Algorithm SHA256).Hash -ine
     (Get-FileHash -LiteralPath $lab -Algorithm SHA256).Hash) { throw 'Staged lab INI mismatch' }
 
-# Enable strict RX filter policy ONLY in a disposable staged copy, after
-# confirming byte-for-byte parity with the supplied B3A65 lab INI.
-# Do not alter the source lab file or installed provider profile.
+# Strict RX filters enabled on STAGED COPY only; input lab INI remains unchanged.
 $cfgBefore=[IO.File]::ReadAllText($stagedIni)
-if ($cfgBefore -match '(?im)^\s*\[Diagnostics\]\s*
+if ($cfgBefore -match '(?im)^\s*\[Diagnostics\]\s*$') {
+    throw 'Refusing lab INI with pre-existing Diagnostics section'
+}
+[IO.File]::AppendAllText($stagedIni,"`r`n[Diagnostics]`r`nStrictJ2534Filters = 1`r`n")
+
 
 $wasLocal=$env:LOCALAPPDATA; $wasTemp=$env:TEMP; $wasTmp=$env:TMP
 try {
@@ -139,7 +141,7 @@ public static class B3A66CEM40Probe {
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
     static extern uint PassThruStopMsgFilter(uint ch,uint fid);
     static void Require(bool value,string name) {
-        if(!value)throw new InvalidOperationException("B3A66 failed: "+name);
+        if(!value)throw new InvalidOperationException("B3A67 failed: "+name);
     }
     static void SelectMsPins(uint channel) {
         IntPtr ptr=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Config)));
@@ -160,7 +162,6 @@ public static class B3A66CEM40Probe {
         for(int i=0;i<8;i++)bytes[i]=Convert.ToByte(tokens[i],16);
         return bytes;
     }
-
     static uint StartPassFilter(uint ch,uint maskId,uint matchId) {
         Msg mask=new Msg();mask.ProtocolID=0x8004u;mask.DataSize=4u;mask.Data=new byte[4128];
         Msg pattern=new Msg();pattern.ProtocolID=0x8004u;pattern.DataSize=4u;pattern.Data=new byte[4128];
@@ -192,21 +193,21 @@ public static class B3A66CEM40Probe {
             uint filter=0u;
             IntPtr rx=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
             try {
-                // Negative control: exact but WRONG CAN ID blocks the synthetic RX.
+                // Wrong exact 29-bit response ID must yield no RX.
                 filter=StartPassFilter(ch,0xFFFFFFFFu,0x00800002u);
                 Require(PassThruWriteMsgs(ch,ref tx,ref count,5000u)==0u&&count==1u,
-                        "CAN_PS B9FB TX with wrong filter");
+                        "CAN_PS B9FB TX under wrong exact filter");
                 count=1u;
-                Require(PassThruReadMsgs(ch,rx,ref count,0u)==16u && count==0u,
-                        "strict wrong PASS filter blocks RX");
+                Require(PassThruReadMsgs(ch,rx,ref count,0u)==16u&&count==0u,
+                        "wrong PASS filter blocks RX");
                 Require(PassThruStopMsgFilter(ch,filter)==0u,"StopMsgFilter wrong");
                 filter=0u;
-                // The public VIDA 2014D D2 candidate uses mask/pattern bit 0 = 1.
-                // This verifies OUR virtual DLL behavior, NOT VIDA's live filter.
+                // A mask/pattern low-bit 1 candidate is documented in public VIDA work.
+                // This verifies our DLL response, NOT original VIDA filter installation.
                 filter=StartPassFilter(ch,0x00000001u,0x00000001u);
                 count=1u;
                 Require(PassThruWriteMsgs(ch,ref tx,ref count,5000u)==0u&&count==1u,
-                        "CAN_PS CEM40 B9FB TX under odd-ID filter");
+                        "CAN_PS B9FB TX under odd-ID pass filter");
                 for(int i=0;i<13;i++) {
                     count=1u;
                     Require(PassThruReadMsgs(ch,rx,ref count,1500u)==0u&&count==1u,
@@ -259,131 +260,6 @@ public static class B3A66CEM40Probe {
         ($report | ConvertTo-Json -Depth 4),[Text.Encoding]::UTF8)
     Write-Host 'CEM40_PS_FILTER_NATIVE_PASS: wrong filter blocks RX; odd-mask pass delivers 13/13 CAN_PS 125000'
     Write-Host 'Original VIDA filter installation / ReadVin / OEM CEM: NOT_VERIFIED'
-} finally {
-    $env:LOCALAPPDATA=$wasLocal; $env:TEMP=$wasTemp; $env:TMP=$wasTmp
-}
-) {
-    throw 'Refusing a lab INI with pre-existing Diagnostics section'
-}
-[IO.File]::AppendAllText($stagedIni,"`r`n[Diagnostics]`r`nStrictJ2534Filters = 1`r`n")
-
-
-$wasLocal=$env:LOCALAPPDATA; $wasTemp=$env:TEMP; $wasTmp=$env:TMP
-try {
-    $env:LOCALAPPDATA=$out; $env:TEMP=$out; $env:TMP=$out
-    $code=@'
-using System;
-using System.Runtime.InteropServices;
-public static class B3A66CEM40Probe {
-    const string Library=@"__DLL_PATH__";
-    [StructLayout(LayoutKind.Sequential)]
-    public struct Msg {
-        public uint ProtocolID,RxStatus,TxFlags,Timestamp,DataSize,ExtraDataIndex;
-        [MarshalAs(UnmanagedType.ByValArray,SizeConst=4128)] public byte[] Data;
-    }
-    [StructLayout(LayoutKind.Sequential)] public struct Config {public uint Parameter,Value;}
-    [StructLayout(LayoutKind.Sequential)] public struct ConfigList {public uint Count;public IntPtr Ptr;}
-    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
-    static extern uint PassThruOpen(IntPtr name,out uint dev);
-    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
-    static extern uint PassThruClose(uint dev);
-    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
-    static extern uint PassThruConnect(uint dev,uint protocol,uint flags,uint baud,out uint ch);
-    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
-    static extern uint PassThruDisconnect(uint ch);
-    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
-    static extern uint PassThruIoctl(uint ch,uint cmd,ref ConfigList cfg,IntPtr output);
-    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
-    static extern uint PassThruWriteMsgs(uint ch,ref Msg msg,ref uint count,uint timeout);
-    [DllImport(Library,CallingConvention=CallingConvention.StdCall)]
-    static extern uint PassThruReadMsgs(uint ch,IntPtr msg,ref uint count,uint timeout);
-    static void Require(bool value,string name) {
-        if(!value)throw new InvalidOperationException("B3A66 failed: "+name);
-    }
-    static void SelectMsPins(uint channel) {
-        IntPtr ptr=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Config)));
-        try {
-            Marshal.StructureToPtr(new Config{Parameter=0x8001u,Value=0x030Bu},ptr,false);
-            ConfigList list=new ConfigList{Count=1u,Ptr=ptr};
-            Require(PassThruIoctl(channel,2u,ref list,IntPtr.Zero)==0u,"J1962 SET_CONFIG");
-            Marshal.StructureToPtr(new Config{Parameter=0x8001u,Value=0u},ptr,false);
-            Require(PassThruIoctl(channel,1u,ref list,IntPtr.Zero)==0u,"J1962 GET_CONFIG");
-            Config read=(Config)Marshal.PtrToStructure(ptr,typeof(Config));
-            Require(read.Value==0x030Bu,"MS pin readback");
-        } finally {Marshal.FreeHGlobal(ptr);}
-    }
-    static byte[] Parse(string value) {
-        string[] tokens=value.Split((char[])null,StringSplitOptions.RemoveEmptyEntries);
-        Require(tokens.Length==8,"expected INI frame width");
-        byte[] bytes=new byte[8];
-        for(int i=0;i<8;i++)bytes[i]=Convert.ToByte(tokens[i],16);
-        return bytes;
-    }
-    public static void Run(string[] frameHex) {
-        Require(frameHex!=null && frameHex.Length==13,"expected 13 frames");
-        uint dev=0,ch=0;bool opened=false,connected=false;
-        try {
-            Require(PassThruOpen(IntPtr.Zero,out dev)==0u&&dev!=0u,"PassThruOpen");
-            opened=true;
-            Require(PassThruConnect(dev,0x8004u,0u,125000u,out ch)==0u&&ch!=0u,
-                    "CAN_PS 125000 Connect");
-            connected=true;
-            SelectMsPins(ch);
-            Msg tx=new Msg();
-            tx.ProtocolID=0x8004u;tx.TxFlags=0x100u;tx.DataSize=12u;tx.Data=new byte[4128];
-            byte[] payload={0,0x0F,0xFF,0xFE,0xCB,0x40,0xB9,0xFB,0,0,0,0};
-            Array.Copy(payload,tx.Data,payload.Length);
-            uint count=1u;
-            Require(PassThruWriteMsgs(ch,ref tx,ref count,5000u)==0u&&count==1u,
-                    "CAN_PS CEM40 B9FB TX");
-            IntPtr rx=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
-            try {
-                for(int i=0;i<13;i++) {
-                    count=1u;
-                    Require(PassThruReadMsgs(ch,rx,ref count,1500u)==0u&&count==1u,
-                            "ReadMsgs frame "+i);
-                    Msg got=(Msg)Marshal.PtrToStructure(rx,typeof(Msg));
-                    Require(got.ProtocolID==0x8004u&&got.DataSize==12u &&
-                            (got.RxStatus&0x100u)!=0u, "CAN_PS 29bit RX status "+i);
-                    byte[] canId={0x00,0x80,0x00,0x03};
-                    for(int j=0;j<4;j++)
-                        Require(got.Data[j]==canId[j],"response ID "+i);
-                    byte[] expected=Parse(frameHex[i]);
-                    for(int j=0;j<8;j++)
-                        Require(got.Data[4+j]==expected[j],"frame byte "+i+"/"+j);
-                }
-                count=1u;
-                Require(PassThruReadMsgs(ch,rx,ref count,0u)==16u,
-                        "no extra queued RX");
-            } finally {Marshal.FreeHGlobal(rx);}
-        } finally {
-            if(connected)Require(PassThruDisconnect(ch)==0u,"PassThruDisconnect");
-            if(opened)Require(PassThruClose(dev)==0u,"PassThruClose");
-        }
-    }
-}
-'@
-    $code=$code.Replace('__DLL_PATH__',$stagedDll)
-    Add-Type -TypeDefinition $code -Language CSharp -ErrorAction Stop
-    [B3A66CEM40Probe]::Run([string[]]$expected)
-    $report=[ordered]@{
-        schema_version='virtualcar-b3a66-cem40-lab-native-v1'
-        status='CEM40_PS_NATIVE_PASS'
-        route='D2_40'
-        protocol='CAN_PS'
-        baud_bps=125000
-        selected_pins='0x030B'
-        synthetic_frames_matched=13
-        installed_ini_modified=$false
-        j2534_rx_delivered_in_isolated_smoke=$true
-        actual_vida_readvin_verified=$false
-        oem_cem_verified=$false
-        physical_adapter_used=$false
-    }
-    [IO.File]::WriteAllText((Join-Path $out 'cem40-native-check.json'),
-        ($report | ConvertTo-Json -Depth 4),[Text.Encoding]::UTF8)
-    Write-Host 'CEM40_PS_NATIVE_PASS: isolated 13/13 frames via CAN_PS 125000'
-    Write-Host 'Original VIDA ReadVin / OEM CEM / physical J2534: NOT_VERIFIED'
 } finally {
     $env:LOCALAPPDATA=$wasLocal; $env:TEMP=$wasTemp; $env:TMP=$wasTmp
 }
