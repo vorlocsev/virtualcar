@@ -161,6 +161,8 @@ class CEM50J2534AdapterTests(unittest.TestCase):
         self.assertIn("45BF8F6E672272B64A18183B268484BF86DA65AB5B652384C2BE1FBE85ADC695", wrapper)
         self.assertIn("C636BAF8C66266BCA80009A2EFBC729F0D6DB00A3A7BE1384068F5E180F01528", wrapper)
         self.assertIn("gh = Get-Command gh", wrapper)
+        self.assertIn("if ($ArtifactZip) {", wrapper)
+        self.assertIn("Expand-Archive -LiteralPath $archive -DestinationPath $download", wrapper)
         self.assertIn("Run-CEM50FromTrustedArtifact.ps1", (ADAPTER / "README_RU.md").read_text(encoding="utf-8"))
         self.assertIn("Verify-J2534CEM50.ps1", wrapper)
         self.assertIn("native-check.json", wrapper)
