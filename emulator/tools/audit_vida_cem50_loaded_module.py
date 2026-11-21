@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """B3A56: read-only, privacy-safe snapshot of the PS DLL in a live VIDA host.
 
-Uses Windows Toolhelp PROCESS/MODULE snapshots. Never launches VIDA, reads a VIN,
+Uses Windows Toolhelp PROCESS/MODULE snapshots and a read-only process creation-time query. Never launches VIDA,
 opens J2534, modifies registry/files or claims a historic load from a snapshot.
-Only aggregate booleans/counts are emitted; no PID, path or source module list.
+Process creation FILETIME is retained only in memory for B3A72 correlation. Only aggregate booleans/counts are emitted; no PID, path, FILETIME or source module list.
 """
 import argparse
 import ctypes
@@ -122,6 +122,9 @@ def _windows_records(host_exe):
             ("szExeFile", wintypes.WCHAR * 260),
         ]
 
+    class FILETIME(ctypes.Structure):
+        _fields_ = [("dwLowDateTime", DWORD), ("dwHighDateTime", DWORD)]
+
     class MODULEENTRY32W(ctypes.Structure):
         _fields_ = [
             ("dwSize", DWORD), ("th32ModuleID", DWORD), ("th32ProcessID", DWORD),
@@ -138,7 +141,26 @@ def _windows_records(host_exe):
     kernel.Module32FirstW.argtypes = [PTR, ctypes.POINTER(MODULEENTRY32W)]
     kernel.Module32NextW.argtypes = [PTR, ctypes.POINTER(MODULEENTRY32W)]
     kernel.CloseHandle.argtypes = [PTR]
+    kernel.OpenProcess.argtypes = [DWORD, wintypes.BOOL, DWORD]
+    kernel.OpenProcess.restype = PTR
+    kernel.GetProcessTimes.argtypes = [PTR, ctypes.POINTER(FILETIME),
+        ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME)]
+    kernel.GetProcessTimes.restype = wintypes.BOOL
     invalid = PTR(-1).value
+
+    def process_creation_filetime(pid):
+        """Return a private in-memory FILETIME; never include it in the report."""
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if handle in (None, invalid):
+            return None
+        try:
+            created, exited, kernel_time, user_time = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+            if not kernel.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                          ctypes.byref(kernel_time), ctypes.byref(user_time)):
+                return None
+            return (int(created.dwHighDateTime) << 32) | int(created.dwLowDateTime)
+        finally:
+            kernel.CloseHandle(handle)
 
     def snapshot(flags, pid):
         handle = kernel.CreateToolhelp32Snapshot(flags, pid)
@@ -154,7 +176,11 @@ def _windows_records(host_exe):
         ok = kernel.Process32FirstW(processes, ctypes.byref(proc))
         while ok:
             if str(proc.szExeFile).casefold() == host_exe.casefold():
-                mods = snapshot(0x00000008 | 0x00000010, proc.th32ProcessID)
+                pid = int(proc.th32ProcessID)
+                # Read process creation time on both sides of the PID-based
+                # module snapshot. A PID reused during enumeration is rejected.
+                epoch_before = process_creation_filetime(pid)
+                mods = snapshot(0x00000008 | 0x00000010, pid)
                 paths = None
                 if mods is not None:
                     paths = []
@@ -169,8 +195,12 @@ def _windows_records(host_exe):
                             mok = kernel.Module32NextW(mods, ctypes.byref(mod))
                     finally:
                         kernel.CloseHandle(mods)
-                # PID remains in-memory only; analyze() and stdout never export it.
-                result.append({"exe": host_exe, "modules": paths, "pid": int(proc.th32ProcessID)})
+                epoch_after = process_creation_filetime(pid)
+                stable_epoch = (epoch_before if epoch_before is not None
+                                and epoch_before == epoch_after else None)
+                # PID and FILETIME remain in-memory only; neither is serialized.
+                result.append({"exe": host_exe, "modules": paths, "pid": pid,
+                               "creation_filetime": stable_epoch})
             ok = kernel.Process32NextW(processes, ctypes.byref(proc))
     finally:
         kernel.CloseHandle(processes)
