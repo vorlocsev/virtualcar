@@ -1916,6 +1916,14 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(!filter_id||!mask||!pattern)return error(ERR_NULL_PARAMETER);
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     if(type<1||type>3){unlock_state();return error(ERR_INVALID_FLAGS);}
+    /* PS always preserves the client-visible protocol ID, including when the
+       historical loose-filter policy is selected for legacy laboratory runs. */
+    if(is_ps_protocol(c->api_protocol) &&
+       (mask->ProtocolID!=c->api_protocol ||
+        pattern->ProtocolID!=c->api_protocol ||
+        (flow && flow->ProtocolID!=c->api_protocol))){
+        unlock_state();return error(ERR_MSG_PROTOCOL_ID);
+    }
     if(g_strict_j2534_filters){
         if(c->protocol==PROTO_CAN && type==3u){unlock_state();return error(ERR_NO_FLOW_CONTROL);}
         if(c->protocol==PROTO_ISO15765 && type!=3u){unlock_state();return error(ERR_INVALID_FLAGS);}
