@@ -159,7 +159,7 @@ def analyze(history, appended, processes, *, host="iexplore.exe",
         if (match is not None and int(match.group(1), 16) == pid
                 and match.group(2).casefold() == host
                 and row[match.end():].startswith(old.ACTIVE)):
-            active.append((index, row[match.end():].strip()))
+            active.append((index, row[match.end() + len(old.ACTIVE):].strip()))
     if not active:
         result["status"] = "NO_ACTIVE_INI_AFTER_PROCESS_EPOCH"
         return result
