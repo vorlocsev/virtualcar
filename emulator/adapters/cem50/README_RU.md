@@ -45,7 +45,11 @@ If the hosted PR workflow cannot start, use the authenticated GitHub CLI on the 
 
     .\emulator\adapters\cem50\Run-CEM50FromTrustedArtifact.ps1
 
-The command downloads **only** artifact #14598404967 from successful development workflow run #44669574171, then verifies the inner package SHA256, BUILDINFO exact SHA `9553d87d400f9baf80fa16fb4a30d163551a6bbb`, PE32 x86 source and the full binary SHA256 `c636baf8c66266bca80009a2efbc729f0d6db00a3a7be1384068f5e180f01528`. It stages an isolated copy, runs the exact 13-frame native probe, and prints the path to `native-check.json`. All paths are unique/exclusive; it refuses overwrite, Registry32 modifications and any original VIDA/physical ECU work. The existing `gh` login must have access to the private repository.
+Alternatively, after retaining the original **outer GitHub Actions ZIP archive**, the exact same smoke can run without any GitHub network request:
+
+    .\emulator\adapters\cem50\Run-CEM50FromTrustedArtifact.ps1 -ArtifactZip 'C:\Downloads\virtualcar_vmware_dev_9553d87.zip'
+
+The local ZIP is independently checked via its contained pinned package SHA256, BUILDINFO and DLL SHA256; no unverified bytes are executed. The command downloads **only** artifact #14598404967 from successful development workflow run #44669574171, then verifies the inner package SHA256, BUILDINFO exact SHA `9553d87d400f9baf80fa16fb4a30d163551a6bbb`, PE32 x86 source and the full binary SHA256 `c636baf8c66266bca80009a2efbc729f0d6db00a3a7be1384068f5e180f01528`. It stages an isolated copy, runs the exact 13-frame native probe, and prints the path to `native-check.json`. All paths are unique/exclusive; it refuses overwrite, Registry32 modifications and any original VIDA/physical ECU work. The existing `gh` login must have access to the private repository.
 
 A native PASS means that a pinned x86 DLL returned the synthetic CEM50 B9FB frames; **not** that original VIDA accepted this VIN.
 
