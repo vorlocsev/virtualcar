@@ -15,6 +15,49 @@ IDENTITY = json.dumps({'Vehicle': {'VIN': 'YV1CZ000290000001', 'ModelYear': 2009
 
 
 class ContractTests(unittest.TestCase):
+    def test_cem50_f0_opt_in_is_independent_of_cem40(self):
+        for ls in (False, True):
+            for hs in (False, True):
+                with self.subTest(ls=ls, hs=hs):
+                    text = lab.build_profile(IDENTITY, enable_synthetic_b9f0=ls,
+                                             enable_synthetic_cem50_b9f0=hs)
+                    result = lab.validate_profile(text, IDENTITY)
+                    self.assertEqual(result['b9f0_frames'], 3 if ls else 0)
+                    self.assertEqual(result['cem50_b9f0_frames'], 3 if hs else 0)
+                    cfg = configparser.ConfigParser(); cfg.read_string(text)
+                    self.assertEqual(cfg['D2_50']['B9FBFrameCount'], '0')
+                    self.assertEqual(cfg['D2_50_B9FC']['FrameCount'], '0')
+                    self.assertFalse(any(s.startswith('D2_50_B9F5') or s.startswith('D2_50_B9F8') for s in cfg))
+
+    def test_cem50_f0_has_own_address_id_and_provenance(self):
+        text = lab.build_profile(IDENTITY, enable_synthetic_cem50_b9f0=True)
+        cfg = configparser.ConfigParser(); cfg.read_string(text)
+        values = cfg['D2_50_B9F0']
+        frames = [bytes.fromhex(values[f'Frame{i:X}']) for i in range(3)]
+        self.assertEqual(lab.decode_d2(frames, service=0xF9, selector=0xF0, target=0x50),
+                         b'\x50\xf9\xf0' + bytes(15))
+        self.assertEqual(values['ResponseId'], '01000003')
+        self.assertEqual(cfg['Provenance_CEM50_B9F0']['OEMVerified'], '0')
+        with self.assertRaises(ValueError):
+            lab.decode_d2(frames, service=0xF9, selector=0xF0)
+
+    def test_cem50_mutation_and_silent_retarget_rejected(self):
+        text = lab.build_profile(IDENTITY, enable_synthetic_cem50_b9f0=True)
+        for old, new in (('8F 50 F9 F0', '8F 40 F9 F0'),
+                         ('8F 50 F9 F0', '8F 50 F9 FB'),
+                         ('ResponseId = 01000003', 'ResponseId = 00800003'),
+                         ('StrictRouting = 1', 'StrictRouting = 0'),
+                         ('AdditionalIdentificationRoute = CEM_50_CAN_500000',
+                          'AdditionalIdentificationRoute = CEM_50_CAN_125000')):
+            with self.subTest(old=old):
+                self.assertIn(old, text)
+                with self.assertRaises(ValueError): lab.validate_profile(text.replace(old, new), IDENTITY)
+
+    def test_v5_cannot_be_mistaken_for_new_contract(self):
+        text = lab.build_profile(IDENTITY)
+        with self.assertRaises(ValueError):
+            lab.validate_profile(text.replace(lab.CONTRACT, 'cem40-synthetic-envelope-v5'), IDENTITY)
+
     def test_empty_identification_lists_require_explicit_f0_and_opt_in(self):
         with self.assertRaises(ValueError):
             lab.build_profile(IDENTITY, enable_synthetic_ident_followups=True)

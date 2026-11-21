@@ -55,6 +55,31 @@ public sealed class VidaSyntheticCatalog : RealProxy {
 public static class VidaConverterProbe {
     private const BindingFlags Fields=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
     private static void Require(bool value) { if(!value) throw new InvalidOperationException("Synthetic contract mismatch"); }
+    public static void CheckDefaultCache(Assembly db) {
+        Type type=db.GetType("Vcc.Vida.DiagSwdl.BizServices.CarCom.DB.DefaultEcuVariantCache",true);
+        object cache=Activator.CreateInstance(type,true);
+        MethodInfo add=type.GetMethod("AddMapping"), get=type.GetMethod("GetDefaultEcuVariant"),
+            diag=type.GetMethod("GetDefaultDiagNumber"), initialized=type.GetMethod("IsInitializedForProfile");
+        Require((int)get.Invoke(cache,new object[]{0,"SYNTHETIC-A"})==0 &&
+            !(bool)initialized.Invoke(cache,new object[]{"SYNTHETIC-A"}));
+        add.Invoke(cache,new object[]{"SYNTHETIC-A",0,101,"SYNTHETIC-FIRST"});
+        Require((int)get.Invoke(cache,new object[]{0,"SYNTHETIC-A"})==101 &&
+            (bool)initialized.Invoke(cache,new object[]{"SYNTHETIC-A"}));
+        add.Invoke(cache,new object[]{"SYNTHETIC-A",0,202,"SYNTHETIC-SECOND"});
+        Require((int)get.Invoke(cache,new object[]{0,"SYNTHETIC-A"})==101 &&
+            (string)diag.Invoke(cache,new object[]{0,"SYNTHETIC-A"})=="SYNTHETIC-FIRST");
+        add.Invoke(cache,new object[]{"SYNTHETIC-B",0,202,"SYNTHETIC-SECOND"});
+        add.Invoke(cache,new object[]{"SYNTHETIC-B",0,101,"SYNTHETIC-FIRST"});
+        Require((int)get.Invoke(cache,new object[]{0,"SYNTHETIC-B"})==202);
+        add.Invoke(cache,new object[]{"SYNTHETIC-A",1,303,"SYNTHETIC-OTHER-GROUP"});
+        Require((int)get.Invoke(cache,new object[]{0,"SYNTHETIC-A"})==101 &&
+            (int)get.Invoke(cache,new object[]{1,"SYNTHETIC-A"})==303 &&
+            (int)get.Invoke(cache,new object[]{1,"SYNTHETIC-B"})==0);
+        add.Invoke(cache,new object[]{"SYNTHETIC-A",0,101,"SYNTHETIC-FIRST"});
+        Require((int)get.Invoke(cache,new object[]{0,"SYNTHETIC-A"})==101 &&
+            (int)get.Invoke(cache,new object[]{0,"SYNTHETIC-MISSING"})==0);
+        Console.WriteLine("PASS: 6 original default-cache gates; first mapping wins, profiles and function groups are isolated.");
+    }
     private static object Output(Type output, Type response, Type leaf, bool missing, bool fresh) {
         object obj=Activator.CreateInstance(output);
         output.GetProperty("EcuType").SetValue(obj,0,null);
@@ -127,6 +152,7 @@ public static class VidaConverterProbe {
 '@
     [VidaConverterProbe]::Run($assemblies['AppServices.VehicleAccess'],$assemblies['BizServices.CarCom.DB'],
         $assemblies['BizServices.Scripting'],$assemblies['BizServices.CarCom.VehicleServices'])
+    [VidaConverterProbe]::CheckDefaultCache($assemblies['BizServices.CarCom.DB'])
     foreach($name in ($assemblies.Keys | Sort-Object)) {
         Write-Output ($name+' SHA256='+(Get-FileHash -LiteralPath $assemblies[$name].Location -Algorithm SHA256).Hash)
     }

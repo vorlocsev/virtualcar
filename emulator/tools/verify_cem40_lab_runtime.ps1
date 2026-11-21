@@ -50,6 +50,8 @@ if($expectedFrames.ContainsKey('D2_40_B9F5/frame0')) {
     $f5=Frame-List 'D2_40_B9F5' 'frame' 1
     $f8=Frame-List 'D2_40_B9F8' 'frame' 1
 }
+$hsF0=''
+if($expectedFrames.ContainsKey('D2_50_B9F0/frame0')) { $hsF0=Frame-List 'D2_50_B9F0' 'frame' 3 }
 $savedTemp=$env:TEMP; $savedLocal=$env:LOCALAPPDATA
 try {
     $env:TEMP=$dir; $env:LOCALAPPDATA=$dir
@@ -72,7 +74,7 @@ public static class CemLabRuntime {
     [DllImport(Dll)] static extern uint PassThruReadMsgs(uint c,ref Msg m,ref uint n,uint timeout);
     static void Check(bool ok) { if(!ok) throw new Exception("CEM lab native contract failed"); }
     static Msg Message() { return new Msg {ProtocolID=5,TxFlags=0x100,Data=new byte[4128]}; }
-    public static void Run(string f0,string fb,string ae,string f5,string f8) {
+    public static void Run(string f0,string fb,string ae,string f5,string f8,string hsF0) {
         uint d,c,f; Check(PassThruOpen(IntPtr.Zero,out d)==0);
         try {
             Check(PassThruConnect(d,5,0x100,125000,out c)==0);
@@ -80,16 +82,50 @@ public static class CemLabRuntime {
                 Msg mask=Message(), pattern=Message(); mask.DataSize=pattern.DataSize=4;
                 mask.Data[3]=pattern.Data[3]=1;
                 Check(PassThruStartMsgFilter(c,1,ref mask,ref pattern,IntPtr.Zero,out f)==0);
-                Probe(c,0xB9,0xF0,f0); Probe(c,0xB9,0xFB,fb); Probe(c,0xAE,0x1B,ae);
-                if(f5.Length>0) { Probe(c,0xB9,0xF5,f5); Probe(c,0xB9,0xF8,f8); }
+                Probe(c,0x40,0x00800003,0xB9,0xF0,f0); Probe(c,0x40,0x00800003,0xB9,0xFB,fb); Probe(c,0x40,0x00800003,0xAE,0x1B,ae);
+                if(f5.Length>0) { Probe(c,0x40,0x00800003,0xB9,0xF5,f5); Probe(c,0x40,0x00800003,0xB9,0xF8,f8); }
+                Silent(c,0x50,0xF0); // HS target must not emit on this LS channel.
+                if(hsF0.Length>0) {
+                    uint hs; Check(PassThruConnect(d,5,0x100,500000,out hs)==0);
+                    try {
+                        Check(PassThruStartMsgFilter(hs,1,ref mask,ref pattern,IntPtr.Zero,out f)==0);
+                        Probe(hs,0x50,0x01000003,0xB9,0xF0,hsF0);
+                        Silent(hs,0x40,0xF0);
+                        Silent(hs,0x50,0xFB); Silent(hs,0x50,0xF5); Silent(hs,0x50,0xF8);
+                        // A request on HS must leave an independently staged LS reply intact.
+                        Msg pending=Request(0x40,0xB9,0xF0); uint n=1;
+                        Check(PassThruWriteMsgs(c,ref pending,ref n,100)==0 && n==1);
+                        Probe(hs,0x50,0x01000003,0xB9,0xF0,hsF0);
+                        for(int i=0;i<3;i++) { Msg rx=Message(); n=1; Check(PassThruReadMsgs(c,ref rx,ref n,1000)==0 && n==1); CompareFrame(rx,f0.Split(';')[i],0x00800003); }
+                        Msg empty=Message(); n=1; Check(PassThruReadMsgs(c,ref empty,ref n,0)==16 && n==0);
+                        Console.WriteLine("PASS CEM40/CEM50: separate baud routes, unconfigured HS reads silent, pending LS reply preserved.");
+                    } finally { PassThruDisconnect(hs); }
+                }
             } finally { PassThruDisconnect(c); }
         } finally { PassThruClose(d); }
     }
-    static void Probe(uint c,byte service,byte mode,string expectedFrames) {
-        string[] frames=expectedFrames.Split(';'); int expected=frames.Length;
+    static Msg Request(byte target,byte service,byte mode) {
         Msg tx=Message(); tx.DataSize=12;
-        byte[] request={0,15,255,254,203,64,service,mode,0,0,0,0};
-        Array.Copy(request,tx.Data,12); uint n=1;
+        byte[] request={0,15,255,254,203,target,service,mode,0,0,0,0};
+        Array.Copy(request,tx.Data,12); return tx;
+    }
+    static void Silent(uint c,byte target,byte mode) {
+        Msg tx=Request(target,0xB9,mode); uint n=1;
+        Check(PassThruWriteMsgs(c,ref tx,ref n,100)==0 && n==1);
+        Msg rx=Message(); n=1; uint status=PassThruReadMsgs(c,ref rx,ref n,50);
+        Check((status==9 || status==16) && n==0);
+    }
+    static void CompareFrame(Msg rx,string frame,uint responseId) {
+        Check(rx.ProtocolID==5 && rx.RxStatus==0x100 && rx.DataSize==12);
+        uint actual=((uint)rx.Data[0]<<24)|((uint)rx.Data[1]<<16)|((uint)rx.Data[2]<<8)|rx.Data[3];
+        Check(actual==responseId);
+        string[] bytes=frame.Split(new char[]{' '},StringSplitOptions.RemoveEmptyEntries);
+        Check(bytes.Length==8);
+        for(int j=0;j<8;j++) Check(rx.Data[4+j]==Convert.ToByte(bytes[j],16));
+    }
+    static void Probe(uint c,byte target,uint responseId,byte service,byte mode,string expectedFrames) {
+        string[] frames=expectedFrames.Split(';'); int expected=frames.Length;
+        Msg tx=Request(target,service,mode); uint n=1;
         Stopwatch clock=Stopwatch.StartNew();
         Check(PassThruWriteMsgs(c,ref tx,ref n,100)==0 && n==1);
         double first=0,last=0,minGap=Double.MaxValue,maxGap=0;
@@ -98,23 +134,19 @@ public static class CemLabRuntime {
             double now=clock.Elapsed.TotalMilliseconds;
             if(i==0) first=now; else { minGap=Math.Min(minGap,now-last); maxGap=Math.Max(maxGap,now-last); }
             last=now;
-            Check(rx.ProtocolID==5 && rx.RxStatus==0x100 && rx.DataSize==12);
-            Check(rx.Data[0]==0 && rx.Data[1]==128 && rx.Data[2]==0 && rx.Data[3]==3);
-            if(i==0) Check(rx.Data[5]==64 && rx.Data[6]==service+64 && rx.Data[7]==mode);
+            CompareFrame(rx,frames[i],responseId);
+            if(i==0) Check(rx.Data[5]==target && rx.Data[6]==service+64 && rx.Data[7]==mode);
             byte header=expected==1 ? (byte)203 : i==0 ? (byte)143 : i==expected-1 ? (byte)(mode==0xF0?76:79) : (byte)(8|(i&7));
             Check(rx.Data[4]==header);
-            string[] bytes=frames[i].Split(new char[]{' '},StringSplitOptions.RemoveEmptyEntries);
-            Check(bytes.Length==8);
-            for(int j=0;j<8;j++) Check(rx.Data[4+j]==Convert.ToByte(bytes[j],16));
         }
         Msg empty=Message(); n=1; Check(PassThruReadMsgs(c,ref empty,ref n,0)==16 && n==0);
-        Console.WriteLine("PASS {0:X2}{1:X2}: frames={2} first_ms={3:F3} last_ms={4:F3} gap_min_ms={5:F3} gap_max_ms={6:F3}",
-            service,mode,expected,first,last,expected==1?0:minGap,maxGap);
+        Console.WriteLine("PASS CEM_{7:X2} {0:X2}{1:X2}: frames={2} first_ms={3:F3} last_ms={4:F3} gap_min_ms={5:F3} gap_max_ms={6:F3}",
+            service,mode,expected,first,last,expected==1?0:minGap,maxGap,target);
     }
 }
 '@
     Add-Type -TypeDefinition $source.Replace('__DLL__', $dll.Replace('"','""'))
-    [CemLabRuntime]::Run($f0,$fb,$ae,$f5,$f8)
+    [CemLabRuntime]::Run($f0,$fb,$ae,$f5,$f8,$hsF0)
     Write-Output 'PASS: every returned D2 byte equals the preflighted private profile.'
     Write-Output 'Native profile loaded and delivered; actual VIDA GUI acceptance NOT_VERIFIED.'
 } finally { $env:TEMP=$savedTemp; $env:LOCALAPPDATA=$savedLocal }
