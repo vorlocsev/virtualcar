@@ -24,6 +24,7 @@
 | VIDA ReadVin, native логи / атрибуция | [Issue #326](https://github.com/vorlocsev/virtualcar/issues/326), [PR #419](https://github.com/vorlocsev/virtualcar/pull/419), [VIDA аудиторы](../emulator/tools) |
 | SectorV, Hardware и ECU маршруты | [B3A318](research/b3a318-xc90-v8-cem-catalog-and-sectorv-routing.md), [B3A319](research/b3a319-sectorv-hardware-client-route-attribution.md) |
 | B9FB: структура и пределы | [Identity shape](research/p2-b9fb-identity-shape-audit.md), [Provenance guard](research/p2-b9fb-target-provenance-guard.md) |
+| **XC90 MY2009: CEM D2 2160 / GGD 529** | **[VIDA CarCom: таблицы B9, DID, сеть, init и границы доказательств](research/vida-carcom-xc90-2009-cem-d2-2160-ggd-529.md)** — SOURCE_RESEARCH, не ReadVin PASS |
 | CarCom / VIDA 2014D / T111 / T122 | [VIDA DB applicability](research/spnda-volvo-vida-db-applicability.md), [bounded aggregate](research/vida-t111-t122-bounded-aggregate.md) |
 | CEM D2/GGD и модельные поколения | [Variant research](research/vida-cem-d2-variant-local-catalog.md), [B3A318](research/b3a318-xc90-v8-cem-catalog-and-sectorv-routing.md) |
 | Ранние CAN исследования | [Early P2](research/p2-can-early-models.md), [SavvyCAN](research/savvycan-dev30.md) |
