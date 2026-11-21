@@ -32,6 +32,25 @@ Sources: https://www.scandoc.org/en/develop/j2534/pt_ioctl_config.html and https
 6. [ ] Prove exact provider selected in original VIDA (expanded dropdown), observed `PassThruOpen/Connect`, actual TX/RX, and removal or persistence of the J2534-1 warning.
 7. [ ] Only after the above: independent original VIDA `ReadVin`, ECU recognition, and T111/T122, each with direct evidence.
 
+## Owner-local native proof before any registry changes
+
+Use a freshly built x86 **feature-branch DLL**, not the older trusted development artifact: the old DLL does not contain PS support. After review, on a Windows machine with Git Bash and the Clang/LLD tools used by `emulator/build-cross.sh`:
+
+```powershell
+# In the PR #418 branch checkout, from repository root:
+Push-Location emulator
+try { & bash ./build-cross.sh; if($LASTEXITCODE -ne 0){throw 'x86 build failed'} }
+finally { Pop-Location }
+$dll = (Resolve-Path '.\emulator\VirtualCarJ2534.dll').Path
+$sha = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+$out = Join-Path $env:TEMP ('CEM50-PS-' + [guid]::NewGuid().ToString('N'))
+& "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '.\emulator\adapters\cem50\Verify-J2534CEM50-PS.ps1' -DllPath $dll -ExpectedSha256 $sha -OutputDirectory $out
+if($LASTEXITCODE -ne 0){throw 'CEM50 PS native smoke failed'}
+Get-Content -LiteralPath (Join-Path $out 'ps-native-check.json') -Raw
+```
+
+Expected *only on genuine success*: `CEM50_PS_NATIVE_PASS: 13/13 exact CAN_PS D2 frames, HS/MS isolated`. The output JSON explicitly sets `vida_readvin_verified=false`, `ecu_identification_verified=false`. This test creates an isolated temporary directory and does **not** call a Windows registry or original VIDA API.
+
 ## Review boundaries
 
 This branch does **not** modify Windows J2534 registry entries, the installed original VIDA, SQL Server BaseData, or physical adapters. Do not merge to persistent VMware CI before the untrusted branch has been evaluated outside that runner. `main`, releases and pre-existing J2534 registrations remain untouched.
