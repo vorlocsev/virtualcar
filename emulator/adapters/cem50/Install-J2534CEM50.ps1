@@ -59,7 +59,7 @@ foreach ($raw in [IO.File]::ReadAllLines($sourceIni)) {
         $sections[$section] = $true
         continue
     }
-    if (-not $section -or $line -notmatch '^([A-Za-z0-9_]+)[ \t]*=[ \t]*(.*)$') {
+    if (-not $section -or -not ($line -match '^([A-Za-z0-9_]+)[ \t]*=[ \t]*(.*)$')) {
         throw 'Malformed INI setting'
     }
     $nameAndSection = $section + '.' + $matches[1]
