@@ -1,0 +1,235 @@
+{
+  "schema_version": "b3a57-carcom-profile-ecu-map-v1",
+  "source": {
+    "database": "CarCom",
+    "profile_table": "T161_Profile",
+    "profile_id": 163120,
+    "profile_title": "XC90 2009 B8444S",
+    "profile_identifier": "0b00c8af83f1a29b",
+    "source_kind": "owner_local_read_only_sql_export",
+    "source_file": "XC90-2009-ECU-map.csv"
+  },
+  "counts": {
+    "unique_ecu_variants": 7,
+    "configuration_rows": 8
+  },
+  "ecu_variants": [
+    {
+      "ecu_variant_id": 416,
+      "part_number": "30667559 AA",
+      "ecu_name": "Brake Control Module (GGD)",
+      "ecu_identifier": "BCM",
+      "ecu_type": "BCM",
+      "configs": [
+        {
+          "config_id": 428,
+          "network": "CAN",
+          "bus_name": "High s 1",
+          "protocol": "GGD",
+          "protocol_version": 2,
+          "physical_address": "01",
+          "functional_address": "33",
+          "can_address": "18DA01F1",
+          "comm_address": "01",
+          "can_id_tx": "000",
+          "can_id_rx": "000",
+          "can_id_func": "000",
+          "can_id_uudt": null,
+          "bus_rate": 500000,
+          "address_size": 29,
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "ecu_variant_id": 2160,
+      "part_number": "31296075 AA",
+      "ecu_name": "Central electronic module (D2)",
+      "ecu_identifier": "CEM",
+      "ecu_type": "CEM",
+      "configs": [
+        {
+          "config_id": 1824,
+          "network": "CAN",
+          "bus_name": "High s 1",
+          "protocol": "D2",
+          "protocol_version": 7,
+          "physical_address": "D0",
+          "functional_address": "50",
+          "can_address": "FFFFE",
+          "comm_address": "50",
+          "can_id_tx": null,
+          "can_id_rx": null,
+          "can_id_func": null,
+          "can_id_uudt": null,
+          "bus_rate": null,
+          "address_size": 29,
+          "gateway": null
+        },
+        {
+          "config_id": 1825,
+          "network": "CAN",
+          "bus_name": "Low speed",
+          "protocol": "D2",
+          "protocol_version": 7,
+          "physical_address": "40",
+          "functional_address": "C0",
+          "can_address": "FFFFE",
+          "comm_address": "40",
+          "can_id_tx": "000",
+          "can_id_rx": "000",
+          "can_id_func": "000",
+          "can_id_uudt": null,
+          "bus_rate": null,
+          "address_size": 29,
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "ecu_variant_id": 529,
+      "part_number": "30682825  A",
+      "ecu_name": "Central electronic module (P1/P2 GGD)",
+      "ecu_identifier": "CEM",
+      "ecu_type": "CEM",
+      "configs": [
+        {
+          "config_id": 541,
+          "network": "CAN",
+          "bus_name": "High s 1",
+          "protocol": "GGD",
+          "protocol_version": 2,
+          "physical_address": "50",
+          "functional_address": "33",
+          "can_address": "18DA50F1",
+          "comm_address": "50",
+          "can_id_tx": "000",
+          "can_id_rx": "000",
+          "can_id_func": "000",
+          "can_id_uudt": null,
+          "bus_rate": 500000,
+          "address_size": 29,
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "ecu_variant_id": 3066,
+      "part_number": "30710664 AC",
+      "ecu_name": "Combustion Preheater Module (CPM)",
+      "ecu_identifier": "CPM",
+      "ecu_type": "CPM",
+      "configs": [
+        {
+          "config_id": 2754,
+          "network": "CAN",
+          "bus_name": "Low speed",
+          "protocol": "D2",
+          "protocol_version": 7,
+          "physical_address": "8F",
+          "functional_address": "0F",
+          "can_address": "FFFFE",
+          "comm_address": "0F",
+          "can_id_tx": null,
+          "can_id_rx": null,
+          "can_id_func": null,
+          "can_id_uudt": null,
+          "bus_rate": null,
+          "address_size": null,
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "ecu_variant_id": 1489,
+      "part_number": "30670321 AA",
+      "ecu_name": "Engine control module, CV8 (GGD)",
+      "ecu_identifier": "ECM Denso CV8",
+      "ecu_type": "ECM",
+      "configs": [
+        {
+          "config_id": 1255,
+          "network": "CAN",
+          "bus_name": "High s 1",
+          "protocol": "GGD",
+          "protocol_version": 2,
+          "physical_address": "10",
+          "functional_address": "33",
+          "can_address": "FFFFE",
+          "comm_address": "10",
+          "can_id_tx": "000",
+          "can_id_rx": "000",
+          "can_id_func": "000",
+          "can_id_uudt": null,
+          "bus_rate": 500000,
+          "address_size": 29,
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "ecu_variant_id": 1614,
+      "part_number": "30782609 AA",
+      "ecu_name": "Headlamp Control Module",
+      "ecu_identifier": "HCM",
+      "ecu_type": "HCM",
+      "configs": [
+        {
+          "config_id": 1346,
+          "network": "CAN",
+          "bus_name": "High s 1",
+          "protocol": "GGD",
+          "protocol_version": 2,
+          "physical_address": "76",
+          "functional_address": "33",
+          "can_address": "0",
+          "comm_address": "76",
+          "can_id_tx": "000",
+          "can_id_rx": "000",
+          "can_id_func": "000",
+          "can_id_uudt": null,
+          "bus_rate": 500000,
+          "address_size": 29,
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "ecu_variant_id": 573,
+      "part_number": "30710733 AC",
+      "ecu_name": "Steering angle sensor (GGD)",
+      "ecu_identifier": "SAS",
+      "ecu_type": "SAS",
+      "configs": [
+        {
+          "config_id": 585,
+          "network": "CAN",
+          "bus_name": "High s 1",
+          "protocol": "GGD",
+          "protocol_version": 2,
+          "physical_address": "32",
+          "functional_address": "33",
+          "can_address": "18DA32F1",
+          "comm_address": "32",
+          "can_id_tx": "000",
+          "can_id_rx": "000",
+          "can_id_func": "000",
+          "can_id_uudt": null,
+          "bus_rate": 500000,
+          "address_size": 29,
+          "gateway": null
+        }
+      ]
+    }
+  ],
+  "evidence_limits": {
+    "profile_catalog_only": true,
+    "installed_ecu_identity_verified": false,
+    "simultaneous_physical_cem_presence_verified": false,
+    "live_ecu_response_verified": false,
+    "vida_readvin_acceptance_verified": false,
+    "ecu_identification_verified": false,
+    "physical_j2534_verified": false,
+    "d2_bus_rate_from_t121_verified": false
+  }
+}
