@@ -111,9 +111,11 @@ class SamePidTest(unittest.TestCase):
         for secret in ("0000002A", "C:\\", "J2534CEM50PS.dll", "00 0F FF FE",
                        "YV1", "00800003", str(FILETIME)):
             self.assertNotIn(secret, blob)
-        for key in ("process_creation_epoch_verified", "ini_bytes_loaded_verified",
-                    "original_vida_readvin_verified", "ecu_rx_delivered_verified"):
+        self.assertTrue(out["process_creation_epoch_verified"])
+        for key in ("ini_bytes_loaded_verified", "original_vida_readvin_verified",
+                    "ecu_rx_delivered_verified"):
             self.assertFalse(out[key])
+        self.assertFalse(out["source_contains_private_pid_path_or_payload"])
 
     def test_13_missing_epoch_marker_keeps_pid_only_status(self):
         rows = [row for row in history() if not row.startswith("[PID=" + "%08X" % PID + " iexplore.exe] Process creation FILETIME")]
