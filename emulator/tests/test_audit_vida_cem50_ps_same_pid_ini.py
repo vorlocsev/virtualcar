@@ -109,6 +109,7 @@ class SamePidTest(unittest.TestCase):
     def test_12_disk_hash_mismatch_is_not_validation(self):
         out = audit.analyze(history(), request(), [process()], disk_sha="0" * 64)
         self.assertFalse(out["disk_sha_matches_pinned"])
+        self.assertEqual(out["status"], "SAME_TEXT_PID_INIT_PATH_BUT_DISK_SHA_UNVERIFIED")
         self.assertFalse(out["original_vida_readvin_verified"])
 
 
