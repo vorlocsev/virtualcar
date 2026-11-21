@@ -6,6 +6,9 @@ append interval (e.g. B3A47). This module does not attest to original VIDA or
 read an ECU. It never prints raw lines, CAN bytes, VIN, paths, PIDs or hosts.
 """
 from collections import Counter
+import argparse
+import json
+from pathlib import Path
 import re
 
 SCHEMA = "virtualcar-b3a50-d2-route-matrix-v1"
@@ -24,6 +27,9 @@ BAUD = {10400: "10400", 125000: "125000", 250000: "250000", 500000: "500000"}
 MAX_LINE = 512
 MAX_GAP = 24
 MAX_ROWS = 250000
+MAX_SOURCE_BYTES = 256 * 1024 * 1024
+MAX_SOURCE_ROWS = 6000000
+MAX_SOURCE_D2_EVENTS = 150000
 
 
 def _bytes(event, label, n):
@@ -52,13 +58,15 @@ def _outcome(event, label):
     return data[1], data[3]
 
 
-def analyze(lines):
+def analyze(lines, *, max_rows=MAX_ROWS, max_d2_events=MAX_ROWS):
     requests, results, paired = Counter(), Counter(), Counter()
     pending = {}  # exact host+PID string for local pairing only; never exported
     invalid_request = invalid_result = unpaired = ambiguous = 0
+    scanned = relevant = 0
     for pos, line in enumerate(lines):
-        if pos >= MAX_ROWS:
+        if pos >= max_rows:
             raise ValueError("bounded_native_lines_exceeded")
+        scanned += 1
         if len(line) > MAX_LINE:
             continue
         match = PREFIX.match(line)
@@ -66,6 +74,10 @@ def analyze(lines):
             continue
         local_key = line[:match.end()]
         event = line[match.end():]
+        if event.startswith("P2 D2 "):
+            relevant += 1
+            if relevant > max_d2_events:
+                raise ValueError("bounded_d2_event_count_exceeded")
         if event.startswith(REQUEST):
             record = _request(event)
             if record is None:
@@ -121,13 +133,42 @@ def analyze(lines):
         "malformed_request_metadata": invalid_request,
         "malformed_outcome_metadata": invalid_result,
         "paired_route_outcomes": paired_modes,
+        "source_scan_counts": {
+            "source_rows_scanned": scanned,
+            "relevant_d2_rows_seen": relevant,
+        },
         "original_vida_client_verified": False,
         "genuine_ecu_rx_verified": False,
         "vin_accepted_verified": False,
         "limitations": [
-            "Pairing is bounded to 24 native logger lines sharing a textual PID+host prefix.",
+            "Pairing is bounded to 24 ORIGINAL native logger lines sharing a textual PID+host prefix.",
             "Same logger prefix is not proof of loaded original VIDA DLL or OEM RX.",
             "Base fixture 0x40=125k, 0x50=500k is an emulator assumption, not MY2009 OEM routing.",
             "No raw vehicle identifier, CAN payload, PID, hostname, local path or unknown flag is exported.",
         ],
     }
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Read-only complete-file D2 40/50 request and route outcome audit")
+    parser.add_argument("--native", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        source = args.native
+        if not source.is_file() or source.is_symlink() or source.stat().st_size > MAX_SOURCE_BYTES:
+            raise ValueError("invalid_or_excessive_source")
+        # Keep every native line, including unrelated lines, so MAX_GAP
+        # measures source-line distance rather than filtered D2 distance.
+        with source.open("r", encoding="utf-8-sig", errors="replace") as f:
+            report = analyze(f, max_rows=MAX_SOURCE_ROWS,
+                             max_d2_events=MAX_SOURCE_D2_EVENTS)
+        report["complete_source_scan"] = True
+    except (OSError, ValueError):
+        parser.exit(2, "ERROR: invalid_or_unreadable_bounded_input\n")
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

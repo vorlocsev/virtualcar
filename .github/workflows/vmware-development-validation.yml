@@ -291,6 +291,113 @@ jobs:
           }
           Write-Host 'PASS: native x86 synthetic 13-frame D2 and ISO15765 ECM F190 wire'
           
+      # CEM50 owner's published synthetic reference profile: exact x86 CAN/D2 RX.
+      # Only runs after a trusted development push on the persistent VMware runner.
+      # Never install/register a provider, run original VIDA or contact physical ECU.
+      - name: Verify exact CEM50 B9FB 13-frame native x86 replay
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -cne 'push' -or
+              $env:GITHUB_REF -cne 'refs/heads/development') {
+            throw 'CEM50 native smoke requires trusted development push'
+          }
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            throw 'Trusted development x86 J2534 DLL not built'
+          }
+          $sha = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+          $root = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          $out = Join-Path $root ('cem50-exact-native-' + [guid]::NewGuid().ToString('N'))
+          if (Test-Path -LiteralPath $out) { throw 'Exclusive CEM50 smoke output already exists' }
+          try {
+            & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/adapters/cem50/Verify-J2534CEM50.ps1 -DllPath $dll -ExpectedSha256 $sha -OutputDirectory $out
+            if ($LASTEXITCODE -ne 0) { throw 'CEM50 native x86 B9FB 13-frame smoke failed' }
+            $reportPath = Join-Path $out 'native-check.json'
+            if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+              throw 'CEM50 native smoke JSON missing'
+            }
+            $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+            if ($report.status -cne 'CEM50_NATIVE_PASS' -or
+                [int]$report.actual_matched_frame_count -ne 13 -or
+                $report.published_vin -cne 'YV1CR855691511566' -or
+                $report.vida_readvin_verified -ne $false -or
+                $report.physical_adapter_used -ne $false) {
+              throw 'CEM50 native report does not match expected read-only evidence'
+            }
+            Write-Host 'PASS: x86 native CEM50 B9FB 13/13 synthetic RX, no VIDA/ECU acceptance claim'
+          } finally {
+            # Persistent runner: delete only this new direct child of RUNNER_TEMP.
+            $parent = [IO.Path]::GetFullPath((Split-Path -Parent $out)).TrimEnd('\')
+            if (-not [String]::Equals($parent,$root,[StringComparison]::OrdinalIgnoreCase)) {
+              throw 'CEM50 native cleanup path escaped RUNNER_TEMP'
+            }
+            if (Test-Path -LiteralPath $out -PathType Container) {
+              Remove-Item -LiteralPath $out -Recurse -Force
+            }
+          }
+
+      # B3A331: owner-independent, read-only source-shaped VIDA CAN-MS
+      # channel lifecycle. Built x86 virtual DLL only. No original VIDA, CAN TX,
+      # physical J2534, provider registry modification or accepted VIN claim.
+      - name: Check native x86 VIDA-shaped CAN-MS J2534-2 channel lifecycle
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $root = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          $probeDir = Join-Path $root ('virtualcar-b3a331-' + [guid]::NewGuid().ToString('N'))
+          if (Test-Path -LiteralPath $probeDir) {
+            throw 'Refusing to reuse a CAN-MS preflight directory'
+          }
+          try {
+            & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_native_routes.ps1 -DllPath $dll -OutputDirectory $probeDir -CanMsPreflight
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Synthetic x86 CAN-MS channel lifecycle preflight failed'
+            }
+          } finally {
+            # The runner is persistent: remove only the unique direct child
+            # of RUNNER_TEMP created by this CI step.
+            $parent = [IO.Path]::GetFullPath((Split-Path -Parent $probeDir)).TrimEnd('\')
+            if (-not [String]::Equals($parent, $root,
+                    [StringComparison]::OrdinalIgnoreCase)) {
+              throw 'Refusing CAN-MS cleanup outside RUNNER_TEMP'
+            }
+            if (Test-Path -LiteralPath $probeDir -PathType Container) {
+              Remove-Item -LiteralPath $probeDir -Recurse -Force
+            }
+          }
+
+      # B3A325: exercise the actual just-built x86 emulator DLL from four
+      # isolated synthetic host processes writing the same temporary trace.
+      # Unlike the host shim, this validates real Win32 multi-process append.
+      # No provider registration, physical CAN, original VIDA or client run.
+      - name: Stress native x86 J2534 logger append across four isolated processes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $script = 'emulator/tools/test_native_log_multiprocess_append.ps1'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -DllPath $dll -Workers 4 -Iterations 16
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Native x86 multi-process append test failed'
+          }
+
+      # B3A330: same native x86 DLL, four simultaneous isolated producers
+      # of synthetic 13-frame D2 B9FB. Distinguish source protocol metadata
+      # and append fidelity from original VIDA/SectorV ECU acceptance.
+      - name: Stress native x86 D2 RX context and tags across four processes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $script = 'emulator/tools/test_native_log_multiprocess_append.ps1'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -DllPath $dll -Workers 4 -Iterations 2 -D2Replay
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Native x86 synthetic multi-process D2 metadata regression failed'
+          }
+
       # Read-only provenance probe: inspect canonical J2534 registry32 metadata
       # on THIS CI runner only. No DLL load or diagnostic-client execution;
       # the runner may be different from the SectorV GUI test guest.

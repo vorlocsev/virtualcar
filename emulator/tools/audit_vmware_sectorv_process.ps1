@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
-Read-only, strictly redacted snapshot of SectorV process -> registered J2534 DLL.
-Default mode checks the *current self-hosted CI runner*. OperatorSession
+Read-only, strictly redacted snapshot of name-matched client -> registered J2534 DLL.
+Default mode checks SectorV on the *current self-hosted CI runner*. OperatorSession
 checks the *current host* and does not prove it is the target guest VM.
 Never starts SectorV, loads a DLL, changes registry, opens a process by PID,
 prints private paths, hashes or VINs. A name match is not binary authenticity.
@@ -11,6 +11,10 @@ param(
     [switch]$FunctionsOnly,
     [switch]$SelfTest,
     [switch]$OperatorSession,
+    [ValidateSet('iexplore','java','VidaMonitor','w3wp')]
+    [string]$VidaProcessName = '',
+    [ValidateRange(1,2147483647)]
+    [int]$VidaProcessId = 0,
     [string]$ReferenceDll,
     [string]$OutputFile
 )
@@ -252,6 +256,198 @@ function Get-OperatorNextGate {
     return 'collect_same_run_redacted_j2534_and_gui_evidence'
 }
 
+# The VIDA mode is a passive, named-process module observation. The selected
+# process name is an operator hint, NOT an authenticated VIDA executable.
+# An exact registered DLL path at one instant does not show whether an XML
+# config was loaded, J2534 was invoked, or a ReadVin script was selected.
+# B3A338. Process PID and birth time stay in memory; identity is untrusted.
+function Select-VidaExactPidCandidate {
+    param([object[]]$NameMatches, [int]$SelectedProcessId)
+    $matches=@($NameMatches | Where-Object { $_.Id -eq $SelectedProcessId })
+    if ($matches.Count -eq 0) {
+        return [pscustomobject]@{Category='selected_pid_not_in_name_matches';Client=$null;BirthTicks=[long]0}
+    }
+    if ($matches.Count -ne 1) {
+        return [pscustomobject]@{Category='selected_pid_ambiguous_in_name_matches';Client=$null;BirthTicks=[long]0}
+    }
+    try {
+        $candidate=$matches[0]
+        if ($candidate.HasExited) { throw 'candidate_exited' }
+        [long]$ticks=$candidate.StartTime.ToUniversalTime().Ticks
+        if ($ticks -le 0) { throw 'invalid_process_start' }
+        return [pscustomobject]@{Category='pid_name_and_starttime_observed';Client=$candidate;BirthTicks=$ticks}
+    } catch {
+        return [pscustomobject]@{Category='selected_pid_starttime_unavailable';Client=$null;BirthTicks=[long]0}
+    }
+}
+function Test-VidaExactPidSnapshotStable {
+    param([object]$Client, [long]$ExpectedBirthTicks)
+    if ($null -eq $Client -or $ExpectedBirthTicks -le 0) { return 'unverifiable' }
+    try {
+        if ($Client.HasExited) { return 'process_exited_after_snapshot' }
+        [long]$actual=$Client.StartTime.ToUniversalTime().Ticks
+        if ($actual -ne $ExpectedBirthTicks) { return 'process_starttime_changed' }
+        return 'same_pid_process_starttime_after_snapshot'
+    } catch { return 'unverifiable' }
+}
+
+function Get-VidaNextGate {
+    param([string]$Observation, [string]$Comparison,
+          [string]$ReferencePe32)
+    if ($Observation -eq 'multiple_client_name_matches') {
+        return 'select_unambiguous_original_client_process'
+    }
+    if ($Observation -eq 'client_not_observed_in_local_snapshot' -or
+        $Observation -eq 'client_process_listing_unavailable') {
+        return 'observe_original_client_only_when_already_running'
+    }
+    if ($Observation -ne 'registered_library_loaded_in_name_matched_client') {
+        return 'verify_virtual_provider_module_in_original_client'
+    }
+    if ($ReferencePe32 -ne 'x86_pe32_header') {
+        return 'verify_reference_virtual_dll_pe32'
+    }
+    if ($Comparison -ne 'exact_bytes_at_snapshot') {
+        return 'verify_registered_vs_reference_binary_equivalence'
+    }
+    return 'independently_observe_active_vida_config_and_readvin'
+}
+
+function New-VidaModuleReport {
+    param([string]$ProcessName, [string]$Observation,
+          [string]$Comparison, [string]$ReferencePe32,
+          [string]$PidSelection = 'not_requested',
+          [string]$StarttimeStability = 'not_assessed')
+    if (@('iexplore','java','VidaMonitor','w3wp') -cnotcontains $ProcessName) {
+        throw 'Unsupported VIDA process name category'
+    }
+    $loaded = $Observation -ceq 'registered_library_loaded_in_name_matched_client'
+    # Path matching is strictly weaker than binary provenance, and both
+    # are strictly weaker than a proven original VIDA process identity.
+    return [ordered]@{
+        schema_version = 'virtualcar-vida-process-binding-operator-v1'
+        scope = 'operator_requested_current_host_name_match_only'
+        selected_process_name_category = $ProcessName
+        registered_virtual_module_observation = $Observation
+        installed_vs_reference_dll = $Comparison
+        reference_dll_pe32 = $ReferencePe32
+        selected_private_pid_name_starttime_observation = $PidSelection
+        selected_private_pid_starttime_snapshot_stability = $StarttimeStability
+        selected_pid_is_authenticated_original_vida = $false
+        registered_dll_module_path_seen_in_name_matched_process = $loaded
+        selected_process_is_authenticated_original_vida = $false
+        loaded_binary_memory_matches_disk_verified = $false
+        active_vida_diagnostic_config_loaded_verified = $false
+        effective_diagnostic_connection_mode_verified = $false
+        original_vida_script_selection_verified = $false
+        original_vida_j2534_tx_rx_verified = $false
+        original_vida_vin_accepted_verified = $false
+        ecu_identity_accepted_verified = $false
+        client_started_by_audit = $false
+        physical_adapter_examined = $false
+        next_safe_gate = Get-VidaNextGate $Observation $Comparison $ReferencePe32
+    }
+}
+
+function Invoke-VidaExactPidSelfTests {
+    # Entirely synthetic processes; no original VIDA or J2534 is invoked.
+    $birth=[datetime]'2026-01-01T00:00:00Z'
+    $match=[pscustomobject]@{Id=321;HasExited=$false;StartTime=$birth}
+    $other=[pscustomobject]@{Id=987;HasExited=$false;StartTime=$birth}
+    $exited=[pscustomobject]@{Id=321;HasExited=$true;StartTime=$birth}
+    $missingTime=[pscustomobject]@{Id=321;HasExited=$false;StartTime=$null}
+    $count=0
+    if ((Select-VidaExactPidCandidate @() 321).Category -cne
+            'selected_pid_not_in_name_matches') { throw 'VIDA PID gate 1' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($other) 321).Category -cne
+            'selected_pid_not_in_name_matches') { throw 'VIDA PID gate 2' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($match,$match) 321).Category -cne
+            'selected_pid_ambiguous_in_name_matches') { throw 'VIDA PID gate 3' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($exited) 321).Category -cne
+            'selected_pid_starttime_unavailable') { throw 'VIDA PID gate 4' }
+    $count++
+    if ((Select-VidaExactPidCandidate @($missingTime) 321).Category -cne
+            'selected_pid_starttime_unavailable') { throw 'VIDA PID gate 5' }
+    $count++
+    $chosen=Select-VidaExactPidCandidate @($other,$match) 321
+    if ($chosen.Category -cne 'pid_name_and_starttime_observed' -or
+        $chosen.Client.Id -ne 321 -or $chosen.BirthTicks -le 0) {
+        throw 'VIDA PID gate 6'
+    }
+    $count++
+    if ((Test-VidaExactPidSnapshotStable $match $chosen.BirthTicks) -cne
+            'same_pid_process_starttime_after_snapshot' -or
+        (Test-VidaExactPidSnapshotStable $exited $chosen.BirthTicks) -cne
+            'process_exited_after_snapshot') { throw 'VIDA PID gate 7' }
+    $count++
+    $report=New-VidaModuleReport 'iexplore' 'registered_library_loaded_in_name_matched_client' 'exact_bytes_at_snapshot' 'x86_pe32_header' $chosen.Category 'same_pid_process_starttime_after_snapshot'
+    $safe=$report | ConvertTo-Json -Compress
+    if ((Test-VidaExactPidSnapshotStable $match ($chosen.BirthTicks+1)) -cne
+            'process_starttime_changed' -or
+        $safe.Contains('321') -or $safe.Contains('2026-01-01') -or
+        $report.selected_pid_is_authenticated_original_vida -ne $false -or
+        $report.original_vida_vin_accepted_verified -ne $false) {
+        throw 'VIDA PID gate 8'
+    }
+    $count++
+    Write-Host ('PASS: {0}/{0} synthetic VIDA exact-PID/starttime and redaction gates' -f $count)
+}
+
+function Invoke-VidaBindingSelfTests {
+    $loaded='registered_library_loaded_in_name_matched_client'
+    $absent='registered_library_not_in_enumerated_modules'
+    $cases=@(
+        @{O=$loaded; C='exact_bytes_at_snapshot'; P='x86_pe32_header';
+          Want='independently_observe_active_vida_config_and_readvin'},
+        @{O=$loaded; C='different_bytes_at_snapshot'; P='x86_pe32_header';
+          Want='verify_registered_vs_reference_binary_equivalence'},
+        @{O=$loaded; C='exact_bytes_at_snapshot'; P='other_pe';
+          Want='verify_reference_virtual_dll_pe32'},
+        @{O=$absent; C='exact_bytes_at_snapshot'; P='x86_pe32_header';
+          Want='verify_virtual_provider_module_in_original_client'},
+        @{O='client_module_list_unavailable'; C='exact_bytes_at_snapshot';
+          P='x86_pe32_header';
+          Want='verify_virtual_provider_module_in_original_client'},
+        @{O='client_not_observed_in_local_snapshot'; C='exact_bytes_at_snapshot';
+          P='x86_pe32_header';
+          Want='observe_original_client_only_when_already_running'},
+        @{O='multiple_client_name_matches'; C='exact_bytes_at_snapshot';
+          P='x86_pe32_header';
+          Want='select_unambiguous_original_client_process'},
+        @{O='client_process_listing_unavailable'; C='not_compared';
+          P='unverifiable';
+          Want='observe_original_client_only_when_already_running'}
+    )
+    $checked=0
+    foreach ($case in $cases) {
+        $report=New-VidaModuleReport 'iexplore' $case.O $case.C $case.P
+        if ($report.next_safe_gate -cne $case.Want -or
+            $report.original_vida_vin_accepted_verified -ne $false -or
+            $report.active_vida_diagnostic_config_loaded_verified -ne $false -or
+            $report.selected_process_is_authenticated_original_vida -ne $false -or
+            $report.registered_dll_module_path_seen_in_name_matched_process -ne
+                ($case.O -ceq $loaded)) {
+            throw 'VIDA process-binding synthetic gate mismatch'
+        }
+        $checked++
+    }
+    $raw=(New-VidaModuleReport 'java' $loaded 'exact_bytes_at_snapshot' 'x86_pe32_header' |
+          ConvertTo-Json -Compress)
+    if ($raw.Contains('C:\') -or $raw.Contains('PID=') -or
+        $raw.Contains('YV1') -or $raw.Contains('sha256') -or
+        $raw.Contains('VirtualCarJ2534.dll')) {
+        throw 'VIDA operator module redaction failed'
+    }
+    $reject=$false
+    try { [void](New-VidaModuleReport 'sectorv.exe' $loaded 'exact_bytes_at_snapshot' 'x86_pe32_header') }
+    catch { $reject=$true }
+    if (-not $reject) { throw 'Unapproved process name accepted' }
+    Write-Host ('PASS: {0}/{0} synthetic VIDA module attribution gates; redaction and unknown-name rejection' -f $checked)
+}
+
 function Write-ExclusiveOperatorReport {
     param([string]$Content, [string]$Destination)
     try {
@@ -340,6 +536,8 @@ function Invoke-LocalSelfTests {
     }
     Write-Host ("PASS: {0}/{0} redacted SectorV process-binding tests" -f $passed)
     Invoke-ModuleSnapshotSelfTests
+    Invoke-VidaBindingSelfTests
+    Invoke-VidaExactPidSelfTests
 
     # Eight additional no-client, no-registry, synthetic operator-mode tests.
     $operatorChecks=0
@@ -504,18 +702,25 @@ if ($FunctionsOnly) {
     return
 }
 if ($SelfTest) {
-    if ($OperatorSession -or $ReferenceDll -or $OutputFile) {
+    if ($OperatorSession -or $ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId) {
         throw 'Self-test cannot combine with operator collection'
     }
     Invoke-LocalSelfTests
     exit 0
 }
-if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile)) {
+if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId)) {
     throw 'Operator-only parameters require -OperatorSession'
+}
+if ($VidaProcessId -and -not $VidaProcessName) {
+    throw 'Exact VIDA PID selection requires -VidaProcessName'
+}
+if ($VidaProcessName -and [string]::IsNullOrWhiteSpace($ReferenceDll)) {
+    throw 'VIDA operator module observation requires an explicit reference DLL'
 }
 
 # Read ONLY the 32-bit canonical Virtual Car J2534 registry key.
-# The process observation is passive and checks only the exact name SectorV.
+# Default process observation checks SectorV; operator-only VIDA name
+# selection stays explicit and does not authenticate any original executable.
 $library = $null
 try {
     $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
@@ -540,15 +745,48 @@ try {
 
 $processes = @()
 try {
-    $processes = @(Get-Process -Name 'SectorV' -ErrorAction SilentlyContinue)
+    $clientName=if ($VidaProcessName) { $VidaProcessName } else { 'SectorV' }
+    $processes = @(Get-Process -Name $clientName -ErrorAction SilentlyContinue)
 } catch {
     # A restricted CI token can be unable to enumerate another user session.
     # Do not treat that as client absence or client failure.
     $processes = @()
     $processObservation = 'client_process_listing_unavailable'
 }
+$vidaPidSelection='not_requested'
+$vidaPidStability='not_assessed'
+$vidaChosenClient=$null
+[long]$vidaBirthTicks=0
+if ($VidaProcessId) {
+    if ($processObservation -eq 'client_process_listing_unavailable') {
+        $vidaPidSelection='client_process_listing_unavailable'
+    } else {
+        $selection=Select-VidaExactPidCandidate -NameMatches $processes -SelectedProcessId $VidaProcessId
+        $vidaPidSelection=$selection.Category
+        if ($vidaPidSelection -eq 'pid_name_and_starttime_observed') {
+            $vidaChosenClient=$selection.Client
+            $vidaBirthTicks=$selection.BirthTicks
+            $processes=@($vidaChosenClient)
+        } else {
+            # Never fall back to another process if the explicit PID failed.
+            $processes=@()
+            if ($vidaPidSelection -eq 'selected_pid_starttime_unavailable') {
+                $processObservation='client_process_listing_unavailable'
+            } else {
+                $processObservation='client_not_observed_in_local_snapshot'
+            }
+        }
+    }
+}
 if (-not $processObservation) {
     $processObservation = Get-ClientBindingState -Clients $processes -RegisteredPath $library
+}
+if ($VidaProcessId -and $null -ne $vidaChosenClient) {
+    $vidaPidStability=Test-VidaExactPidSnapshotStable -Client $vidaChosenClient -ExpectedBirthTicks $vidaBirthTicks
+    if ($vidaPidStability -ne 'same_pid_process_starttime_after_snapshot') {
+        # A process exit or changed birth time invalidates its module snapshot.
+        $processObservation='client_module_list_unavailable'
+    }
 }
 
 # Default CI mode is backward compatible and scoped only to that runner.
@@ -560,6 +798,9 @@ if ($OperatorSession) {
     }
     $comparison = Get-ByteEquivalence -RegisteredPath $library -ReferencePath $ReferenceDll
     $referencePe32 = Get-ReferencePe32State -ReferencePath $ReferenceDll
+    if ($VidaProcessName) {
+        $result=New-VidaModuleReport -ProcessName $VidaProcessName -Observation $processObservation -Comparison $comparison -ReferencePe32 $referencePe32 -PidSelection $vidaPidSelection -StarttimeStability $vidaPidStability
+    } else {
     $result = [ordered]@{
         schema_version = 'virtualcar-sectorv-process-binding-operator-v1'
         scope = 'operator_requested_current_host_snapshot_only'
@@ -572,6 +813,7 @@ if ($OperatorSession) {
         reference_dll_pe32 = $referencePe32
         client_was_launched_by_audit = $false
         accepted_vin_or_ecu = 'not_verified'
+    }
     }
     $serialized = $result | ConvertTo-Json -Compress
     if ($OutputFile) {

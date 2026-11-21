@@ -3,11 +3,17 @@
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [switch]$IdentityReplay
+    [switch]$IdentityReplay,
+    [switch]$CanMsPreflight
 )
 $ErrorActionPreference = 'Stop'
+if ($CanMsPreflight -and $IdentityReplay) {
+    throw 'Choose one synthetic native verification mode'
+}
 if ([IntPtr]::Size -ne 4) {
-    if ($IdentityReplay) {
+    if ($CanMsPreflight) {
+        & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory -CanMsPreflight
+    } elseif ($IdentityReplay) {
         & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory -IdentityReplay
     } else {
         & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -DllPath $DllPath -OutputDirectory $OutputDirectory
@@ -86,6 +92,7 @@ using System.Runtime.InteropServices;
 public static class NativeRouteCheck {
     const string Library = @"__ISOLATED_DLL__";
     static readonly bool IdentityReplay = __IDENTITY_REPLAY__;
+    static readonly bool CanMsPreflight = __CAN_MS_PREFLIGHT__;
     [StructLayout(LayoutKind.Sequential)] public struct Msg {
         public uint ProtocolID, RxStatus, TxFlags, Timestamp, DataSize, ExtraDataIndex;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst=4128)] public byte[] Data;
@@ -182,6 +189,38 @@ public static class NativeRouteCheck {
         try { uint count=128; Check(PassThruReadMsgs(channel,buffer,ref count,0)==16 && count==0,"Unexpected RX or READ128 failure"); }
         finally { Marshal.FreeHGlobal(buffer); }
     }
+    static void CheckSyntheticVidaCanMsPreflight(uint device) {
+        uint canMs=0,isoMs=0,hsCan=0;
+        uint rejected=0xC0DEFACEu;
+        try {
+            // Original VIDA source-shaped numeric channel arguments only.
+            // This check does not execute VIDA or transmit any diagnostic bytes.
+            Check(PassThruConnect(device,5,0x100u,125000,out canMs)==0 &&
+                  canMs!=0,"CAN_MS 125k/0x100 connect failed");
+            Console.WriteLine("PASS B3A331 gate 3: CAN 5 / flags 0x100 / 125000");
+            Check(PassThruConnect(device,6,0,125000,out isoMs)==0 &&
+                  isoMs!=0 && isoMs!=canMs,"ISO15765_PS 125k connect failed");
+            Console.WriteLine("PASS B3A331 gate 4: ISO15765 6 / flags 0 / 125000");
+            Check(PassThruConnect(device,5,0x800u,500000,out hsCan)==0 &&
+                  hsCan!=0 && hsCan!=canMs && hsCan!=isoMs,
+                  "Independent 500k CAN channel rejected");
+            Console.WriteLine("PASS B3A331 gate 5: simultaneous 500k channel distinct");
+            Check(PassThruConnect(device,0x8004u,0,125000,out rejected)==3u &&
+                  rejected==0xC0DEFACEu,
+                  "Vendor 0x8004 falsely accepted");
+            Check(PassThruConnect(device,0x8005u,0,125000,out rejected)==3u &&
+                  rejected==0xC0DEFACEu,
+                  "Vendor 0x8005 falsely accepted");
+            Console.WriteLine("PASS B3A331 gate 6: vendor 0x8004/0x8005 rejected");
+        } finally {
+            bool released=true;
+            if(hsCan!=0) released &= PassThruDisconnect(hsCan)==0;
+            if(isoMs!=0) released &= PassThruDisconnect(isoMs)==0;
+            if(canMs!=0) released &= PassThruDisconnect(canMs)==0;
+            Check(released,"J2534 CAN-MS channel release failed");
+        }
+        Console.WriteLine("PASS B3A331 gate 7: all synthetic channels disconnected");
+    }
     public static void Run() {
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"x86 ABI mismatch");
         IntPtr module=LoadLibraryW(Library); Check(module!=IntPtr.Zero,"LoadLibrary failed");
@@ -191,6 +230,15 @@ public static class NativeRouteCheck {
                 Check(GetProcAddress(module,"PassThru"+api)!=IntPtr.Zero,"Missing PassThru export");
             Console.WriteLine("PASS group 1: native x86 ABI and 14 exports");
             Check(PassThruOpen(IntPtr.Zero,out device)==0,"Open failed"); opened=true;
+            if(CanMsPreflight) {
+                Console.WriteLine("PASS B3A331 gate 1: x86 ABI and 14 exports");
+                Console.WriteLine("PASS B3A331 gate 2: PassThruOpen");
+                CheckSyntheticVidaCanMsPreflight(device);
+                Check(PassThruClose(device)==0,"CAN-MS preflight Close failed");
+                opened=false;
+                Console.WriteLine("PASS B3A331 gate 8: PassThruClose; no WriteMsgs/ReadMsgs or original client");
+                return;
+            }
             Check(PassThruConnect(device,5,0x800,500000,out hs)==0,"HS connect failed");
             Check(PassThruConnect(device,5,0x800,125000,out ls)==0,"LS connect failed");
             for(int k=0;k<3;k++) Silent(hs,5,0x7e0,new byte[]{2,0x3e,0x80});
@@ -238,11 +286,16 @@ public static class NativeRouteCheck {
 '@
     $source = $source.Replace('__ISOLATED_DLL__', $isolatedDll.Replace('"', '""'))
     $source = $source.Replace('__IDENTITY_REPLAY__', $(if ($IdentityReplay) { 'true' } else { 'false' }))
+    $source = $source.Replace('__CAN_MS_PREFLIGHT__', $(if ($CanMsPreflight) { 'true' } else { 'false' }))
     Add-Type -TypeDefinition $source -Language CSharp
     [NativeRouteCheck]::Run()
     $backend = Join-Path $directory 'VirtualCar/dev47-backend.jsonl'
-    if (-not (Test-Path -LiteralPath $backend)) { throw 'Native DLL produced no backend evidence' }
-    if ($IdentityReplay) {
+    if (-not $CanMsPreflight -and -not (Test-Path -LiteralPath $backend)) {
+        throw 'Native DLL produced no backend evidence'
+    }
+    if ($CanMsPreflight) {
+        Write-Output 'PASS B3A331: owner-independent x86 virtual CAN-MS channel lifecycle; no diagnostics, no original VIDA, no VIN/ECU acceptance.'
+    } elseif ($IdentityReplay) {
         Write-Output 'Native identity replay assertions passed. The silent-route Python verifier does not support this mode.'
     } else {
         Write-Output 'Native calls passed. Verify the isolated backend with verify_native_routes.py.'

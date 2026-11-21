@@ -114,7 +114,6 @@ IMPORT U32 WINCALL GetTempPathA(U32 n, char *out) ALIAS(GetTempPathA);
 IMPORT U32 WINCALL GetEnvironmentVariableA(const char *name, char *out, U32 n) ALIAS(GetEnvironmentVariableA);
 IMPORT int WINCALL CreateDirectoryA(const char *name, PTR sec) ALIAS(CreateDirectoryA);
 IMPORT HANDLE WINCALL CreateFileA(const char *path,U32 access,U32 sharing,PTR security,U32 creation,U32 flags,HANDLE templateFile) ALIAS(CreateFileA);
-IMPORT U32 WINCALL SetFilePointer(HANDLE file,U32 low,PTR high,U32 method) ALIAS(SetFilePointer);
 IMPORT int WINCALL WriteFile(HANDLE file,const void *buf,U32 count,U32 *written,PTR overlap) ALIAS(WriteFile);
 IMPORT int WINCALL CloseHandle(HANDLE file) ALIAS(CloseHandle);
 IMPORT long WINCALL InterlockedCompareExchange(volatile long *dst,long exchange,long compare) ALIAS(InterlockedCompareExchange);
@@ -284,9 +283,13 @@ static void logline(const char *message,const U8 *data,U32 len) {
     str_append(line,"] ",sizeof(line));str_append(line,message,sizeof(line));p=str_len(line);
     if(data&&len&&p+1<sizeof(line)){line[p++]=' ';hex_bytes(line+p,sizeof(line)-p,data,len>52?52:len);p=str_len(line);}
     if(p+2<sizeof(line)){line[p++]='\r';line[p++]='\n';line[p]=0;}
-    f=CreateFileA(g_log_path,0x40000000u,3,0,4,0x80,0); /* FILE_APPEND_DATA, OPEN_ALWAYS */
+    /* FILE_APPEND_DATA without FILE_WRITE_DATA makes each WriteFile append.
+       The former GENERIC_WRITE + SetFilePointer(FILE_END) pair could race
+       with other processes sharing the same native trace file. Preserve
+       exactly one write per CRLF-terminated record. */
+    f=CreateFileA(g_log_path,0x00100004u,3,0,4,0x80,0); /* SYNCHRONIZE|FILE_APPEND_DATA, OPEN_ALWAYS */
     if(f==INVALID_HANDLE)return;
-    SetFilePointer(f,0,0,2);WriteFile(f,line,p,&written,0);CloseHandle(f);
+    WriteFile(f,line,p,&written,0);CloseHandle(f);
 }
 
 /* P3Tool IL evidence: expose Connect's actual outcome even when no channel
@@ -1716,10 +1719,13 @@ static void pump_periodic(CHANNEL *c){
            not a fresh direct PassThruWriteMsgs call from the GUI. */
         {
             p2_bridge_tx_result observed;
-            if(p2_bridge_inspect_tx(&g_vehicle_bridge,c->id,p->msg.TxFlags,
-                    p->msg.Data,p->msg.DataSize,&observed) &&
-               observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
-                logline(observed.label,0,0);
+            if(p2_bridge_inspect_tx_at(&g_vehicle_bridge,c->id,p->msg.TxFlags,
+                    p->msg.Data,p->msg.DataSize,now_us(),&observed)) {
+                if(observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
+                    logline(observed.label,0,0);
+                if(observed.hw_event!=P2_HW_UNRELATED)
+                    logline(p2_hw_tx_event_name(observed.hw_event),0,0);
+            }
         }
         begin_tx_evidence(c,&p->msg);
         process_request(c,&p->msg);
@@ -1816,10 +1822,13 @@ EXPORT U32 WINCALL PassThruWriteMsgs(U32 id,const PASSTHRU_MSG *msgs,U32 *count,
         /* The observer cannot affect J2534 return codes or ECU responses. */
         {
             p2_bridge_tx_result observed;
-            if (p2_bridge_inspect_tx(&g_vehicle_bridge,id,msgs[i].TxFlags,
-                    msgs[i].Data,msgs[i].DataSize,&observed) &&
-                observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
-                logline(observed.label,0,0);
+            if (p2_bridge_inspect_tx_at(&g_vehicle_bridge,id,msgs[i].TxFlags,
+                    msgs[i].Data,msgs[i].DataSize,now_us(),&observed)) {
+                if(observed.label && observed.decision!=P2_CEM_KEEP_EXISTING)
+                    logline(observed.label,0,0);
+                if(observed.hw_event!=P2_HW_UNRELATED)
+                    logline(p2_hw_tx_event_name(observed.hw_event),0,0);
+            }
         }
         begin_tx_evidence(c,&msgs[i]);
         process_request(c,&msgs[i]);
@@ -1853,6 +1862,15 @@ EXPORT U32 WINCALL PassThruReadMsgs(U32 id,PASSTHRU_MSG *msgs,U32 *count,U32 tim
              u32_be(meta+16,(U32)now_us());
              logline("RX context channel/protocol/status/baud/time-us (BE)",meta,20);}
             logline("PassThruReadMsgs -> delivered",msgs[actual].Data,msgs[actual].DataSize);
+            /* Observe delivered RX only: E3 remains an unverified header,
+               not ECU authentication or a generated positive reply. */
+            {
+                p2_hw_rx_event hw_rx=p2_bridge_inspect_hw_rx_at(
+                    &g_vehicle_bridge,id,msgs[actual].RxStatus,
+                    msgs[actual].Data,msgs[actual].DataSize,now_us());
+                if(hw_rx!=P2_HW_RX_UNRELATED)
+                    logline(p2_hw_rx_event_name(hw_rx),0,0);
+            }
             /* Community LS signal inference is disabled by default. */
             if(g_vehicle_bridge.vehicle.cfg.enable_community_ls_signals)
                 (void)p2_bridge_inspect_rx(&g_vehicle_bridge,id,msgs[actual].RxStatus,
