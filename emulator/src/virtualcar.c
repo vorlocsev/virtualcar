@@ -38,6 +38,7 @@ int _fltused = 0;
 #endif
 typedef void *PTR;
 typedef void *HANDLE;
+typedef struct { U32 low; U32 high; } FILETIME_VALUE;
 #define MAX_DATA 4128
 #define MAX_CHANNELS 8
 #define MAX_QUEUE 64
@@ -118,6 +119,8 @@ IMPORT U32 WINCALL GetTickCount(void) ALIAS(GetTickCount);
 IMPORT int WINCALL QueryPerformanceCounter(I64 *count) ALIAS(QueryPerformanceCounter);
 IMPORT int WINCALL QueryPerformanceFrequency(I64 *freq) ALIAS(QueryPerformanceFrequency);
 IMPORT U32 WINCALL GetCurrentProcessId(void) ALIAS(GetCurrentProcessId);
+IMPORT HANDLE WINCALL GetCurrentProcess(void) ALIAS(GetCurrentProcess);
+IMPORT int WINCALL GetProcessTimes(HANDLE process,FILETIME_VALUE *creation,FILETIME_VALUE *exitTime,FILETIME_VALUE *kernelTime,FILETIME_VALUE *userTime) ALIAS(GetProcessTimes);
 IMPORT U32 WINCALL GetModuleFileNameA(PTR mod, char *out, U32 n) ALIAS(GetModuleFileNameA);
 IMPORT U32 WINCALL GetPrivateProfileStringA(const char *section,const char *key,const char *fallback,char *out,U32 size,const char *path) ALIAS(GetPrivateProfileStringA);
 IMPORT U32 WINCALL GetTempPathA(U32 n, char *out) ALIAS(GetTempPathA);
@@ -304,6 +307,15 @@ static void logline(const char *message,const U8 *data,U32 len) {
     f=CreateFileA(g_log_path,0x00100004u,3,0,4,0x80,0); /* SYNCHRONIZE|FILE_APPEND_DATA, OPEN_ALWAYS */
     if(f==INVALID_HANDLE)return;
     WriteFile(f,line,p,&written,0);CloseHandle(f);
+}
+
+/* B3A72: bind native log records to the Windows process creation epoch.
+   The FILETIME is private log metadata, never a vehicle/CAN payload. */
+static void log_process_creation_filetime(void){
+    FILETIME_VALUE created,exited,kernel,user;U8 value[8];
+    if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user))return;
+    u32_be(value,created.high);u32_be(value+4,created.low);
+    logline("Process creation FILETIME (BE)",value,8);
 }
 
 /* P3Tool IL evidence: expose Connect's actual outcome even when no channel
@@ -932,6 +944,7 @@ static void load_config(void) {
        the GUI's expected directory. This resolves stale Registry32 paths. */
     {
         char detail[320];U8 lengths[8];
+        log_process_creation_filetime();
         str_copy(detail,"Active INI: ",sizeof(detail));
         str_append(detail,g_profile_path,sizeof(detail));
         logline(detail,0,0);

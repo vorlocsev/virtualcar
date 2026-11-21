@@ -3,6 +3,8 @@ EXPORTS
  Sleep
  GetTickCount
  GetCurrentProcessId
+ GetCurrentProcess
+ GetProcessTimes
  GetModuleFileNameA
  GetPrivateProfileStringA
  GetTempPathA

@@ -13,8 +13,9 @@ DLL = tool.DEFAULT_DLL
 SHA = tool.PINNED_SHA256
 
 
-def rec(exe="iexplore.exe", modules=()):
-    return {"exe": exe, "modules": list(modules) if modules is not None else None}
+def rec(exe="iexplore.exe", modules=(), creation_filetime=None):
+    return {"exe": exe, "modules": list(modules) if modules is not None else None,
+            "creation_filetime": creation_filetime}
 
 
 class CEM50LoadedModuleTests(unittest.TestCase):
@@ -97,6 +98,14 @@ class CEM50LoadedModuleTests(unittest.TestCase):
         self.assertEqual(r["host_processes_module_inspection_blocked"], 1)
         self.assertEqual(r["exact_module_path_instances"], 1)
         self.assertEqual(r["same_basename_other_path_instances"], 1)
+
+    def test_13_process_creation_filetime_is_never_exported(self):
+        private_epoch = 133000000000000000
+        r = tool.analyze([rec(modules=(DLL,), creation_filetime=private_epoch)],
+                         disk_digest=SHA, ini_present=True)
+        self.assertEqual(r["status"], "EXACT_DLL_IN_HOST_SHA_MATCH")
+        self.assertNotIn(str(private_epoch), json.dumps(r, sort_keys=True))
+        self.assertFalse(r["raw_paths_pids_modules_or_vin_exported"])
 
     def test_12_private_toolhelp_pid_never_enters_categorical_report(self):
         record = rec(modules=(DLL,))
