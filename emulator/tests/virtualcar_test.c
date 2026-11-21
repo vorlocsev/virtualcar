@@ -2999,6 +2999,11 @@ static void test_j2534_ps_cem50(U32 dev){
  tx.ProtocolID=PROTO_CAN;
  n=1;REQUIRE(PassThruWriteMsgs(can,&tx,&n,0)==ERR_MSG_PROTOCOL_ID && n==0u);
  tx.ProtocolID=PROTO_CAN_PS;
+ mask=frame(PROTO_CAN,0xFFFFFFFFu,0,0);
+ pattern=frame(PROTO_CAN,0x01200003u,0,0);
+ REQUIRE(PassThruStartMsgFilter(can,1,&mask,&pattern,0,&fid)==ERR_MSG_PROTOCOL_ID);
+ mask.ProtocolID=PROTO_CAN_PS;pattern.ProtocolID=PROTO_CAN_PS;
+ REQUIRE(PassThruStartMsgFilter(can,1,&mask,&pattern,0,&fid)==ERR_OK);
  /* A 13-frame synthetic CEM50 route is delivered over the PS channel,
     with the EXTERNAL PS ProtocolID preserved in each PASSTHRU_MSG. */
  d=&g_d2[2];
@@ -3017,6 +3022,7 @@ static void test_j2534_ps_cem50(U32 dev){
   for(j=0;j<8u;j++)REQUIRE(rx.Data[4u+j]==expected[i][j]);
  }
  n=1;REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruStopMsgFilter(can,fid)==ERR_OK);
  REQUIRE(PassThruDisconnect(can)==ERR_OK);
  /* MS pins 3/11 select 125k; they must NOT leak the 500k CEM50 fixture. */
  REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,125000u,&ms)==ERR_OK);
