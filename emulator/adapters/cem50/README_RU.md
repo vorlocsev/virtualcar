@@ -23,11 +23,15 @@ In Windows PowerShell 5.1, after reviewing the code and SHA256, run:
     $hash = (Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
     .\Install-J2534CEM50.ps1 -SourceDll $src -ExpectedSha256 $hash
 
-The first call is DRY_RUN_ONLY and never installs or registers. To install, in an ELEVATED PowerShell 5.1 window:
+The first call is DRY_RUN_ONLY and never installs or registers. The installer also preflights all thirteen sequential D2 frames, verifies the exact 17-byte VIN at B9FB payload offset 14 and the six-byte chassis field at offset 49, and refuses duplicate or unapproved INI entries before opening Registry32. After `-Apply`, it re-reads Registry32 values before reporting success. To install, in an ELEVATED PowerShell 5.1 window:
 
     .\Install-J2534CEM50.ps1 -SourceDll $src -ExpectedSha256 $hash -Apply
 
 The source path and expected hash must refer to an independently reviewed binary; computing the hash does not itself establish trust. The script checks x86 PE32, SHA256, that the registry key and destination directory do not already exist, then stages a copy to %ProgramData%\J2534-CEM50 and registers only a new Registry32 key in HKLM\SOFTWARE\PassThruSupport.04.04. On failures during creation it attempts to remove only its new key/directory. It NEVER overwrites an existing registration, the installed VIDA configuration, current J2534 DLL/INI or SQL data. If the key or folder already exists, stop and investigate rather than deleting it.
+
+## Native x86 regression before installation
+
+The existing `emulator/tools/verify_native_routes.ps1` provides a synthetic, isolated J2534 baseline; its `-IdentityReplay` mode uses its own older fixture, **NOT** this published CEM50 VIN or profile. Its PASS must not be reported as CEM50 B9FB validation. A new exact-profile CEM50 native test is required before registering the new provider in VIDA.
 
 ## Offline gates / runtime gates
 
