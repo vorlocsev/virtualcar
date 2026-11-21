@@ -45,7 +45,7 @@ Run from repository root:
 
     py -3 -m unittest discover -s emulator/tests -p test_cem50_j2534_adapter.py -v
 
-Nine synthetic offline tests verify the identity, 13-frame D2 response, published 88-byte shape, VIN/chassis consistency, silence of unrelated routes, explicit synthetic provenance, installer guardrails, and existing native CEM50 route.
+Ten synthetic offline tests verify the identity, 13-frame D2 response, published 88-byte shape, VIN/chassis consistency, silence of unrelated routes, explicit synthetic provenance, installer guardrails, and existing native CEM50 route.
 
 Still unverified until a separately authorized owner-machine experiment: exact DLL binary provenance, correct x86 provider selection in original VIDA, 500-kbit/s CAN D2 request to target 0x50, J2534 RX of all 13 frames, VIDA ResponseHandler extraction, VIN acceptance, ECU identification and T111/T122. Original VIDA previously observed 0x726 F114 and ResultGet(59790) empty. This B9FB-only adapter is an isolated alternative, not a fix for the F114 parser.
 
