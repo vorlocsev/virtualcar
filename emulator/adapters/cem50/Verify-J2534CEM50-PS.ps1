@@ -102,7 +102,7 @@ public static class CEM50PSProbe {
    return m;
  }
  public static void Run() {
-   uint dev=0,can=0,ms=0; bool opened=false,hasCan=false,hasMs=false;
+   uint dev=0,can=0,ms=0,iso=0; bool opened=false,hasCan=false,hasMs=false,hasIso=false;
    try {
      Check(PassThruOpen(IntPtr.Zero,out dev)==0u&&dev!=0u,"Open");
      opened=true;
@@ -137,13 +137,39 @@ public static class CEM50PSProbe {
        Check(PassThruWriteMsgs(ms,ref m,ref count,5000u)==0u&&count==1u,"CAN_PS MS TX");
        count=1u;
        Check(PassThruReadMsgs(ms,rxptr,ref count,0u)==16u,"500k CEM fixture leaked to 125k");
+       Check(PassThruDisconnect(ms)==0u,"MS Disconnect");
+       hasMs=false;
+       Check(PassThruConnect(dev,0x8005u,0u,500000u,out iso)==0u && iso!=0u,
+             "ISO15765_PS 500k Connect");
+       hasIso=true;
+       Pins(iso,0x060Eu);
+       Msg uds=new Msg();
+       uds.ProtocolID=0x8005u;uds.DataSize=7u;uds.Data=new byte[4128];
+       byte[] f190={0x00,0x00,0x07,0xE0,0x22,0xF1,0x90};
+       Array.Copy(f190,uds.Data,f190.Length);
+       count=1u;
+       Check(PassThruWriteMsgs(iso,ref uds,ref count,5000u)==0u && count==1u,
+             "ISO15765_PS F190 WriteMsgs");
+       count=1u;
+       Check(PassThruReadMsgs(iso,rxptr,ref count,1500u)==0u && count==1u,
+             "ISO15765_PS F190 ReadMsgs");
+       Msg isoReply=(Msg)Marshal.PtrToStructure(rxptr,typeof(Msg));
+       Check(isoReply.ProtocolID==0x8005u && isoReply.DataSize==24u,
+             "ISO15765_PS RX identity and length");
+       Check(isoReply.Data[0]==0 && isoReply.Data[1]==0 &&
+             isoReply.Data[2]==0x07 && isoReply.Data[3]==0xE8 &&
+             isoReply.Data[4]==0x62 && isoReply.Data[5]==0xF1 &&
+             isoReply.Data[6]==0x90, "ISO15765_PS ECM F190 shape");
+       Check(System.Text.Encoding.ASCII.GetString(isoReply.Data,7,17)=="YV1CR855691511566",
+             "ISO15765_PS ECM VIN payload");
      }finally{Marshal.FreeHGlobal(rxptr);}
    } finally {
+     if(hasIso)Check(PassThruDisconnect(iso)==0u,"ISO Disconnect");
      if(hasMs)Check(PassThruDisconnect(ms)==0u,"MS Disconnect");
      if(hasCan)Check(PassThruDisconnect(can)==0u,"CAN Disconnect");
      if(opened)Check(PassThruClose(dev)==0u,"Close");
    }
-   Console.WriteLine("CEM50_PS_NATIVE_PASS: 13/13 exact CAN_PS D2 frames, HS/MS isolated");
+   Console.WriteLine("CEM50_PS_NATIVE_PASS: 13/13 CAN_PS D2 frames, HS/MS isolated, ISO15765_PS F190");
  }
 }
 '@
@@ -158,6 +184,7 @@ public static class CEM50PSProbe {
    j1962_hs='0x060E'
    j1962_ms='0x030B'
    matched_frames=13
+   iso15765_ps_f190_verified=$true
    dll_sha256=$sha
    vida_readvin_verified=$false
    ecu_identification_verified=$false
