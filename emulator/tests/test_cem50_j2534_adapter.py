@@ -96,6 +96,12 @@ class CEM50J2534AdapterTests(unittest.TestCase):
         self.assertIn("registration already exists; never overwrite", ps)
         self.assertIn("Source DLL SHA256 mismatch", ps)
         self.assertIn("Get-FileHash", ps)
+        self.assertIn("Duplicate INI section", ps)
+        self.assertIn("Duplicate INI setting", ps)
+        self.assertIn("Wrong number of CEM50 B9FB frame keys", ps)
+        self.assertIn("Invalid D2 frame sequence", ps)
+        self.assertIn("CEM50 B9FB VIN/chassis/payload mismatch", ps)
+        self.assertLess(ps.index("PROFILE_OK: CEM50 13 frames"), ps.index("$reg ="))
 
     def test_08_matches_existing_native_cem50_route(self):
         source = (EMULATOR / "src" / "virtualcar.c").read_text(encoding="utf-8")
