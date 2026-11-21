@@ -1447,6 +1447,27 @@ static void supersede_d2_exchange(CHANNEL *c){
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len){
     U32 i;D2_PROFILE *d;const char *route;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
+    /* B3A144: The owner's historical native log has 12 TX entries shaped
+       CB 40 AE 1B on LS CAN; original VIDA process/session is not attested.
+       AE is a D2 Read-DTC service, but no validated CEM 0x40 AE1B
+       response exists. Recognize the exact padded request ONLY for
+       telemetry. Do not emit a guessed EE reply, alter D2 replay state,
+       change active filters, or claim CEM identification success. */
+    if(len>=4u && len<=8u && data[0]==0xCBu && data[1]==0x40u &&
+       data[2]==0xAEu && data[3]==0x1Bu){
+        for(i=4u;i<len;i++)if(data[i])return 0;
+        backend_event(c,c->active_trace,"route_selected","CEM","none","unknown");
+        if(g_p2_strict_routing && c->baud!=125000u){
+            logline("P2 D2 CEM AE1B strict bus mismatch: no response",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unsupported_bus","no_response");
+        }else{
+            logline("P2 D2 CEM AE1B: read DTC not implemented (no validated response)",0,0);
+            backend_event(c,c->active_trace,"request_completed","CEM",
+                          "unimplemented_probe","no_response");
+        }
+        return 1;
+    }
     /* Issue #4: A3/A6 are recognizable CEM *requests*, not implemented ECU
        responses. Keep them silent, but distinguish the known missing emulator
        implementation from an arbitrary CAN ID or an absent B9 fixture.
