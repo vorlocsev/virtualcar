@@ -924,6 +924,10 @@ static void load_config(void) {
         u32_be(opts+8,g_iso_rx_start);u32_be(opts+12,g_p2_strict_routing);
         logline("Lab options passive-CAN / interval-ms / ISO-RxStart / P2 strict routing (BE)",opts,16);
     }
+    /* B3A69: filter policy is a loaded native configuration bit, not a
+       statement about original VIDA client acceptance or filter channel. */
+    {U8 strict_be[4];u32_be(strict_be,g_strict_j2534_filters);
+     logline("J2534 native strict RX filter policy (BE)",strict_be,4);}
     /* Show the active configuration loaded by the *client* process, not just
        the GUI's expected directory. This resolves stale Registry32 paths. */
     {
@@ -1986,6 +1990,16 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     }
     {U8 descriptor[8];u32_be(descriptor,type);u32_be(descriptor+4,*filter_id);
      logline("PassThruStartMsgFilter type / id (BE)",descriptor,8);}
+    /* B3A69: accepted filter lifecycle evidence, source-only. A channel ID
+       is necessary to distinguish simultaneous CAN_PS/ISO15765 filters in
+       one VIDA host process. Only metadata; no VIN or filter payload here.
+       Keep the original type/id, mask and pattern log markers unchanged. */
+    {U8 lifecycle[20];
+     u32_be(lifecycle,id);u32_be(lifecycle+4,type);
+     u32_be(lifecycle+8,*filter_id);
+     u32_be(lifecycle+12,c->api_protocol?c->api_protocol:c->protocol);
+     u32_be(lifecycle+16,c->baud);
+     logline("J2534 filter accepted channel/type/id/protocol/baud (BE)",lifecycle,20);}
     if(mask && mask->DataSize<=MAX_DATA)
         logline("  filter mask",mask->Data,mask->DataSize);
     if(pattern && pattern->DataSize<=MAX_DATA)
@@ -1998,6 +2012,9 @@ EXPORT U32 WINCALL PassThruStopMsgFilter(U32 id,U32 filter_id){
     U32 i;CHANNEL *c;lock_state();c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
     for(i=0;i<c->filters_count;i++)if(c->filters[i].id==filter_id){
         U32 j;for(j=i+1;j<c->filters_count;j++)c->filters[j-1]=c->filters[j];c->filters_count--;
+        /* Only a successful Stop changes active filter lifetime. */
+        {U8 released[8];u32_be(released,id);u32_be(released+4,filter_id);
+         logline("J2534 filter stopped channel/id (BE)",released,8);}
         unlock_state();return error(ERR_OK);
     }
     unlock_state();return error(ERR_INVALID_FILTER_ID);
