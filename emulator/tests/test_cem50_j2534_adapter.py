@@ -101,6 +101,7 @@ class CEM50J2534AdapterTests(unittest.TestCase):
         self.assertIn("Wrong number of CEM50 B9FB frame keys", ps)
         self.assertIn("Invalid D2 frame sequence", ps)
         self.assertIn("CEM50 B9FB VIN/chassis/payload mismatch", ps)
+        self.assertIn("Registered J2534 values failed readback verification", ps)
         self.assertLess(ps.index("PROFILE_OK: CEM50 13 frames"), ps.index("$reg ="))
 
     def test_08_matches_existing_native_cem50_route(self):
