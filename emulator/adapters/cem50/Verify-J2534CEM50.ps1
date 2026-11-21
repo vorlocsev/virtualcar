@@ -20,6 +20,21 @@ if (-not (Test-Path -LiteralPath $sourceIni) -or
     [IO.File]::Exists($dir)) {
     throw 'Missing published INI or existing output directory'
 }
+# A physical J2534 driver must never be used for this isolated synthetic test.
+if ([IO.Path]::GetFileName($src) -ine 'VirtualCarJ2534.dll') {
+    throw 'Expected emulator source DLL by exact file name; do not use physical J2534 DLL'
+}
+$peBytes = [IO.File]::ReadAllBytes($src)
+if ($peBytes.Length -lt 256 -or $peBytes[0] -ne 0x4D -or $peBytes[1] -ne 0x5A) {
+    throw 'Expected x86 PE32 emulator DLL'
+}
+$offset = [BitConverter]::ToInt32($peBytes, 0x3C)
+if ($offset -lt 64 -or $offset + 26 -ge $peBytes.Length -or
+    $peBytes[$offset] -ne 0x50 -or $peBytes[$offset+1] -ne 0x45 -or
+    [BitConverter]::ToUInt16($peBytes,$offset+4) -ne 0x014C -or
+    [BitConverter]::ToUInt16($peBytes,$offset+24) -ne 0x010B) {
+    throw 'Expected x86 PE32 emulator DLL'
+}
 $sha = (Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
 if ($sha -ine $ExpectedSha256) { throw 'x86 J2534 DLL SHA256 mismatch' }
 $iniText = [IO.File]::ReadAllText($sourceIni)
