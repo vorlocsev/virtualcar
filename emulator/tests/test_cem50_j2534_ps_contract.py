@@ -101,6 +101,8 @@ class CEM50PSContracts(unittest.TestCase):
         self.assertIn("Pins(ms,0x030Bu)", native)
         self.assertIn("r.ProtocolID==0x8004u", native)
         self.assertIn("CEM50_PS_NATIVE_PASS", native)
+        self.assertIn("ISO15765_PS F190 ReadMsgs", native)
+        self.assertIn("iso15765_ps_f190_verified=$true", native)
         self.assertNotIn("CreateSubKey", native)
         matrix_match = re.search(
             r"Frames=new byte\[13,8\] \{([\s\S]*?)\n \};", native)
