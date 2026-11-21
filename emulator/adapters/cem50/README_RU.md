@@ -66,3 +66,12 @@ Still unverified until a separately authorized owner-machine experiment: exact D
 ## Recovery / removal
 
 The installer has no automatic uninstall: when appropriate, close the diagnostic client, ensure the DLL is no longer loaded, verify the exact new Registry32 key and dedicated directory, manually export the key, then remove only the newly created J2534 Diagnostic Interface CEM50 registration and %ProgramData%\J2534-CEM50 directory. Existing J2534 Diagnostic Interface and CANPS Step6 registrations remain untouched.
+
+## Draft PR #418 — experimental J2534-2 PS (not yet installed)
+
+The adjacent `virtualcar.ini` now contains `[J2534_2] Enabled = 1` for a **proposed, separately built DLL**. The previously installed `J2534 Diagnostic Interface CEM50` remains the older J2534-1 binary and registration. The existing `Install-J2534CEM50.ps1` is NOT an installer for PS: it never advertises `CAN_PS` or `ISO15765_PS`, and refuses to overwrite existing installations.
+
+For the proposed x86 PS binary, first run host regressions, then `Verify-J2534CEM50-PS.ps1` on a newly built `VirtualCarJ2534.dll` from PR #418. That script stages a copy in an unused temporary folder and requires `CAN_PS` at 500k, `J1962_PINS 0x060E`, 13 exact B9FB RX frames with external PS ProtocolID, and no leak to 125k MS pins `0x030B`. It does **not** prove complete J2534-2 conformance or VIDA acceptance. Exact commands and evidence boundaries are in `../../docs/research/cem50-j2534-2-ps-readvin-boundary.md` (from repository root: `docs/research/cem50-j2534-2-ps-readvin-boundary.md`).
+
+A **new side-by-side PS provider key/name** will be considered only after native PS tests pass, not by changing current Registry32 keys. Original VIDA, ECU and physical J2534 gates are still NOT VERIFIED.
+
