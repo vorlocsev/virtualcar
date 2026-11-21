@@ -155,6 +155,43 @@ class VidaDualWindowTests(unittest.TestCase):
         self.assertGreaterEqual(item["connect_modes"]["invalid_events"], 1)
         self.assertFalse(item["original_vida_selected_driver_verified"])
 
+    def test_cem_append_evidence_separates_channels_and_excludes_baseline(self):
+        def tx(channel, baud, data):
+            return (line("TX context channel/protocol/flags/baud/time-us (BE) "
+                         + metadata(channel, 5, 0x100, baud, 10000))
+                    + line("TX (app request) 00 0F FF FE " + data))
+
+        def rx(channel, baud, response, data):
+            return (line("RX context channel/protocol/status/baud/time-us (BE) "
+                         + metadata(channel, 5, 0x100, baud, 12000))
+                    + line("PassThruReadMsgs -> delivered " + response + " " + data))
+
+        self.virtual.write_text(tx(1, 125000, "CB 40 B9 FB 00 00 00 00"), encoding="utf-8")
+        self.invoke("baseline")
+        with self.virtual.open("a", encoding="utf-8") as stream:
+            stream.write(tx(1, 125000, "CB 40 AE 1B 00 00 00 00"))
+            stream.write(tx(2, 500000, "CB 50 B9 F0 00 00 00 00"))
+            stream.write(line("P2 D2 read command: no validated response fixture"))
+            stream.write(rx(1, 125000, "00 80 00 03", "CB 40 EE 1B 00 00 00 00"))
+            stream.write(tx(1, 125000, "CB 40 B9 F5 00 00 00 00"))
+            stream.write(rx(1, 125000, "00 80 00 03", "CB 40 F9 F5 00 00 00 00"))
+            stream.write(tx(1, 125000, "CB 40 B9 F8 00 00 00 00"))
+            stream.write(rx(1, 125000, "00 80 00 03", "CA 40 F9 F8 00 00 00 00"))
+            stream.write(tx(2, 500000, "CB 50 B9 F8 00 00 00 00"))
+        evidence = self.report()["cem_transport"]
+        routes = {(r["target"], r["service"], r["baud_bps"]): r["statuses"] for r in evidence["routes"]}
+        self.assertEqual(routes, {
+            ("0x40", "AE1B", 125000): {"delivered": 1},
+            ("0x40", "B9F5", 125000): {"delivered": 1},
+            ("0x40", "B9F8", 125000): {"partial_rx": 1},
+            ("0x50", "B9F0", 500000): {"no_fixture": 1},
+            ("0x50", "B9F8", 500000): {"unverified": 1},
+        })
+        serialized = json.dumps(evidence)
+        for private in ("1234ABCD", "CB 40 F9 F5", "channel", "iexplore"):
+            self.assertNotIn(private, serialized)
+        self.assertFalse(evidence["client_acceptance_verified"])
+
 
 if __name__ == "__main__":
     unittest.main()

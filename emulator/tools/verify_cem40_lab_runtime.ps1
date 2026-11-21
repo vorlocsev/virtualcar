@@ -52,9 +52,9 @@ if($expectedFrames.ContainsKey('D2_40_B9F5/frame0')) {
 }
 $hsF0=''
 if($expectedFrames.ContainsKey('D2_50_B9F0/frame0')) { $hsF0=Frame-List 'D2_50_B9F0' 'frame' 3 }
-$savedTemp=$env:TEMP; $savedLocal=$env:LOCALAPPDATA
+$savedTemp=$env:TEMP; $savedTmp=$env:TMP; $savedLocal=$env:LOCALAPPDATA
 try {
-    $env:TEMP=$dir; $env:LOCALAPPDATA=$dir
+    $env:TEMP=$dir; $env:TMP=$dir; $env:LOCALAPPDATA=$dir
     $source = @'
 using System;
 using System.Diagnostics;
@@ -149,4 +149,4 @@ public static class CemLabRuntime {
     [CemLabRuntime]::Run($f0,$fb,$ae,$f5,$f8,$hsF0)
     Write-Output 'PASS: every returned D2 byte equals the preflighted private profile.'
     Write-Output 'Native profile loaded and delivered; actual VIDA GUI acceptance NOT_VERIFIED.'
-} finally { $env:TEMP=$savedTemp; $env:LOCALAPPDATA=$savedLocal }
+} finally { $env:TEMP=$savedTemp; $env:TMP=$savedTmp; $env:LOCALAPPDATA=$savedLocal }

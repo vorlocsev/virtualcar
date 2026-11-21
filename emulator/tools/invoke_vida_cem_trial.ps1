@@ -10,7 +10,8 @@ param(
     [Parameter(Mandatory=$true)][ValidateSet('Begin','Snapshot','Finish')][string]$Phase,
     [Parameter(Mandatory=$true)][string]$SessionDirectory,
     [Parameter(Mandatory=$true)][string]$ReferenceDll,
-    [Parameter(Mandatory=$true)][string]$IdentityJson,
+    [string]$IdentityJson,
+    [switch]$PublishedCem50,
     [Parameter(Mandatory=$true)][string]$AdapterKey,
     [Parameter(Mandatory=$true)][string]$VidaLog,
     [string]$NativeLog = (Join-Path $env:TEMP 'SectorVVirtualCar.log'),
@@ -44,10 +45,23 @@ try {
     $reference = (Resolve-Path -LiteralPath $ReferenceDll).Path
     if ((Get-ReferencePe32State $reference) -ne 'x86_pe32_header') { throw 'Expected x86 DLL' }
     $profile = Join-Path ([IO.Path]::GetDirectoryName($reference)) 'virtualcar.ini'
-    # Validate the exact adjacent profile before any client-side load attempt.
-    & $PythonExe (Join-Path $PSScriptRoot 'build_b3a146_cem40_lab_profile.py') `
-        --validate-only --profile $profile --identity-json $IdentityJson
-    if ($LASTEXITCODE -ne 0) { throw 'Lab profile preflight failed' }
+    $profileHash = (Get-FileHash -LiteralPath $profile -Algorithm SHA256).Hash
+    $identityHash = ''
+    $profileSource = 'private_lab'
+    if ($PublishedCem50) {
+        if ($IdentityJson) { throw 'IdentityJson applies to the private profile only' }
+        $published = Join-Path $PSScriptRoot '..\adapters\cem50\virtualcar.ini'
+        if ($profileHash -cne (Get-FileHash -LiteralPath $published -Algorithm SHA256).Hash) {
+            throw 'Adjacent profile differs from the published CEM50 profile'
+        }
+        $profileSource = 'published_cem50'
+    } else {
+        if (-not $IdentityJson) { throw 'Private lab profile requires IdentityJson' }
+        & $PythonExe (Join-Path $PSScriptRoot 'build_b3a146_cem40_lab_profile.py') `
+            --validate-only --profile $profile --identity-json $IdentityJson
+        if ($LASTEXITCODE -ne 0) { throw 'Lab profile preflight failed' }
+        $identityHash = (Get-FileHash -LiteralPath $IdentityJson -Algorithm SHA256).Hash
+    }
     $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
         [Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry32)
     try {
@@ -60,8 +74,8 @@ try {
     }
     $fingerprints = @{
         dll = (Get-FileHash -LiteralPath $reference -Algorithm SHA256).Hash
-        ini = (Get-FileHash -LiteralPath $profile -Algorithm SHA256).Hash
-        identity = (Get-FileHash -LiteralPath $IdentityJson -Algorithm SHA256).Hash
+        ini = $profileHash
+        identity = $identityHash
     }
     $stateFile = Join-Path $session 'trial-private.json'
     $baseline = Join-Path $session 'log-baseline-private.json'
@@ -75,6 +89,7 @@ try {
             schema = 'virtualcar-vida-cem-trial-v1'; private_do_not_publish = $true
             started_utc = [DateTime]::UtcNow.ToString('o'); fingerprints = $fingerprints
             adapter_key = $AdapterKey; reference_dll = $reference; profile = $profile
+            profile_source = $profileSource
             vida_log = [IO.Path]::GetFullPath($VidaLog); native_log = [IO.Path]::GetFullPath($NativeLog)
         }
         $observations = [ordered]@{}
@@ -89,6 +104,8 @@ try {
     if ($saved.schema -cne 'virtualcar-vida-cem-trial-v1' -or $saved.private_do_not_publish -ne $true) {
         throw 'Wrong trial state'
     }
+    $savedProfileSource = if ($saved.profile_source) { $saved.profile_source } else { 'private_lab' }
+    if ($savedProfileSource -cne $profileSource) { throw 'Trial profile source changed' }
     foreach ($name in @('dll','ini','identity')) {
         if ($saved.fingerprints.$name -cne $fingerprints[$name]) { throw 'Trial inputs changed' }
     }
