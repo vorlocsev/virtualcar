@@ -99,6 +99,14 @@ try {
     $key.SetValue('ISO15765', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
     $key.SetValue('MessageVersion', 0x0404, [Microsoft.Win32.RegistryValueKind]::DWord)
     $key.Flush()
+    # Confirm the actual Registry32 values before reporting a successful install.
+    if ($key.GetValue('Name') -cne $name -or
+        $key.GetValue('FunctionLibrary') -cne $targetDll -or
+        [int]$key.GetValue('CAN') -ne 1 -or
+        [int]$key.GetValue('ISO15765') -ne 1 -or
+        [int]$key.GetValue('MessageVersion') -ne 0x0404) {
+        throw 'Registered J2534 values failed readback verification'
+    }
     Write-Host "CREATED: $name, Registry32, DLL SHA256=$sha"
 } catch {
     if ($null -ne $key) { $key.Close(); $key=$null }
