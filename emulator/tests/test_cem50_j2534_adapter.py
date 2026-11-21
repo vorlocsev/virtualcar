@@ -1,6 +1,6 @@
 """CEM50 B9FB published owner-approved reference, separate x86 J2534 adapter.
 
-Eight synthetic/offline regression groups. NOT original VIDA acceptance.
+Ten synthetic/offline regression groups. NOT original VIDA acceptance.
 """
 import configparser
 from pathlib import Path
@@ -133,6 +133,16 @@ class CEM50J2534AdapterTests(unittest.TestCase):
         ]
         self.assertEqual(len(native), 13)
         self.assertEqual(native, [frame for _, frame in frames(profile())])
+
+    def test_10_install_script_has_one_registry_write_path_and_captured_ini_match(self):
+        ps = (ADAPTER / "Install-J2534CEM50.ps1").read_text(encoding="utf-8")
+        self.assertEqual(ps.count("$reg = [Microsoft.Win32.RegistryKey]::OpenBaseKey("), 1)
+        self.assertEqual(ps.count("CreateSubKey($keyPath)"), 1)
+        self.assertEqual(ps.count("CREATED: $name, Registry32, DLL SHA256=$sha"), 1)
+        self.assertEqual(ps.count("PROFILE_OK: CEM50 13 frames"), 1)
+        self.assertIn("-not ($line -match '^([A-Za-z0-9_]+)", ps)
+        self.assertNotIn("$line -notmatch '^([A-Za-z0-9_]+)", ps)
+        self.assertLess(ps.index("PROFILE_OK: CEM50 13 frames"), ps.index("$reg ="))
 
 
 if __name__ == "__main__":
