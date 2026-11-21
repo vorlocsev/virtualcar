@@ -3,6 +3,7 @@
 # Read-only Windows x86 J2534, no adapter installation, no original VIDA/physical ECU.
 [CmdletBinding()]
 param(
+    [string]$ArtifactZip,
     [string]$OutputDirectory = (Join-Path $env:TEMP ('J2534-CEM50-Smoke-' + [guid]::NewGuid().ToString('N')))
 )
 $ErrorActionPreference = 'Stop'
@@ -12,7 +13,6 @@ $artifactName = 'virtualcar-vmware-lab-9553d87d400f9baf80fa16fb4a30d163551a6bbb-
 $expectedBase = '9553d87d400f9baf80fa16fb4a30d163551a6bbb'
 $zipSha = '45BF8F6E672272B64A18183B268484BF86DA65AB5B652384C2BE1FBE85ADC695'
 $dllSha = 'C636BAF8C66266BCA80009A2EFBC729F0D6DB00A3A7BE1384068F5E180F01528'
-$gh = Get-Command gh -ErrorAction Stop
 $probe = Join-Path $PSScriptRoot 'Verify-J2534CEM50.ps1'
 if (-not (Test-Path -LiteralPath $probe -PathType Leaf)) { throw 'Local exact-profile CEM50 smoke missing' }
 $dir = [IO.Path]::GetFullPath($OutputDirectory)
@@ -22,8 +22,16 @@ if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) {
 [void][IO.Directory]::CreateDirectory($dir)
 $download = Join-Path $dir 'source-artifact'
 [void][IO.Directory]::CreateDirectory($download)
-& $gh.Source run download $runId --repo $repo --name $artifactName --dir $download
-if ($LASTEXITCODE -ne 0) { throw 'GitHub artifact download failed (gh auth required)' }
+if ($ArtifactZip) {
+    $archive = (Resolve-Path -LiteralPath $ArtifactZip -ErrorAction Stop).Path
+    if ($archive -notmatch '\.zip$') { throw 'Local artifact input must be a ZIP' }
+    Expand-Archive -LiteralPath $archive -DestinationPath $download
+    Write-Host 'LOCAL_ARTIFACT: expanding retained GitHub Actions archive'
+} else {
+    $gh = Get-Command gh -ErrorAction Stop
+    & $gh.Source run download $runId --repo $repo --name $artifactName --dir $download
+    if ($LASTEXITCODE -ne 0) { throw 'GitHub artifact download failed (gh auth required)' }
+}
 $package = Join-Path $download 'VirtualCar-VMware-LAB-ci-9553d87d400f-Windows-x86.zip'
 if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw 'Expected pinned LAB ZIP missing' }
 if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -cne $zipSha) {
