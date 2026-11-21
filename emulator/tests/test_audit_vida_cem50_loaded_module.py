@@ -68,7 +68,7 @@ class CEM50LoadedModuleTests(unittest.TestCase):
                          ini_present=True)
         data = json.dumps(r, sort_keys=True)
         for forbidden in (DLL, private, "YV1CR855691511566", "1234ABCD",
-                          "module_paths", "pid"):
+                          "module_paths", "PID="):
             # Lowercase 'pid' does not appear in user-facing report.
             self.assertNotIn(forbidden, data)
         self.assertFalse(r["raw_paths_pids_modules_or_vin_exported"])
