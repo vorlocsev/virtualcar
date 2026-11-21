@@ -22,6 +22,9 @@ $src = [IO.Path]::GetFullPath($SourceDll)
 if (-not [IO.File]::Exists($src) -or -not [IO.File]::Exists($sourceIni)) {
     throw 'Source DLL or published CEM50 INI missing'
 }
+if ([IO.Path]::GetFileName($src) -ine 'VirtualCarJ2534.dll') {
+    throw 'Expected existing emulator source DLL by exact file name, not a physical J2534 driver'
+}
 if ([string]::Equals($src, $targetDll, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Source DLL must differ from the new isolated installation'
 }
