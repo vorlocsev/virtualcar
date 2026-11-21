@@ -288,3 +288,20 @@ foreach ($hostExe in @('iexplore.exe','java.exe','vidamonitor.exe')) { Write-Hos
 DLL может отсутствовать в постфактум append-window. До прямого RX
 delivered и положительного GUI ReadVin не добавлять фиктивный
 B9F0/A3/A6 и не объявлять VIN/ECU acceptance.
+
+
+## B3A63 — связать точную PS DLL и родной Active INI по текстовому PID (только чтение)
+
+При последнем B3A55 были D2 B9 F0/B9 FB к \`0x40\` при 125000 бод и 0 доставленных RX. B3A56 отдельно находил точный PS DLL-модуль в одном из двух \`iexplore.exe\` на момент снимка. Эти два отчёта **не являются доказательством одного процесса**.
+
+Новый \`emulator/tools/audit_vida_cem50_ps_same_pid_ini.py\` использует тот **самый** существующий локальный B3A45 baseline, тот же нативный журнал, метки \`P2 D2 request target/opcode/baud/flags (BE)\`, последние \`Active INI:\` и 14 нативных записей \`P2 fixture ... frame-count (BE)\` перед baseline. В процессе обработки сопоставляет текстовый PID с точным путём PS DLL в живом Toolhelp snapshot, но не печатает PID, путь INI, VIN или кадры. Проверка SHA относится **к DLL на диске**, а не к её образу в памяти.
+
+Запускать в изолированной VMware при открытой оригинальной VIDA и существующих переменных PowerShell 5.1 \`$base\` (путь **именно к B3A45 baseline**) и \`$vlog\` (путь к **тому же** \`SectorVVirtualCar.log\`). Одна строка:
+
+\`\`\`powershell
+if (!(Test-Path -LiteralPath $base -PathType Leaf) -or !(Test-Path -LiteralPath $vlog -PathType Leaf)) { throw 'Нужно указать существующие $base и $vlog из B3A45/B3A55' }; py -3.12 emulator/tools/audit_vida_cem50_ps_same_pid_ini.py --virtual-log $vlog --private-baseline $base --host-exe iexplore.exe
+\`\`\`
+
+**Граница доказательства:** статус \`CORRELATED_SAME_TEXT_PID_EPOCH_NOT_ATTESTED\` означает совпадение текстового PID у D2 B9 FB, предыдущей инициализации и живого модуля в одном снимке. Не доказывает, что PID не использовался повторно, что INI имеет те же байты, какие прочитала DLL, что VIDA вызвала именно этот модуль в том же интервале или что VIN принят. Если нет раннего \`Active INI:\` в ограниченных 32 МиБ перед baseline, корректный результат — \`NO_PREBASELINE_ACTIVE_INI_FOR_REQUEST_PID\`, а не ошибка транспорта. При \`native_loaded_b9fb_cem40=zero_frames_loaded\` и \`CEM_50=frames_loaded_unverified\` подтверждается лишь содержимое **исторической записи загрузки** в этом нативном журнале.
+
+Без запуска J2534, записи в Registry32, замены DLL/INI, установки VIDA, отправки запросов, исходных логов в GitHub или CI.
