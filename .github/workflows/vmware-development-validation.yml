@@ -295,6 +295,7 @@ jobs:
       # Only runs after a trusted development push on the persistent VMware runner.
       # Never install/register a provider, run original VIDA or contact physical ECU.
       - name: Verify exact CEM50 B9FB 13-frame native x86 replay
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
