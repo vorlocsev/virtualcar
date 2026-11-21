@@ -39,3 +39,13 @@ traces/raw/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Virtual Car Lab persistent database and private captured artifacts
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.enc
+lab/private/

@@ -2407,6 +2407,26 @@ Cross-chat trigger: **virtual car**.
 
 ---
 
+## АКТУАЛЬНЫЙ ПЛАН: Dvinholm-first Virtual Car Lab (с 2026-11-06)
+
+**Главный продукт: Dvinholm** (WinUI 3, .NET 10, целевой x64). **Virtual Car только лабораторный стенд** с независимыми J2534 x86/x64 адаптерами, Go Core и SQLite, а не самостоятельный продукт для пользователя. Старые записи ниже сохраняются как исторические контрольные точки, НЕ как текущая очередь работ.
+
+**Начинай новое продолжение с этих документов, проверив live GitHub:**
+- [Current STATUS](docs/project/STATUS.md)
+- [Roadmap](docs/project/ROADMAP.md)
+- [Next actionable task](docs/project/NEXT_CHAT.md)
+- [SQLite developer usage](docs/project/LABDB-LOCAL-USAGE.md)
+- [Master Issue #60](https://github.com/vorlocsev/virtualcar/issues/60)
+- [Stage60 PR #61](https://github.com/vorlocsev/virtualcar/pull/61)
+- [Dvinholm architecture PR #703](https://github.com/vorlocsev/dvinholm/pull/703)
+- [Dvinholm x64 PR #702](https://github.com/vorlocsev/dvinholm/pull/702)
+
+**Последний подтверждённый завершённый этап:** PR #59 Go Labcore + SQLite schema merged в `development`; CI #577 success. **Этап 60**: Python SQLite repository, сохранение состояния между чатами и десять тестов в PR #61. Проверить CI текущего HEAD; статус PR/merge записать в STATUS/NEXT_CHAT, НЕ выдумывать успех. Дальше этап 61: полноценный Go SQLite driver/repository, миграции/backup, 8 тестов. Никаких релизов Virtual Car и выдуманных ответов CEM.
+
+**Короткий запрос для нового чата:** «Продолжи Dvinholm-first Virtual Car по корневому NEXT_CHAT.md ветки development и docs/project/STATUS.md, сверяй PR/CI и выполни следующий P0 этап. Не публикуй Virtual Car».
+
+---
+
 ## Checkpoint 2026-11-06: Stage 47 VIDA identity-script and ECU resolution boundaries, PR #55 merged
 
 - **development squash commit:** `40c2b3f58d7c1c652866ef3b70883b60c2565831`. [PR #55](https://github.com/vorlocsev/virtualcar/pull/55) merged. Research doc, one read-only categorical evidence tool, eight synthetic Python tests ONLY; no J2534/C emulator changes, no original binaries, VIN, D2 fixtures, main, Dvinholm or releases.
