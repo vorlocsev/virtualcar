@@ -2943,9 +2943,10 @@ static void test_native_log_append_only(void){
 static void test_j2534_ps_cem50(U32 dev){
  U32 can=0,ms=0,iso=0,n,i;
  U32 old_flag=g_j2534_ps_enabled,old_spacing=g_d2_spacing_ms;
+ U32 old_route_strict=g_p2_strict_routing;
  U32 old_count=g_ecu_count,old_iso_start=g_iso_rx_start;
  ECU old_ecu=g_ecu[0];
- D2_PROFILE old_fixture=g_d2[BASE_D2_FIXTURES],*d;
+ D2_PROFILE old_fixture=g_d2[2],*d;
  PASSTHRU_MSG tx,rx,mask,pattern;
  U32 fid=0;
  SCONFIG pin={CONFIG_J1962_PINS,0u},rate={1u,125000u};
@@ -3000,11 +3001,11 @@ static void test_j2534_ps_cem50(U32 dev){
  tx.ProtocolID=PROTO_CAN_PS;
  /* A 13-frame synthetic CEM50 route is delivered over the PS channel,
     with the EXTERNAL PS ProtocolID preserved in each PASSTHRU_MSG. */
- d=&g_d2[BASE_D2_FIXTURES];
+ d=&g_d2[2];
  bytes_zero(d,sizeof(*d));d->target=0x50u;d->subcommand=0xFBu;
  d->response_id=0x01200003u;d->frame_count=13u;d->baud=500000u;
  for(i=0;i<13u;i++)bytes_copy(d->frame[i],expected[i],8u);
- g_d2_spacing_ms=0u;
+ g_d2_spacing_ms=0u;g_p2_strict_routing=1u;
  send(can,&tx);
  for(i=0;i<13u;i++){
   U32 j;
@@ -3039,7 +3040,7 @@ static void test_j2534_ps_cem50(U32 dev){
  REQUIRE(rx.Data[4]==0x62u && rx.Data[5]==0xF1u && rx.Data[6]==0x90u);
  REQUIRE(PassThruDisconnect(iso)==ERR_OK);
  g_j2534_ps_enabled=old_flag;g_d2_spacing_ms=old_spacing;
- g_d2[BASE_D2_FIXTURES]=old_fixture;
+ g_d2[2]=old_fixture;g_p2_strict_routing=old_route_strict;
  g_ecu_count=old_count;g_ecu[0]=old_ecu;g_iso_rx_start=old_iso_start;
  puts("PASS J2534-2 PS: explicit pins, 13/13 CEM50, ISO15765 PS, no MS fixture leakage");
 }
