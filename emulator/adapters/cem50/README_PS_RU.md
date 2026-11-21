@@ -126,3 +126,32 @@ SHA, но не переписывание установленной DLL.
 (ScriptType=19/20) подтверждены только предыдущим статическим
 исследованием оригинальной VIDA 2015A. Если ECU identification пуст,
 этап идентификации не пройден.
+
+## Анализировать запросы в том же окне (B3A55)
+
+После того как B3A45 создал baseline.private.json и выполнил один тест VIDA, можно
+без вывода сырых CAN/UDS данных классифицировать именно добавленные строки
+SectorVVirtualCar.log. Это важно, если PassThruOpen/Connect произошли
+до baseline, а в текущем окне появились TX (app request).
+
+Из каталога репозитория выполните:
+
+    $repo = 'C:\Users\vorloc\Downloads\CEM50-PS-PR419'
+    $priv = Join-Path $env:LOCALAPPDATA 'VirtualCar\OwnerPrivate\CEM50PS-VIDA-Window'
+    $log = Join-Path $env:TEMP 'SectorVVirtualCar.log'
+    $out = Join-Path $priv 'transaction-delta.private.json'
+    py -3.12 (Join-Path $repo 'emulator\tools\audit_vida_j2534_window_transactions.py') --virtual-log $log --private-baseline (Join-Path $priv 'baseline.private.json') --host-class iexplore --output $out
+
+B3A55 использует точную границу B3A45 (размер, SHA256 исторического префикса,
+идентичность пути, завершённые строки) и существующий J2534 transaction auditor.
+Он выводит только количество запросов, их безопасные категории, protocol,
+baud, статусы и причины. iexplore — только категория имени процесса, не
+аутентификация компонента VIDA и не подтверждение полного пути DLL. Отчёт
+остаётся приватным и не содержит PID, путей, CAN payload или VIN.
+
+TX (app request) в нативном DLL-логе появляется внутри PassThruWriteMsgs
+после проверки канала и сообщения. Поэтому такие записи означают, что
+соответствующие вызовы записи дошли до DLL; отсутствие Open/Connect в
+добавочном окне может означать, что канал был открыт раньше. PassThruReadMsgs
+-> delivered отдельно подтверждает выдачу кадра клиенту, но не принятие VIN
+или идентификацию ECU самой VIDA.
