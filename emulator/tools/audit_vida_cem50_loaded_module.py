@@ -169,7 +169,8 @@ def _windows_records(host_exe):
                             mok = kernel.Module32NextW(mods, ctypes.byref(mod))
                     finally:
                         kernel.CloseHandle(mods)
-                result.append({"exe": host_exe, "modules": paths})
+                # PID remains in-memory only; analyze() and stdout never export it.
+                result.append({"exe": host_exe, "modules": paths, "pid": int(proc.th32ProcessID)})
             ok = kernel.Process32NextW(processes, ctypes.byref(proc))
     finally:
         kernel.CloseHandle(processes)
