@@ -1,6 +1,6 @@
 """CEM50 B9FB published owner-approved reference, separate x86 J2534 adapter.
 
-Eleven synthetic/offline regression groups. NOT original VIDA acceptance.
+Twelve synthetic/offline regression groups. NOT original VIDA acceptance.
 """
 import configparser
 from pathlib import Path
@@ -153,6 +153,19 @@ class CEM50J2534AdapterTests(unittest.TestCase):
         self.assertIn("do not use physical J2534 DLL", native)
         self.assertIn("[BitConverter]::ToUInt16($peBytes,$offset+4) -ne 0x014C", native)
         self.assertIn("[BitConverter]::ToUInt16($peBytes,$offset+24) -ne 0x010B", native)
+
+    def test_12_owner_local_artifact_wrapper_pins_trusted_binaries(self):
+        wrapper = (ADAPTER / "Run-CEM50FromTrustedArtifact.ps1").read_text(encoding="utf-8")
+        self.assertIn("44669574171", wrapper)
+        self.assertIn("9553d87d400f9baf80fa16fb4a30d163551a6bbb", wrapper)
+        self.assertIn("45BF8F6E672272B64A18183B268484BF86DA65AB5B652384C2BE1FBE85ADC695", wrapper)
+        self.assertIn("C636BAF8C66266BCA80009A2EFBC729F0D6DB00A3A7BE1384068F5E180F01528", wrapper)
+        self.assertIn("gh = Get-Command gh", wrapper)
+        self.assertIn("Run-CEM50FromTrustedArtifact.ps1", (ADAPTER / "README_RU.md").read_text(encoding="utf-8"))
+        self.assertIn("Verify-J2534CEM50.ps1", wrapper)
+        self.assertIn("native-check.json", wrapper)
+        self.assertNotIn("CreateSubKey", wrapper)
+        self.assertNotIn("-Apply", wrapper)
 
 
 if __name__ == "__main__":
