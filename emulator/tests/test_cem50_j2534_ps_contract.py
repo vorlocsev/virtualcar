@@ -143,5 +143,26 @@ class CEM50PSContracts(unittest.TestCase):
         self.assertNotIn("CreateSubKey", runner)
         self.assertNotIn("reg add", runner)
 
+    def test_14_route_evidence_runs_after_real_c_emitter(self):
+        runner = (EMULATOR / "adapters" / "cem50" /
+                  "run_cem50_ps_validation.py").read_text(encoding="utf-8")
+        # Plain Python tests cannot consume a nonexistent C harness artifact.
+        self.assertIn('env.pop("VIRTUALCAR_ROUTE_EVIDENCE", None)', runner)
+        self.assertLess(
+            runner.index('env.pop("VIRTUALCAR_ROUTE_EVIDENCE", None)'),
+            runner.index('print("RUN full Python suite")'))
+        self.assertLess(
+            runner.index('host_output = command([host]'),
+            runner.index('print("RUN C emitter -> Python route evidence integration")'))
+        self.assertLess(
+            runner.index('print("RUN C emitter -> Python route evidence integration")'),
+            runner.index('print("CROSS BUILD Windows x86 J2534 DLL")'))
+        self.assertIn('if not evidence.is_file() or evidence.stat().st_size == 0:', runner)
+        self.assertIn('"test_vmware_route_evidence.py", "-v"', runner)
+        self.assertIn('summary["route_evidence_suite"] = "PASS"', runner)
+        self.assertIn('if summary[stage] == "RUNNING":', runner)
+        self.assertIn('summary[stage] = "FAILED"', runner)
+
+
 if __name__ == "__main__":
     unittest.main()
