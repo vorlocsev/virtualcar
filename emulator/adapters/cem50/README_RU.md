@@ -31,7 +31,13 @@ The source path and expected hash must refer to an independently reviewed binary
 
 ## Native x86 regression before installation
 
-The existing `emulator/tools/verify_native_routes.ps1` provides a synthetic, isolated J2534 baseline; its `-IdentityReplay` mode uses its own older fixture, **NOT** this published CEM50 VIN or profile. Its PASS must not be reported as CEM50 B9FB validation. A new exact-profile CEM50 native test is required before registering the new provider in VIDA.
+The existing `emulator/tools/verify_native_routes.ps1` provides a synthetic, isolated J2534 baseline; its `-IdentityReplay` mode uses its own older fixture, **NOT** this published CEM50 VIN or profile. Its PASS must not be reported as CEM50 B9FB validation. An exact-profile CEM50 native smoke is now included as `Verify-J2534CEM50.ps1`. It stages a COPY of the x86 DLL and this exact published INI in a NEW output folder, calls PassThruOpen/Connect/CAN WriteMsgs/13 ReadMsgs/Disconnect/Close, and compares each byte against its independently embedded expected matrix. It does not touch the registry, installed VIDA or a physical adapter. Run only with a reviewed source DLL and its full SHA256:
+
+    $src = 'C:\path\to\trusted\x86\VirtualCarJ2534.dll'
+    $sha = (Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+    .\Verify-J2534CEM50.ps1 -DllPath $src -ExpectedSha256 $sha -OutputDirectory 'C:\Lab\CEM50-native-new'
+
+The report `native-check.json` records the DLL digest and exact 13/13 delivery, but explicitly keeps VIDA, ECU identification and physical hardware gates false. This smoke is **prepared, not executed**, until an actual Windows x86 DLL is supplied.
 
 ## Offline gates / runtime gates
 
