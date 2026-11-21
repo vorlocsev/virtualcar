@@ -184,9 +184,9 @@ def main(argv=None):
     print("Recognized transactions:", report["recognized_transactions"])
     print("Transaction statuses:", report["transaction_status_counts"])
     for item in report["transaction_groups"]:
-        print("Transaction:", item["route"], item["service"], item["protocol"],
-              item["baud_bps"], item["status"], item["reason"],
-              "count=" + str(item["count"]))
+        print("Transaction:", item["route"], item["can_id"], item["target"],
+              item["service"], item["protocol"], item["baud_bps"],
+              item["status"], item["reason"], "count=" + str(item["count"]))
     print("VIDA VIN / ECU acceptance: NOT_VERIFIED")
     print("Private categorical JSON retained locally; do not upload")
 
