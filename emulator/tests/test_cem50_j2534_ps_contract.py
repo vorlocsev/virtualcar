@@ -118,5 +118,12 @@ class CEM50PSContracts(unittest.TestCase):
         ]
         self.assertEqual(matrix, expected)
 
+    def test_12_ps_filters_never_accept_legacy_protocol_id(self):
+        self.assertIn("mask->ProtocolID!=c->api_protocol", self.c)
+        self.assertIn("pattern->ProtocolID!=c->api_protocol", self.c)
+        self.assertIn("PassThruStartMsgFilter(can,1,&mask,&pattern,0,&fid)==ERR_MSG_PROTOCOL_ID", self.ct)
+        self.assertIn("mask.ProtocolID=PROTO_CAN_PS;pattern.ProtocolID=PROTO_CAN_PS;", self.ct)
+        self.assertIn("PassThruStopMsgFilter(can,fid)==ERR_OK", self.ct)
+
 if __name__ == "__main__":
     unittest.main()
