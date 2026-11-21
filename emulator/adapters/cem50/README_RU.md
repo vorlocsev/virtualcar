@@ -27,7 +27,7 @@ The first call is DRY_RUN_ONLY and never installs or registers. The installer al
 
     .\Install-J2534CEM50.ps1 -SourceDll $src -ExpectedSha256 $hash -Apply
 
-The source path and expected hash must refer to an independently reviewed binary; computing the hash does not itself establish trust. The script checks x86 PE32, SHA256, that the registry key and destination directory do not already exist, then stages a copy to %ProgramData%\J2534-CEM50 and registers only a new Registry32 key in HKLM\SOFTWARE\PassThruSupport.04.04. On failures during creation it attempts to remove only its new key/directory. It NEVER overwrites an existing registration, the installed VIDA configuration, current J2534 DLL/INI or SQL data. If the key or folder already exists, stop and investigate rather than deleting it.
+The source path must be named `VirtualCarJ2534.dll` (this is an internal trusted-source filename, NOT the displayed adapter name). Both the installer and the native smoke reject other source filenames. The native smoke also validates the x86 PE32 machine and magic before copying. The source path and expected hash must refer to an independently reviewed binary; computing the hash does not itself establish trust. The script checks x86 PE32, SHA256, that the registry key and destination directory do not already exist, then stages a copy to %ProgramData%\J2534-CEM50 and registers only a new Registry32 key in HKLM\SOFTWARE\PassThruSupport.04.04. On failures during creation it attempts to remove only its new key/directory. It NEVER overwrites an existing registration, the installed VIDA configuration, current J2534 DLL/INI or SQL data. If the key or folder already exists, stop and investigate rather than deleting it.
 
 ## Native x86 regression before installation
 
@@ -45,7 +45,7 @@ Run from repository root:
 
     py -3 -m unittest discover -s emulator/tests -p test_cem50_j2534_adapter.py -v
 
-Ten synthetic offline tests verify the identity, 13-frame D2 response, published 88-byte shape, VIN/chassis consistency, silence of unrelated routes, explicit synthetic provenance, installer guardrails, and existing native CEM50 route.
+Eleven synthetic offline tests verify the identity, 13-frame D2 response, published 88-byte shape, VIN/chassis consistency, silence of unrelated routes, explicit synthetic provenance, installer guardrails, and existing native CEM50 route.
 
 Still unverified until a separately authorized owner-machine experiment: exact DLL binary provenance, correct x86 provider selection in original VIDA, 500-kbit/s CAN D2 request to target 0x50, J2534 RX of all 13 frames, VIDA ResponseHandler extraction, VIN acceptance, ECU identification and T111/T122. Original VIDA previously observed 0x726 F114 and ResultGet(59790) empty. This B9FB-only adapter is an isolated alternative, not a fix for the F114 parser.
 
