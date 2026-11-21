@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 
 from audit_j2534_connect import audit as audit_connect
+from audit_j2534_discovery import audit as audit_discovery
 
 SCHEMA = "virtualcar-private-vida-j2534-window-v1"
 REPORT = "virtualcar-vida-j2534-append-evidence-v1"
@@ -167,6 +168,27 @@ def _external(path, sources):
         raise ValueError("private output must be outside source tree and logs")
 
 
+def cem_transport_summary(native_lines):
+    """Group only fixed CEM services on the existing channel-aware audit path."""
+    counts = {}
+    result = audit_discovery(native_lines)
+    for item in result["transactions"]:
+        if item["route"] != "D2" or item["target"] not in ("0x40", "0x50"):
+            continue
+        key = (item["target"], item["service"], item["baud_bps"] or 0)
+        counts.setdefault(key, Counter())[item["status"]] += 1
+    return {
+        "scope": "native_j2534_append_window_transport",
+        "client_acceptance_verified": False,
+        "routes": [
+            {"target": target, "service": service, "baud_bps": baud or None,
+             "requests": sum(group.values()), "statuses": dict(sorted(group.items()))}
+            for (target, service, baud), group in sorted(counts.items())
+        ],
+        "parse_errors": result["parse_errors"],
+    }
+
+
 def summarize(vida_lines, virtual_lines, vida_bytes, virtual_bytes, dropped):
     vida_count = Counter()
     for line in vida_lines:
@@ -202,6 +224,7 @@ def summarize(vida_lines, virtual_lines, vida_bytes, virtual_bytes, dropped):
         "virtual_host_class_line_counts": dict(sorted(hosts.items())),
         "connect_modes": mode["connect"],
         "set_config_modes": mode["set_config"],
+        "cem_transport": cem_transport_summary(accepted),
         "original_vida_selected_driver_verified": False,
         "original_vida_dll_loaded_verified": False,
         "physical_ecu_rx_verified": False,

@@ -40,6 +40,11 @@ for _target in ("40", "50"):
         PROBES[f"D2_{_target}_{_op}"] = {
             "service": _op, "can_id": "0x000FFFFE",
             "id_format": "29bit", "target": f"0x{_target}"}
+PROBES["D2_40_AE1B"] = {"service": "AE1B", "can_id": "0x000FFFFE",
+                         "id_format": "29bit", "target": "0x40"}
+for _op in ("B9F5", "B9F8"):
+    PROBES[f"D2_40_{_op}"] = {"service": _op, "can_id": "0x000FFFFE",
+                               "id_format": "29bit", "target": "0x40"}
 for _kind, _id, _bits in (("726", "0x726", "11bit"),
                          ("29", "0x18DA50F1", "29bit")):
     for _did in ("F114", "F1B0", "F1A3", "F106", "F190"):

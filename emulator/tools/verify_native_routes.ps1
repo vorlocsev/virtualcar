@@ -295,6 +295,8 @@ public static class NativeRouteCheck {
     }
     if ($CanMsPreflight) {
         Write-Output 'PASS B3A331: owner-independent x86 virtual CAN-MS channel lifecycle; no diagnostics, no original VIDA, no VIN/ECU acceptance.'
+    } elseif ($IdentityReplay) {
+        Write-Output 'Native identity replay assertions passed. The silent-route Python verifier does not support this mode.'
     } else {
         Write-Output 'Native calls passed. Verify the isolated backend with verify_native_routes.py.'
     }

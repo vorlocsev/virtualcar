@@ -61,6 +61,10 @@ def _request(raw, include_obd=False):
     if can_id == 0x000FFFFE:
         if len(data) >= 4 and data[0] == 0xCB and data[2] == 0xB9 and data[3] in D2_SERVICES:
             return ("D2", f"B9{data[3]:02X}", data[1], can_id)
+        if (4 <= len(data) <= 8 and data[0] == 0xCB
+                and data[1] in (0x40, 0x50) and not any(data[4:])):
+            if data[2:4] in (b"\xB9\xF5", b"\xB9\xF8") or (data[1] == 0x40 and data[2:4] == b"\xAE\x1B"):
+                return ("D2", data[2:4].hex().upper(), data[1], can_id)
         # D2 CAN requests carry C8 + significant-byte count, target, service.
         # Attribute only known CEM targets and complete classic-CAN requests;
         # parameters/padding remain private and no response meaning is inferred.
@@ -815,6 +819,10 @@ def audit(lines, *, include_obd=False):
             errors["invalid_rx_can_id"] += 1
             return
         if tx["route"] == "D2":
+            block_request = tx["service"].startswith("B9") or tx["service"] == "AE1B"
+            if block_request:
+                service = int(tx["service"][:2], 16) + 0x40
+                echo = bytes((int(tx["target"], 16), service, int(tx["service"][-2:], 16)))
             # A B9 response is a sequence of *classic CAN* 8-byte frames,
             # not ISO15765 J2534 reassembly, TX echo or a byte-shortened
             # fake final 0x4F. Keep unknown legacy protocol metadata
@@ -838,7 +846,7 @@ def audit(lines, *, include_obd=False):
                 errors["d2_rx_indication_not_payload"] += 1
                 tx["off_route_rx"] += 1
                 return
-            if tx["service"].startswith("B9") and len(payload) != 8:
+            if block_request and len(payload) != 8:
                 # A short/long frame is evidence of malformed B9
                 # transport only when it belongs to this response route.
                 # A different CAN ID, or an unrelated first-frame opcode,
@@ -850,9 +858,7 @@ def audit(lines, *, include_obd=False):
                     matching = (len(payload) >= 4
                                 and (payload[0] in (0x8F, 0x97)
                                      or (payload[0] & 0xF8) == 0xC8)
-                                and payload[1:4] == bytes((
-                                    int(tx["target"], 16), 0xF9,
-                                    int(tx["service"][-2:], 16))))
+                                and payload[1:4] == echo)
                 if not matching:
                     tx["off_route_rx"] += 1
                     return
@@ -940,17 +946,16 @@ def audit(lines, *, include_obd=False):
         else:
             head = payload[0]
             if tx["_rxid"] is None:
-                if tx["service"].startswith("B9") and len(payload) >= 4:
-                    opcode = int(tx["service"][-2:], 16)
-                    target = int(tx["target"], 16)
-                    if head in (0x8F, 0x97) and payload[1:4] == bytes((target, 0xF9, opcode)):
+                if block_request and len(payload) >= 4:
+                    if head in (0x8F, 0x97) and payload[1:4] == echo:
                         tx["_rxid"] = can_id
                         tx["_base"] = 0x10 if head == 0x97 else 0x08
                         tx["rx_frames"] += 1
-                    elif head & 0xF8 == 0xC8 and payload[1:4] == bytes((target, 0xF9, opcode)):
+                    elif head & 0xF8 == 0xC8 and payload[1:4] == echo:
                         tx["_rxid"] = can_id
                         tx["rx_frames"] += 1
-                        tx["_complete"] = True
+                        tx["_complete"] = head - 0xC8 >= 3
+                        tx["_invalid"] = not tx["_complete"]
                     else:
                         tx["off_route_rx"] += 1
                 else:
@@ -978,7 +983,7 @@ def audit(lines, *, include_obd=False):
                         tx["_complete"] = True
                 elif head & 0xF8 == 0x50:
                     tx["_subblock"] = True
-                elif tx["_subblock"] and head == 0x8F and len(payload) >= 4 and payload[1:4] == bytes((int(tx["target"], 16), 0xF9, int(tx["service"][-2:], 16))):
+                elif tx["_subblock"] and head == 0x8F and len(payload) >= 4 and payload[1:4] == echo:
                     tx["_subblock"] = False
                 elif head == (tx["_base"] | tx["_seq"]):
                     tx["_seq"] = (tx["_seq"] + 1) & 7
