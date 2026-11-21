@@ -162,6 +162,8 @@ def _windows_records(host_exe):
                         mod = MODULEENTRY32W()
                         mod.dwSize = ctypes.sizeof(mod)
                         mok = kernel.Module32FirstW(mods, ctypes.byref(mod))
+                        if not mok:
+                            paths = None  # Failed enumeration is INCONCLUSIVE, not an empty module list.
                         while mok:
                             paths.append(str(mod.szExePath))
                             mok = kernel.Module32NextW(mods, ctypes.byref(mod))
