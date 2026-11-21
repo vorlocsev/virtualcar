@@ -162,6 +162,7 @@ def main():
                 or result.get("published_vin") != VIN
                 or result.get("matched_frames") != 13
                 or result.get("protocol_id") != "0x8004"
+                or result.get("iso15765_ps_f190_verified") is not True
                 or result.get("dll_sha256", "").upper() != sha
                 or result.get("vida_readvin_verified") is not False
                 or result.get("ecu_identification_verified") is not False
