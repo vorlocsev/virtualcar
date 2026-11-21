@@ -82,6 +82,19 @@ typedef void *HANDLE;
 #define ERR_INVALID_DEVICE_ID 26u
 #define PROTO_CAN 5u
 #define PROTO_ISO15765 6u
+/* J2534-2 pin-selectable CAN protocols; disabled unless the adjacent INI opts in. */
+#define PROTO_CAN_PS 0x8004u
+#define PROTO_ISO15765_PS 0x8005u
+#define CONFIG_J1962_PINS 0x8001u
+#define PINS_CAN_HS 0x060Eu /* J1962 pins 6 (CAN-H), 14 (CAN-L) */
+#define PINS_CAN_MS 0x030Bu /* J1962 pins 3 (CAN-H), 11 (CAN-L) */
+static int is_ps_protocol(U32 protocol) {
+    return protocol==PROTO_CAN_PS || protocol==PROTO_ISO15765_PS;
+}
+static U32 canonical_protocol(U32 protocol) {
+    return protocol==PROTO_CAN_PS?PROTO_CAN:
+           (protocol==PROTO_ISO15765_PS?PROTO_ISO15765:protocol);
+}
 #define IO_GET_CONFIG 1u
 #define IO_SET_CONFIG 2u
 #define IO_READ_VBATT 3u
@@ -143,6 +156,8 @@ static U32 g_trace_count=0;
 static U32 g_iso_rx_start=0;
 /* Explicit strict receive-filter policy. Legacy behavior is the default. */
 static U32 g_strict_j2534_filters=0;
+/* PS is isolated to an explicitly enabled emulator profile; legacy defaults stay off. */
+static U32 g_j2534_ps_enabled=0;
 static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
@@ -173,6 +188,8 @@ typedef struct { U64 rid; U32 cause; } BACKEND_ABORT;
 typedef struct { U64 rid; U32 cause; } BACKEND_DROP;
 typedef struct {
     int used; U32 id,protocol,baud,flags;
+/* protocol is internal CAN/ISO15765; api_protocol preserves the client-visible PS ID. */
+    U32 api_protocol,ps_pins;
     /* Monotonic private connection lifetime. Reused numeric channel IDs
        must not make an in-flight ReadMsgs consume a new channel's FIFO. */
     U64 session_serial;
@@ -719,6 +736,10 @@ static void load_config(void) {
     g_iso_rx_start=parse_num(v,0)?1:0;
     GetPrivateProfileStringA("Diagnostics","StrictJ2534Filters","0",v,sizeof(v),g_profile_path);
     g_strict_j2534_filters=parse_num(v,0)==1u?1u:0u;
+    /* Only a dedicated new provider profile can advertise J2534-2 virtual pins. */
+    g_j2534_ps_enabled=0;
+    GetPrivateProfileStringA("J2534_2","Enabled","0",v,sizeof(v),g_profile_path);
+    g_j2534_ps_enabled=parse_num(v,0)==1u?1u:0u;
     g_passive_enabled=0;
     GetPrivateProfileStringA("PassiveCAN","Enabled","0",v,sizeof(v),g_profile_path);
     g_passive_enabled=parse_num(v,0)?1:0;
@@ -999,7 +1020,7 @@ static void enqueue_status(CHANNEL *c,U32 response_id,const U8 *payload,U32 len,
         return;
     }
     msg=&c->queue[c->w];bytes_zero(msg,sizeof(*msg));
-    msg->ProtocolID=c->protocol;msg->RxStatus=(response_id>0x7FF?CAN_29BIT_ID:0)|status;
+    msg->ProtocolID=c->api_protocol?c->api_protocol:c->protocol;msg->RxStatus=(response_id>0x7FF?CAN_29BIT_ID:0)|status;
     /* J2534 v04.04 Timestamp is in MICROSECONDS, not GetTickCount() milliseconds.
        A wrapping 32-bit free-running clock is normal for J2534. */
     msg->Timestamp=(U32)now_us();
@@ -1024,6 +1045,7 @@ static void enqueue(CHANNEL *c,U32 response_id,const U8 *payload,U32 len){enqueu
 /* Bus-specific recorded traffic. Never cross CAN-LS/HS speed boundaries. */
 static void pump_recorded_trace(CHANNEL *c){
     U32 i,now;
+    if(is_ps_protocol(c->api_protocol) && !c->ps_pins)return;
     if(c->protocol!=PROTO_CAN)return;
     now=GetTickCount();
     for(i=0;i<MAX_PASSIVE_TRACES;i++){
@@ -1040,6 +1062,7 @@ static void pump_recorded_trace(CHANNEL *c){
     }
 }
 static void maybe_passive_frame(CHANNEL *c){
+    if(is_ps_protocol(c->api_protocol) && !c->ps_pins)return;
     U32 now;
     if(!g_passive_enabled||c->protocol!=PROTO_CAN||c->count>=MAX_QUEUE)return;
     now=GetTickCount();
@@ -1652,6 +1675,7 @@ static void begin_tx_evidence(CHANNEL *c,const PASSTHRU_MSG *msg){
    polls ReadMsgs. Never spawn a background vehicle writer. */
 static void pump_periodic(CHANNEL *c){
     U32 i;U64 now=now_us();
+    if(is_ps_protocol(c->api_protocol) && !c->ps_pins)return;
     for(i=0;i<MAX_PERIODIC;i++){
         PERIODIC *p=&c->periodic[i];
         if(!p->used || now<p->next_us || c->count>=MAX_QUEUE)continue;
@@ -1714,24 +1738,31 @@ EXPORT U32 WINCALL PassThruConnect(U32 device,U32 protocol,U32 flags,U32 baud,U3
        check and this allocation, creating a live channel on a closed device. */
     lock_state();
     if(!g_open){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_DEVICE_ID);}
-    /* P3Tool driver-specific protocol IDs remain rejected, not aliased. */
-    if(protocol!=PROTO_CAN&&protocol!=PROTO_ISO15765){
+    /* PS aliases are accepted ONLY for an explicitly configured laboratory provider.
+       No unknown vendor protocol may be reclassified into a CAN channel. */
+    if(protocol!=PROTO_CAN && protocol!=PROTO_ISO15765 &&
+       !(g_j2534_ps_enabled && is_ps_protocol(protocol))){
         unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_PROTOCOL_ID);
     }
-    /* Zero cannot represent a configured CAN bit rate. */
-    if(baud==0u){unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);}
+    /* PS is restricted to our two tested virtual J1962 CAN bus rates. */
+    if(baud==0u || (is_ps_protocol(protocol) && baud!=500000u && baud!=125000u)){
+        unlock_state();return connect_result(protocol,flags,baud,ERR_INVALID_BAUDRATE);
+    }
     for(i=0;i<MAX_CHANNELS;i++)if(!g_ch[i].used)break;
     if(i==MAX_CHANNELS){unlock_state();return connect_result(protocol,flags,baud,ERR_EXCEEDED_LIMIT);}
     bytes_zero(&g_ch[i],sizeof(CHANNEL));g_ch[i].used=1;g_ch[i].id=i+1;
     ++g_next_channel_serial;
     if(!g_next_channel_serial)++g_next_channel_serial;
     g_ch[i].session_serial=g_next_channel_serial;
-    g_ch[i].protocol=protocol;g_ch[i].flags=flags;g_ch[i].baud=baud;
+    g_ch[i].protocol=canonical_protocol(protocol);
+    g_ch[i].api_protocol=protocol;
+    g_ch[i].ps_pins=0u; /* Fail closed until SET_CONFIG(J1962_PINS). */
+    g_ch[i].flags=flags;g_ch[i].baud=baud;
     g_ch[i].passive_next_tick=GetTickCount()+g_passive_period_ms;
     {U32 k;for(k=0;k<MAX_PASSIVE_TRACES;k++)
         g_ch[i].trace_next_tick[k]=GetTickCount()+g_trace[k].period_ms+(k%4)*3u;}
     *channel_id=i+1;
-    p2_bridge_connect(&g_vehicle_bridge,i+1,protocol,baud);
+    p2_bridge_connect(&g_vehicle_bridge,i+1,canonical_protocol(protocol),baud);
     {U8 details[12];u32_be(details,protocol);u32_be(details+4,flags);u32_be(details+8,baud);
      logline("PassThruConnect protocol / flags / baud (BE)",details,12);}
     unlock_state();return connect_result(protocol,flags,baud,ERR_OK);
@@ -1748,7 +1779,8 @@ EXPORT U32 WINCALL PassThruDisconnect(U32 id) {
    must not bypass protocol, classic CAN DLC, physical ID and addressing
    guards by entering through a different scheduling API. */
 static U32 validate_tx_message(const CHANNEL *c,const PASSTHRU_MSG *m){
-    if(m->ProtocolID!=c->protocol)return ERR_MSG_PROTOCOL_ID;
+    if(m->ProtocolID!=(c->api_protocol?c->api_protocol:c->protocol))return ERR_MSG_PROTOCOL_ID;
+    if(is_ps_protocol(c->api_protocol) && !c->ps_pins)return ERR_PIN_INVALID;
     if(m->DataSize>MAX_DATA||m->DataSize<5u||
        (c->protocol==PROTO_CAN && m->DataSize>12u))return ERR_INVALID_MSG;
     if((m->Data[0]&0xE0u)!=0u)return ERR_INVALID_MSG;
@@ -1887,11 +1919,12 @@ EXPORT U32 WINCALL PassThruStartMsgFilter(U32 id,U32 type,const PASSTHRU_MSG *ma
     if(g_strict_j2534_filters){
         if(c->protocol==PROTO_CAN && type==3u){unlock_state();return error(ERR_NO_FLOW_CONTROL);}
         if(c->protocol==PROTO_ISO15765 && type!=3u){unlock_state();return error(ERR_INVALID_FLAGS);}
-        if(mask->ProtocolID!=c->protocol||pattern->ProtocolID!=c->protocol){
+        if(mask->ProtocolID!=(c->api_protocol?c->api_protocol:c->protocol)||
+           pattern->ProtocolID!=(c->api_protocol?c->api_protocol:c->protocol)){
             unlock_state();return error(ERR_MSG_PROTOCOL_ID);
         }
         if(type==3u && !flow){unlock_state();return error(ERR_NULL_PARAMETER);}
-        if(type==3u && flow->ProtocolID!=c->protocol){unlock_state();return error(ERR_MSG_PROTOCOL_ID);}
+        if(type==3u && flow->ProtocolID!=(c->api_protocol?c->api_protocol:c->protocol)){unlock_state();return error(ERR_MSG_PROTOCOL_ID);}
         if(c->protocol==PROTO_ISO15765 &&
            ((mask->TxFlags|pattern->TxFlags|(flow?flow->TxFlags:0u))&ISO15765_ADDR_TYPE)){
             unlock_state();return error(ERR_NOT_SUPPORTED);
@@ -2036,36 +2069,54 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     if(ioctl==IO_CLEAR_TX_BUFFER){unlock_state();return error(ERR_OK);}
     if(ioctl==IO_SET_CONFIG||ioctl==IO_GET_CONFIG){
         SCONFIG_LIST *list=(SCONFIG_LIST*)input;
-        U32 initial_baud=c->baud;
+        U32 initial_baud=c->baud,desired_baud=c->baud,desired_pins=c->ps_pins;
+        int ps=is_ps_protocol(c->api_protocol);
         if(!list||(!list->ConfigPtr&&list->NumOfParams)){unlock_state();return error(ERR_NULL_PARAMETER);}
         if(list->NumOfParams>64){unlock_state();return error(ERR_INVALID_IOCTL_VALUE);}
-        /* Validate every DATA_RATE before mutating any parameter. A zero
-           speed is invalid, including when it appears after a valid rate
-           in the same list; leave baud and observer state unchanged. */
+        /* Preflight the COMPLETE batch before changing any channel state.
+           A partial DATA_RATE/PINS update could otherwise expose an invalid bus. */
         if(ioctl==IO_SET_CONFIG){
-            for(i=0;i<list->NumOfParams;i++)
-                if(list->ConfigPtr[i].Parameter==1u &&
-                   list->ConfigPtr[i].Value==0u){
+            for(i=0;i<list->NumOfParams;i++){
+                SCONFIG *cfg=&list->ConfigPtr[i];
+                if(cfg->Parameter==1u){
+                    if(cfg->Value==0u){unlock_state();return error(ERR_INVALID_BAUDRATE);}
+                    desired_baud=cfg->Value;
+                }else if(ps && cfg->Parameter==CONFIG_J1962_PINS){
+                    if(cfg->Value!=PINS_CAN_HS && cfg->Value!=PINS_CAN_MS){
+                        unlock_state();return error(ERR_PIN_INVALID);
+                    }
+                    desired_pins=cfg->Value;
+                }
+            }
+            if(ps && desired_pins){
+                if((desired_pins==PINS_CAN_HS && desired_baud!=500000u) ||
+                   (desired_pins==PINS_CAN_MS && desired_baud!=125000u)){
                     unlock_state();return error(ERR_INVALID_BAUDRATE);
                 }
+                /* A pin change requires a fresh virtual channel. This prevents
+                   cross-bus queued RX/FC and avoids silent CAN-MS/HS re-routing. */
+                if(c->ps_pins && desired_pins!=c->ps_pins){
+                    unlock_state();return error(ERR_CHANNEL_IN_USE);
+                }
+            }
+            if(ps && desired_baud!=500000u && desired_baud!=125000u){
+                unlock_state();return error(ERR_INVALID_BAUDRATE);
+            }
         }
         for(i=0;i<list->NumOfParams;i++){
-            SCONFIG *s=&list->ConfigPtr[i];
+            SCONFIG *cfg=&list->ConfigPtr[i];
             if(ioctl==IO_SET_CONFIG){
-                if(s->Parameter==1)c->baud=s->Value;
-                log_set_config(id,s->Parameter,s->Value);
+                if(cfg->Parameter==1u)c->baud=cfg->Value;
+                if(ps && cfg->Parameter==CONFIG_J1962_PINS)c->ps_pins=cfg->Value;
+                log_set_config(id,cfg->Parameter,cfg->Value);
+            }else if(ioctl==IO_GET_CONFIG){
+                if(cfg->Parameter==1u)cfg->Value=c->baud;
+                else if(ps && cfg->Parameter==CONFIG_J1962_PINS)cfg->Value=c->ps_pins;
+                else cfg->Value=0u;
             }
-            if(ioctl==IO_GET_CONFIG)s->Value=s->Parameter==1?c->baud:0;
         }
-        /* A staged or queued D2 reply belongs to the baud of the original
-           B9 request. Re-tuning this channel must not release those frames
-           on a different CAN bus. Preserve unrelated RX FIFO entries.
-           Compare only the FINAL rate: a list that ends at its original
-           rate must not invalidate the transfer or reset bridge state. */
         if(ioctl==IO_SET_CONFIG && c->baud!=initial_baud){
             supersede_d2_exchange(c);
-            /* Optional read-only CAN traces are bus-specific too. Preserve
-               unrelated FIFO and queued frames that have no passive origin. */
             {U32 removed=drop_old_bus_passive_rx(c);
              if(removed){U8 count_be[4];u32_be(count_be,removed);
               logline("J2534 DATA_RATE stale passive RX dropped (BE)",count_be,4);}
@@ -2075,8 +2126,6 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
               logline("J2534 DATA_RATE stale raw ISO-TP RX dropped (BE)",count_be,4);}
             }
             logline("J2534 DATA_RATE changed; old-bus D2 replay disallowed",0,0);
-            /* Passive CEM observation must follow the effective transport
-               speed; this never creates ECU RX or CAN TX. */
             p2_bridge_connect(&g_vehicle_bridge,id,c->protocol,c->baud);
         }
         unlock_state();return error(ERR_OK);
