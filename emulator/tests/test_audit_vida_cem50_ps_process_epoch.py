@@ -141,8 +141,9 @@ class SamePidTest(unittest.TestCase):
     def test_16_latest_epoch_marker_wins_for_reused_pid(self):
         rows = [epoch_marker(FILETIME - 1)] + history()
         out = audit.analyze(rows, request(), [process()])
-        self.assertEqual(out["status"], "CORRELATED_SAME_PROCESS_EPOCH_EXACT_DLL_ACTIVE_INI")
+        self.assertEqual(out["status"], "SAME_PROCESS_EPOCH_BUT_DISK_SHA_UNVERIFIED")
         self.assertTrue(out["process_creation_epoch_verified"])
+        self.assertIsNone(out["disk_sha_matches_pinned"])
 
     def test_17_epoch_marker_after_request_is_not_used(self):
         defaults = ((0x40, 0xFB), (0x40, 0xF0), (0x50, 0xFB),
