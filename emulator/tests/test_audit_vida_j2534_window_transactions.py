@@ -61,9 +61,10 @@ class VidaWindowTransactionTests(unittest.TestCase):
         self.assertEqual(report["native_marker_counts"]["open_success"], 0)
         self.assertEqual(report["recognized_transactions"], 1)
         item = report["transaction_groups"][0]
-        self.assertEqual((item["route"], item["service"], item["protocol"],
+        self.assertEqual((item["can_id"], item["target"], item["route"],
+                          item["service"], item["protocol"],
                           item["baud_bps"], item["status"]),
-                         ("P3", "22F190", "CAN", 500000, "unverified"))
+                         ("0x726", None, "P3", "22F190", "CAN", 500000, "unverified"))
         self.assertFalse(report["original_vida_vin_accepted_verified"])
 
     def test_02_host_category_filter_excludes_other_process(self):
@@ -148,6 +149,30 @@ class VidaWindowTransactionTests(unittest.TestCase):
         self.assertEqual(report["native_d2_delivery_tags"]["client_vin_and_ecu_acceptance"],
                          "not_verified")
         self.assertFalse(report["ecu_identity_accepted_verified"])
+
+
+    def test_09_native_queue_clear_and_d2_fixture_events_are_counted(self):
+        with self.log.open("a", encoding="utf-8") as stream:
+            stream.write(tx_context())
+            stream.write(line("TX (app request) 00 00 07 26 03 22 F1 90"))
+            stream.write(line("RX (simulated) 00 00 07 2E 03 62 F1 90"))
+            stream.write(line("J2534 CLEAR_RX_BUFFER: queued D2/raw ISO-TP and staged CF dropped"))
+            stream.write(line("P2 D2 read command: no validated response fixture"))
+        report = self.report()
+        counts = report["native_marker_counts"]
+        self.assertEqual(counts["rx_enqueued"], 1)
+        self.assertEqual(counts["clear_rx_buffer"], 1)
+        self.assertEqual(counts["d2_no_fixture"], 1)
+        self.assertEqual(counts["rx_delivered"], 0)
+
+    def test_10_native_cem_no_fixture_and_unmatched_events_are_counted(self):
+        with self.log.open("a", encoding="utf-8") as stream:
+            stream.write(line("P3 CEM F114 probe: no configured CEM fixture; no response"))
+            stream.write(line("Unmatched request ID / protocol, no response"))
+        counts = self.report()["native_marker_counts"]
+        self.assertEqual(counts["p3_cem_f114_no_fixture"], 1)
+        self.assertEqual(counts["p3_unmatched"], 1)
+
 
 
 if __name__ == "__main__":

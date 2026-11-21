@@ -58,8 +58,22 @@ def analyze_window(virtual_log, baseline_path, host_class):
                 ("connect_result", "J2534 Connect result protocol/flags/baud/status (BE)"),
                 ("set_config", "J2534 SET_CONFIG channel/parameter/value/applied (BE)"),
                 ("app_tx", "TX (app request)"),
+                ("rx_enqueued", "RX (simulated)"),
+                ("rx_start_enqueued", "RX START_OF_MESSAGE (ISO15765)"),
                 ("rx_delivered", "PassThruReadMsgs -> delivered"),
+                ("clear_rx_buffer", "J2534 CLEAR_RX_BUFFER:"),
                 ("read_timeout", "PassThruReadMsgs timeout: channel / wait-ms / consecutive-count (BE)"),
+                ("d2_fixture_staged", "P2 D2 read-only recorded frames staged"),
+                ("d2_no_fixture", "P2 D2 read command: no validated response fixture"),
+                ("d2_no_recorded_fixture", "P2 D2 command: no recorded ECU fixture for target"),
+                ("d2_route_rejected", "P2 D2 strict route rejected"),
+                ("p3_cem_f114_no_fixture", "P3 CEM F114 probe: no configured CEM fixture; no response"),
+                ("p3_cem_f114_synthetic_reply", "P3 CEM F114 VIN reply (synthetic lab data)"),
+                ("p3_configured_did_reply", "Read-only configured ECU DID reply (not OEM verified)"),
+                ("p3_f1b0_unavailable", "P3 CEM F1B0 unavailable (no fixture)"),
+                ("p3_f1a3_unavailable", "P3 CEM F1A3 unavailable (no fixture)"),
+                ("p3_unmatched", "Unmatched request ID / protocol, no response"),
+                ("rx_filter_drop", "RX discarded by installed J2534 filter"),
                 ("close", "PassThruClose"),
                 ("disconnect", "PassThruDisconnect"),
         ):
@@ -68,8 +82,8 @@ def analyze_window(virtual_log, baseline_path, host_class):
 
     audited = discovery.audit(selected, include_obd=True)
     groups = Counter(
-        (item["route"], item["service"], item["protocol"],
-         item["baud_bps"], item["status"], item["reason"],
+        (item["can_id"], item["target"], item["route"], item["service"],
+         item["protocol"], item["baud_bps"], item["status"], item["reason"],
          item["request_origin"])
         for item in audited["transactions"]
     )
@@ -95,8 +109,13 @@ def analyze_window(virtual_log, baseline_path, host_class):
         "incomplete_edge_fragments_ignored": dropped,
         "native_marker_counts": {key: marker_counts[key] for key in (
             "dll_initialized", "open_success", "connect_result",
-            "set_config", "app_tx", "rx_delivered", "read_timeout",
-            "close", "disconnect")},
+            "set_config", "app_tx", "rx_enqueued", "rx_start_enqueued",
+            "rx_delivered", "clear_rx_buffer", "read_timeout",
+            "d2_fixture_staged", "d2_no_fixture", "d2_no_recorded_fixture",
+            "d2_route_rejected", "p3_cem_f114_no_fixture",
+            "p3_cem_f114_synthetic_reply", "p3_configured_did_reply",
+            "p3_f1b0_unavailable", "p3_f1a3_unavailable",
+            "p3_unmatched", "rx_filter_drop", "close", "disconnect")},
         "recognized_transactions": len(audited["transactions"]),
         "transaction_status_counts": audited["counts"],
         "transaction_groups": transaction_groups,
@@ -150,9 +169,17 @@ def main(argv=None):
         stream.write("\n")
     print("B3A55 Transaction window: ANALYZED")
     print("Host process category:", report["host_process_category"])
-    print("Native app TX / delivered RX:",
-          report["native_marker_counts"]["app_tx"], "/",
-          report["native_marker_counts"]["rx_delivered"])
+    counts = report["native_marker_counts"]
+    print("Native app TX / RX enqueued / RX delivered:",
+          counts["app_tx"], "/", counts["rx_enqueued"] + counts["rx_start_enqueued"],
+          "/", counts["rx_delivered"])
+    print("Native CLEAR_RX_BUFFER calls:", counts["clear_rx_buffer"])
+    print("D2 staged / missing fixture / route rejected:",
+          counts["d2_fixture_staged"], "/", counts["d2_no_fixture"] + counts["d2_no_recorded_fixture"],
+          "/", counts["d2_route_rejected"])
+    print("P3 CEM F114 no fixture / synthetic reply / unmatched:",
+          counts["p3_cem_f114_no_fixture"], "/",
+          counts["p3_cem_f114_synthetic_reply"], "/", counts["p3_unmatched"])
     print("Recognized transactions:", report["recognized_transactions"])
     print("Transaction statuses:", report["transaction_status_counts"])
     for item in report["transaction_groups"]:
