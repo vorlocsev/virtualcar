@@ -4,6 +4,7 @@ This file cannot certify Windows J2534 ABI correctness, PS native runtime,
 VIDA ReadVin, ECU identity, or hardware. Native C host tests are separate.
 """
 import configparser
+import re
 from pathlib import Path
 import unittest
 
@@ -91,6 +92,31 @@ class CEM50PSContracts(unittest.TestCase):
         self.assertIn("B9FBFrameCount = 0", self.ini)
         self.assertIn("FixtureAuthority = synthetic_lab_not_oem_attested", self.ini)
         self.assertIn("Enabled = 0", self.ini)
+
+    def test_11_native_ps_smoke_exact_matrix_equals_published_ini(self):
+        native = (EMULATOR / "adapters" / "cem50" /
+                  "Verify-J2534CEM50-PS.ps1").read_text(encoding="utf-8")
+        self.assertIn("PassThruConnect(dev,0x8004u", native)
+        self.assertIn("Pins(can,0x060Eu)", native)
+        self.assertIn("Pins(ms,0x030Bu)", native)
+        self.assertIn("r.ProtocolID==0x8004u", native)
+        self.assertIn("CEM50_PS_NATIVE_PASS", native)
+        self.assertNotIn("CreateSubKey", native)
+        matrix_match = re.search(
+            r"Frames=new byte\[13,8\] \{([\s\S]*?)\n \};", native)
+        self.assertIsNotNone(matrix_match, "Expected literal native 13x8 fixture")
+        matrix = [
+            bytes(int(part.strip(), 16) for part in row.split(","))
+            for row in re.findall(r"\{([^{}]+)\}", matrix_match.group(1))
+        ]
+        config = configparser.ConfigParser(interpolation=None)
+        config.optionxform = str
+        config.read_string(self.ini)
+        expected = [
+            bytes.fromhex(config.get("D2_50", "B9FBFrame" + format(i, "X")))
+            for i in range(13)
+        ]
+        self.assertEqual(matrix, expected)
 
 if __name__ == "__main__":
     unittest.main()
