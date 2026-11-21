@@ -1,6 +1,6 @@
 """CEM50 B9FB published owner-approved reference, separate x86 J2534 adapter.
 
-Ten synthetic/offline regression groups. NOT original VIDA acceptance.
+Eleven synthetic/offline regression groups. NOT original VIDA acceptance.
 """
 import configparser
 from pathlib import Path
@@ -143,6 +143,16 @@ class CEM50J2534AdapterTests(unittest.TestCase):
         self.assertIn("-not ($line -match '^([A-Za-z0-9_]+)", ps)
         self.assertNotIn("$line -notmatch '^([A-Za-z0-9_]+)", ps)
         self.assertLess(ps.index("PROFILE_OK: CEM50 13 frames"), ps.index("$reg ="))
+
+    def test_11_reject_non_emulator_source_dll_in_both_scripts(self):
+        install = (ADAPTER / "Install-J2534CEM50.ps1").read_text(encoding="utf-8")
+        native = (ADAPTER / "Verify-J2534CEM50.ps1").read_text(encoding="utf-8")
+        self.assertIn("GetFileName($src) -ine 'VirtualCarJ2534.dll'", install)
+        self.assertIn("GetFileName($src) -ine 'VirtualCarJ2534.dll'", native)
+        self.assertIn("Expected existing emulator source DLL", install)
+        self.assertIn("do not use physical J2534 DLL", native)
+        self.assertIn("[BitConverter]::ToUInt16($peBytes,$offset+4) -ne 0x014C", native)
+        self.assertIn("[BitConverter]::ToUInt16($peBytes,$offset+24) -ne 0x010B", native)
 
 
 if __name__ == "__main__":
