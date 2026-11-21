@@ -45,7 +45,7 @@ class NativeFilterChannelTests(unittest.TestCase):
 
     def test_02_wrong_channel_rejected(self):
         lines = fixture()
-        lines[7] = line("tx", 8, 5, 0x100, 125000, 30)
+        lines[6] = line("tx", 8, 5, 0x100, 125000, 30)
         result = audit.analyze(lines)
         self.assertIn("tx_rx_channel_differs_from_active_filter", result["failures"])
         self.assertEqual(result["status"], "NOT_VERIFIED")
