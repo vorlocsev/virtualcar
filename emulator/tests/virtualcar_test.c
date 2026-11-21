@@ -2937,6 +2937,113 @@ static void test_native_log_append_only(void){
  capture_connect_log=0;
  bytes_copy(g_log_path,saved_path,sizeof(saved_path));
 }
+
+/* J2534-2 pin-selectable virtual channels: NO physical J1962 or ECU hardware.
+   Existing J2534-1 transport and emulator fixture semantics must not change. */
+static void test_j2534_ps_cem50(U32 dev){
+ U32 can=0,ms=0,iso=0,n,i;
+ U32 old_flag=g_j2534_ps_enabled,old_spacing=g_d2_spacing_ms;
+ U32 old_count=g_ecu_count,old_iso_start=g_iso_rx_start;
+ ECU old_ecu=g_ecu[0];
+ D2_PROFILE old_fixture=g_d2[BASE_D2_FIXTURES],*d;
+ PASSTHRU_MSG tx,rx,mask,pattern;
+ U32 fid=0;
+ SCONFIG pin={CONFIG_J1962_PINS,0u},rate={1u,125000u};
+ SCONFIG_LIST list={1u,&pin},both={2u,0};
+ SCONFIG two[2];
+ static const U8 request[8]={0xCBu,0x50u,0xB9u,0xFBu,0u,0u,0u,0u};
+ static const U8 vinrequest[3]={0x22u,0xF1u,0x90u};
+ static const U8 expected[13][8]={
+  {0x8F,0x50,0xF9,0xFB,0x57,0x00,0x30,0x66},
+  {0x09,0x70,0x28,0x30,0x30,0x35,0x0D,0x0A},
+  {0x0A,0x59,0x56,0x31,0x43,0x52,0x38,0x35},
+  {0x0B,0x35,0x36,0x39,0x31,0x35,0x31,0x31},
+  {0x0C,0x35,0x36,0x36,0x0D,0x0A,0x32,0x35},
+  {0x0D,0x31,0x35,0x36,0x38,0x39,0x35,0x32},
+  {0x0E,0x0D,0x0A,0x32,0x39,0x35,0x0D,0x0A},
+  {0x0F,0x35,0x31,0x31,0x35,0x36,0x36,0x0D},
+  {0x08,0x0A,0x32,0x31,0x0D,0x0A,0x32,0x30},
+  {0x09,0x30,0x35,0x31,0x32,0x0D,0x0A,0x30},
+  {0x0A,0x30,0x30,0x30,0x34,0x33,0x33,0x38},
+  {0x0B,0x36,0x30,0x34,0x30,0x38,0x32,0x32},
+  {0x4F,0x30,0x36,0x39,0x33,0x31,0x0D,0x0A}
+ };
+ g_j2534_ps_enabled=0;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,500000u,&can)==ERR_INVALID_PROTOCOL_ID);
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,500000u,&iso)==ERR_INVALID_PROTOCOL_ID);
+ /* Opt-in is independent of registry: the API must actually implement pins. */
+ g_j2534_ps_enabled=1;
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,0u,&can)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,250000u,&can)==ERR_INVALID_BAUDRATE);
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,500000u,&can)==ERR_OK);
+ REQUIRE(channel(can)->protocol==PROTO_CAN && channel(can)->api_protocol==PROTO_CAN_PS);
+ REQUIRE(channel(can)->ps_pins==0u);
+ tx=frame(PROTO_CAN_PS,0x000FFFFEu,request,8u);
+ n=1;REQUIRE(PassThruWriteMsgs(can,&tx,&n,0)==ERR_PIN_INVALID && n==0u);
+ REQUIRE(PassThruIoctl(can,IO_GET_CONFIG,&list,0)==ERR_OK && pin.Value==0u);
+ pin.Value=0x0710u;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&list,0)==ERR_PIN_INVALID);
+ pin.Value=PINS_CAN_MS;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&list,0)==ERR_INVALID_BAUDRATE);
+ REQUIRE(channel(can)->ps_pins==0u);
+ pin.Value=PINS_CAN_HS;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&list,0)==ERR_OK);
+ pin.Value=0u;
+ REQUIRE(PassThruIoctl(can,IO_GET_CONFIG,&list,0)==ERR_OK && pin.Value==PINS_CAN_HS);
+ /* All changes are atomic: a requested HS-to-MS retune cannot slip through. */
+ two[0]=rate;two[1].Parameter=CONFIG_J1962_PINS;two[1].Value=PINS_CAN_MS;
+ both.ConfigPtr=two;
+ REQUIRE(PassThruIoctl(can,IO_SET_CONFIG,&both,0)==ERR_CHANNEL_IN_USE);
+ REQUIRE(channel(can)->baud==500000u && channel(can)->ps_pins==PINS_CAN_HS);
+ tx.ProtocolID=PROTO_CAN;
+ n=1;REQUIRE(PassThruWriteMsgs(can,&tx,&n,0)==ERR_MSG_PROTOCOL_ID && n==0u);
+ tx.ProtocolID=PROTO_CAN_PS;
+ /* A 13-frame synthetic CEM50 route is delivered over the PS channel,
+    with the EXTERNAL PS ProtocolID preserved in each PASSTHRU_MSG. */
+ d=&g_d2[BASE_D2_FIXTURES];
+ bytes_zero(d,sizeof(*d));d->target=0x50u;d->subcommand=0xFBu;
+ d->response_id=0x01200003u;d->frame_count=13u;d->baud=500000u;
+ for(i=0;i<13u;i++)bytes_copy(d->frame[i],expected[i],8u);
+ g_d2_spacing_ms=0u;
+ send(can,&tx);
+ for(i=0;i<13u;i++){
+  U32 j;
+  rx=readmsg(can);
+  REQUIRE(rx.ProtocolID==PROTO_CAN_PS && rx.DataSize==12u);
+  REQUIRE((rx.RxStatus&CAN_29BIT_ID)!=0u);
+  REQUIRE(rx.Data[0]==0x01u && rx.Data[1]==0x20u &&
+          rx.Data[2]==0x00u && rx.Data[3]==0x03u);
+  for(j=0;j<8u;j++)REQUIRE(rx.Data[4u+j]==expected[i][j]);
+ }
+ n=1;REQUIRE(PassThruReadMsgs(can,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruDisconnect(can)==ERR_OK);
+ /* MS pins 3/11 select 125k; they must NOT leak the 500k CEM50 fixture. */
+ REQUIRE(PassThruConnect(dev,PROTO_CAN_PS,0,125000u,&ms)==ERR_OK);
+ pin.Value=PINS_CAN_MS;
+ REQUIRE(PassThruIoctl(ms,IO_SET_CONFIG,&list,0)==ERR_OK);
+ send(ms,&tx);
+ n=1;REQUIRE(PassThruReadMsgs(ms,&rx,&n,0)==ERR_BUFFER_EMPTY && n==0u);
+ REQUIRE(PassThruDisconnect(ms)==ERR_OK);
+ /* ISO15765_PS reuses the existing UDS transport but retains its API ID.
+    This is simulated traffic, not an OEM ECU response or VIDA acceptance. */
+ REQUIRE(PassThruConnect(dev,PROTO_ISO15765_PS,0,500000u,&iso)==ERR_OK);
+ REQUIRE(channel(iso)->protocol==PROTO_ISO15765);
+ pin.Value=PINS_CAN_HS;
+ REQUIRE(PassThruIoctl(iso,IO_SET_CONFIG,&list,0)==ERR_OK);
+ g_ecu_count=1;g_ecu[0].req=0x7E0u;g_ecu[0].resp=0x7E8u;
+ g_iso_rx_start=0u;
+ tx=frame(PROTO_ISO15765_PS,0x7E0u,vinrequest,3u);
+ send(iso,&tx);
+ rx=readmsg(iso);
+ REQUIRE(rx.ProtocolID==PROTO_ISO15765_PS && rx.DataSize>=7u);
+ REQUIRE(rx.Data[4]==0x62u && rx.Data[5]==0xF1u && rx.Data[6]==0x90u);
+ REQUIRE(PassThruDisconnect(iso)==ERR_OK);
+ g_j2534_ps_enabled=old_flag;g_d2_spacing_ms=old_spacing;
+ g_d2[BASE_D2_FIXTURES]=old_fixture;
+ g_ecu_count=old_count;g_ecu[0]=old_ecu;g_iso_rx_start=old_iso_start;
+ puts("PASS J2534-2 PS: explicit pins, 13/13 CEM50, ISO15765 PS, no MS fixture leakage");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_native_log_append_only();
@@ -4330,6 +4437,7 @@ int main(){
  }
  test_stage42_multiecu_fc(dev);
  test_stage43_iso_rx_boundaries(dev);
+ test_j2534_ps_cem50(dev);
  REQUIRE(PassThruClose(dev)==ERR_OK);
  /* Lost host evidence is a test failure, never silently ignored. */
  REQUIRE(backend_capture_overflows==0);
