@@ -125,5 +125,21 @@ class CEM50PSContracts(unittest.TestCase):
         self.assertIn("mask.ProtocolID=PROTO_CAN_PS;pattern.ProtocolID=PROTO_CAN_PS;", self.ct)
         self.assertIn("PassThruStopMsgFilter(can,fid)==ERR_OK", self.ct)
 
+    def test_13_owner_windows_exact_head_full_suite_runner_is_isolated(self):
+        runner = (EMULATOR / "adapters" / "cem50" /
+                  "run_cem50_ps_validation.py").read_text(encoding="utf-8")
+        self.assertIn('"git", "clone", "--no-local", "--no-checkout"', runner)
+        self.assertIn('if branch != BRANCH:', runner)
+        self.assertIn('"status", "--porcelain"', runner)
+        self.assertIn('"-p", "test_*.py"', runner)
+        self.assertIn('"virtualcar-host-test.exe"', runner)
+        self.assertIn('["bash", "./build-cross.sh"]', runner)
+        self.assertIn("Verify-J2534CEM50-PS.ps1", runner)
+        self.assertIn("ps-native-check.json", runner)
+        self.assertIn('"vida_readvin_verified": False', runner)
+        self.assertIn('"installed_provider_modified": False', runner)
+        self.assertNotIn("CreateSubKey", runner)
+        self.assertNotIn("reg add", runner)
+
 if __name__ == "__main__":
     unittest.main()
