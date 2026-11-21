@@ -119,15 +119,29 @@ def analyze_window(virtual_log, baseline_path, host_class):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--virtual-log", required=True, type=Path,
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--virtual-log", type=Path,
                         help="Exact local SectorVVirtualCar.log used by B3A45")
+    source.add_argument("--candidate-manifest", type=Path,
+                        help="Private B3A46 manifest used to create the B3A45 baseline")
+    parser.add_argument("--candidate-index", type=int,
+                        help="Same 1-based candidate index used by B3A45")
     parser.add_argument("--private-baseline", required=True, type=Path,
                         help="B3A45 private baseline JSON, never upload")
     parser.add_argument("--host-class", required=True, choices=HOST_CLASSES)
     parser.add_argument("--output", required=True, type=Path,
                         help="New private categorical JSON, never upload")
     args = parser.parse_args(argv)
-    window._external(args.output, (args.virtual_log, args.private_baseline))
+    if args.candidate_manifest is not None:
+        if args.candidate_index is None:
+            parser.error("--candidate-index is required with --candidate-manifest")
+        args.virtual_log = window._candidate_log(
+            args.candidate_manifest, args.candidate_index)
+    elif args.candidate_index is not None:
+        parser.error("--candidate-index requires --candidate-manifest")
+    sources = (args.virtual_log, args.private_baseline)
+    protected = (*sources, args.candidate_manifest) if args.candidate_manifest else sources
+    window._external(args.output, protected)
     report = analyze_window(args.virtual_log, args.private_baseline,
                             args.host_class)
     args.output.parent.mkdir(parents=True, exist_ok=True)

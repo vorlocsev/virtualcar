@@ -138,9 +138,10 @@ SectorVVirtualCar.log. Это важно, если PassThruOpen/Connect прои
 
     $repo = 'C:\Users\vorloc\Downloads\CEM50-PS-PR419'
     $priv = Join-Path $env:LOCALAPPDATA 'VirtualCar\OwnerPrivate\CEM50PS-VIDA-Window'
-    $log = Join-Path $env:TEMP 'SectorVVirtualCar.log'
-    $out = Join-Path $priv 'transaction-delta.private.json'
-    py -3.12 (Join-Path $repo 'emulator\tools\audit_vida_j2534_window_transactions.py') --virtual-log $log --private-baseline (Join-Path $priv 'baseline.private.json') --host-class iexplore --output $out
+    $manifest = Join-Path $priv 'candidate-paths.private.json'
+    $index = 1  # замените на тот же индекс, который использовали в B3A45
+    $out = Join-Path $priv ('transaction-delta-' + [guid]::NewGuid().ToString('N') + '.private.json')
+    py -3 (Join-Path $repo 'emulator\tools\audit_vida_j2534_window_transactions.py') --candidate-manifest $manifest --candidate-index $index --private-baseline (Join-Path $priv 'baseline.private.json') --host-class iexplore --output $out
 
 B3A55 использует точную границу B3A45 (размер, SHA256 исторического префикса,
 идентичность пути, завершённые строки) и существующий J2534 transaction auditor.
