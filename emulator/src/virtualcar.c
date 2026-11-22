@@ -920,6 +920,7 @@ static void load_config(void) {
                 g_d2[j].subcommand==d->subcommand){d->frame_count=0;invalid_p2++;break;}
         if(d->frame_count && (!validate_d2_fixture(d) ||
             (d->subcommand==0xF0u &&
+             (d->target==0x40u || d->target==0x50u) &&
              !p2_b9f0_fixture_allowed(d->frame_count, d->frame, d->target)) ||
             !validate_fc140_fixture(d))){
             d->frame_count=0;invalid_p2++;
