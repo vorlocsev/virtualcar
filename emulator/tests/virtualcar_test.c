@@ -129,6 +129,8 @@ int QueryPerformanceCounter(I64 *v){*v=(I64)tick*1000+qpc_offset_us;return 1;}
 static void advance_test_us(U32 us){tick+=us/1000u;qpc_offset_us+=(I64)(us%1000u);if(qpc_offset_us>=1000){tick+=(U32)(qpc_offset_us/1000);qpc_offset_us%=1000;}}
 U32 GetCurrentProcessId(void){return 0xAABBCCDD;}
 U32 GetModuleFileNameA(PTR mod,char*out,U32 n){(void)mod;strncpy(out,"C:\\SectorV\\VirtualCarJ2534.dll",n);return (U32)strlen(out);}
+/* Injection is confined to deterministic host tests; never reads a real INI. */
+static U32 b9f0_loader_test_case=0;
 U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32 n,const char*path){
  (void)path;
  /* Only host-test fixture: the distributed INI keeps count=0 by default. */
@@ -149,6 +151,38 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
       snprintf(out+z*3,n-z*3,"%02X%s",(unsigned)z,z+1<142?" ":"");
     }
     return (U32)strlen(out);
+ }
+ /* B3A101: exercise the actual load_config() fixture gate, without
+    modifying an INI or installing a test J2534 provider. */
+ if((b9f0_loader_test_case>=1u && b9f0_loader_test_case<=3u) &&
+    strcmp(s,"D2_40_B9F0")==0){
+  if(strcmp(k,"FrameCount")==0)d=b9f0_loader_test_case==2u?"1":"3";
+  else if(strcmp(k,"Frame0")==0)
+   d=b9f0_loader_test_case==1u?"8F 40 F9 F0 00 00 00 00":
+     (b9f0_loader_test_case==2u?"CC 40 7F B9 31 00 00 00":"8F 40 F9 F0 00 30 72 85");
+  else if(strcmp(k,"Frame1")==0)
+   d=b9f0_loader_test_case==3u?"09 42 20 20 41 31 39 41":"09 00 00 00 00 00 00 00";
+  else if(strcmp(k,"Frame2")==0)
+   d=b9f0_loader_test_case==3u?"4C 63 20 41 41 00 00 00":"4C 00 00 00 00 00 00 00";
+ }
+ if((b9f0_loader_test_case==4u || b9f0_loader_test_case==5u) &&
+    strcmp(s,"D2_50_B9F0")==0){
+  if(strcmp(k,"FrameCount")==0)d=b9f0_loader_test_case==4u?"3":"1";
+  else if(strcmp(k,"Frame0")==0)
+   d=b9f0_loader_test_case==4u?"8F 50 F9 F0 00 00 00 00":"CC 50 7F B9 31 00 00 00";
+  else if(strcmp(k,"Frame1")==0)d="09 00 00 00 00 00 00 00";
+  else if(strcmp(k,"Frame2")==0)d="4C 00 00 00 00 00 00 00";
+ }
+ if((b9f0_loader_test_case==6u || b9f0_loader_test_case==7u) &&
+    strcmp(s,"D2_Node0")==0){
+  if(strcmp(k,"Enabled")==0)d="1";
+  else if(strcmp(k,"Target")==0)d="60";
+  else if(strcmp(k,"Opcode")==0)d="F0";
+  else if(strcmp(k,"Baud")==0)d="500000";
+  else if(strcmp(k,"ResponseId")==0)d="01000003";
+  else if(strcmp(k,"FrameCount")==0)d="1";
+  else if(strcmp(k,"Frame0")==0)
+   d=b9f0_loader_test_case==6u?"CC 60 F9 F0 00 00 00 00":"CC 60 7F B9 31 00 00 00";
  }
  snprintf(out,n,"%s",d);return (U32)strlen(out);
 }
@@ -3051,11 +3085,37 @@ static void test_j2534_ps_cem50(U32 dev){
  puts("PASS J2534-2 PS: explicit pins, 13/13 CEM50, ISO15765 PS, no MS fixture leakage");
 }
 
+/* Regression at the real INI loader boundary. The host's only input is
+   the synthetic GetPrivateProfileStringA shim above, not a real vehicle. */
+static void test_b9f0_real_loader_scope(void){
+ b9f0_loader_test_case=1u;load_config();
+ REQUIRE(g_d2[1].frame_count==0u); /* invalid 40 B9F0: 15 zero bytes */
+ REQUIRE(g_d2[3].frame_count==3u); /* independent 50 donor fixture */
+ b9f0_loader_test_case=2u;load_config();
+ REQUIRE(g_d2[1].frame_count==1u); /* valid 40 negative D2 B9 */
+ b9f0_loader_test_case=3u;load_config();
+ REQUIRE(g_d2[1].frame_count==3u); /* public donor FORMAT, not an OEM claim */
+ b9f0_loader_test_case=4u;load_config();
+ REQUIRE(g_d2[3].frame_count==0u); /* invalid 50 B9F0: 15 zero bytes */
+ b9f0_loader_test_case=5u;load_config();
+ REQUIRE(g_d2[3].frame_count==1u); /* valid 50 negative D2 B9 */
+ b9f0_loader_test_case=6u;load_config();
+ REQUIRE(g_d2[6].target==0x60u && g_d2[6].subcommand==0xF0u);
+ REQUIRE(g_d2[6].frame_count==1u); /* non-CEM optional D2 positive */
+ b9f0_loader_test_case=7u;load_config();
+ REQUIRE(g_d2[6].frame_count==1u); /* non-CEM optional D2 negative */
+ b9f0_loader_test_case=0u;load_config();
+ REQUIRE(g_d2[1].frame_count==0u && g_d2[3].frame_count==3u);
+ REQUIRE(g_d2[6].frame_count==0u && g_d2[0].frame_count==1u);
+ puts("PASS B3A101 B9F0 config loader: reject zero, preserve negative, non-CEM and B9FB");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_native_log_append_only();
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
+ test_b9f0_real_loader_scope();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_d2_replay_isolation_on_set_config(dev);

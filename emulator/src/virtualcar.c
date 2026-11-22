@@ -29,6 +29,7 @@ typedef unsigned int U32;
 typedef unsigned long U32; /* Windows LLP64: 32-bit unsigned long */
 #endif
 #include "p2core/p2_j2534_bridge.h"
+#include "p2core/p2_b9f0_fixture_guard.h"
 typedef unsigned char U8;
 typedef unsigned long long U64;
 typedef long long I64;
@@ -917,7 +918,11 @@ static void load_config(void) {
         if(i>=BASE_D2_FIXTURES && d->frame_count)
             for(j=0;j<i;j++)if(g_d2[j].frame_count && g_d2[j].target==d->target &&
                 g_d2[j].subcommand==d->subcommand){d->frame_count=0;invalid_p2++;break;}
-        if(d->frame_count && (!validate_d2_fixture(d) || !validate_fc140_fixture(d))){
+        if(d->frame_count && (!validate_d2_fixture(d) ||
+            (d->subcommand==0xF0u &&
+             (d->target==0x40u || d->target==0x50u) &&
+             !p2_b9f0_fixture_allowed(d->frame_count, d->frame, d->target)) ||
+            !validate_fc140_fixture(d))){
             d->frame_count=0;invalid_p2++;
         }
     }
