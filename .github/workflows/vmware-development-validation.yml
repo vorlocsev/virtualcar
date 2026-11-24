@@ -299,6 +299,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'B3A320 battery prerequisite failed' }
             & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'rem-baseline-off') -Expanded -Scenario 4 -BatterySync -RemProbe -RemSync
             if ($LASTEXITCODE -ne 0) { throw 'B3A320 baseline prerequisite failed' }
+            foreach ($scenario in @('0','1','2','3','4','invalid')) {
+              & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir ('supply-sync-'+$scenario)) -Enabled -Expanded -Scenario $scenario -BatterySync -RemProbe -RemSync -SupplyProbe -SupplySync
+              if ($LASTEXITCODE -ne 0) { throw "B3A324 native supply sync failed: $scenario" }
+            }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'supply-sync-off') -Enabled -Expanded -Scenario 4 -BatterySync -RemProbe -RemSync -SupplyProbe
+            if ($LASTEXITCODE -ne 0) { throw 'B3A324 disabled failed' }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'supply-battery-off') -Enabled -Expanded -Scenario 4 -RemProbe -SupplyProbe -SupplySync
+            if ($LASTEXITCODE -ne 0) { throw 'B3A324 battery prerequisite failed' }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'supply-baseline-off') -Expanded -Scenario 4 -BatterySync -RemProbe -SupplyProbe -SupplySync
+            if ($LASTEXITCODE -ne 0) { throw 'B3A324 baseline prerequisite failed' }
           } finally {
             if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
           }

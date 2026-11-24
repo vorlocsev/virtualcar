@@ -1,5 +1,13 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A324 — remaining observed voltage routes (candidate)
+
+- Trusted development `d5a0747e3250f8496ba0ebeaaccdb9d985edc7f9`, exact [VMware #282](https://github.com/vorlocsev/virtualcar/actions/runs/45468263653) PASS. Owner B3A321 screenshot and B3A322 combined trace: ECM 120D and REM D0D4 14 V; REM 1A02 8000, CCM 0080 0320 and global indicator 12.5 V. Background CEM DD02 32, A45F 07; no READ_VBATT marker in captured interval. DD02 plausible global source, not causally established.
+- Owner-private B3A323 R2 catalog: 13785 candidates, 1819 REID. Direct 16-bit REM "Battery voltage, REM" x*25/65535 and CCM "Supply voltage" x/64; 8-bit CEM supply x*0.25/x/4. Match prior displayed baseline; exact selected variants not bound. A45F unchanged.
+- New independent default-off [B3A324_SupplyVoltageSyncLab] Enabled=1 requires B3A319 and B3A309; existing D2/current-data and GGD CEM route gates unchanged. Only existing REM 1A02, CCM 0080 and CEM DD02 payload adjusted. 14 V -> 8F5C,0380,38. Exact production helper and expanded harness GCC -Werror ASan/UBSan rechecked PASS (FNV1a 90b3b3d0/c4e79744): 15 scenario values, disabled controls, 60003 rounding checks, 4080 request mutations, invalid headers and shapes.
+- Nine new isolated x86 matrix invocations: five states, invalid fallback, three prerequisite negatives; verify two D2 responses, CEM DD02/A45F with both TX flags, wrong baud and unknown DID silence. CI pending. No original VIDA or physical testing of this candidate. No private raw data committed.
+- Next: exact post-merge CI and separate owner-local provider (no Virtual in name), repeat five-value acceptance, retain B3A321. Verify F443/D994 and nonzero DA48 separately.
+
 ## B3A320 — REM voltage sync (candidate)
 
 - Trusted development `1601703e5176a7a6934d442993e3216415b54eac`: exact [VMware #281](https://github.com/vorlocsev/virtualcar/actions/runs/45416351896) 38/38 PASS, 1199 Python PASS / 4 skipped; 16 native runs checked READ_VBATT HS and LS, custom voltage preserved when disabled or baseline off.

@@ -8,7 +8,9 @@ param(
     [ValidateSet('0','1','2','3','4','invalid')][string]$Scenario='0',
     [switch]$BatterySync,
     [switch]$RemProbe,
-    [switch]$RemSync
+    [switch]$RemSync,
+    [switch]$SupplyProbe,
+    [switch]$SupplySync
 )
 $ErrorActionPreference='Stop'
 if ([IntPtr]::Size -ne 4) { throw 'Use 32-bit Windows PowerShell' }
@@ -46,6 +48,12 @@ if ($Scenario -ne "0") { $profile += [Environment]::NewLine + "[B3A316_EcmScenar
 if ($BatterySync) { $profile += [Environment]::NewLine + "[B3A319_BatterySyncLab]" + [Environment]::NewLine + "Enabled=1" }
 if ($RemProbe) { $profile += [Environment]::NewLine + "[B3A267_CurrentDataLab]" + [Environment]::NewLine + "Enabled=1" }
 if ($RemSync) { $profile += [Environment]::NewLine + "[B3A320_RemVoltageSyncLab]" + [Environment]::NewLine + "Enabled=1" }
+if ($SupplyProbe) {
+    if (-not $RemProbe) { throw 'SupplyProbe requires RemProbe' }
+    $profile=$profile.Replace('ECUCount=1','ECUCount=2').Replace('StrictJ2534Filters=0',"StrictJ2534Filters=0"+[Environment]::NewLine+"EnableGGDCemLab=1")
+    $profile += [Environment]::NewLine + "[ECU1]" + [Environment]::NewLine + "RequestId=18DA50F1" + [Environment]::NewLine + "ResponseId=18DAF150" + [Environment]::NewLine + "ExpectedBaud=500000" + [Environment]::NewLine + "PartNumber=LAB-CEM-HW"
+}
+if ($SupplySync) { $profile += [Environment]::NewLine + "[B3A324_SupplyVoltageSyncLab]" + [Environment]::NewLine + "Enabled=1" }
 [IO.File]::WriteAllText((Join-Path $dir 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
@@ -83,14 +91,14 @@ public static class EcmLiveNative {
         try{uint n=1;Check(PassThruReadMsgs(ch,p,ref n,0)==16 && n==0,"unexpected RX");}
         finally{Marshal.FreeHGlobal(p);}
     }
-    static void Expect(uint ch,byte[] payload){
+    static void Expect(uint ch,byte[] payload,uint rx=Rx){
         IntPtr p=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
         try{
             uint n=1;Check(PassThruReadMsgs(ch,p,ref n,200)==0 && n==1,"missing RX");
             Msg m=(Msg)Marshal.PtrToStructure(p,typeof(Msg));
             Check(m.ProtocolID==6 && m.RxStatus==0x100 && m.DataSize==payload.Length+4 && m.ExtraDataIndex==m.DataSize,"RX metadata");
             uint id=((uint)m.Data[0]<<24)|((uint)m.Data[1]<<16)|((uint)m.Data[2]<<8)|m.Data[3];
-            Check(id==Rx,"RX CAN ID");
+            Check(id==rx,"RX CAN ID");
             for(int i=0;i<payload.Length;i++)Check(m.Data[4+i]==payload[i],"RX payload");
         }finally{Marshal.FreeHGlobal(p);}
         Empty(ch);
@@ -114,7 +122,7 @@ public static class EcmLiveNative {
             for(int j=3;j<reply.Length;j++)reply[j]=(byte)(raw>>(8*(reply.Length-1-j)));
         }
     }
-    public static void Run(bool enabled,bool expanded,int scenario,bool batterySync,bool remProbe,bool remSync){
+    public static void Run(bool enabled,bool expanded,int scenario,bool batterySync,bool remProbe,bool remSync,bool supplyProbe,bool supplySync){
         uint[][] states={
             new uint[]{0xa000,0x60,0x60,0x0,0x0,0x0,0x3c,0x0,0x0,0x60,0x0,0x3c,0x0,0x64,0x0,0x0,0x64,0xc8,0x3333},
             new uint[]{0x8666,0x60,0x60,0x43480000,0x320,0x0,0x3c,0x0,0x0,0x60,0x26,0x3c,0xc8,0x64,0x0,0x0,0x5a,0xc8,0x2e14},
@@ -144,6 +152,25 @@ public static class EcmLiveNative {
                 Send(can,0x000FFFFE,0x100,new byte[]{0xCD,0x40,0xA6,0x1A,0x04,1,0,0},5);
                 ExpectD2(can,new byte[]{0xCD,0x40,0xE6,0x1A,0x04,6,0,0});
                 Console.WriteLine("B3A320_NATIVE_REM_PASS state="+scenario+" raw="+expected+" remSync="+remSync+" batterySync="+batterySync+" baseline="+enabled);
+                if(supplyProbe){
+                    int state=supplySync&&batterySync&&enabled?scenario:0;
+                    uint[] rem={0x8000,0x6B85,0x9168,0x8F5C,0x8F5C};
+                    uint[] ccm={0x0320,0x02A0,0x038D,0x0380,0x0380};
+                    byte[] cem={0x32,0x2A,0x39,0x38,0x38};
+                    Send(can,0x000FFFFE,0x100,new byte[]{0xCD,0x46,0xA6,0x1A,0x02,1,0,0},5);
+                    ExpectD2(can,new byte[]{0xCD,0x46,0xE6,0x1A,0x02,(byte)(rem[state]>>8),(byte)rem[state],0});
+                    Send(can,0x000FFFFE,0x100,new byte[]{0xCD,0x29,0xA6,0x00,0x80,1,0,0},5);
+                    ExpectD2(can,new byte[]{0xCD,0x29,0xE6,0x00,0x80,(byte)(ccm[state]>>8),(byte)ccm[state],0});
+                    foreach(uint flags in new uint[]{0x100,0x140}){
+                        Send(hs,0x18DA50F1,flags,new byte[]{0x22,0xDD,0x02});
+                        Expect(hs,new byte[]{0x62,0xDD,0x02,cem[state]},0x18DAF150);
+                        Send(hs,0x18DA50F1,flags,new byte[]{0x22,0xA4,0x5F});
+                        Expect(hs,new byte[]{0x62,0xA4,0x5F,0x04},0x18DAF150);
+                    }
+                    Send(ls,0x18DA50F1,0x140,new byte[]{0x22,0xDD,0x02});Empty(ls);Empty(hs);
+                    Send(hs,0x18DA50F1,0x140,new byte[]{0x22,0xDD,0x03});Empty(hs);
+                    Console.WriteLine("B3A324_NATIVE_SUPPLY_PASS state="+scenario+" effective="+state);
+                }
             }
             byte[][] replies={
                 new byte[]{0x62,0x12,0x0D,0xA0,0},
@@ -226,7 +253,7 @@ public static class EcmLiveNative {
     Add-Type -TypeDefinition $source -Language CSharp
     $expectedState=0
     if ($Scenario -ne 'invalid') { $expectedState=[int]$Scenario }
-    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState,[bool]$BatterySync,[bool]$RemProbe,[bool]$RemSync)
+    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState,[bool]$BatterySync,[bool]$RemProbe,[bool]$RemSync,[bool]$SupplyProbe,[bool]$SupplySync)
 } finally {
     $env:LOCALAPPDATA=$savedLocal
     $env:TEMP=$savedTemp
