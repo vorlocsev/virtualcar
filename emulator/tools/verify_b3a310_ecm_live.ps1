@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)][string]$DllPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [switch]$Enabled,
-    [switch]$Expanded
+    [switch]$Expanded,
+    [ValidateSet('0','1','2','3','4','invalid')][string]$Scenario='0'
 )
 $ErrorActionPreference='Stop'
 if ([IntPtr]::Size -ne 4) { throw 'Use 32-bit Windows PowerShell' }
@@ -37,6 +38,7 @@ BackendTelemetryEnabled=0
 '@
 if ($Enabled) { $profile += [Environment]::NewLine + "[B3A309_EcmLiveDataLab]" + [Environment]::NewLine + "Enabled=1" }
 if ($Expanded) { $profile += [Environment]::NewLine + "[B3A314_EcmExtendedLiveLab]" + [Environment]::NewLine + "Enabled=1" }
+if ($Scenario -ne "0") { $profile += [Environment]::NewLine + "[B3A316_EcmScenarioLab]" + [Environment]::NewLine + "Enabled=1" + [Environment]::NewLine + "State=$Scenario" }
 [IO.File]::WriteAllText((Join-Path $dir 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
@@ -85,7 +87,22 @@ public static class EcmLiveNative {
         }finally{Marshal.FreeHGlobal(p);}
         Empty(ch);
     }
-    public static void Run(bool enabled,bool expanded){
+    static void ApplyScenario(byte[][] replies,uint[] values,int offset){
+        for(int i=0;i<replies.Length;i++){
+            byte[] reply=replies[i];
+            uint raw=values[offset+i];
+            for(int j=3;j<reply.Length;j++)reply[j]=(byte)(raw>>(8*(reply.Length-1-j)));
+        }
+    }
+    public static void Run(bool enabled,bool expanded,int scenario){
+        uint[][] states={
+            new uint[]{0xa000,0x60,0x60,0x0,0x0,0x0,0x3c,0x0,0x0,0x60,0x0,0x3c,0x0,0x64,0x0,0x0,0x64,0xc8,0x3333},
+            new uint[]{0x8666,0x60,0x60,0x43480000,0x320,0x0,0x3c,0x0,0x0,0x60,0x26,0x3c,0xc8,0x64,0x0,0x0,0x5a,0xc8,0x2e14},
+            new uint[]{0xb5c3,0x60,0x60,0x44898000,0x1130,0x0,0x3c,0x0,0x0,0x68,0x40,0x3c,0x384,0x64,0x0,0x0,0x2d,0xc8,0x170a},
+            new uint[]{0xb333,0x68,0xa0,0x44610000,0xe10,0x0,0x41,0x0,0x0,0x78,0x33,0x64,0x2bc,0x64,0x0,0x0,0x26,0xc8,0x1375},
+            new uint[]{0xb333,0x70,0xd0,0x442f0000,0xaf0,0x0,0x46,0x0,0x0,0x88,0x2e,0x82,0x226,0x64,0x0,0x0,0x23,0xc8,0x11ec}
+        };
+        Check(scenario>=0 && scenario<states.Length,"scenario index");
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"x86 ABI");
         uint dev=0,hs=0,ls=0;bool opened=false;
         try{
@@ -101,6 +118,7 @@ public static class EcmLiveNative {
                 new byte[]{0x62,0xF4,0x0D,0},
                 new byte[]{0x62,0xF4,0x0F,0x3C}
             };
+            ApplyScenario(replies,states[scenario],0);
             byte[] nrc={0x7F,0x22,0x31};
             foreach(uint flags in new uint[]{0x100,0x140}){
                 foreach(byte[] reply in replies){
@@ -123,6 +141,7 @@ public static class EcmLiveNative {
                 new byte[]{0x62,0xD9,0xA4,0xC8},
                 new byte[]{0x62,0xDA,0x47,0x33,0x33}
             };
+            ApplyScenario(extra,states[scenario],7);
             foreach(uint flags in new uint[]{0x100,0x140}){
                 foreach(byte[] reply in extra){
                     Send(hs,Tx,flags,new byte[]{0x22,reply[1],reply[2]});
@@ -151,13 +170,16 @@ public static class EcmLiveNative {
             if(opened)clean &= PassThruClose(dev)==0;
             Check(clean,"cleanup");
         }
+        Console.WriteLine("B3A316_NATIVE_SCENARIO_PASS state="+scenario+" baseline="+enabled+" expanded="+expanded);
         Console.WriteLine("B3A310_NATIVE_PASS enabled="+enabled);
     }
 }
 '@
     $source=$source.Replace('__DLL__',$isolated.Replace('"','""'))
     Add-Type -TypeDefinition $source -Language CSharp
-    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded)
+    $expectedState=0
+    if ($Scenario -ne 'invalid') { $expectedState=[int]$Scenario }
+    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState)
 } finally {
     $env:LOCALAPPDATA=$savedLocal
     $env:TEMP=$savedTemp

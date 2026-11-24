@@ -829,6 +829,7 @@ static int validate_fc140_fixture(const D2_PROFILE *d){
     for(k=0;k<140;k++)sum+=(U32)stream[5+k];
     return stream[4]==(U8)sum;
 }
+static void ecm_lab_select_scenario(U32 enabled,const char *state);
 static void load_config(void) {
     U32 n,i;char v[512],key[24];
     /* Include the host executable and PID so GUI self-checks and SectorV
@@ -990,6 +991,12 @@ static void load_config(void) {
     g_b3a309_ecm_live_lab=(str_len(v)==1u && v[0]=='1')?1u:0u;
     GetPrivateProfileStringA("B3A314_EcmExtendedLiveLab","Enabled","0",v,sizeof(v),g_profile_path);
     g_b3a314_ecm_live_lab=(str_len(v)==1u && v[0]=='1')?1u:0u;
+    {U32 enabled;
+        GetPrivateProfileStringA("B3A316_EcmScenarioLab","Enabled","0",v,sizeof(v),g_profile_path);
+        enabled=(str_len(v)==1u && v[0]=='1')?1u:0u;
+        GetPrivateProfileStringA("B3A316_EcmScenarioLab","State","0",v,sizeof(v),g_profile_path);
+        ecm_lab_select_scenario(enabled,v);
+    }
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
     bytes_zero(g_trace,sizeof(g_trace));g_trace_count=0;
@@ -2044,7 +2051,21 @@ typedef struct {
     U32 ambient_kpa,manifold_kpa;
     int coolant_c,intake_c,ecm_c;
 } ECM_LAB_STATE;
-static const ECM_LAB_STATE g_ecm_lab_state={12500u,0u,0u,0u,0u,0u,100u,100u,20,20,20};
+/* B3A316: owner-selected fixed synthetic snapshots, not an OEM calibration. */
+static const ECM_LAB_STATE g_ecm_lab_scenarios[]={
+    {12500u,0u,0u,0u,0u,0u,100u,100u,20,20,20},
+    {10500u,200u,0u,0u,150u,200u,100u,90u,20,20,20},
+    {14200u,1100u,0u,0u,250u,900u,100u,45u,20,20,25},
+    {14000u,900u,0u,0u,200u,700u,100u,38u,60,25,35},
+    {14000u,700u,0u,0u,180u,550u,100u,35u,90,30,45}
+};
+static U32 g_ecm_lab_scenario=0u;
+static void ecm_lab_select_scenario(U32 enabled,const char *state){
+    g_ecm_lab_scenario=0u;
+    if(enabled==1u && state && state[0]>='0' && state[0]<='4' && state[1]=='\0')
+        g_ecm_lab_scenario=(U32)(state[0]-'0');
+}
+#define g_ecm_lab_state (g_ecm_lab_scenarios[g_ecm_lab_scenario])
 static U32 ecm_lab_temperature_valid(int t){return t>=-40 && t<=119;}
 static U32 ecm_lab_state_valid(const ECM_LAB_STATE *s){
     return s && s->battery_mv<=20000u && s->rpm<=16383u && s->speed_kph<=255u &&

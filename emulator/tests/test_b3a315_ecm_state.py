@@ -25,3 +25,11 @@ class TestSharedEcmState(unittest.TestCase):
             subprocess.run(compiler+["-std=c11","-Wall","-Wextra","-Werror",str(folder/"harness.c"),"-o",str(exe)],check=True,timeout=60)
             result=subprocess.run([str(exe)],check=True,capture_output=True,text=True,timeout=20)
             self.assertIn("B3A315_MODEL_PASS",result.stdout)
+            self.assertIn("B3A316_SCENARIO_PASS",result.stdout)
+
+    def test_scenario_config_wiring(self):
+        source=(ROOT/"src"/"virtualcar.c").read_text(encoding="utf-8")
+        self.assertIn('GetPrivateProfileStringA("B3A316_EcmScenarioLab","Enabled","0"',source)
+        self.assertIn('GetPrivateProfileStringA("B3A316_EcmScenarioLab","State","0"',source)
+        self.assertIn("ecm_lab_select_scenario(enabled,v);",source)
+        self.assertEqual(source.count("ecm_lab_encode(&g_ecm_lab_state,"),2)
