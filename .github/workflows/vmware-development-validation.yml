@@ -86,6 +86,8 @@ on:
           - a53769967d20b0e3faf18e3f63da0f42b6ef0cfb
           # B3A304: exact B3A302-R1 native and B3A303 trace-validated PR #436 head.
           - 6fa632b09eed51b884140eaddfc765ec9d84185e
+          # PR #439 R2: exact locally validated M5D2eB marker and Host recovery candidate.
+          - 7ca4904fb227a124743fefec002d15458025f128
 
 permissions:
   contents: read
@@ -146,6 +148,7 @@ jobs:
             'd06f8a13e2edd281138f4cfac2075c485d579a87'
             'a53769967d20b0e3faf18e3f63da0f42b6ef0cfb'
             '6fa632b09eed51b884140eaddfc765ec9d84185e'
+            '7ca4904fb227a124743fefec002d15458025f128'
           )
           if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
               $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
@@ -832,7 +835,9 @@ jobs:
             $deadline = [DateTime]::UtcNow.AddSeconds(12)
             while ([DateTime]::UtcNow -lt $deadline) {
               if (Test-Path -LiteralPath $Path) {
-                if ((Get-Content -LiteralPath $Path -Raw).Trim() -eq $Value) { return }
+                $markerContent = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+                if (-not [string]::IsNullOrWhiteSpace($markerContent) -and
+                    $markerContent.Trim() -eq $Value) { return }
               }
               if ($Client.HasExited) {
                 throw ('M5D2c client exited before ' + $Value + ': ' + $Client.ExitCode)
