@@ -26,6 +26,7 @@ class TestSharedEcmState(unittest.TestCase):
             result=subprocess.run([str(exe)],check=True,capture_output=True,text=True,timeout=20)
             self.assertIn("B3A315_MODEL_PASS",result.stdout)
             self.assertIn("B3A316_SCENARIO_PASS",result.stdout)
+            self.assertIn("B3A318_TWO_DID_PASS",result.stdout)
 
     def test_scenario_config_wiring(self):
         source=(ROOT/"src"/"virtualcar.c").read_text(encoding="utf-8")

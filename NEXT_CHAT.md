@@ -1,5 +1,12 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A318 — два наблюдавшихся запроса ECM (candidate)
+
+- Trusted development `2e460a9aad54a2b9a3497add9971689ed8e5bae2`: exact [VMware #279](https://github.com/vorlocsev/virtualcar/actions/runs/45410000759), 38/38 PASS, Python 1198 PASS/4 skipped, 342 native DID exchanges, D2 98/98.
+- B3A317 owner GUI 9/9 scenario 4 values PASS; ECM 14 V vs Vehicle Communication 12.5 V. Fresh owner log ~20 s: 843/843 matched ECM frames, provider J2534 Diagnostic Lab B3A317, channel 2; F44A positive 281, F443 and D994 each 281 NRC31, no timeout markers. No nonzero DA48/F40C or battery IOCTL captured in this window.
+- Catalog confirms F443 16-bit unsigned scaling x*100/255 and D994 32-bit float g/s. Add to existing B3A314 opt-in; synthetic equal calculated/absolute load is a simplifying assumption, D994 big-endian binary32 a candidate, not OEM wire evidence. Local exact model/harness GCC ASan/UBSan PASS previous 95 + 10 new state/DID vectors; exhaustive binary32 centi-g/s conversion 65536/65536 matches reference. Native 9-process matrix adds 36 DID exchanges; CI pending.
+- Next: verify exact-head CI; original VIDA accept F443/D994 and capture nonzero DA48/F40C. Separately investigate READ_VBATT (uses Vehicle.BatteryMv), REM/CEM voltage and global indicator. No cross-ECU sync yet; no private raw data committed.
+
 ## B3A316 — фиксированные лабораторные сценарии ECM (candidate)
 
 - Trusted development `5189093b37d13514d4a40f7597baaf5d2433ca6a`: exact [VMware #278](https://github.com/vorlocsev/virtualcar/actions/runs/45408147891), 38/38 PASS; Python 1197 PASS / 4 skipped; 19 DID in four native opt-in combinations, D2 98/98. Shared model test passed.
