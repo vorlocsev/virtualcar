@@ -152,6 +152,16 @@ public static class EcmLiveNative {
             Send(ls,Tx,0x140,new byte[]{0x22,0xD9,0xAC});Empty(ls);Empty(hs);
             Send(hs,0x18DA11F1,0x140,new byte[]{0x22,0xD9,0xAC});Empty(hs);
             Console.WriteLine("B3A314_DID_24_EXCHANGES_PASS expanded="+expanded+" baseline="+enabled);
+            uint[][] observedValues={new uint[]{0,0},new uint[]{38,0x40000000},new uint[]{64,0x41100000},new uint[]{51,0x40E00000},new uint[]{46,0x40B00000}};
+            byte[][] observedReplies={new byte[]{0x62,0xF4,0x43,0,0},new byte[]{0x62,0xD9,0x94,0,0,0,0}};
+            ApplyScenario(observedReplies,observedValues[scenario],0);
+            foreach(uint flags in new uint[]{0x100,0x140}){
+                foreach(byte[] reply in observedReplies){
+                    Send(hs,Tx,flags,new byte[]{0x22,reply[1],reply[2]});
+                    Expect(hs,expanded?reply:nrc);
+                }
+            }
+            Console.WriteLine("B3A318_DID_4_EXCHANGES_PASS expanded="+expanded+" state="+scenario);
             Send(hs,Tx,0x140,new byte[]{0x22,0x12,0x0E});Expect(hs,nrc);
             Console.WriteLine("B3A310_UNKNOWN_DID_PASS");
             Send(ls,Tx,0x140,new byte[]{0x22,0x12,0x0D});Empty(ls);Empty(hs);

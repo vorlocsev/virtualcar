@@ -41,7 +41,9 @@ int main(void){
         {0xF44A,1,{0x00}},
         {0xF40B,1,{0x64}},
         {0xD9A4,1,{0xC8}},
-        {0xDA47,2,{0x33,0x33}}
+        {0xDA47,2,{0x33,0x33}},
+        {0xF443,2,{0,0}},
+        {0xD994,4,{0,0,0,0}}
     };
     U32 i;
 #define CALL() answer_b3a314_ecm_live_lab(&c,&e,id,0x100,req,3,out)

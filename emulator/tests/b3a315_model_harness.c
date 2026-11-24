@@ -39,6 +39,15 @@ int main(void){
     for(i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){ecm_lab_select_scenario(1,"4");ecm_lab_select_scenario(1,invalid[i]);assert(g_ecm_lab_scenario==0);}
     ecm_lab_select_scenario(2,"4");assert(g_ecm_lab_scenario==0);
     }
+    {const U32 load[]={0u,38u,64u,51u,46u};
+    const U32 maf[]={0u,0x40000000u,0x41100000u,0x40e00000u,0x40b00000u};
+    for(U32 k=0;k<5;k++){char state[2]={(char)('0'+k),0};ecm_lab_select_scenario(1,state);
+        check(&g_ecm_lab_state,1,0xF443,2,load[k]);check(&g_ecm_lab_state,1,0xD994,4,maf[k]);
+        assert(!ecm_lab_encode(&g_ecm_lab_state,0,0xF443,b));assert(!ecm_lab_encode(&g_ecm_lab_state,0,0xD994,b));}
+    for(i=0;i<=65535u;i++){float ref=(float)i/100.0f;U32 bits;memcpy(&bits,&ref,4);assert(ecm_lab_maf_bits(i)==bits);}
+    ecm_lab_select_scenario(0,"0");
+    }
+    puts("B3A318_TWO_DID_PASS");
     puts("B3A316_SCENARIO_PASS");
     puts("B3A315_MODEL_PASS");return 0;
 }

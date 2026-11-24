@@ -2080,6 +2080,20 @@ static U32 ecm_lab_rpm_bits(U32 rpm){
     while(v>1u){v>>=1;e++;}
     return ((127u+e)<<23)|((rpm<<(23u-e))&0x7FFFFFu);
 }
+/* Candidate IEEE binary32 for centi-g/s, rounded to nearest/even. No CRT or FP dependency. */
+static U32 ecm_lab_maf_bits(U32 centi){
+    U32 num=centi,den=100u,frac=0u,i,rem;int exponent=127;
+    if(!num)return 0u;
+    while(num<den){num*=2u;exponent--;}
+    while(num>=2u*den){den*=2u;exponent++;}
+    rem=num-den;
+    for(i=0;i<23u;i++){
+        rem*=2u;frac<<=1;
+        if(rem>=den){frac|=1u;rem-=den;}
+    }
+    if(rem*2u>den || (rem*2u==den && (frac&1u)))frac++;
+    return ((U32)exponent<<23)+frac;
+}
 static U32 ecm_lab_encode(const ECM_LAB_STATE *s,U32 extended,U32 did,U8 *out){
     U32 raw=0u,n=0u,i;
     if(!out||!ecm_lab_state_valid(s))return 0;
@@ -2101,6 +2115,9 @@ static U32 ecm_lab_encode(const ECM_LAB_STATE *s,U32 extended,U32 did,U8 *out){
         case 0xF404u: n=1u;raw=(s->load_permille*255u+500u)/1000u;break;
         case 0xF405u: n=1u;raw=(U32)(s->coolant_c+40);break;
         case 0xF410u: n=2u;raw=s->maf_centi_gps;break;
+        /* B3A318: observed VIDA reads; equal load values are a simplified lab assumption. */
+        case 0xF443u: n=2u;raw=(s->load_permille*255u+500u)/1000u;break;
+        case 0xD994u: n=4u;raw=ecm_lab_maf_bits(s->maf_centi_gps);break;
         case 0xF433u: n=1u;raw=s->ambient_kpa;break;
         case 0xF449u: case 0xF44Au: n=1u;raw=(s->pedal_permille*255u+500u)/1000u;break;
         case 0xF40Bu: n=1u;raw=s->manifold_kpa;break;
