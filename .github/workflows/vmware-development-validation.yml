@@ -283,6 +283,12 @@ jobs:
               & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir ('scenario-'+$scenario)) -Enabled -Expanded -Scenario $scenario
               if ($LASTEXITCODE -ne 0) { throw "B3A316 native scenario failed: $scenario" }
             }
+            foreach ($scenario in @('0','1','2','3','4','invalid')) {
+              & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir ('battery-sync-'+$scenario)) -Enabled -Expanded -Scenario $scenario -BatterySync
+              if ($LASTEXITCODE -ne 0) { throw "B3A319 native battery sync failed: $scenario" }
+            }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'battery-sync-baseline-off') -Expanded -Scenario 4 -BatterySync
+            if ($LASTEXITCODE -ne 0) { throw 'B3A319 native battery sync baseline-off failed' }
           } finally {
             if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
           }
