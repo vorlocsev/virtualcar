@@ -3833,6 +3833,30 @@ int main(){
  node->frame[0][1]=0x50;REQUIRE(!validate_d2_fixture(node));
  node->frame[0][1]=0x11;REQUIRE(validate_d2_fixture(node));
  node->frame_count=0;
+ /* B3A302: only an explicitly configured synthetic CEM40 B9 31 fixture. */
+ {
+  D2_PROFILE *impact=&g_d2[MAX_D2_FIXTURES-1];D2_PROFILE saved=*impact;
+  const U8 q[8]={0xCB,0x40,0xB9,0x31,0,0,0,0};
+  const U8 expected[8]={0xCC,0x40,0xF9,0x31,0,0,0,0};
+  U8 bad[8];bytes_zero(impact,sizeof(*impact));
+  impact->target=0x40;impact->subcommand=0x31;impact->baud=125000;
+  impact->response_id=0x00800003;impact->frame_count=1;
+  memcpy(impact->frame[0],expected,8);
+  REQUIRE(lab_extended_size(0x40,0x31)==1);
+  REQUIRE(!lab_special_b9(0x50,0x31));
+  REQUIRE(validate_d2_fixture(impact)&&lab_special_fixture(impact));
+  for(U32 j=0;j<8;j++){impact->frame[0][j]^=1;REQUIRE(!lab_special_fixture(impact));impact->frame[0][j]^=1;}
+  impact->frame_count=2;REQUIRE(!lab_special_fixture(impact));impact->frame_count=1;
+  impact->baud=500000;REQUIRE(!lab_special_fixture(impact));impact->baud=125000;
+  impact->response_id=0x00800004;REQUIRE(!lab_special_fixture(impact));impact->response_id=0x00800003;
+  REQUIRE(lab_special_request(q,8,125000,CAN_29BIT_ID,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,7,125000,CAN_29BIT_ID,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,8,500000,CAN_29BIT_ID,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,8,125000,0,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,8,125000,CAN_29BIT_ID,0));
+  memcpy(bad,q,8);bad[4]=1;REQUIRE(!lab_special_request(bad,8,125000,CAN_29BIT_ID,CAN_29BIT_ID));
+  *impact=saved;
+ }
  /* v0.3.6.4: passive recorded CAN fixture is strictly bus-specific. */
  TRACE_FRAME *trace=&g_trace[0];bytes_zero(trace,sizeof(*trace));
  trace->id=0x321;trace->baud=125000;trace->period_ms=40;trace->enabled=1;
