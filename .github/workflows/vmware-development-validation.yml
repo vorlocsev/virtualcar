@@ -262,6 +262,23 @@ jobs:
           & $python emulator/native-cpp/tests/verify_pe_exports.py $dll Win32
           if ($LASTEXITCODE -ne 0) { throw 'Legacy x86 DLL PE architecture/export verification failed' }
 
+      - name: Verify native x86 ECM live data opt-in and disabled controls
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Join-Path $env:GITHUB_WORKSPACE 'emulator\VirtualCarJ2534.dll'
+          $ps32 = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+          $dir = Join-Path $env:RUNNER_TEMP ('virtualcar-ecm-live-' + [Guid]::NewGuid().ToString('N'))
+          try {
+            New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'disabled')
+            if ($LASTEXITCODE -ne 0) { throw 'B3A310 disabled native control failed' }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'enabled') -Enabled
+            if ($LASTEXITCODE -ne 0) { throw 'B3A310 enabled native gate failed' }
+          } finally {
+            if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+          }
+
       - name: Run legacy C x86 DLL native route regression and evidence audit
         shell: powershell
         run: |
