@@ -27,6 +27,7 @@ class TestSharedEcmState(unittest.TestCase):
             self.assertIn("B3A315_MODEL_PASS",result.stdout)
             self.assertIn("B3A316_SCENARIO_PASS",result.stdout)
             self.assertIn("B3A318_TWO_DID_PASS",result.stdout)
+            self.assertIn("B3A319_BATTERY_SYNC_PASS",result.stdout)
 
     def test_scenario_config_wiring(self):
         source=(ROOT/"src"/"virtualcar.c").read_text(encoding="utf-8")
@@ -34,3 +35,12 @@ class TestSharedEcmState(unittest.TestCase):
         self.assertIn('GetPrivateProfileStringA("B3A316_EcmScenarioLab","State","0"',source)
         self.assertIn("ecm_lab_select_scenario(enabled,v);",source)
         self.assertEqual(source.count("ecm_lab_encode(&g_ecm_lab_state,"),2)
+
+    def test_battery_sync_config_wiring(self):
+        source=(ROOT/"src"/"virtualcar.c").read_text(encoding="utf-8")
+        select=source.index("ecm_lab_select_scenario(enabled,v);")
+        read=source.index('GetPrivateProfileStringA("B3A319_BatterySyncLab","Enabled","0"')
+        apply=source.index("g_battery_mv=ecm_lab_battery_mv(g_battery_mv,")
+        self.assertLess(select,read)
+        self.assertLess(read,apply)
+        self.assertIn("*(U32*)output=g_battery_mv;",source)

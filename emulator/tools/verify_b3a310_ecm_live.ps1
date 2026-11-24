@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [switch]$Enabled,
     [switch]$Expanded,
-    [ValidateSet('0','1','2','3','4','invalid')][string]$Scenario='0'
+    [ValidateSet('0','1','2','3','4','invalid')][string]$Scenario='0',
+    [switch]$BatterySync
 )
 $ErrorActionPreference='Stop'
 if ([IntPtr]::Size -ne 4) { throw 'Use 32-bit Windows PowerShell' }
@@ -20,6 +21,7 @@ if ((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ne (Get-FileHash -L
 $profile=@'
 [Vehicle]
 ECUCount=1
+BatteryMv=12345
 EmitIsoRxStart=0
 [ECU0]
 RequestId=18DA10F1
@@ -39,6 +41,7 @@ BackendTelemetryEnabled=0
 if ($Enabled) { $profile += [Environment]::NewLine + "[B3A309_EcmLiveDataLab]" + [Environment]::NewLine + "Enabled=1" }
 if ($Expanded) { $profile += [Environment]::NewLine + "[B3A314_EcmExtendedLiveLab]" + [Environment]::NewLine + "Enabled=1" }
 if ($Scenario -ne "0") { $profile += [Environment]::NewLine + "[B3A316_EcmScenarioLab]" + [Environment]::NewLine + "Enabled=1" + [Environment]::NewLine + "State=$Scenario" }
+if ($BatterySync) { $profile += [Environment]::NewLine + "[B3A319_BatterySyncLab]" + [Environment]::NewLine + "Enabled=1" }
 [IO.File]::WriteAllText((Join-Path $dir 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
@@ -63,6 +66,7 @@ public static class EcmLiveNative {
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)] static extern uint PassThruDisconnect(uint ch);
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)] static extern uint PassThruWriteMsgs(uint ch,ref Msg msg,ref uint count,uint timeout);
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)] static extern uint PassThruReadMsgs(uint ch,IntPtr buffer,ref uint count,uint timeout);
+    [DllImport(Library,CallingConvention=CallingConvention.StdCall)] static extern uint PassThruIoctl(uint id,uint ioctl,IntPtr input,out uint output);
     static void Check(bool ok,string gate){if(!ok)throw new Exception(gate);}
     static void Send(uint ch,uint id,uint flags,byte[] payload){
         Msg m=new Msg();m.ProtocolID=6;m.TxFlags=flags;m.DataSize=(uint)payload.Length+4;m.Data=new byte[4128];
@@ -94,7 +98,7 @@ public static class EcmLiveNative {
             for(int j=3;j<reply.Length;j++)reply[j]=(byte)(raw>>(8*(reply.Length-1-j)));
         }
     }
-    public static void Run(bool enabled,bool expanded,int scenario){
+    public static void Run(bool enabled,bool expanded,int scenario,bool batterySync){
         uint[][] states={
             new uint[]{0xa000,0x60,0x60,0x0,0x0,0x0,0x3c,0x0,0x0,0x60,0x0,0x3c,0x0,0x64,0x0,0x0,0x64,0xc8,0x3333},
             new uint[]{0x8666,0x60,0x60,0x43480000,0x320,0x0,0x3c,0x0,0x0,0x60,0x26,0x3c,0xc8,0x64,0x0,0x0,0x5a,0xc8,0x2e14},
@@ -109,6 +113,12 @@ public static class EcmLiveNative {
             Check(PassThruOpen(IntPtr.Zero,out dev)==0,"open");opened=true;
             Check(PassThruConnect(dev,6,0x100,500000,out hs)==0,"HS connect");
             Check(PassThruConnect(dev,6,0x100,125000,out ls)==0 && ls!=hs,"LS connect");
+            uint[] batteryMv={12500,10500,14200,14000,14000};
+            uint expectedMv=batterySync&&enabled?batteryMv[scenario]:12345u;
+            uint measured;
+            Check(PassThruIoctl(hs,3,IntPtr.Zero,out measured)==0 && measured==expectedMv,"HS READ_VBATT");
+            Check(PassThruIoctl(ls,3,IntPtr.Zero,out measured)==0 && measured==expectedMv,"LS READ_VBATT");
+            Console.WriteLine("B3A319_READ_VBATT_PASS state="+scenario+" sync="+batterySync+" baseline="+enabled+" mV="+expectedMv);
             byte[][] replies={
                 new byte[]{0x62,0x12,0x0D,0xA0,0},
                 new byte[]{0x62,0xD9,0x98,0x60},
@@ -189,7 +199,7 @@ public static class EcmLiveNative {
     Add-Type -TypeDefinition $source -Language CSharp
     $expectedState=0
     if ($Scenario -ne 'invalid') { $expectedState=[int]$Scenario }
-    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState)
+    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState,[bool]$BatterySync)
 } finally {
     $env:LOCALAPPDATA=$savedLocal
     $env:TEMP=$savedTemp

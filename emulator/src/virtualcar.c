@@ -830,6 +830,7 @@ static int validate_fc140_fixture(const D2_PROFILE *d){
     return stream[4]==(U8)sum;
 }
 static void ecm_lab_select_scenario(U32 enabled,const char *state);
+static U32 ecm_lab_battery_mv(U32 configured,U32 sync_enabled,U32 baseline_enabled);
 static void load_config(void) {
     U32 n,i;char v[512],key[24];
     /* Include the host executable and PID so GUI self-checks and SectorV
@@ -997,6 +998,8 @@ static void load_config(void) {
         GetPrivateProfileStringA("B3A316_EcmScenarioLab","State","0",v,sizeof(v),g_profile_path);
         ecm_lab_select_scenario(enabled,v);
     }
+    GetPrivateProfileStringA("B3A319_BatterySyncLab","Enabled","0",v,sizeof(v),g_profile_path);
+    g_battery_mv=ecm_lab_battery_mv(g_battery_mv,(str_len(v)==1u && v[0]=='1')?1u:0u,g_b3a309_ecm_live_lab);
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
     bytes_zero(g_trace,sizeof(g_trace));g_trace_count=0;
@@ -2066,6 +2069,10 @@ static void ecm_lab_select_scenario(U32 enabled,const char *state){
         g_ecm_lab_scenario=(U32)(state[0]-'0');
 }
 #define g_ecm_lab_state (g_ecm_lab_scenarios[g_ecm_lab_scenario])
+/* B3A319: explicit lab opt-in; preserve configured voltage outside ECM baseline mode. */
+static U32 ecm_lab_battery_mv(U32 configured,U32 sync_enabled,U32 baseline_enabled){
+    return sync_enabled==1u && baseline_enabled==1u ? g_ecm_lab_state.battery_mv : configured;
+}
 static U32 ecm_lab_temperature_valid(int t){return t>=-40 && t<=119;}
 static U32 ecm_lab_state_valid(const ECM_LAB_STATE *s){
     return s && s->battery_mv<=20000u && s->rpm<=16383u && s->speed_kph<=255u &&

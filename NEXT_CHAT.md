@@ -1,5 +1,13 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A319 — синхронизация ECM и J2534 READ_VBATT (candidate)
+
+- Base development `a542fc91585bd62e7dad99724de93d2da2410385`: B3A318 adds F443/D994; exact [VMware #280](https://github.com/vorlocsev/virtualcar/actions/runs/45415265459) must finish successfully before merging this candidate. No original-client acceptance of those two DIDs yet.
+- Owner B3A317 screenshot showed ECM 14.00 V vs Vehicle Communication 12.5 V. Source confirms READ_VBATT uses independent Vehicle.BatteryMv; REM D0D4 still has a fixed 0x64 synthetic payload. No actual IOCTL trace for this screenshot.
+- New explicit default-off `[B3A319_BatterySyncLab]` Enabled=1, only with B3A309 baseline reads enabled. Resolve configured voltage at PassThruOpen from selected ECM snapshot (0..4 or fallback 0); otherwise keep Vehicle.BatteryMv. No change to IOCTL argument semantics, D2 routes, CEM/REM/TCM or programming.
+- Local extracted production model and harness GCC -Werror ASan/UBSan PASS (FNV1a 36a7b1c7/cbe56b33): five snapshots x four switch combinations, existing voltage payloads, invalid flags and reset. Native test now checks READ_VBATT on both HS and LS channels using non-default 12345 mV control, six sync cases (including invalid), baseline-off negative control. Windows CI pending.
+- Next: exact-head CI then separate VIDA provider, capture READ_VBATT and compare ECM/Vehicle Communication; independently verify REM D0D4 scaling from original CarCom before any D2 change. Preserve B3A317 and original owner data.
+
 ## B3A318 — два наблюдавшихся запроса ECM (candidate)
 
 - Trusted development `2e460a9aad54a2b9a3497add9971689ed8e5bae2`: exact [VMware #279](https://github.com/vorlocsev/virtualcar/actions/runs/45410000759), 38/38 PASS, Python 1198 PASS/4 skipped, 342 native DID exchanges, D2 98/98.

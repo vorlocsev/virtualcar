@@ -47,6 +47,20 @@ int main(void){
     for(i=0;i<=65535u;i++){float ref=(float)i/100.0f;U32 bits;memcpy(&bits,&ref,4);assert(ecm_lab_maf_bits(i)==bits);}
     ecm_lab_select_scenario(0,"0");
     }
+    {const U32 mv[]={12500u,10500u,14200u,14000u,14000u};
+    const U32 raw[]={0xa000u,0x8666u,0xb5c3u,0xb333u,0xb333u};
+    for(U32 k=0;k<5;k++){char state[2]={(char)('0'+k),0};ecm_lab_select_scenario(1,state);
+        for(U32 sync=0;sync<2;sync++)for(U32 baseline=0;baseline<2;baseline++)
+            assert(ecm_lab_battery_mv(12345u,sync,baseline)==(sync&&baseline?mv[k]:12345u));
+        check(&g_ecm_lab_state,0,0x120d,2,raw[k]);
+    }
+    assert(ecm_lab_battery_mv(12345u,2u,1u)==12345u);
+    assert(ecm_lab_battery_mv(12345u,1u,2u)==12345u);
+    ecm_lab_select_scenario(1,"invalid");assert(ecm_lab_battery_mv(12345u,1u,1u)==12500u);
+    ecm_lab_select_scenario(1,"4");assert(ecm_lab_battery_mv(12345u,1u,1u)==14000u);
+    ecm_lab_select_scenario(0,"4");assert(ecm_lab_battery_mv(12345u,1u,1u)==12500u);
+    }
+    puts("B3A319_BATTERY_SYNC_PASS");
     puts("B3A318_TWO_DID_PASS");
     puts("B3A316_SCENARIO_PASS");
     puts("B3A315_MODEL_PASS");return 0;
