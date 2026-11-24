@@ -956,7 +956,8 @@ jobs:
             $deadline = [DateTime]::UtcNow.AddSeconds(12)
             while ([DateTime]::UtcNow -lt $deadline) {
               if (Test-Path -LiteralPath $Path) {
-                if ((Get-Content -LiteralPath $Path -Raw).Trim() -eq $Value) { return }
+                $markerContent = [string](Get-Content -LiteralPath $Path -Raw -ErrorAction Stop)
+                if ($markerContent.Trim() -eq $Value) { return }
               }
               if ($Client.HasExited) {
                 throw ('M5D2c client exited before ' + $Value + ': ' + $Client.ExitCode)
