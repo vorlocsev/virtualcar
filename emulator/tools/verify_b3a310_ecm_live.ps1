@@ -6,7 +6,9 @@ param(
     [switch]$Enabled,
     [switch]$Expanded,
     [ValidateSet('0','1','2','3','4','invalid')][string]$Scenario='0',
-    [switch]$BatterySync
+    [switch]$BatterySync,
+    [switch]$RemProbe,
+    [switch]$RemSync
 )
 $ErrorActionPreference='Stop'
 if ([IntPtr]::Size -ne 4) { throw 'Use 32-bit Windows PowerShell' }
@@ -42,6 +44,8 @@ if ($Enabled) { $profile += [Environment]::NewLine + "[B3A309_EcmLiveDataLab]" +
 if ($Expanded) { $profile += [Environment]::NewLine + "[B3A314_EcmExtendedLiveLab]" + [Environment]::NewLine + "Enabled=1" }
 if ($Scenario -ne "0") { $profile += [Environment]::NewLine + "[B3A316_EcmScenarioLab]" + [Environment]::NewLine + "Enabled=1" + [Environment]::NewLine + "State=$Scenario" }
 if ($BatterySync) { $profile += [Environment]::NewLine + "[B3A319_BatterySyncLab]" + [Environment]::NewLine + "Enabled=1" }
+if ($RemProbe) { $profile += [Environment]::NewLine + "[B3A267_CurrentDataLab]" + [Environment]::NewLine + "Enabled=1" }
+if ($RemSync) { $profile += [Environment]::NewLine + "[B3A320_RemVoltageSyncLab]" + [Environment]::NewLine + "Enabled=1" }
 [IO.File]::WriteAllText((Join-Path $dir 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
@@ -68,8 +72,8 @@ public static class EcmLiveNative {
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)] static extern uint PassThruReadMsgs(uint ch,IntPtr buffer,ref uint count,uint timeout);
     [DllImport(Library,CallingConvention=CallingConvention.StdCall)] static extern uint PassThruIoctl(uint id,uint ioctl,IntPtr input,out uint output);
     static void Check(bool ok,string gate){if(!ok)throw new Exception(gate);}
-    static void Send(uint ch,uint id,uint flags,byte[] payload){
-        Msg m=new Msg();m.ProtocolID=6;m.TxFlags=flags;m.DataSize=(uint)payload.Length+4;m.Data=new byte[4128];
+    static void Send(uint ch,uint id,uint flags,byte[] payload,uint protocol=6){
+        Msg m=new Msg();m.ProtocolID=protocol;m.TxFlags=flags;m.DataSize=(uint)payload.Length+4;m.Data=new byte[4128];
         m.Data[0]=(byte)(id>>24);m.Data[1]=(byte)(id>>16);m.Data[2]=(byte)(id>>8);m.Data[3]=(byte)id;
         Array.Copy(payload,0,m.Data,4,payload.Length);
         uint n=1;Check(PassThruWriteMsgs(ch,ref m,ref n,100)==0 && n==1,"write");
@@ -91,6 +95,18 @@ public static class EcmLiveNative {
         }finally{Marshal.FreeHGlobal(p);}
         Empty(ch);
     }
+    static void ExpectD2(uint ch,byte[] payload){
+        IntPtr p=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+        try{
+            uint n=1;Check(PassThruReadMsgs(ch,p,ref n,200)==0 && n==1,"missing D2 RX");
+            Msg m=(Msg)Marshal.PtrToStructure(p,typeof(Msg));
+            Check(m.ProtocolID==5 && m.DataSize==12,"D2 RX metadata");
+            uint id=((uint)m.Data[0]<<24)|((uint)m.Data[1]<<16)|((uint)m.Data[2]<<8)|m.Data[3];
+            Check(id==0x00800003,"D2 RX ID");
+            for(int i=0;i<8;i++)Check(m.Data[4+i]==payload[i],"D2 RX payload");
+        }finally{Marshal.FreeHGlobal(p);}
+        Empty(ch);
+    }
     static void ApplyScenario(byte[][] replies,uint[] values,int offset){
         for(int i=0;i<replies.Length;i++){
             byte[] reply=replies[i];
@@ -98,7 +114,7 @@ public static class EcmLiveNative {
             for(int j=3;j<reply.Length;j++)reply[j]=(byte)(raw>>(8*(reply.Length-1-j)));
         }
     }
-    public static void Run(bool enabled,bool expanded,int scenario,bool batterySync){
+    public static void Run(bool enabled,bool expanded,int scenario,bool batterySync,bool remProbe,bool remSync){
         uint[][] states={
             new uint[]{0xa000,0x60,0x60,0x0,0x0,0x0,0x3c,0x0,0x0,0x60,0x0,0x3c,0x0,0x64,0x0,0x0,0x64,0xc8,0x3333},
             new uint[]{0x8666,0x60,0x60,0x43480000,0x320,0x0,0x3c,0x0,0x0,0x60,0x26,0x3c,0xc8,0x64,0x0,0x0,0x5a,0xc8,0x2e14},
@@ -108,7 +124,7 @@ public static class EcmLiveNative {
         };
         Check(scenario>=0 && scenario<states.Length,"scenario index");
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"x86 ABI");
-        uint dev=0,hs=0,ls=0;bool opened=false;
+        uint dev=0,hs=0,ls=0,can=0;bool opened=false;
         try{
             Check(PassThruOpen(IntPtr.Zero,out dev)==0,"open");opened=true;
             Check(PassThruConnect(dev,6,0x100,500000,out hs)==0,"HS connect");
@@ -119,6 +135,16 @@ public static class EcmLiveNative {
             Check(PassThruIoctl(hs,3,IntPtr.Zero,out measured)==0 && measured==expectedMv,"HS READ_VBATT");
             Check(PassThruIoctl(ls,3,IntPtr.Zero,out measured)==0 && measured==expectedMv,"LS READ_VBATT");
             Console.WriteLine("B3A319_READ_VBATT_PASS state="+scenario+" sync="+batterySync+" baseline="+enabled+" mV="+expectedMv);
+            if(remProbe){
+                Check(PassThruConnect(dev,5,0x100,125000,out can)==0 && can!=hs && can!=ls,"REM CAN connect");
+                byte[] values={0x64,0x54,0x72,0x70,0x70};
+                byte expected=remSync&&batterySync&&enabled?values[scenario]:(byte)0x64;
+                Send(can,0x000FFFFE,0x100,new byte[]{0xCD,0x46,0xA6,0xD0,0xD4,1,0,0},5);
+                ExpectD2(can,new byte[]{0xCD,0x46,0xE6,0xD0,0xD4,expected,0,0});
+                Send(can,0x000FFFFE,0x100,new byte[]{0xCD,0x40,0xA6,0x1A,0x04,1,0,0},5);
+                ExpectD2(can,new byte[]{0xCD,0x40,0xE6,0x1A,0x04,6,0,0});
+                Console.WriteLine("B3A320_NATIVE_REM_PASS state="+scenario+" raw="+expected+" remSync="+remSync+" batterySync="+batterySync+" baseline="+enabled);
+            }
             byte[][] replies={
                 new byte[]{0x62,0x12,0x0D,0xA0,0},
                 new byte[]{0x62,0xD9,0x98,0x60},
@@ -185,6 +211,7 @@ public static class EcmLiveNative {
             Empty(hs);Empty(ls);
         }finally{
             bool clean=true;
+            if(can!=0)clean &= PassThruDisconnect(can)==0;
             if(ls!=0)clean &= PassThruDisconnect(ls)==0;
             if(hs!=0)clean &= PassThruDisconnect(hs)==0;
             if(opened)clean &= PassThruClose(dev)==0;
@@ -199,7 +226,7 @@ public static class EcmLiveNative {
     Add-Type -TypeDefinition $source -Language CSharp
     $expectedState=0
     if ($Scenario -ne 'invalid') { $expectedState=[int]$Scenario }
-    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState,[bool]$BatterySync)
+    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState,[bool]$BatterySync,[bool]$RemProbe,[bool]$RemSync)
 } finally {
     $env:LOCALAPPDATA=$savedLocal
     $env:TEMP=$savedTemp

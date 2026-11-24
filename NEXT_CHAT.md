@@ -1,5 +1,12 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A320 — REM voltage sync (candidate)
+
+- Trusted development `1601703e5176a7a6934d442993e3216415b54eac`: exact [VMware #281](https://github.com/vorlocsev/virtualcar/actions/runs/45416351896) 38/38 PASS, 1199 Python PASS / 4 skipped; 16 native runs checked READ_VBATT HS and LS, custom voltage preserved when disabled or baseline off.
+- Owner private D0D4 export: 415 unique variants. PPE voltage formulas vary; 76 use x*0.125, 259 x*0.125+5, other factors also occur. 32 simple eight-bit offset-zero AS/PPE x*0.125 definitions. Exact selected REM CarCom variant not bound. Previous owner GUI/log: REM 46 A6 D0 D4 01 -> E6 D0 D4 64, 12.5 V, consistent with no-offset formula. No claim for all ECU variants.
+- New independent default-off `[B3A320_RemVoltageSyncLab]` Enabled=1 requires B3A319 and B3A309 and existing B3A267 current-data gate. Override only byte 5 of an already-generated exact single REM response. No new routes. Nearest 125 mV: 12.5/10.5/14.2/14/14 V -> 64/54/72/70/70; 14.2 represented as 14.25. Local exact helper/harness GCC Werror ASan/UBSan PASS, 20,001 input voltages and 2,040 single-byte request mutations, five scenario/disabled pairs, invalid shape guards. Native tests pending.
+- Next: exact CI and new owner-local provider; capture ECM and REM values, READ_VBATT, actual GUI indicator, F443/D994 and nonzero DA48; verify selected REM variant when available. No physical CAN, raw catalog or logs committed, no CEM/TCM change.
+
 ## B3A319 — синхронизация ECM и J2534 READ_VBATT (candidate)
 
 - Base development `a542fc91585bd62e7dad99724de93d2da2410385`: B3A318 adds F443/D994; exact [VMware #280](https://github.com/vorlocsev/virtualcar/actions/runs/45415265459) must finish successfully before merging this candidate. No original-client acceptance of those two DIDs yet.

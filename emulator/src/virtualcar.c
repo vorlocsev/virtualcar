@@ -172,6 +172,7 @@ static U32 g_p2_strict_routing=0;
 static U32 g_b3a267_current_lab=0;
 static U32 g_b3a309_ecm_live_lab=0;
 static U32 g_b3a314_ecm_live_lab=0;
+static U32 g_b3a320_rem_sync=0;
 static U32 g_b3a228_cem40_empty_dtc=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
 typedef struct {U32 req,resp,expected_baud; U8 lab_dtc_mask,lab_dtc_single,lab_dtc_details; char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
@@ -999,7 +1000,11 @@ static void load_config(void) {
         ecm_lab_select_scenario(enabled,v);
     }
     GetPrivateProfileStringA("B3A319_BatterySyncLab","Enabled","0",v,sizeof(v),g_profile_path);
-    g_battery_mv=ecm_lab_battery_mv(g_battery_mv,(str_len(v)==1u && v[0]=='1')?1u:0u,g_b3a309_ecm_live_lab);
+    {U32 battery_sync=(str_len(v)==1u && v[0]=='1')?1u:0u;
+        g_battery_mv=ecm_lab_battery_mv(g_battery_mv,battery_sync,g_b3a309_ecm_live_lab);
+        GetPrivateProfileStringA("B3A320_RemVoltageSyncLab","Enabled","0",v,sizeof(v),g_profile_path);
+        g_b3a320_rem_sync=(battery_sync && g_b3a309_ecm_live_lab && str_len(v)==1u && v[0]=='1')?1u:0u;
+    }
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
     bytes_zero(g_trace,sizeof(g_trace));g_trace_count=0;
@@ -1867,6 +1872,17 @@ static U32 lab_current_frames(const U8 *data,U32 len,U32 baud,U32 flags,U32 tx_f
     return count;
 }
 
+/* B3A320: exact existing REM voltage response only, nearest 125 mV. */
+static void lab_rem_voltage_sync(U32 enabled,U32 mv,const U8 *req,U32 len,U32 count,U8 frames[][8]){
+    static const U8 target[8]={0xCD,0x46,0xA6,0xD0,0xD4,1,0,0};
+    static const U8 header[5]={0xCD,0x46,0xE6,0xD0,0xD4};
+    U32 i;
+    if(enabled!=1u || !req || !frames || len!=8u || count!=1u || mv>20000u)return;
+    for(i=0;i<8u;i++)if(req[i]!=target[i])return;
+    for(i=0;i<5u;i++)if(frames[0][i]!=header[i])return;
+    frames[0][5]=(U8)((mv+62u)/125u);
+}
+
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len,U32 tx_flags){
     U32 i;D2_PROFILE *d;const char *route;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
@@ -1878,6 +1894,7 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len,U32 tx_flags){
         route=data[1]==0x40u?"CEM":"ECU_OTHER";
         backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
         count=lab_current_frames(data,len,c->baud,c->flags,tx_flags,c->d2_frame);
+        lab_rem_voltage_sync(g_b3a320_rem_sync,g_battery_mv,data,len,count,c->d2_frame);
         if(!count){logline("B3A267 LAB current data unsupported shape/bus/mode",data,len);
             backend_event(c,c->active_trace,"request_completed",route,"no_response","no_response");return 1;}
         c->d2_trace=c->active_trace;
