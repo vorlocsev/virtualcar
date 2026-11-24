@@ -1899,7 +1899,7 @@ static void lab_supply_voltage_sync(U32 enabled,U32 mv,const U8 *req,U32 len,U32
     for(i=0;i<2u;i++){
         for(j=0;j<8u;j++)if(req[j]!=targets[i][j])break;
         if(j!=8u)continue;
-        if(frames[0][0]!=0xCDu || frames[0][1]!=req[1] || frames[0][2]!=0xE6u ||
+        if(frames[0][0]!=0xCEu || frames[0][1]!=req[1] || frames[0][2]!=0xE6u ||
            frames[0][3]!=req[3] || frames[0][4]!=req[4])return;
         raw=lab_voltage_raw(i+1u,mv);
         frames[0][5]=(U8)(raw>>8);frames[0][6]=(U8)raw;

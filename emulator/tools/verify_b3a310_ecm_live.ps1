@@ -111,7 +111,7 @@ public static class EcmLiveNative {
             Check(m.ProtocolID==5 && m.DataSize==12,"D2 RX metadata");
             uint id=((uint)m.Data[0]<<24)|((uint)m.Data[1]<<16)|((uint)m.Data[2]<<8)|m.Data[3];
             Check(id==0x00800003,"D2 RX ID");
-            for(int i=0;i<8;i++)Check(m.Data[4+i]==payload[i],"D2 RX payload");
+            for(int i=0;i<8;i++)Check(m.Data[4+i]==payload[i],"D2 RX payload index="+i+" expected="+BitConverter.ToString(payload)+" actual="+BitConverter.ToString(m.Data,4,8));
         }finally{Marshal.FreeHGlobal(p);}
         Empty(ch);
     }
@@ -158,9 +158,9 @@ public static class EcmLiveNative {
                     uint[] ccm={0x0320,0x02A0,0x038D,0x0380,0x0380};
                     byte[] cem={0x32,0x2A,0x39,0x38,0x38};
                     Send(can,0x000FFFFE,0x100,new byte[]{0xCD,0x46,0xA6,0x1A,0x02,1,0,0},5);
-                    ExpectD2(can,new byte[]{0xCD,0x46,0xE6,0x1A,0x02,(byte)(rem[state]>>8),(byte)rem[state],0});
+                    ExpectD2(can,new byte[]{0xCE,0x46,0xE6,0x1A,0x02,(byte)(rem[state]>>8),(byte)rem[state],0});
                     Send(can,0x000FFFFE,0x100,new byte[]{0xCD,0x29,0xA6,0x00,0x80,1,0,0},5);
-                    ExpectD2(can,new byte[]{0xCD,0x29,0xE6,0x00,0x80,(byte)(ccm[state]>>8),(byte)ccm[state],0});
+                    ExpectD2(can,new byte[]{0xCE,0x29,0xE6,0x00,0x80,(byte)(ccm[state]>>8),(byte)ccm[state],0});
                     foreach(uint flags in new uint[]{0x100,0x140}){
                         Send(hs,0x18DA50F1,flags,new byte[]{0x22,0xDD,0x02});
                         Expect(hs,new byte[]{0x62,0xDD,0x02,cem[state]},0x18DAF150);
