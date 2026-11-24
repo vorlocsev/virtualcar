@@ -1,5 +1,12 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A315 — общая неизменяемая модель ECM (candidate)
+
+- Trusted baseline: development `ae6e123846152b57b18df3fdfa1c7b5290c18237`, exact [VMware #277](https://github.com/vorlocsev/virtualcar/actions/runs/45405450416), 38/38 PASS; Python 1196 passed / 4 skipped; all four native ECM switch combinations (152 DID exchanges), D2 98/98.
+- Owner VIDA B3A311: 1265/1265 positive matched requests for five DID (120D/D998/D99B/DA48/F40D), 253 each, no timeouts; F40C/F40F not selected. 12 extended candidates native PASS but original VIDA not yet tested.
+- B3A315 shares one immutable physical-unit snapshot across independent B3A309 and B3A314 opt-ins; stopped bytes unchanged, no new routes. Local exact model+harness GCC ASan/UBSan PASS; full wrappers/native CI pending at PR creation. Nonzero DA48 IEEE binary32 big-endian is a candidate, not original-client evidence. No dynamic input or ECU programming.
+- Next: verify exact post-merge CI then separate provider (no Virtual in name) for original VIDA 19-DID acceptance; before dynamic input, verify nonzero scaling with controlled synthetic data. No private logs/catalog committed.
+
 ## B3A312 — приёмка ECM Live Data и следующий owner-VM gate (2026-11-24)
 
 - Проверенный development: `48759ceada3eb0b0be4c00d14d531b3c7e6f3afa`, PR #444, exact-head VMware CI [#275](https://github.com/vorlocsev/virtualcar/actions/runs/45394372250): SUCCESS 38/38 шагов; Python 1194 PASS / 4 skipped; нативный x86 ECM 14/14 enabled и 14/14 default-off, неизвестный DID, wrong bus/ID и F187 PASS; D2 98/98. Новый тест ECM использует нестрогие фильтры. Артефакт #14920532216, срок 2026-11-27 12:35 UTC.

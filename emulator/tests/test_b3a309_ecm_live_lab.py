@@ -73,6 +73,9 @@ class TestEcmLiveLab(unittest.TestCase):
         self.assertEqual(source.count(START),1)
         pos=source.index(START)
         helper=source[pos:source.index("\n}",pos)+2]
+        model_start=source.index("/* B3A315 shared synthetic ECM snapshot;")
+        model_end=source.index("/* B3A315 shared ECM snapshot end */",model_start)
+        helper=source[model_start:model_end]+helper
         compiler=shlex.split(os.environ["CC"]) if os.environ.get("CC") else [shutil.which("gcc") or shutil.which("clang") or "gcc"]
         with tempfile.TemporaryDirectory(prefix="b3a309-") as tmp:
             c=Path(tmp)/"check.c"
