@@ -88,6 +88,9 @@ on:
           - 6fa632b09eed51b884140eaddfc765ec9d84185e
           # PR #439 R2: exact locally validated M5D2eB marker and Host recovery candidate.
           - 7ca4904fb227a124743fefec002d15458025f128
+          # B3A302/B3A305: previous native PASS heads with the CI-validated R2 infrastructure port; new exact-head runs pending.
+          - 0f888d2aee15fb14b377ded40dfcb76825a56d94
+          - c788cf656aebd6828e8019029beb605885e08e13
 
 permissions:
   contents: read
@@ -149,6 +152,8 @@ jobs:
             'a53769967d20b0e3faf18e3f63da0f42b6ef0cfb'
             '6fa632b09eed51b884140eaddfc765ec9d84185e'
             '7ca4904fb227a124743fefec002d15458025f128'
+            '0f888d2aee15fb14b377ded40dfcb76825a56d94'
+            'c788cf656aebd6828e8019029beb605885e08e13'
           )
           if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
               $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
