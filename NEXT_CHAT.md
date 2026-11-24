@@ -1,5 +1,12 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A316 — фиксированные лабораторные сценарии ECM (candidate)
+
+- Trusted development `5189093b37d13514d4a40f7597baaf5d2433ca6a`: exact [VMware #278](https://github.com/vorlocsev/virtualcar/actions/runs/45408147891), 38/38 PASS; Python 1197 PASS / 4 skipped; 19 DID in four native opt-in combinations, D2 98/98. Shared model test passed.
+- New opt-in `[B3A316_EcmScenarioLab]`, Enabled=1, State=0..4: stopped, cranking, cold idle, warming idle, warm idle; selected only on PassThruOpen, reset to state 0 for missing/invalid/disabled selection. Existing two DID group switches remain independent. All snapshots synthetic stationary vehicle, no automatic timeline or cross-ECU synchronization.
+- Local exact model/harness GCC -Werror ASan/UBSan PASS 95 state/DID vectors plus disabled/invalid reset and previous boundary tests. Native test matrix extended by five isolated x86 processes, full CI pending. Nonzero DA48 original VIDA acceptance still pending.
+- Next: inspect exact post-merge CI, install separate owner-local provider (no Virtual in visible name) for VIDA 19-DID and nonzero scenario acceptance. Keep B3A311 intact; no private catalog/logs, programming or release publication.
+
 ## B3A315 — общая неизменяемая модель ECM (candidate)
 
 - Trusted baseline: development `ae6e123846152b57b18df3fdfa1c7b5290c18237`, exact [VMware #277](https://github.com/vorlocsev/virtualcar/actions/runs/45405450416), 38/38 PASS; Python 1196 passed / 4 skipped; all four native ECM switch combinations (152 DID exchanges), D2 98/98.
