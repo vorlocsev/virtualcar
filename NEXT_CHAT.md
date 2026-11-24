@@ -1,5 +1,13 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A312 — приёмка ECM Live Data и следующий owner-VM gate (2026-11-24)
+
+- Проверенный development: `48759ceada3eb0b0be4c00d14d531b3c7e6f3afa`, PR #444, exact-head VMware CI [#275](https://github.com/vorlocsev/virtualcar/actions/runs/45394372250): SUCCESS 38/38 шагов; Python 1194 PASS / 4 skipped; нативный x86 ECM 14/14 enabled и 14/14 default-off, неизвестный DID, wrong bus/ID и F187 PASS; D2 98/98. Новый тест ECM использует нестрогие фильтры. Артефакт #14920532216, срок 2026-11-27 12:35 UTC.
+- B3A311: пользователь сообщил установку проверенной DLL, сохранение B3A303, успешную смену имени на J2534 Diagnostic Lab B3A311 и восстановление J2534DiagnosticConnection. До исправления наблюдался VirtualDiagnosticConnection с прежним именем, причинная связь с именем не доказана. Запрет Virtual в именах VIDA-провайдеров закреплён в AGENTS.md; старые регистрации не менялись.
+- Owner screenshot: оригинальная VIDA 2014D/2015A, XC90 V8 MY2009, ECM Parameters: 12.50 V, 20 C coolant, 20 C intake, 0 rpm, 0 km/h. **5/5 GUI values PASS**, не OEM payload capture. Ранее B3A303 дал ReadVin, профиль, сеть, CEM/ECM identification, DTC и CEM Live Data; не переносить автоматически эти отдельные результаты на B3A311.
+- Следующий gate: свежий приватный append-window лога оригинальной VIDA и J2534 при B3A311; проверить 7 DID 120D/D998/D99B/DA48/F40C/F40D/F40F, точные ответы, корреляцию TX/RX, повторяемость, правильный канал и PID. Два альтернативных представления оборотов и температуры могут потребовать отдельного выбора в GUI. Оригинальный лог и конфигурация остаются у владельца; в GitHub только ограниченная сводка.
+- NOT VERIFIED: 7/7 DID непосредственно в оригинальном сеансе, точный DLL/module binding в новом сеансе, сравнительная регрессия всех GUI gates B3A311, T111/T122, SectorV, физический J2534. Не программировать ECU; не публиковать релиз без подтверждения.
+
 ## B3A338 — привязка снимка J2534-модуля к выбранному PID (2026-11-20)
 
 - Прошлый доверенный `development` после B3A337: `7b727973f85a487f8da434bc744fbd205179f9a0`, PR #414, exact-head VMware #44667734195: **SUCCESS 36/36**, Python 1059 PASS / 4 skipped.

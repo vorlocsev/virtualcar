@@ -12,6 +12,7 @@ These instructions apply to coding agents working in this repository. **For a ne
 - Verify existing implementation and CI before writing code. Reuse the actual source files; do not regenerate complete repositories from ZIPs.
 - Preserve existing B9FB replay. CEM A3, A6, B9F0 and other incomplete diagnostics must not receive invented positive responses.
 - Keep read-only lab behavior. Do not add programming, security-access or immobilizer-bypass functionality.
+- For VIDA-facing J2534 provider registrations, never use the case-insensitive substring `Virtual` in the registered provider name (registry key and Name/CommToolName); use a distinct short name such as `J2534 Diagnostic Lab B3A311`. Preserve existing legacy providers for baseline comparisons; do not rename or overwrite their registry entries or DLLs implicitly. Verify the actual `DiagnosticConnection=J2534DiagnosticConnection` and selected name after reopening VIDA. This rule does not rename the project, DLL, directories or internal symbols.
 - Every code change needs tests covering behavior, failure modes and regressions; mark hardware/VMware checks as not performed until evidence exists.
 
 ## Automatic VMware CI is mandatory
