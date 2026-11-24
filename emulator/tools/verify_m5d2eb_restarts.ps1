@@ -40,12 +40,48 @@ function Stop-Child([System.Diagnostics.Process]$Child) {
     }
   } finally { $Child.Dispose() }
 }
+function Test-MarkerValue([string]$Path, [string]$Value) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  # A writer may create the file before publishing its contents. On Windows
+  # PowerShell 5.1 Get-Content -Raw can return null for an empty file.
+  $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+  if ([string]::IsNullOrWhiteSpace($content)) { return $false }
+  return ($content.Trim() -eq $Value)
+}
+function Assert-MarkerReadContract([string]$Work) {
+  $path = Join-Path $Work 'marker-contract.tmp'
+  try {
+    Write-Host 'M5D2eB marker contract case 1/8'
+    if (Test-MarkerValue -Path $path -Value 'accepted') {
+      throw 'M5D2eB missing marker incorrectly accepted'
+    }
+    $cases = @(
+      @{ Content = ''; Expected = 'accepted'; Match = $false },
+      @{ Content = '   '; Expected = 'accepted'; Match = $false },
+      @{ Content = 'accept'; Expected = 'accepted'; Match = $false },
+      @{ Content = 'revoked'; Expected = 'accepted'; Match = $false },
+      @{ Content = 'accepted'; Expected = 'accepted'; Match = $true },
+      @{ Content = "revoked`r`n"; Expected = 'revoked'; Match = $true },
+      @{ Content = 'verified'; Expected = 'verified'; Match = $true }
+    )
+    $caseIndex = 1
+    foreach ($case in $cases) {
+      $caseIndex++
+      Write-Host ('M5D2eB marker contract case ' + $caseIndex + '/8')
+      [System.IO.File]::WriteAllText($path, $case.Content, [System.Text.Encoding]::ASCII)
+      if ((Test-MarkerValue -Path $path -Value $case.Expected) -ne $case.Match) {
+        throw ('M5D2eB marker read contract mismatch: case ' + $caseIndex)
+      }
+    }
+    Write-Host 'PASS: M5D2eB marker read contract 8/8'
+  } finally {
+    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+  }
+}
 function Wait-Marker([string]$Path, [string]$Value, [System.Diagnostics.Process]$Client) {
   $deadline = [DateTime]::UtcNow.AddSeconds(17)
   while ([DateTime]::UtcNow -lt $deadline) {
-    if (Test-Path -LiteralPath $Path) {
-      if ((Get-Content -LiteralPath $Path -Raw).Trim() -eq $Value) { return }
-    }
+    if (Test-MarkerValue -Path $Path -Value $Value) { return }
     if ($Client.HasExited) {
       throw ('M5D2eB native client exited too early: ' + $Client.ExitCode)
     }
@@ -69,6 +105,8 @@ foreach ($arch in @('x86','x64')) {
   $hostChild = $null
   $client = $null
   try {
+    Write-Host ('M5D2eB starting architecture ' + $arch)
+    Assert-MarkerReadContract -Work $work
     $marker = Join-Path $work 'round-0.ready'
     $hostArgs = ('"{0}" --serve-once "{1}" read-held "{2}"' -f $ServiceDll,$pipe,$marker)
     $hostChild = Start-Child -Exe $dotnet -CommandLine $hostArgs
@@ -108,12 +146,16 @@ foreach ($arch in @('x86','x64')) {
 
     Assert-Exit -Child $client -Label ($arch + ' 3-epoch client')
     $verified = Join-Path $work 'round-3.verified'
-    if (-not (Test-Path -LiteralPath $verified) -or
-        (Get-Content -LiteralPath $verified -Raw).Trim() -ne 'verified') {
+    if (-not (Test-MarkerValue -Path $verified -Value 'verified')) {
       throw ('M5D2eB ' + $arch + ' final recovery marker missing')
     }
     Assert-Exit -Child $hostChild -Label ($arch + ' final clean Host')
     Write-Host ('PASS: M5D2eB ' + $arch + ' accepted Host crash/cancel/crash and clean fourth Host')
+  } catch {
+    Write-Host ('M5D2eB FAILURE architecture=' + $arch + ' error=' + $_.FullyQualifiedErrorId)
+    Write-Host $_.InvocationInfo.PositionMessage
+    Write-Host $_.ScriptStackTrace
+    throw
   } finally {
     Stop-Child -Child $client
     Stop-Child -Child $hostChild

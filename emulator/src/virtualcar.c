@@ -719,6 +719,7 @@ static U32 lab_extended_size(U32 target,U32 opcode){
         {0x7B,0xF8,6u},
         {0x0F,0xD2,4u},
         {0x0F,0xD4,4u},
+        {0x40,0x31,1u}, /* B3A302: synthetic impact status, explicit lab fixture only. */
     };
     U32 i;for(i=0;i<sizeof(layouts)/sizeof(layouts[0]);i++)
         if(target==layouts[i][0] && opcode==layouts[i][1])return layouts[i][2];
@@ -740,6 +741,12 @@ static int lab_special_fixture(const D2_PROFILE *d){
     if(d->baud!=125000u || d->response_id!=0x00800003u)return 0;
     {U32 n=lab_extended_size(d->target,d->subcommand),remaining,k,j;
      if(n){
+        if(d->target==0x40u && d->subcommand==0x31u){
+            static const U8 synthetic[8]={0xCCu,0x40u,0xF9u,0x31u,0,0,0,0};
+            if(d->frame_count!=1u)return 0;
+            for(j=0;j<8u;j++)if(d->frame[0][j]!=synthetic[j])return 0;
+            return 1;
+        }
         if(n==4u)return d->frame_count==1u && d->frame[0][0]==0xCFu && d->frame[0][2]==0xF9u;
         if(d->frame_count!=1u+(n-4u+6u)/7u || d->frame[0][0]!=0x8Fu)return 0;
         remaining=n-4u;
@@ -1972,7 +1979,7 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len,U32 tx_flags){
             c->d2_response_id=d->response_id;c->d2_count=d->frame_count;
             c->d2_spacing_ms=g_d2_spacing_ms;c->d2_next_us=now_us();
             for(j=0;j<d->frame_count;j++)bytes_copy(c->d2_frame[j],d->frame[j],8);
-            logline("P2 D2 read-only recorded frames staged",data,4);
+            logline(data[1]==0x40u && data[3]==0x31u ? "B3A302 LAB synthetic B9 31 (not OEM verified)" : "P2 D2 read-only recorded frames staged",data,4);
             pump_d2(c);
         }else {
             logline("P2 D2 read command: no validated response fixture",data,4);
