@@ -1,5 +1,13 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A324 R2 — fix actual D2 response length header
+
+- Exact development `cac78811d82d8ba82ef748c0616bed0eb4a5f7ac` [CI #283](https://github.com/vorlocsev/virtualcar/actions/runs/45506708435) FAILED native supply scenario 0, D2 RX payload. Previous native ECM/READ_VBATT/REM D0D4 controls passed. No deployment of failed build.
+- Root cause: real lab_current_frames uses C8+header+payload_length: CD for one byte, CE for two bytes. B3A324 incorrectly checked CD on two-byte replies; native expected header also incorrect. Owner B3A322 DLL log independently shows CE 46 E6 1A 02 80 00 00 and CE 29 E6 00 80 03 20 00.
+- Fix only B3A324 header check and two native expected response headers; existing request routes and frame generator untouched. Native error now includes expected/actual full frame and index.
+- Local GCC Werror ASan/UBSan PASS exact corrected helper and expanded harness; real frame generator with four exact route entries (two target, REM D0D4 and CEM 1A02 controls) PASS. New CI portable integration extracts full production route table + generator and checks all 98 routes with five states, disabled mode and wrong baud; full-table test not yet executed locally. Exact local hashes 9b44bf21/f3ab7b99/e6fa80a4. No raw owner data committed.
+- Next: verify exact development CI then B3A325 owner-local provider; no VIDA 5/5 claim until actual acceptance.
+
 ## B3A324 — remaining observed voltage routes (candidate)
 
 - Trusted development `d5a0747e3250f8496ba0ebeaaccdb9d985edc7f9`, exact [VMware #282](https://github.com/vorlocsev/virtualcar/actions/runs/45468263653) PASS. Owner B3A321 screenshot and B3A322 combined trace: ECM 120D and REM D0D4 14 V; REM 1A02 8000, CCM 0080 0320 and global indicator 12.5 V. Background CEM DD02 32, A45F 07; no READ_VBATT marker in captured interval. DD02 plausible global source, not causally established.

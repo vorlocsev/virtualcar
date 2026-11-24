@@ -26,6 +26,26 @@ class TestSupplyVoltageSync(unittest.TestCase):
             result=subprocess.run([str(exe)],check=True,capture_output=True,text=True,timeout=20)
             self.assertIn("B3A324_SUPPLY_SYNC_PASS",result.stdout)
 
+    def test_real_packer_integration(self):
+        source=(ROOT/"src"/"virtualcar.c").read_text(encoding="utf-8")
+        start=source.index("/* B3A267: opt-in synthetic A5/A6")
+        end=source.index("\n}",source.index("static U32 lab_current_frames(",start))+2
+        packer="#define CAN_29BIT_ID 0x100u\n#define MAX_D2_FRAMES 64u\n"+source[start:end]+"\n"
+        start=source.index("/* B3A324: only existing observed synthetic voltage reads")
+        end=source.index("/* B3A324 helper end */",start)
+        helper=source[start:end]
+        harness=(ROOT/"tests"/"b3a324_packer_harness.c").read_text(encoding="utf-8")
+        compiler=shlex.split(os.environ["CC"]) if os.environ.get("CC") else [shutil.which("gcc") or shutil.which("clang") or "gcc"]
+        with tempfile.TemporaryDirectory(prefix="b3a324-packer-") as tmp:
+            folder=Path(tmp)
+            (folder/"helper.c").write_text(helper,encoding="utf-8")
+            (folder/"packer.c").write_text(packer,encoding="utf-8")
+            (folder/"harness.c").write_text(harness,encoding="utf-8")
+            exe=folder/("check.exe" if os.name=="nt" else "check")
+            subprocess.run(compiler+["-std=c11","-Wall","-Wextra","-Werror",str(folder/"harness.c"),"-o",str(exe)],check=True,timeout=60)
+            result=subprocess.run([str(exe)],check=True,capture_output=True,text=True,timeout=20)
+            self.assertIn("B3A324_R2_PACKER_PASS routes=98 targets=2",result.stdout)
+
     def test_scope(self):
         source=(ROOT/"src"/"virtualcar.c").read_text(encoding="utf-8")
         self.assertIn('GetPrivateProfileStringA("B3A324_SupplyVoltageSyncLab","Enabled","0"',source)

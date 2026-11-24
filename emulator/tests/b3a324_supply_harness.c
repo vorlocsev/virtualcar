@@ -13,7 +13,7 @@ int main(void){
     U32 i,j,k,x;
     for(i=0;i<2;i++){
         U8 *req=reqs[i];
-        memset(orig,0,sizeof orig);memcpy(orig[0],req,5);orig[0][2]=0xe6;
+        memset(orig,0,sizeof orig);memcpy(orig[0],req,5);orig[0][0]=0xce;orig[0][2]=0xe6;
         orig[0][5]=(U8)(expected[i][0]>>8);orig[0][6]=(U8)expected[i][0];orig[1][7]=0xaa;
         for(k=0;k<5;k++){
             memcpy(frames,orig,sizeof frames);memcpy(want,orig,sizeof want);
