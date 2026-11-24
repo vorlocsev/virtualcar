@@ -2038,13 +2038,67 @@ static U32 answer_b3a150_ggd_cem50_lab(const CHANNEL *c,const ECU *ecu,
     }
     return 0;
 }
+/* B3A315 shared synthetic ECM snapshot; immutable until a separately tested state source exists. */
+typedef struct {
+    U32 battery_mv,rpm,speed_kph,pedal_permille,load_permille,maf_centi_gps;
+    U32 ambient_kpa,manifold_kpa;
+    int coolant_c,intake_c,ecm_c;
+} ECM_LAB_STATE;
+static const ECM_LAB_STATE g_ecm_lab_state={12500u,0u,0u,0u,0u,0u,100u,100u,20,20,20};
+static U32 ecm_lab_temperature_valid(int t){return t>=-40 && t<=119;}
+static U32 ecm_lab_state_valid(const ECM_LAB_STATE *s){
+    return s && s->battery_mv<=20000u && s->rpm<=16383u && s->speed_kph<=255u &&
+        s->pedal_permille<=1000u && s->load_permille<=1000u && s->maf_centi_gps<=65535u &&
+        s->ambient_kpa<=127u && s->manifold_kpa<=255u && ecm_lab_temperature_valid(s->coolant_c) &&
+        ecm_lab_temperature_valid(s->intake_c) && ecm_lab_temperature_valid(s->ecm_c);
+}
+/* Encode integer rpm as candidate IEEE binary32, big endian; nonzero wire format is not VIDA-verified. */
+static U32 ecm_lab_rpm_bits(U32 rpm){
+    U32 e=0u,v=rpm;
+    if(!rpm)return 0u;
+    while(v>1u){v>>=1;e++;}
+    return ((127u+e)<<23)|((rpm<<(23u-e))&0x7FFFFFu);
+}
+static U32 ecm_lab_encode(const ECM_LAB_STATE *s,U32 extended,U32 did,U8 *out){
+    U32 raw=0u,n=0u,i;
+    if(!out||!ecm_lab_state_valid(s))return 0;
+    if(!extended){
+        switch(did){
+        case 0x120Du: n=2u;raw=(s->battery_mv*65536u+10000u)/20000u;if(raw>65535u)raw=65535u;break;
+        case 0xD998u: n=1u;raw=((U32)(s->intake_c+40)*8u+2u)/5u;break;
+        case 0xD99Bu: n=1u;raw=((U32)(s->coolant_c+40)*8u+2u)/5u;break;
+        case 0xDA48u: n=4u;raw=ecm_lab_rpm_bits(s->rpm);break;
+        case 0xF40Cu: n=2u;raw=s->rpm*4u;break;
+        case 0xF40Du: n=1u;raw=s->speed_kph;break;
+        case 0xF40Fu: n=1u;raw=(U32)(s->intake_c+40);break;
+        default:return 0;
+        }
+    }else{
+        switch(did){
+        case 0xD9ACu: case 0xD9ADu: n=2u;raw=s->pedal_permille;break;
+        case 0xD9B8u: n=1u;raw=((U32)(s->ecm_c+40)*8u+2u)/5u;break;
+        case 0xF404u: n=1u;raw=(s->load_permille*255u+500u)/1000u;break;
+        case 0xF405u: n=1u;raw=(U32)(s->coolant_c+40);break;
+        case 0xF410u: n=2u;raw=s->maf_centi_gps;break;
+        case 0xF433u: n=1u;raw=s->ambient_kpa;break;
+        case 0xF449u: case 0xF44Au: n=1u;raw=(s->pedal_permille*255u+500u)/1000u;break;
+        case 0xF40Bu: n=1u;raw=s->manifold_kpa;break;
+        case 0xD9A4u: n=1u;raw=s->ambient_kpa*2u;break;
+        case 0xDA47u: n=2u;raw=(s->manifold_kpa*65536u+250u)/500u;break;
+        default:return 0;
+        }
+    }
+    for(i=0;i<n;i++)out[i]=(U8)(raw>>(8u*(n-1u-i)));
+    return n;
+}
+/* B3A315 shared ECM snapshot end */
 /* B3A309: synthetic stationary ECM 30670321 AA live data. Catalog
    scaling and runtime requests are evidence; payloads are not OEM captures.
    Keep this independent of the generic F1xx identification whitelist. */
 static U32 answer_b3a309_ecm_live_lab(const CHANNEL *c,const ECU *ecu,
                                         U32 can_id,U32 tx_flags,
                                         const U8 *req,U32 len,U8 *res){
-    U32 did,n=0,i;U8 value[4]={0,0,0,0};
+    U32 did,n;
     if(!g_b3a309_ecm_live_lab || !c || !ecu || !req || !res ||
        c->api_protocol!=PROTO_ISO15765 || c->protocol!=PROTO_ISO15765 ||
        c->baud!=500000u || c->flags!=CAN_29BIT_ID ||
@@ -2053,17 +2107,9 @@ static U32 answer_b3a309_ecm_live_lab(const CHANNEL *c,const ECU *ecu,
        ecu->resp!=0x18DAF110u || ecu->expected_baud!=500000u ||
        len!=3u || req[0]!=0x22u)return 0;
     did=((U32)req[1]<<8)|req[2];
-    switch(did){
-    case 0x120Du: n=2u;value[0]=0xA0u;break; /* 12.5 V */
-    case 0xD998u: case 0xD99Bu: n=1u;value[0]=0x60u;break; /* 20 C */
-    case 0xDA48u: n=4u;break; /* float zero candidate */
-    case 0xF40Cu: n=2u;break; /* 0 rpm */
-    case 0xF40Du: n=1u;break; /* 0 km/h */
-    case 0xF40Fu: n=1u;value[0]=0x3Cu;break; /* 20 C */
-    default:return 0;
-    }
+    n=ecm_lab_encode(&g_ecm_lab_state,0u,did,res+3u);
+    if(!n)return 0;
     res[0]=0x62u;res[1]=req[1];res[2]=req[2];
-    for(i=0;i<n;i++)res[3u+i]=value[i];
     logline("B3A309 ECM live data positive (synthetic)",req,len);
     return 3u+n;
 }
@@ -2071,7 +2117,7 @@ static U32 answer_b3a309_ecm_live_lab(const CHANNEL *c,const ECU *ecu,
 static U32 answer_b3a314_ecm_live_lab(const CHANNEL *c,const ECU *ecu,
                                         U32 can_id,U32 tx_flags,
                                         const U8 *req,U32 len,U8 *res){
-    U32 did,n=0,i;U8 value[4]={0,0,0,0};
+    U32 did,n;
     if(!g_b3a314_ecm_live_lab || !c || !ecu || !req || !res ||
        c->api_protocol!=PROTO_ISO15765 || c->protocol!=PROTO_ISO15765 ||
        c->baud!=500000u || c->flags!=CAN_29BIT_ID ||
@@ -2080,23 +2126,9 @@ static U32 answer_b3a314_ecm_live_lab(const CHANNEL *c,const ECU *ecu,
        ecu->resp!=0x18DAF110u || ecu->expected_baud!=500000u ||
        len!=3u || req[0]!=0x22u)return 0;
     did=((U32)req[1]<<8)|req[2];
-    switch(did){
-    case 0xD9ACu: n=2u;value[0]=0x00u;value[1]=0x00u;break;
-    case 0xD9ADu: n=2u;value[0]=0x00u;value[1]=0x00u;break;
-    case 0xD9B8u: n=1u;value[0]=0x60u;break;
-    case 0xF404u: n=1u;value[0]=0x00u;break;
-    case 0xF405u: n=1u;value[0]=0x3Cu;break;
-    case 0xF410u: n=2u;value[0]=0x00u;value[1]=0x00u;break;
-    case 0xF433u: n=1u;value[0]=0x64u;break;
-    case 0xF449u: n=1u;value[0]=0x00u;break;
-    case 0xF44Au: n=1u;value[0]=0x00u;break;
-    case 0xF40Bu: n=1u;value[0]=0x64u;break;
-    case 0xD9A4u: n=1u;value[0]=0xC8u;break;
-    case 0xDA47u: n=2u;value[0]=0x33u;value[1]=0x33u;break;
-    default:return 0;
-    }
+    n=ecm_lab_encode(&g_ecm_lab_state,1u,did,res+3u);
+    if(!n)return 0;
     res[0]=0x62u;res[1]=req[1];res[2]=req[2];
-    for(i=0;i<n;i++)res[3u+i]=value[i];
     logline("B3A314 ECM extended live data positive (synthetic)",req,len);
     return 3u+n;
 }
