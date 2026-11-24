@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$DllPath,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [switch]$Enabled
+    [switch]$Enabled,
+    [switch]$Expanded
 )
 $ErrorActionPreference='Stop'
 if ([IntPtr]::Size -ne 4) { throw 'Use 32-bit Windows PowerShell' }
@@ -35,6 +36,7 @@ StrictJ2534Filters=0
 BackendTelemetryEnabled=0
 '@
 if ($Enabled) { $profile += [Environment]::NewLine + "[B3A309_EcmLiveDataLab]" + [Environment]::NewLine + "Enabled=1" }
+if ($Expanded) { $profile += [Environment]::NewLine + "[B3A314_EcmExtendedLiveLab]" + [Environment]::NewLine + "Enabled=1" }
 [IO.File]::WriteAllText((Join-Path $dir 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
@@ -83,7 +85,7 @@ public static class EcmLiveNative {
         }finally{Marshal.FreeHGlobal(p);}
         Empty(ch);
     }
-    public static void Run(bool enabled){
+    public static void Run(bool enabled,bool expanded){
         Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"x86 ABI");
         uint dev=0,hs=0,ls=0;bool opened=false;
         try{
@@ -107,6 +109,30 @@ public static class EcmLiveNative {
                 }
             }
             Console.WriteLine("B3A310_DID_14_EXCHANGES_PASS enabled="+enabled);
+            byte[][] extra={
+                new byte[]{0x62,0xD9,0xAC,0x00,0x00},
+                new byte[]{0x62,0xD9,0xAD,0x00,0x00},
+                new byte[]{0x62,0xD9,0xB8,0x60},
+                new byte[]{0x62,0xF4,0x04,0x00},
+                new byte[]{0x62,0xF4,0x05,0x3C},
+                new byte[]{0x62,0xF4,0x10,0x00,0x00},
+                new byte[]{0x62,0xF4,0x33,0x64},
+                new byte[]{0x62,0xF4,0x49,0x00},
+                new byte[]{0x62,0xF4,0x4A,0x00},
+                new byte[]{0x62,0xF4,0x0B,0x64},
+                new byte[]{0x62,0xD9,0xA4,0xC8},
+                new byte[]{0x62,0xDA,0x47,0x33,0x33}
+            };
+            foreach(uint flags in new uint[]{0x100,0x140}){
+                foreach(byte[] reply in extra){
+                    Send(hs,Tx,flags,new byte[]{0x22,reply[1],reply[2]});
+                    Expect(hs,expanded?reply:nrc);
+                }
+            }
+            Send(hs,Tx,0x140,new byte[]{0x22,0xD9,0xAE});Expect(hs,nrc);
+            Send(ls,Tx,0x140,new byte[]{0x22,0xD9,0xAC});Empty(ls);Empty(hs);
+            Send(hs,0x18DA11F1,0x140,new byte[]{0x22,0xD9,0xAC});Empty(hs);
+            Console.WriteLine("B3A314_DID_24_EXCHANGES_PASS expanded="+expanded+" baseline="+enabled);
             Send(hs,Tx,0x140,new byte[]{0x22,0x12,0x0E});Expect(hs,nrc);
             Console.WriteLine("B3A310_UNKNOWN_DID_PASS");
             Send(ls,Tx,0x140,new byte[]{0x22,0x12,0x0D});Empty(ls);Empty(hs);
@@ -131,7 +157,7 @@ public static class EcmLiveNative {
 '@
     $source=$source.Replace('__DLL__',$isolated.Replace('"','""'))
     Add-Type -TypeDefinition $source -Language CSharp
-    [EcmLiveNative]::Run([bool]$Enabled)
+    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded)
 } finally {
     $env:LOCALAPPDATA=$savedLocal
     $env:TEMP=$savedTemp

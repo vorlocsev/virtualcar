@@ -86,5 +86,5 @@ class TestEcmLiveLab(unittest.TestCase):
         source=SOURCE.read_text(encoding="utf-8")
         self.assertIn('GetPrivateProfileStringA("B3A309_EcmLiveDataLab","Enabled","0"',source)
         self.assertIn("g_b3a309_ecm_live_lab=(str_len(v)==1u && v[0]=='1')?1u:0u;",source)
-        self.assertIn("sz=answer_b3a309_ecm_live_lab(c,ecu,id,msg->TxFlags,payload,n,answer);\n            if(!sz)sz=answer_uds(ecu,payload,n,answer);",source)
+        self.assertIn("if(!sz)sz=answer_b3a309_ecm_live_lab(c,ecu,id,msg->TxFlags,payload,n,answer);\n            if(!sz)sz=answer_uds(ecu,payload,n,answer);",source)
         self.assertIn("g_ecu[i].did_code[slot]<0xF100u||g_ecu[i].did_code[slot]>0xF1FFu",source)

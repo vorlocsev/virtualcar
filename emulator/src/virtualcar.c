@@ -171,6 +171,7 @@ static U32 g_ecu_count=2;
 static U32 g_p2_strict_routing=0;
 static U32 g_b3a267_current_lab=0;
 static U32 g_b3a309_ecm_live_lab=0;
+static U32 g_b3a314_ecm_live_lab=0;
 static U32 g_b3a228_cem40_empty_dtc=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
 typedef struct {U32 req,resp,expected_baud; U8 lab_dtc_mask,lab_dtc_single,lab_dtc_details; char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
@@ -987,6 +988,8 @@ static void load_config(void) {
     g_b3a267_current_lab=(str_len(v)==1u && v[0]=='1')?1u:0u;
     GetPrivateProfileStringA("B3A309_EcmLiveDataLab","Enabled","0",v,sizeof(v),g_profile_path);
     g_b3a309_ecm_live_lab=(str_len(v)==1u && v[0]=='1')?1u:0u;
+    GetPrivateProfileStringA("B3A314_EcmExtendedLiveLab","Enabled","0",v,sizeof(v),g_profile_path);
+    g_b3a314_ecm_live_lab=(str_len(v)==1u && v[0]=='1')?1u:0u;
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
     bytes_zero(g_trace,sizeof(g_trace));g_trace_count=0;
@@ -2064,6 +2067,39 @@ static U32 answer_b3a309_ecm_live_lab(const CHANNEL *c,const ECU *ecu,
     logline("B3A309 ECM live data positive (synthetic)",req,len);
     return 3u+n;
 }
+/* B3A314: catalog-derived synthetic stopped-engine candidates; not OEM wire captures. */
+static U32 answer_b3a314_ecm_live_lab(const CHANNEL *c,const ECU *ecu,
+                                        U32 can_id,U32 tx_flags,
+                                        const U8 *req,U32 len,U8 *res){
+    U32 did,n=0,i;U8 value[4]={0,0,0,0};
+    if(!g_b3a314_ecm_live_lab || !c || !ecu || !req || !res ||
+       c->api_protocol!=PROTO_ISO15765 || c->protocol!=PROTO_ISO15765 ||
+       c->baud!=500000u || c->flags!=CAN_29BIT_ID ||
+       !(tx_flags&CAN_29BIT_ID) || (tx_flags&~(CAN_29BIT_ID|0x40u)) ||
+       can_id!=0x18DA10F1u || ecu->req!=0x18DA10F1u ||
+       ecu->resp!=0x18DAF110u || ecu->expected_baud!=500000u ||
+       len!=3u || req[0]!=0x22u)return 0;
+    did=((U32)req[1]<<8)|req[2];
+    switch(did){
+    case 0xD9ACu: n=2u;value[0]=0x00u;value[1]=0x00u;break;
+    case 0xD9ADu: n=2u;value[0]=0x00u;value[1]=0x00u;break;
+    case 0xD9B8u: n=1u;value[0]=0x60u;break;
+    case 0xF404u: n=1u;value[0]=0x00u;break;
+    case 0xF405u: n=1u;value[0]=0x3Cu;break;
+    case 0xF410u: n=2u;value[0]=0x00u;value[1]=0x00u;break;
+    case 0xF433u: n=1u;value[0]=0x64u;break;
+    case 0xF449u: n=1u;value[0]=0x00u;break;
+    case 0xF44Au: n=1u;value[0]=0x00u;break;
+    case 0xF40Bu: n=1u;value[0]=0x64u;break;
+    case 0xD9A4u: n=1u;value[0]=0xC8u;break;
+    case 0xDA47u: n=2u;value[0]=0x33u;value[1]=0x33u;break;
+    default:return 0;
+    }
+    res[0]=0x62u;res[1]=req[1];res[2]=req[2];
+    for(i=0;i<n;i++)res[3u+i]=value[i];
+    logline("B3A314 ECM extended live data positive (synthetic)",req,len);
+    return 3u+n;
+}
 static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     U32 id,i,n,sz;U8 payload[256],answer[256];const ECU *ecu;
     const char *route;
@@ -2172,7 +2208,8 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
             if(sz && answer[0]==0x59u && answer[1]!=0x02u)logline("B3A238 synthetic TCM DTC details (not OEM verified)",0,0);
             else if(sz && answer[0]==0x59u)logline(sz==7u?"B3A231 synthetic TCM 056200 DTC record (not OEM verified)":"Synthetic ECU empty DTC list (not OEM verified)",0,0);
         } else {
-            sz=answer_b3a309_ecm_live_lab(c,ecu,id,msg->TxFlags,payload,n,answer);
+            sz=answer_b3a314_ecm_live_lab(c,ecu,id,msg->TxFlags,payload,n,answer);
+            if(!sz)sz=answer_b3a309_ecm_live_lab(c,ecu,id,msg->TxFlags,payload,n,answer);
             if(!sz)sz=answer_uds(ecu,payload,n,answer);
         }
         if(sz){answered=1;emit_response(c,ecu->resp,id==0x7DFu?ecu->req:id,answer,sz);if(c->pending_len)c->pending_request_id=id;

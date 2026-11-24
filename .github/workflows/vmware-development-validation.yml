@@ -275,6 +275,10 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'B3A310 disabled native control failed' }
             & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'enabled') -Enabled
             if ($LASTEXITCODE -ne 0) { throw 'B3A310 enabled native gate failed' }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'expanded') -Expanded
+            if ($LASTEXITCODE -ne 0) { throw 'B3A314 expanded-only native gate failed' }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'both') -Enabled -Expanded
+            if ($LASTEXITCODE -ne 0) { throw 'B3A314 combined native gate failed' }
           } finally {
             if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
           }
