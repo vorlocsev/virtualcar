@@ -131,6 +131,8 @@ U32 GetCurrentProcessId(void){return 0xAABBCCDD;}
 U32 GetModuleFileNameA(PTR mod,char*out,U32 n){(void)mod;strncpy(out,"C:\\SectorV\\VirtualCarJ2534.dll",n);return (U32)strlen(out);}
 /* Injection is confined to deterministic host tests; never reads a real INI. */
 static U32 b9f0_loader_test_case=0;
+static const char *capacity_section=0;
+static U32 capacity_duplicate=0,capacity_seen=0;
 U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32 n,const char*path){
  (void)path;
  /* Only host-test fixture: the distributed INI keeps count=0 by default. */
@@ -183,6 +185,17 @@ U32 GetPrivateProfileStringA(const char*s,const char*k,const char*d,char*out,U32
   else if(strcmp(k,"FrameCount")==0)d="1";
   else if(strcmp(k,"Frame0")==0)
    d=b9f0_loader_test_case==6u?"CC 60 F9 F0 00 00 00 00":"CC 60 7F B9 31 00 00 00";
+ }
+ /* B3A305: exact optional slot names; same existing synthetic F0 fixture. */
+ if(capacity_section && (strcmp(s,capacity_section)==0 ||
+    (capacity_duplicate && strcmp(s,"D2_Node63")==0))){
+  if(strcmp(k,"Enabled")==0){d="1";if(strcmp(s,capacity_section)==0)capacity_seen++;}
+  else if(strcmp(k,"Target")==0)d="60";
+  else if(strcmp(k,"Opcode")==0)d="F0";
+  else if(strcmp(k,"Baud")==0)d="500000";
+  else if(strcmp(k,"ResponseId")==0)d="01000003";
+  else if(strcmp(k,"FrameCount")==0)d="1";
+  else if(strcmp(k,"Frame0")==0)d="CC 60 F9 F0 00 00 00 00";
  }
  snprintf(out,n,"%s",d);return (U32)strlen(out);
 }
@@ -3110,12 +3123,41 @@ static void test_b9f0_real_loader_scope(void){
  puts("PASS B3A101 B9F0 config loader: reject zero, preserve negative, non-CEM and B9FB");
 }
 
+static void test_d2_capacity_loader(void){
+ static const struct {const char *section;U32 slot;} cases[]={
+  {"D2_Node0",0},{"D2_Node9",9},{"D2_Node10",10},{"D2_Node63",63},
+  {"D2_Node64",64},{"D2_Node99",99},{"D2_Node100",100},{"D2_Node127",127},
+  {"D2_Node128",128}
+ };
+ REQUIRE(MAX_D2_FIXTURES==BASE_D2_FIXTURES+128u);
+ for(U32 i=0;i<sizeof(cases)/sizeof(cases[0]);i++){
+  U32 active=0;
+  capacity_section=cases[i].section;capacity_seen=0;load_config();
+  for(U32 j=BASE_D2_FIXTURES;j<MAX_D2_FIXTURES;j++)if(g_d2[j].frame_count)active++;
+  REQUIRE(g_d2[0].frame_count==1u && g_d2[3].frame_count==3u);
+  if(cases[i].slot<128u){
+   D2_PROFILE *d=&g_d2[BASE_D2_FIXTURES+cases[i].slot];
+   REQUIRE(capacity_seen==1u && active==1u);
+   REQUIRE(d->frame_count==1u && d->target==0x60u && d->subcommand==0xF0u);
+   REQUIRE(d->baud==500000u && d->response_id==0x01000003u);
+  }else REQUIRE(capacity_seen==0u && active==0u);
+ }
+ capacity_section="D2_Node127";capacity_duplicate=1u;capacity_seen=0;load_config();
+ REQUIRE(capacity_seen==1u);
+ REQUIRE(g_d2[BASE_D2_FIXTURES+63].frame_count==1u);
+ REQUIRE(g_d2[BASE_D2_FIXTURES+127].frame_count==0u);
+ capacity_section=0;capacity_duplicate=0;load_config();
+ for(U32 j=BASE_D2_FIXTURES;j<MAX_D2_FIXTURES;j++)REQUIRE(g_d2[j].frame_count==0u);
+ puts("PASS B3A305 D2 capacity: eight slot boundaries, slot128 ignored, duplicate rejected, cleanup");
+}
+
 int main(){
  U32 dev=0,cid=0,batt=0,n=0;
  test_native_log_append_only();
  test_j2534_lifecycle_lock_races();
  test_j2534_blocked_read_session_reuse();
  test_b9f0_real_loader_scope();
+ test_d2_capacity_loader();
  REQUIRE(PassThruOpen(0,&dev)==ERR_OK);REQUIRE(dev==1);
  test_zero_baud_guard(dev);
  test_d2_replay_isolation_on_set_config(dev);
@@ -3833,6 +3875,30 @@ int main(){
  node->frame[0][1]=0x50;REQUIRE(!validate_d2_fixture(node));
  node->frame[0][1]=0x11;REQUIRE(validate_d2_fixture(node));
  node->frame_count=0;
+ /* B3A302: only an explicitly configured synthetic CEM40 B9 31 fixture. */
+ {
+  D2_PROFILE *impact=&g_d2[BASE_D2_FIXTURES+63];D2_PROFILE saved=*impact;
+  const U8 q[8]={0xCB,0x40,0xB9,0x31,0,0,0,0};
+  const U8 expected[8]={0xCC,0x40,0xF9,0x31,0,0,0,0};
+  U8 bad[8];bytes_zero(impact,sizeof(*impact));
+  impact->target=0x40;impact->subcommand=0x31;impact->baud=125000;
+  impact->response_id=0x00800003;impact->frame_count=1;
+  memcpy(impact->frame[0],expected,8);
+  REQUIRE(lab_extended_size(0x40,0x31)==1);
+  REQUIRE(!lab_special_b9(0x50,0x31));
+  REQUIRE(validate_d2_fixture(impact)&&lab_special_fixture(impact));
+  for(U32 j=0;j<8;j++){impact->frame[0][j]^=1;REQUIRE(!lab_special_fixture(impact));impact->frame[0][j]^=1;}
+  impact->frame_count=2;REQUIRE(!lab_special_fixture(impact));impact->frame_count=1;
+  impact->baud=500000;REQUIRE(!lab_special_fixture(impact));impact->baud=125000;
+  impact->response_id=0x00800004;REQUIRE(!lab_special_fixture(impact));impact->response_id=0x00800003;
+  REQUIRE(lab_special_request(q,8,125000,CAN_29BIT_ID,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,7,125000,CAN_29BIT_ID,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,8,500000,CAN_29BIT_ID,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,8,125000,0,CAN_29BIT_ID));
+  REQUIRE(!lab_special_request(q,8,125000,CAN_29BIT_ID,0));
+  memcpy(bad,q,8);bad[4]=1;REQUIRE(!lab_special_request(bad,8,125000,CAN_29BIT_ID,CAN_29BIT_ID));
+  *impact=saved;
+ }
  /* v0.3.6.4: passive recorded CAN fixture is strictly bus-specific. */
  TRACE_FRAME *trace=&g_trace[0];bytes_zero(trace,sizeof(*trace));
  trace->id=0x321;trace->baud=125000;trace->period_ms=40;trace->enabled=1;
