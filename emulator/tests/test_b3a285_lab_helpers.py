@@ -37,8 +37,8 @@ class TestLabHelpers(unittest.TestCase):
             self.assertIn(marker, result.stdout)
             print(result.stdout.strip())
 
-    def test_current_83(self):
-        self.run_fixture('test_current.c', '/* B3A267: opt-in synthetic A5/A6', 'static U32 lab_current_frames(', '83/83_PASS')
+    def test_current_97(self):
+        self.run_fixture('test_current.c', '/* B3A267: opt-in synthetic A5/A6', 'static U32 lab_current_frames(', '97/97_PASS')
 
     def test_srs_12(self):
         self.run_fixture('test_srs_ae11.c', 'static int lab_d2_empty_reply(', 'static int lab_d2_empty_reply(', '12/12_PASS')
