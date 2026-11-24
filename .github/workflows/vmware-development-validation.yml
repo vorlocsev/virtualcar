@@ -82,6 +82,8 @@ on:
           - 3e90a0d30d63133f489b8ce12894ac9288b6d340
           # Owner-reviewed exact RxStatus x86 test commit from Draft PR #201.
           - d06f8a13e2edd281138f4cfac2075c485d579a87
+          # B3A288: owner-local validated immutable PR #430 candidate.
+          - a53769967d20b0e3faf18e3f63da0f42b6ef0cfb
 
 permissions:
   contents: read
@@ -140,6 +142,7 @@ jobs:
             'a47d7858a4c634517358a7fa3c552c998b795cc1',
             '3e90a0d30d63133f489b8ce12894ac9288b6d340'
             'd06f8a13e2edd281138f4cfac2075c485d579a87'
+            'a53769967d20b0e3faf18e3f63da0f42b6ef0cfb'
           )
           if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
               $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
