@@ -47,7 +47,7 @@ typedef struct { U32 low; U32 high; } FILETIME_VALUE;
 #define LEGACY_ECUS 8
 #define MAX_D2_FRAMES 64
 #define MAX_PERIODIC 4
-#define MAX_D2_FIXTURES 70 /* 6 legacy + 64 optional D2_Node slots */
+#define MAX_D2_FIXTURES 134 /* 6 legacy + 128 optional D2_Node slots */
 #define BASE_D2_FIXTURES 6
 #define MAX_PASSIVE_TRACES 12
 #define MAX_EXTRA_DID 192
@@ -1023,10 +1023,11 @@ static void load_config(void) {
         d->subcommand=(U8)(i>=4?0xFC:((i%2)==0?0xFB:0xF0));
         d->baud=(d->target==0x40?125000u:500000u);
         if(i>=BASE_D2_FIXTURES){
-            char digits[3];U32 target,opcode;
+            char digits[4];U32 target,opcode;
             str_copy(section,"D2_Node",sizeof(section));
             {U32 slot=i-BASE_D2_FIXTURES,pos=0;
-             if(slot>=10u)digits[pos++]=(char)('0'+slot/10u);
+             if(slot>=100u)digits[pos++]=(char)('0'+slot/100u);
+             if(slot>=10u)digits[pos++]=(char)('0'+(slot/10u)%10u);
              digits[pos++]=(char)('0'+slot%10u);digits[pos]=0;}
             str_append(section,digits,sizeof(section));
             GetPrivateProfileStringA(section,"Enabled","0",v,sizeof(v),g_profile_path);
