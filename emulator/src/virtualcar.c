@@ -173,6 +173,7 @@ static U32 g_b3a267_current_lab=0;
 static U32 g_b3a309_ecm_live_lab=0;
 static U32 g_b3a314_ecm_live_lab=0;
 static U32 g_b3a320_rem_sync=0;
+static U32 g_b3a324_supply_sync=0;
 static U32 g_b3a228_cem40_empty_dtc=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
 typedef struct {U32 req,resp,expected_baud; U8 lab_dtc_mask,lab_dtc_single,lab_dtc_details; char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
@@ -1004,6 +1005,8 @@ static void load_config(void) {
         g_battery_mv=ecm_lab_battery_mv(g_battery_mv,battery_sync,g_b3a309_ecm_live_lab);
         GetPrivateProfileStringA("B3A320_RemVoltageSyncLab","Enabled","0",v,sizeof(v),g_profile_path);
         g_b3a320_rem_sync=(battery_sync && g_b3a309_ecm_live_lab && str_len(v)==1u && v[0]=='1')?1u:0u;
+        GetPrivateProfileStringA("B3A324_SupplyVoltageSyncLab","Enabled","0",v,sizeof(v),g_profile_path);
+        g_b3a324_supply_sync=(battery_sync && g_b3a309_ecm_live_lab && str_len(v)==1u && v[0]=='1')?1u:0u;
     }
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
@@ -1883,6 +1886,30 @@ static void lab_rem_voltage_sync(U32 enabled,U32 mv,const U8 *req,U32 len,U32 co
     frames[0][5]=(U8)((mv+62u)/125u);
 }
 
+/* B3A324: only existing observed synthetic voltage reads; catalog-based rounding. */
+static U32 lab_voltage_raw(U32 kind,U32 mv){
+    if(kind==1u)return (mv*65535u+12500u)/25000u;
+    if(kind==2u)return (mv*64u+500u)/1000u;
+    return (mv+125u)/250u;
+}
+static void lab_supply_voltage_sync(U32 enabled,U32 mv,const U8 *req,U32 len,U32 count,U8 frames[][8]){
+    static const U8 targets[2][8]={{0xCD,0x46,0xA6,0x1A,0x02,1,0,0},{0xCD,0x29,0xA6,0x00,0x80,1,0,0}};
+    U32 i,j,raw;
+    if(enabled!=1u || !req || !frames || len!=8u || count!=1u || mv>20000u)return;
+    for(i=0;i<2u;i++){
+        for(j=0;j<8u;j++)if(req[j]!=targets[i][j])break;
+        if(j!=8u)continue;
+        if(frames[0][0]!=0xCDu || frames[0][1]!=req[1] || frames[0][2]!=0xE6u ||
+           frames[0][3]!=req[3] || frames[0][4]!=req[4])return;
+        raw=lab_voltage_raw(i+1u,mv);
+        frames[0][5]=(U8)(raw>>8);frames[0][6]=(U8)raw;
+        return;
+    }
+}
+static U8 lab_cem_voltage_byte(U32 enabled,U32 mv){
+    return enabled==1u && mv<=20000u ? (U8)lab_voltage_raw(3u,mv) : 0x32u;
+}
+/* B3A324 helper end */
 static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len,U32 tx_flags){
     U32 i;D2_PROFILE *d;const char *route;
     if(id!=0x000FFFFEu || c->protocol!=PROTO_CAN)return 0;
@@ -1895,6 +1922,7 @@ static int process_d2(CHANNEL *c,U32 id,const U8 *data,U32 len,U32 tx_flags){
         backend_event(c,c->active_trace,"route_selected",route,"none","unknown");
         count=lab_current_frames(data,len,c->baud,c->flags,tx_flags,c->d2_frame);
         lab_rem_voltage_sync(g_b3a320_rem_sync,g_battery_mv,data,len,count,c->d2_frame);
+        lab_supply_voltage_sync(g_b3a324_supply_sync,g_battery_mv,data,len,count,c->d2_frame);
         if(!count){logline("B3A267 LAB current data unsupported shape/bus/mode",data,len);
             backend_event(c,c->active_trace,"request_completed",route,"no_response","no_response");return 1;}
         c->d2_trace=c->active_trace;
@@ -2059,7 +2087,7 @@ static U32 answer_b3a150_ggd_cem50_lab(const CHANNEL *c,const ECU *ecu,
     }
     if(req[1]==0xDDu && req[2]==0x02u){
         /* LAB-only 0x32 * 0.25 V = 12.50 V; not OEM-captured voltage. */
-        res[0]=0x62u;res[1]=0xDDu;res[2]=0x02u;res[3]=0x32u;
+        res[0]=0x62u;res[1]=0xDDu;res[2]=0x02u;res[3]=lab_cem_voltage_byte(g_b3a324_supply_sync,g_battery_mv);
         logline("B3A150 LAB GGD CEM DD02 positive (synthetic)",req,len);
         return 4u;
     }
