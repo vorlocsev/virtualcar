@@ -94,6 +94,8 @@ public sealed class CemPreviewWindow : Window
     private readonly UiLanguageSettings? _languageSettings;
     private readonly TextBlock _languageNotice = new() { TextWrapping = TextWrapping.Wrap };
     private readonly bool _ephemeral;
+    private readonly bool _previewOnly;
+    private bool CanLoadProfile => !_ephemeral || _previewOnly;
     private bool _languageSaveFailed;
     private bool _russian;
     private string _statusEn = "";
@@ -109,9 +111,11 @@ public sealed class CemPreviewWindow : Window
     private CemPreview? Snapshot => _model?.Snapshot;
     private CemRow? Selected => (_rows.SelectedItem as ListViewItem)?.Tag as CemRow;
 
-    public CemPreviewWindow(bool ephemeral = false)
+    public CemPreviewWindow(bool ephemeral = false, bool previewOnly = false)
     {
-        _ephemeral = ephemeral;
+        _previewOnly = previewOnly;
+        _ephemeral = ephemeral || previewOnly;
+        ephemeral = _ephemeral;
         if (!ephemeral)
         {
             var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -266,6 +270,20 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_language, "VC075.Language");
         AutomationId(_heading, "VC075.Heading");
         AutomationId(_load, "VC075.Load");
+        AutomationId(_python, "VC087.Python");
+        AutomationId(_script, "VC087.Script");
+        AutomationId(_data, "VC087.Data");
+        AutomationId(_counts, "VC087.Counts");
+        AutomationId(_rows, "VC087.Rows");
+        AutomationId(_options, "VC087.Options");
+        AutomationId(_detail, "VC087.Detail");
+        AutomationId(_audit, "VC087.Audit");
+        AutomationId(_status, "VC087.Status");
+        AutomationId(_preview, "VC087.Preview");
+        AutomationId(_revert, "VC087.Revert");
+        AutomationId(_clear, "VC087.Clear");
+        AutomationId(_reset, "VC087.Close");
+        AutomationId(_cancel, "VC087.Cancel");
         AutomationId(_search, "VC075.Search");
         AutomationId(_filter, "VC075.Filter");
         AutomationId(_auditHeading, "VC075.AuditHeading");
@@ -293,7 +311,12 @@ public sealed class CemPreviewWindow : Window
         filters.ColumnDefinitions.Add(new ColumnDefinition());
         filters.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         filters.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        foreach (string item in new[] { "All", "Changed", "Locked", "Editable" }) _filter.Items.Add(new ComboBoxItem { Content = item });
+        foreach (string item in new[] { "All", "Changed", "Locked", "Editable" })
+        {
+            var filterItem = new ComboBoxItem { Content = item };
+            AutomationId(filterItem, "VC087.Filter." + item);
+            _filter.Items.Add(filterItem);
+        }
         _filter.SelectedIndex = 0;
         Add(filters, _search, 0); Add(filters, _filter, 0, 1); Add(filters, _counts, 0, 2);
         Add(root, filters, 1);
@@ -425,8 +448,11 @@ public sealed class CemPreviewWindow : Window
         bool configuration = _section == Section.Configuration;
         _heading.Text = SectionLabel(_section);
         _subtitle.Text = configuration
-            ? T("Lab preview only. Export and ECU writes are unavailable.",
-                "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.")
+            ? _previewOnly
+                ? T("Isolated CEM preview. Registry, INI changes and log access disabled.",
+                    "Изолированный предпросмотр CEM. Реестр, изменение INI и чтение журналов отключены.")
+                : T("Lab preview only. Export and ECU writes are unavailable.",
+                    "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.")
             : _section == Section.Connection
                 ? T("J2534 Lab Adapter — registration only.", "J2534 Lab Adapter — только регистрация.")
                 : _section == Section.Vehicle
@@ -1039,7 +1065,7 @@ public sealed class CemPreviewWindow : Window
 
     private async Task LoadAsync()
     {
-        if (_ephemeral || _closed || Busy || _model is not null) return;
+        if (!CanLoadProfile || _closed || Busy || _model is not null) return;
         try
         {
             var transport = new CemPreviewProcessTransport(_python.Text.Trim(), _script.Text.Trim(), _data.Text.Trim());
@@ -1139,6 +1165,7 @@ public sealed class CemPreviewWindow : Window
                         Tag = row,
                         Content = new TextBlock { Text = $"{row.Offset:D3}  {row.Name}  {state}\n{row.SelectedCode}  {row.SelectedText}", TextWrapping = TextWrapping.Wrap }
                     };
+                    AutomationId(item, "VC087.Row." + row.Offset.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     _rows.Items.Add(item);
                     if (selectedOffset == row.Offset) _rows.SelectedItem = item;
                 }
@@ -1171,7 +1198,11 @@ public sealed class CemPreviewWindow : Window
         if (row is { Locked: false })
         {
             foreach (var option in row.Options.Where(o => o.Selectable && o.Code != row.SelectedCode))
-                _options.Items.Add(new ComboBoxItem { Tag = option, Content = $"{option.Code} — {option.Text}" });
+            {
+                var item = new ComboBoxItem { Tag = option, Content = $"{option.Code} — {option.Text}" };
+                AutomationId(item, "VC087.Option." + option.Code);
+                _options.Items.Add(item);
+            }
         }
         UpdateControls();
     }
@@ -1179,8 +1210,8 @@ public sealed class CemPreviewWindow : Window
     private void UpdateControls()
     {
         bool loaded = Snapshot is not null && !Busy;
-        _python.IsEnabled = _script.IsEnabled = _data.IsEnabled = !_ephemeral && _model is null && !Busy;
-        _load.IsEnabled = !_ephemeral && _model is null && !Busy;
+        _python.IsEnabled = _script.IsEnabled = _data.IsEnabled = CanLoadProfile && _model is null && !Busy;
+        _load.IsEnabled = CanLoadProfile && _model is null && !Busy;
         _cancel.IsEnabled = _operation is not null;
         _reset.IsEnabled = _model is not null && !Busy;
         _progress.IsActive = Busy;
