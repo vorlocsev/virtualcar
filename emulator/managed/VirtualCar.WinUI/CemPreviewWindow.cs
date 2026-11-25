@@ -7,23 +7,23 @@ namespace VirtualCar.WinUI;
 // Standalone lab preview. No activation, export, ECU I/O or provider registration.
 public sealed class CemPreviewWindow : Window
 {
-    private readonly TextBox _python = new() { Header = "Python.exe (абсолютный путь)" };
-    private readonly TextBox _script = new() { Header = "vc071_view.py (абсолютный путь)" };
-    private readonly TextBox _data = new() { Header = "Локальный каталог CEM529 (вне Git)" };
-    private readonly TextBox _search = new() { PlaceholderText = "Поиск по названию или смещению" };
+    private readonly TextBox _python = new() { Header = "Python.exe (absolute path)" };
+    private readonly TextBox _script = new() { Header = "vc071_view.py (absolute path)" };
+    private readonly TextBox _data = new() { Header = "Local CEM529 directory (outside Git)" };
+    private readonly TextBox _search = new() { PlaceholderText = "Search by name or offset" };
     private readonly ComboBox _filter = new() { MinWidth = 150 };
     private readonly ListView _rows = new() { SelectionMode = ListViewSelectionMode.Single };
     private readonly ComboBox _options = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly TextBlock _counts = new() { Text = "Профиль не загружен" };
+    private readonly TextBlock _counts = new() { Text = "No profile loaded" };
     private readonly TextBlock _detail = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _audit = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Button _load = new() { Content = "Загрузить профиль" };
-    private readonly Button _cancel = new() { Content = "Отмена" };
-    private readonly Button _reset = new() { Content = "Закрыть профиль" };
-    private readonly Button _preview = new() { Content = "Проверить вариант" };
-    private readonly Button _revert = new() { Content = "Вернуть исходное" };
-    private readonly Button _clear = new() { Content = "Сбросить все изменения" };
+    private readonly Button _load = new() { Content = "Load profile" };
+    private readonly Button _cancel = new() { Content = "Cancel" };
+    private readonly Button _reset = new() { Content = "Close profile" };
+    private readonly Button _preview = new() { Content = "Preview selection" };
+    private readonly Button _revert = new() { Content = "Revert to baseline" };
+    private readonly Button _clear = new() { Content = "Reset all changes" };
     private readonly ProgressRing _progress = new() { Width = 24, Height = 24 };
     private CemPreviewViewModel? _model;
     private CancellationTokenSource? _operation;
@@ -44,10 +44,10 @@ public sealed class CemPreviewWindow : Window
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var heading = new StackPanel { Spacing = 4 };
-        heading.Children.Add(new TextBlock { Text = "Конфигурация CEM529", FontSize = 28 });
+        heading.Children.Add(new TextBlock { Text = "CEM529 Configuration", FontSize = 28 });
         heading.Children.Add(new TextBlock
         {
-            Text = "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.",
+            Text = "Lab preview only. Export and ECU writes are unavailable.",
             TextWrapping = TextWrapping.Wrap
         });
         Add(root, heading, 0);
@@ -68,7 +68,7 @@ public sealed class CemPreviewWindow : Window
         filters.ColumnDefinitions.Add(new ColumnDefinition());
         filters.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         filters.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        foreach (string item in new[] { "Все", "Изменённые", "Защищённые", "Доступные" }) _filter.Items.Add(item);
+        foreach (string item in new[] { "All", "Changed", "Locked", "Editable" }) _filter.Items.Add(item);
         _filter.SelectedIndex = 0;
         Add(filters, _search, 0); Add(filters, _filter, 0, 1); Add(filters, _counts, 0, 2);
         Add(root, filters, 2);
@@ -78,11 +78,11 @@ public sealed class CemPreviewWindow : Window
         workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         Add(workspace, _rows, 0, 0);
         var right = new StackPanel { Spacing = 10 };
-        right.Children.Add(new TextBlock { Text = "Параметр", FontSize = 20 });
+        right.Children.Add(new TextBlock { Text = "Parameter", FontSize = 20 });
         right.Children.Add(_detail);
         right.Children.Add(_options);
         right.Children.Add(_preview); right.Children.Add(_revert); right.Children.Add(_clear);
-        right.Children.Add(new TextBlock { Text = "Аудит конфигурации", FontSize = 20 });
+        right.Children.Add(new TextBlock { Text = "Configuration audit", FontSize = 20 });
         right.Children.Add(_audit);
         Add(workspace, new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }, 0, 1);
         Add(root, workspace, 3);
@@ -138,7 +138,7 @@ public sealed class CemPreviewWindow : Window
             if (!_closed)
             {
                 ResetProfile();
-                _status.Text = "Не удалось открыть профиль. Проверьте локальные пути.";
+                _status.Text = "Could not open the profile. Check the local paths.";
             }
         }
     }
@@ -151,7 +151,7 @@ public sealed class CemPreviewWindow : Window
         _operation = cancel;
         try
         {
-            _status.Text = "Проверка конфигурации…";
+            _status.Text = "Checking configuration…";
             RefreshRows(null);
             await model.RefreshAsync(candidate.Select(p => new CemEdit(p.Key, p.Value)), cancel.Token);
             if (_closed) return;
@@ -159,9 +159,9 @@ public sealed class CemPreviewWindow : Window
             _edits = new Dictionary<int, string>(candidate);
             _status.Text = result.Status switch
             {
-                "pass" => "Предварительная проверка пройдена. Не является приёмкой VIDA.",
-                "review" => "Требуется проверка предупреждений или топологии.",
-                _ => "Вариант заблокирован политикой зависимостей."
+                "pass" => "Preview checks passed. VIDA acceptance is not established.",
+                "review" => "Warnings or topology require review.",
+                _ => "Selection blocked by dependency policy."
             };
         }
         catch (Exception ex)
@@ -169,8 +169,8 @@ public sealed class CemPreviewWindow : Window
             _model = null;
             _edits.Clear();
             if (!_closed) _status.Text = ex is OperationCanceledException
-                ? "Операция отменена. Загрузите исходный профиль заново."
-                : "Проверка не выполнена. Загрузите исходный профиль заново.";
+                ? "Operation cancelled. Reload the baseline profile."
+                : "Preview failed. Reload the baseline profile.";
         }
         finally
         {
@@ -184,7 +184,7 @@ public sealed class CemPreviewWindow : Window
         if (Busy) return;
         _model = null;
         _edits.Clear();
-        _status.Text = "Профиль закрыт.";
+        _status.Text = "Profile closed.";
         RefreshRows(null);
     }
 
@@ -196,8 +196,8 @@ public sealed class CemPreviewWindow : Window
         {
             _rows.Items.Clear();
             var snapshot = Busy ? null : Snapshot;
-            _counts.Text = snapshot is null ? "Нет данных" :
-                $"Параметры: {snapshot.Rows.Count} · защищено: {snapshot.Rows.Count(r => r.Locked)} · изменено: {snapshot.Rows.Count(r => r.Changed)}";
+            _counts.Text = snapshot is null ? "No data" :
+                $"Parameters: {snapshot.Rows.Count} · locked: {snapshot.Rows.Count(r => r.Locked)} · changed: {snapshot.Rows.Count(r => r.Changed)}";
             if (snapshot is not null)
             {
                 string query = _search.Text.Trim();
@@ -209,7 +209,7 @@ public sealed class CemPreviewWindow : Window
                         continue;
                     if (query.Length > 0 && !row.Name.Contains(query, StringComparison.OrdinalIgnoreCase) &&
                         !row.Offset.ToString().Contains(query, StringComparison.Ordinal)) continue;
-                    string state = row.Locked ? "[Защищено]" : row.Changed ? "[Изменено]" : "";
+                    string state = row.Locked ? "[Locked]" : row.Changed ? "[Changed]" : "";
                     var item = new ListViewItem
                     {
                         Tag = row,
@@ -218,10 +218,10 @@ public sealed class CemPreviewWindow : Window
                     _rows.Items.Add(item);
                     if (selectedOffset == row.Offset) _rows.SelectedItem = item;
                 }
-                _audit.Text = $"Статус: {snapshot.Status}\nТопология: {(snapshot.TopologyReviewRequired ? "требует проверки" : "без новых замечаний")}\n" +
-                    $"Ошибки: {snapshot.Errors.Count}\n{string.Join("\n", snapshot.Errors)}\n" +
-                    $"Предупреждения: {snapshot.Warnings.Count}\n{string.Join("\n", snapshot.Warnings)}\n" +
-                    $"SHA256 аудита: {snapshot.AuditSha256}\nOEM / VIDA / физический J2534: не подтверждены.";
+                _audit.Text = $"Status: {snapshot.Status}\nTopology: {(snapshot.TopologyReviewRequired ? "review required" : "no new review flags")}\n" +
+                    $"Errors: {snapshot.Errors.Count}\n{string.Join("\n", snapshot.Errors)}\n" +
+                    $"Warnings: {snapshot.Warnings.Count}\n{string.Join("\n", snapshot.Warnings)}\n" +
+                    $"Audit SHA256: {snapshot.AuditSha256}\nOEM / VIDA / physical J2534: not verified.";
             }
             else _audit.Text = "";
         }
@@ -233,10 +233,10 @@ public sealed class CemPreviewWindow : Window
     {
         _options.Items.Clear();
         var row = Busy ? null : Selected;
-        _detail.Text = row is null ? "Выберите параметр." :
-            $"{row.Name}\nСмещение: {row.Offset}\nИсходное: {row.BaselineCode} — {row.BaselineText}\n" +
-            $"Выбранное: {row.SelectedCode} — {row.SelectedText}\n" +
-            (row.Locked ? "Защищённое поле." : "Допустимые варианты из каталога:");
+        _detail.Text = row is null ? "Select a parameter." :
+            $"{row.Name}\nOffset: {row.Offset}\nBaseline: {row.BaselineCode} — {row.BaselineText}\n" +
+            $"Selected: {row.SelectedCode} — {row.SelectedText}\n" +
+            (row.Locked ? "Locked field." : "Selectable catalog options:");
         if (row is { Locked: false })
         {
             foreach (var option in row.Options.Where(o => o.Selectable && o.Code != row.SelectedCode))
