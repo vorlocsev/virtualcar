@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace VirtualCar.Core;
 
@@ -37,6 +38,7 @@ public sealed class CemPreviewProcessTransport : ICemPreviewTransport
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardInput = true,
+                StandardInputEncoding = new UTF8Encoding(false),
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             }
@@ -48,6 +50,9 @@ public sealed class CemPreviewProcessTransport : ICemPreviewTransport
         {
             started = process.Start();
             if (!started) throw new InvalidOperationException();
+            // Interrupt pipe I/O by terminating the child on deadline/cancellation,
+            // including Windows streams whose pending reads ignore cancellation.
+            using var registration = token.Register(() => KillChild(process));
             var output = ReadBoundedAsync(process.StandardOutput.BaseStream, CemPreviewClient.MaxResponseBytes, deadline);
             var errors = ReadBoundedAsync(process.StandardError.BaseStream, 8192, deadline);
             var write = WriteAsync(process, request, deadline);
@@ -61,8 +66,7 @@ public sealed class CemPreviewProcessTransport : ICemPreviewTransport
         {
             if (started)
             {
-                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
+                KillChild(process);
                 // Never wait indefinitely for a failed or timed-out child.
                 try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
                 catch (Exception ex) when (ex is InvalidOperationException or TimeoutException) { }
@@ -70,6 +74,12 @@ public sealed class CemPreviewProcessTransport : ICemPreviewTransport
             cancellationToken.ThrowIfCancellationRequested();
             throw new InvalidDataException("Local CEM preview failed.");
         }
+    }
+
+    private static void KillChild(Process process)
+    {
+        try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
     }
 
     private static async Task WriteAsync(Process process, byte[] request, CancellationTokenSource deadline)
