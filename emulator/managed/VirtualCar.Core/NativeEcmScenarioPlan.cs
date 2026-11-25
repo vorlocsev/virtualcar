@@ -67,6 +67,9 @@ public static class NativeEcmScenarioPlan
         return values;
     }
 
+    internal static bool GgdEnabled(ReadOnlySpan<byte> bytes) =>
+        Read(bytes).TryGetValue("Diagnostics/EnableGGDCemLab", out string? value) && value == "1";
+
     public static EcmScenarioPlan Inspect(ReadOnlySpan<byte> bytes, EcmScenario? selection = null)
     {
         var values = Read(bytes);
