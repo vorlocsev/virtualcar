@@ -123,6 +123,30 @@ The accumulated workspace panels are now vertically scrollable; navigating away 
 
 The report explicitly leaves private CEM preview, actual registration, scenario application/restoration, native ignition responses, loaded profile UI, DPI/layout, actual ECU inventory, live log monitoring, VIDA ReadVin/T111/T122 and physical J2534 not_tested. Passing this runner is not final vehicle or OEM acceptance. No release or merge is authorized by its report. Windows execution remains required; no results are asserted by the source changes alone.
 
+## VC087 isolated loaded CEM529 acceptance (pending)
+
+VC086 owner-local synthetic/empty UI acceptance passed at exact head 2cb787b0b584f6f54fa88c16cf712a55cec13bad (owner-provided terminal marker, PR #472; full artifacts not independently reviewed). VC087 is a separate candidate, not yet built or tested.
+
+The new explicit --preview-only launch mode enables local CEM preview while retaining ephemeral settings and the existing read/mutation lockouts for registry, native INI, configured ECU inventory and CAN log. Normal launch and --ephemeral-settings retain their previous roles. Preview is a draft in memory only; no export, ECU writes or driver installation. The user must select a trusted reviewed Python executable and the exact checkout's vc071_view.py. This is an application feature lockout, not an OS sandbox for arbitrary Python code.
+
+Build and first rerun VC086 on the reviewed exact VC087 head using a new external output directory. Then use that build inventory:
+
+```powershell
+& .\emulator\managed\VirtualCar.WinUI\Test-VC087LoadedPreview.ps1 -ExpectedSha $sha -BuildDirectory C:\VC087-Review\build -PythonExe $python -PrivateDirectory $private
+```
+
+The runner accepts explicit absolute local paths only. The seven pinned private input files must already exist outside Git and be reviewed by the owner. It verifies the build inventory and clean exact source, opens an isolated application instance, selects an editable option offered by the catalog (not a predetermined OEM-valid edit), and exercises eight gates:
+1. Baseline 127 parameters / 12 locked / zero changes.
+2. Protected row cannot preview or revert.
+3. Select an editable row and offered option.
+4. Preview one change with a distinct audit digest.
+5. EN/RU/EN preserves the draft, selection and filter.
+6. Navigation preserves the draft and checks isolated mode lockouts.
+7. Revert and close/reload the baseline.
+8. Compare SHA256 for the seven inputs before and after, without printing private values or digests.
+
+The result marker VC087_LOADED_CEM_ACCEPTANCE=PASS is emitted only after all gates and normal process exit. Failure stops execution; the runner closes only its own process. UIA control realization, private input compatibility and loaded-state behavior require actual Windows testing. This runner does not prove DPI/layout, normal-mode registry/INI access, live log, ECU inventory, cancellation during real preview, all filter cases, reset-all, dependency-blocked variants, original VIDA acceptance or hardware behavior; those remain separate gates. Do not upload the seven private files or run this on automated CI.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
