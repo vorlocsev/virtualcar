@@ -6,7 +6,7 @@ using System.Diagnostics;
 
 namespace VirtualCar.WinUI;
 
-// Standalone lab preview. No activation, export, ECU I/O or provider registration.
+// Standalone laboratory UI. No direct ECU I/O; local profile and provider mutations require confirmation.
 public sealed class CemPreviewWindow : Window
 {
     private readonly TextBox _python = new() { Header = "Python.exe (absolute path)" };
@@ -31,6 +31,7 @@ public sealed class CemPreviewWindow : Window
     private readonly ListView _navigation = new() { SelectionMode = ListViewSelectionMode.Single, MinWidth = 180 };
     private readonly Grid _editor = new() { RowSpacing = 12 };
     private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
+    private readonly ScrollViewer _workspaceScroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     private readonly TextBlock _placeholderHeading = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _placeholderText = new() { TextWrapping = TextWrapping.Wrap };
     private readonly StackPanel _monitorPanel = new() { Spacing = 8 };
@@ -147,8 +148,12 @@ public sealed class CemPreviewWindow : Window
             _monitorDirection.Items.Add(new ComboBoxItem { Content = label });
         _monitorDirection.SelectedIndex = 0;
         _monitorPanel.Children.Add(_monitorDirection);
-        _monitorView.Items.Add(new ComboBoxItem { Content = "CAN Monitor" });
-        _monitorView.Items.Add(new ComboBoxItem { Content = "Diagnostic journal" });
+        var canView = new ComboBoxItem { Content = "CAN Monitor" };
+        var journalView = new ComboBoxItem { Content = "Diagnostic journal" };
+        AutomationId(canView, "VC086.View.Can");
+        AutomationId(journalView, "VC086.View.Journal");
+        _monitorView.Items.Add(canView);
+        _monitorView.Items.Add(journalView);
         _monitorView.SelectedIndex = 0;
         _monitorPanel.Children.Add(_monitorView);
         _monitorPanel.Children.Add(_journalSummary);
@@ -236,7 +241,8 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_placeholderHeading, "VC077.PlaceholderHeading");
         AutomationId(_placeholderText, "VC077.PlaceholderText");
         page.Children.Add(_editor);
-        page.Children.Add(_placeholder);
+        _workspaceScroll.Content = _placeholder;
+        page.Children.Add(_workspaceScroll);
         Add(body, page, 0, 1);
         Add(shell, body, 1);
         var root = _editor;
@@ -316,12 +322,15 @@ public sealed class CemPreviewWindow : Window
             {
                 // Retain a valid selection even if a selection is cleared programmatically.
                 var current = _navigation.Items.OfType<ListViewItem>().Single(i => (Section)i.Tag == _section);
-                if (_navigation.SelectedItem != current) _navigation.SelectedItem = current;
+                if (!ReferenceEquals(_navigation.SelectedItem, current)) _navigation.SelectedItem = current;
                 return;
             }
             _section = section;
+            _moduleSlots = null;
+            _moduleFailed = false;
             if (section == Section.Connection) RefreshDriver();
             ShowSection();
+            _workspaceScroll.ChangeView(null, 0, null, true);
         };
         _load.Click += async (_, _) => await LoadAsync();
         _cancel.Click += (_, _) => _operation?.Cancel();
@@ -435,7 +444,7 @@ public sealed class CemPreviewWindow : Window
         _driverPanel.Visibility = _section == Section.Connection ? Visibility.Visible : Visibility.Collapsed;
         RenderDriver();
         _editor.Visibility = configuration ? Visibility.Visible : Visibility.Collapsed;
-        _placeholder.Visibility = configuration ? Visibility.Collapsed : Visibility.Visible;
+        _workspaceScroll.Visibility = configuration ? Visibility.Collapsed : Visibility.Visible;
         _placeholderHeading.Text = SectionLabel(_section);
         _placeholderText.Text = _section switch
         {
@@ -502,7 +511,7 @@ public sealed class CemPreviewWindow : Window
         }
         bool journal = _monitorView.SelectedIndex == 1;
         _journalSummary.Visibility = journal ? Visibility.Visible : Visibility.Collapsed;
-        _journalSummary.Text = "";
+        _journalSummary.Text = journal ? T("No log records available.", "Нет записей журнала.") : "";
         _monitorFilter.Header = journal
             ? T("Filter CAN ID / payload / PID / process / SID / DID / NRC", "Фильтр CAN ID / данных / PID / процесса / SID / DID / NRC")
             : T("Filter CAN ID / payload / PID / process", "Фильтр CAN ID / данных / PID / процесса");
@@ -908,7 +917,7 @@ public sealed class CemPreviewWindow : Window
 
     private void RefreshDriver()
     {
-        if (_driverBusy || _closed) return;
+        if (_ephemeral || _driverBusy || _closed) return;
         _driverInfo = DriverRegistration.Read();
         RenderDriver();
     }
@@ -930,7 +939,7 @@ public sealed class CemPreviewWindow : Window
         _driverResult.Text = T(_driverResultEn, _driverResultRu);
         bool enabled = !_ephemeral && !Busy && !_closed && File.Exists(DriverToolPath);
         _driverPath.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
-        _driverRefresh.IsEnabled = !Busy;
+        _driverRefresh.IsEnabled = !_ephemeral && !Busy && !_closed;
         _driverInstall.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
         _driverRemove.IsEnabled = enabled && (_driverInfo.Status is DriverRegistration.State.Registered or DriverRegistration.State.LegacyRegistered);
         if (_ephemeral)
@@ -1023,14 +1032,14 @@ public sealed class CemPreviewWindow : Window
     private static void AutomationId(DependencyObject element, string id) =>
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(element, id);
 
-    private static void Add(Grid grid, UIElement child, int row, int column = 0)
+    private static void Add(Grid grid, FrameworkElement child, int row, int column = 0)
     {
         Grid.SetRow(child, row); Grid.SetColumn(child, column); grid.Children.Add(child);
     }
 
     private async Task LoadAsync()
     {
-        if (Busy || _model is not null) return;
+        if (_ephemeral || _closed || Busy || _model is not null) return;
         try
         {
             var transport = new CemPreviewProcessTransport(_python.Text.Trim(), _script.Text.Trim(), _data.Text.Trim());
@@ -1170,12 +1179,13 @@ public sealed class CemPreviewWindow : Window
     private void UpdateControls()
     {
         bool loaded = Snapshot is not null && !Busy;
-        _python.IsEnabled = _script.IsEnabled = _data.IsEnabled = _model is null && !Busy;
-        _load.IsEnabled = _model is null && !Busy;
-        _cancel.IsEnabled = Busy;
+        _python.IsEnabled = _script.IsEnabled = _data.IsEnabled = !_ephemeral && _model is null && !Busy;
+        _load.IsEnabled = !_ephemeral && _model is null && !Busy;
+        _cancel.IsEnabled = _operation is not null;
         _reset.IsEnabled = _model is not null && !Busy;
         _progress.IsActive = Busy;
         _navigation.IsEnabled = !Busy;
+        _language.IsEnabled = !Busy;
         _search.IsEnabled = _filter.IsEnabled = _rows.IsEnabled = loaded;
         _options.IsEnabled = loaded && Selected is { Locked: false } && _options.Items.Count > 0;
         _preview.IsEnabled = _options.IsEnabled && (_options.SelectedItem as ComboBoxItem)?.Tag is CemOption { Selectable: true };

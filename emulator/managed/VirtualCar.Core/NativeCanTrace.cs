@@ -43,7 +43,7 @@ public static class NativeCanTrace
         int size = (int)Math.Min(length, MaxBytes);
         stream.Position = length - size;
         byte[] bytes = new byte[size];
-        int read = stream.ReadAtLeast(bytes, size, throwIfEndOfStream: false);
+        int read = stream.ReadAtLeast(bytes, size, false);
         if (read != size) throw new IOException("Log changed while reading.");
         return Parse(bytes, length > size);
     }

@@ -29,10 +29,71 @@ foreach ($entry in $manifest.files) {
     }
 }
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+if (-not ('VC086.WindowOwnership' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace VC086 {
+    public static class WindowOwnership {
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    }
+}
+'@
+}
 function Find-Element($root, [string]$id) {
-    $condition = [System.Windows.Automation.PropertyCondition]::new(
+    $idCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+    $pidCondition = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
+    $condition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.Condition[]]@($idCondition,$pidCondition))
     return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+function Wait-OwnedWindow($process) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $last = 'No HWND'
+    do {
+        $process.Refresh()
+        if ($process.HasExited) { throw ('Application exited before UIA readiness: 0x{0:X8}' -f $process.ExitCode) }
+        $hwnd = $process.MainWindowHandle
+        if ($hwnd -ne [IntPtr]::Zero) {
+            [uint32]$owner = 0
+            $thread = [VC086.WindowOwnership]::GetWindowThreadProcessId($hwnd, [ref]$owner)
+            $last = "HWND=$hwnd owner=$owner expected=$($process.Id)"
+            if ($thread -ne 0 -and $owner -eq $process.Id) {
+                try {
+                    $candidate = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+                    if ($null -ne $candidate) {
+                        $uiaPid = $candidate.Current.ProcessId
+                        $uiaHwnd = $candidate.Current.NativeWindowHandle
+                        $last += " UIA_PID=$uiaPid UIA_HWND=$uiaHwnd"
+                        # WinUI may expose a host provider at the native window root.
+                        # Require the exact HWND and unique app-owned anchors instead
+                        # of trusting the provider PID or selecting an arbitrary window.
+                        if ([int64]$uiaHwnd -eq $hwnd.ToInt64()) {
+                            $heading = Find-Element $candidate 'VC075.Heading'
+                            $nav = Find-Element $candidate 'VC077.Navigation'
+                            $lang = Find-Element $candidate 'VC075.Language'
+                            if ($null -ne $heading -and $null -ne $nav -and $null -ne $lang) {
+                                [uint32]$confirmedOwner = 0
+                                $confirmedThread = [VC086.WindowOwnership]::GetWindowThreadProcessId($hwnd, [ref]$confirmedOwner)
+                                if ($confirmedThread -ne 0 -and $confirmedOwner -eq $process.Id -and -not $process.HasExited) {
+                                    Write-Host "VC086_UIA_OWNED_WINDOW=PASS $last"
+                                    return $candidate
+                                }
+                            }
+                        }
+                    }
+                }
+                catch [System.Windows.Automation.ElementNotAvailableException] {
+                    $last += ' UIA provider not ready'
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 200
+    } while ($timer.Elapsed.TotalSeconds -lt 30)
+    throw "No owned and ready WinUI window: $last"
 }
 function Wait-Element($root, [string]$id) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
@@ -75,6 +136,28 @@ function Set-Language($window, [string]$code) {
         $expand.Collapse()
     }
 }
+function Select-JournalView($window, [string]$choice) {
+    $selector = Wait-Element $window 'VC085.Diagnostics.View'
+    $expand = $selector.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand.Expand()
+    $pidCondition = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
+    $idCondition = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, "VC086.View.$choice")
+    $condition = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@($pidCondition,$idCondition))
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $item = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($null -ne $item) { break }
+        Start-Sleep -Milliseconds 100
+    } while ($timer.Elapsed.TotalSeconds -lt 5)
+    if ($null -eq $item) { throw "Journal view option unavailable: $choice" }
+    $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    if ($expand.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+        $expand.Collapse()
+    }
+}
 function Select-Section($window, [string]$section) {
     $item = Wait-Element $window "VC077.Nav.$section"
     $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
@@ -92,17 +175,9 @@ $exe = Join-Path $app 'VirtualCar.WinUI.exe'
 $process = Start-Process -FilePath $exe -WorkingDirectory $app -ArgumentList '--ephemeral-settings' -PassThru
 $passed = 0
 $navigationPassed = 0
+$journalPassed = 0
 try {
-    $timer = [Diagnostics.Stopwatch]::StartNew()
-    do {
-        $process.Refresh()
-        if ($process.HasExited) { throw 'Application exited.' }
-        if ($process.MainWindowHandle -ne [IntPtr]::Zero) { break }
-        Start-Sleep -Milliseconds 200
-    } while ($timer.Elapsed.TotalSeconds -lt 20)
-    if ($process.MainWindowHandle -eq [IntPtr]::Zero) { throw 'No application window.' }
-    $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
-    if ($window.Current.ProcessId -ne $process.Id) { throw 'Window process mismatch.' }
+    $window = Wait-OwnedWindow $process
     foreach ($case in @(
         @{ code='EN'; heading='CEM529 Configuration'; load='Load profile'; audit='Configuration audit' },
         @{ code='RU'; heading='Конфигурация CEM529'; load='Загрузить профиль'; audit='Аудит конфигурации' },
@@ -112,6 +187,7 @@ try {
         Assert-Name $window 'VC075.Heading' $case.heading
         Assert-Name $window 'VC075.Load' $case.load
         Assert-Name $window 'VC075.AuditHeading' $case.audit
+        if ((Wait-Element $window 'VC075.Load').Current.IsEnabled) { throw 'Private CEM load enabled in ephemeral smoke.' }
         $passed++
         Write-Host "PASS language $($case.code)"
         $sections = if ($case.code -eq 'RU') {
@@ -135,6 +211,11 @@ try {
             Assert-Name $window 'VC077.PlaceholderHeading' $section.label
             Assert-EditorHidden $window
             if ($section.key -eq 'Diagnostics') {
+                Select-JournalView $window 'Journal'
+                $emptyJournal = if ($case.code -eq 'RU') { 'Нет записей журнала.' } else { 'No log records available.' }
+                Assert-Name $window 'VC085.Diagnostics.Summary' $emptyJournal
+                Select-JournalView $window 'Can'
+                $journalPassed++
                 $start = Wait-Element $window 'VC084.Monitor.Start'
                 $stop = Wait-Element $window 'VC084.Monitor.Stop'
                 $refresh = Wait-Element $window 'VC084.Monitor.Refresh'
@@ -175,6 +256,8 @@ try {
                 }
             }
             if ($section.key -eq 'Connection') {
+                $driverRefresh = Wait-Element $window 'VC078.Driver.Refresh'
+                if ($driverRefresh.Current.IsEnabled) { throw 'Registry refresh enabled in ephemeral smoke.' }
                 $install = Wait-Element $window 'VC078.Driver.Install'
                 $remove = Wait-Element $window 'VC078.Driver.Remove'
                 if ($install.Current.IsEnabled -or $remove.Current.IsEnabled) { throw 'Driver mutation enabled in ephemeral smoke.' }
@@ -208,13 +291,16 @@ finally {
                 throw 'Application did not close normally.'
             }
         }
+        if ($process.ExitCode -ne 0) { throw ('Application did not exit cleanly: 0x{0:X8}' -f $process.ExitCode) }
     }
     finally { $process.Dispose() }
 }
-if ($passed -ne 3 -or $navigationPassed -ne 15) { throw 'Language/navigation checks incomplete.' }
+if ($passed -ne 3 -or $navigationPassed -ne 15 -or $journalPassed -ne 3) { throw 'Language/navigation checks incomplete.' }
 Write-Host "VC075_SOURCE_SHA=$ExpectedSha"
 Write-Host 'VC075_EMPTY_UI_LANG=PASS 3/3'
 Write-Host 'VC077_EMPTY_NAVIGATION=PASS 15/15'
+Write-Host 'VC086_EMPTY_JOURNAL=PASS 3/3'
+Write-Host 'VC086_EMPTY_LOCKOUT=PASS'
 Write-Host 'VC077_LOADED_PROFILE_NAVIGATION=NOT_TESTED'
 Write-Host 'VC075_LOADED_PROFILE_LANG=NOT_TESTED'
 Write-Host 'VC075_PRIVATE_PREVIEW=NOT_TESTED'

@@ -7,6 +7,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-VCNative.ps1')
 if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem) {
     throw 'Windows x64 is required.'
 }
@@ -45,22 +46,22 @@ try {
         '-p:Platform=x64','-p:PublishSingleFile=false','-p:PublishTrimmed=false',
         '-p:PublishReadyToRun=false','-p:PublishAot=false','-o',$publish)
     # Keep native Windows App SDK dependencies as separate files.
-    & $dotnet @publishArgs *> $log
-    if ($LASTEXITCODE -ne 0) { throw 'Publish failed. See local publish.log.' }
+    $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments $publishArgs -WorkingDirectory $repo -Log $log
+    if ($exitCode -ne 0) { throw "Publish failed (exit $exitCode). See publish.log and publish.log.stderr." }
     $toolProject = Join-Path $PSScriptRoot '..\VirtualCar.DriverTool\VirtualCar.DriverTool.csproj'
     $toolOut = Join-Path $publish 'driver-tools'
     $toolLog = Join-Path $out 'driver-tool-publish.log'
     $toolArgs = @('publish',$toolProject,'-c','Release','-r','win-x64','--self-contained','true',
         '-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:PublishAot=false','-o',$toolOut)
-    & $dotnet @toolArgs *> $toolLog
-    if ($LASTEXITCODE -ne 0) { throw 'Driver tool publish failed. See local driver-tool-publish.log.' }
+    $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments $toolArgs -WorkingDirectory $repo -Log $toolLog
+    if ($exitCode -ne 0) { throw "Driver tool publish failed (exit $exitCode). See driver-tool-publish.log and driver-tool-publish.log.stderr." }
 }
 finally { Pop-Location }
 function Assert-Amd64([string]$Path) {
     $stream = [IO.File]::OpenRead($Path)
     $reader = $null
     try {
-        $reader = New-Object IO.BinaryReader($stream)
+        $reader = [IO.BinaryReader]::new($stream)
         if ($stream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) { throw 'Invalid DOS header.' }
         $stream.Position = 60
         $offset = $reader.ReadInt32()
@@ -81,7 +82,9 @@ foreach ($name in @('VirtualCar.WinUI.exe','Microsoft.UI.Xaml.dll','coreclr.dll'
 foreach ($name in @('VirtualCar.WinUI.dll','VirtualCar.Core.dll','VirtualCar.WinUI.deps.json','VirtualCar.WinUI.runtimeconfig.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish $name) -PathType Leaf)) { throw "Missing managed file: $name" }
 }
-Assert-Amd64 (Join-Path $publish 'driver-tools\VirtualCar.DriverTool.exe')
+foreach ($name in @('VirtualCar.DriverTool.exe','coreclr.dll','hostfxr.dll','hostpolicy.dll')) {
+    Assert-Amd64 (Join-Path $publish ('driver-tools\' + $name))
+}
 foreach ($name in @('VirtualCar.DriverTool.dll','VirtualCar.DriverTool.deps.json','VirtualCar.DriverTool.runtimeconfig.json','coreclr.dll')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish ('driver-tools\' + $name)) -PathType Leaf)) {
         throw "Missing driver tool runtime file: $name"
@@ -104,16 +107,23 @@ if ($LaunchSmoke) {
         $handle = [IntPtr]::Zero
         while ($watch.Elapsed.TotalSeconds -lt 20) {
             $process.Refresh()
-            if ($process.HasExited) { throw 'Application exited before showing a window.' }
+            if ($process.HasExited) { throw ('Application exited before showing a window: 0x{0:X8}' -f $process.ExitCode) }
             $handle = $process.MainWindowHandle
             if ($handle -ne [IntPtr]::Zero) { break }
             Start-Sleep -Milliseconds 200
         }
         if ($handle -eq [IntPtr]::Zero) { throw 'No main window within 20 seconds.' }
-        Start-Sleep -Milliseconds 1000
-        $process.Refresh()
-        if ($process.HasExited) { throw 'Application exited during empty-window smoke.' }
-        $smoke = 'window_present'
+        # A crash dialog can transiently look like a main window. Require the
+        # owned process to remain alive and show the actual application title.
+        $ready = [Diagnostics.Stopwatch]::StartNew()
+        while ($ready.Elapsed.TotalSeconds -lt 5) {
+            $process.Refresh()
+            if ($process.HasExited) { throw ('Application exited during smoke: 0x{0:X8}' -f $process.ExitCode) }
+            if ($process.MainWindowHandle -eq [IntPtr]::Zero -or $process.MainWindowTitle -ne 'Virtual Car') {
+                throw 'Expected Virtual Car window not present during smoke.'
+            }
+            Start-Sleep -Milliseconds 200
+        }
     }
     finally {
         try {
@@ -126,9 +136,11 @@ if ($LaunchSmoke) {
                     throw 'Application did not close normally.'
                 }
             }
+            if ($process.ExitCode -ne 0) { throw ('Application did not exit cleanly: 0x{0:X8}' -f $process.ExitCode) }
         }
         finally { $process.Dispose() }
     }
+    $smoke = 'window_present'
 }
 $report = [ordered]@{
     schema = 'vc075-winui-build-v1'
