@@ -210,6 +210,8 @@ namespace VC089 {
         [StructLayout(LayoutKind.Sequential)]
         public struct MONITORINFO { public int Size; public RECT Monitor, Work; public int Flags; }
         [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+        [DllImport("user32.dll")] public static extern IntPtr GetWindowDpiAwarenessContext(IntPtr h);
+        [DllImport("user32.dll")] public static extern bool AreDpiAwarenessContextsEqual(IntPtr a, IntPtr b);
         [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
         [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT rect);
         [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
@@ -269,6 +271,10 @@ function Capture-View($window,[string]$language,[string]$section,[string]$positi
     $hwnd = $process.MainWindowHandle
     [uint32]$owner = 0
     if ($hwnd -eq [IntPtr]::Zero -or [VC086.WindowOwnership]::GetWindowThreadProcessId($hwnd,[ref]$owner) -eq 0 -or $owner -ne $process.Id) { throw 'Window ownership changed.' }
+    $context = [VC089.NativeLayout]::GetWindowDpiAwarenessContext($hwnd)
+    if (-not [VC089.NativeLayout]::AreDpiAwarenessContextsEqual($context,[IntPtr](-4))) {
+        throw 'Window is not PerMonitorV2 DPI-aware. DPI-unaware/system-aware captures are not acceptance evidence.'
+    }
     $dpi = [VC089.NativeLayout]::GetDpiForWindow($hwnd)
     if ($dpi -ne ($ExpectedScale * 96 / 100)) { throw "Actual DPI $dpi does not match requested scale $ExpectedScale." }
     $frame = [VC089.NativeLayout]::Frame($hwnd)
@@ -296,7 +302,7 @@ function Capture-View($window,[string]$language,[string]$section,[string]$positi
         $bitmap.Save($target,[Drawing.Imaging.ImageFormat]::Png)
     }
     finally { $graphics.Dispose(); $bitmap.Dispose() }
-    $records.Add([ordered]@{ language=$language; section=$section; position=$position; dpi=$dpi; scale_percent=$ExpectedScale; client_width_dip=$clientWidth; client_height_dip=$clientHeight; width_px=$width; height_px=$height; file=$name; sha256=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash })
+    $records.Add([ordered]@{ language=$language; section=$section; position=$position; dpi=$dpi; scale_percent=$ExpectedScale; dpi_awareness='PerMonitorV2'; client_width_dip=$clientWidth; client_height_dip=$clientHeight; width_px=$width; height_px=$height; file=$name; sha256=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash })
     Write-Host ("PASS capture {0} {1} {2} DPI={3} client={4}x{5}" -f $language,$section,$position,$dpi,$clientWidth,$clientHeight)
 }
 function Scroll-Workspace($window,[double]$percent) {
@@ -376,6 +382,6 @@ foreach ($entry in $manifest.files) {
         (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $entry.sha256) { throw 'Final build integrity mismatch.' }
 }
 if (@($records | Where-Object {$_.position -eq 'top'}).Count -ne 10) { throw 'Incomplete page capture.' }
-[ordered]@{schema='vc089-layout-evidence-v1';source_sha=$ExpectedSha;scale_percent=$ExpectedScale;status='capture_pass';visual_review='not_tested';captures=@($records.ToArray())} |
+[ordered]@{schema='vc089-layout-evidence-v1';source_sha=$ExpectedSha;scale_percent=$ExpectedScale;dpi_awareness='PerMonitorV2';status='capture_pass';visual_review='not_tested';captures=@($records.ToArray())} |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $out 'vc089-layout.json') -Encoding UTF8
 Write-Host "VC089_LAYOUT_CAPTURE=PASS SCALE=$ExpectedScale SHA=$ExpectedSha VISUAL_REVIEW=NOT_TESTED"
