@@ -39,7 +39,7 @@ public static class NativeEcmScenarioApply
         return result;
     }
 
-    private static void UpdateSection(List<string> lines, string section,
+    internal static void UpdateSection(List<string> lines, string section,
         Dictionary<string, string> missing, string newline)
     {
         int start = -1, end = lines.Count;
@@ -77,10 +77,12 @@ public static class NativeEcmScenarioApply
             if (!missing.TryGetValue(key, out string? value)) continue;
             int at = eq + 1;
             while (at < raw.Length && raw[at] is ' ' or '\t') at++;
-            if (at >= raw.Length || raw[at] is < '0' or > '4' ||
-                raw[(at + 1)..].Any(c => c is not (' ' or '\t' or '\r')))
+            int length = key.Equals("A45FRawByte", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+            if (at + length > raw.Length ||
+                (length == 2 ? raw.Substring(at, length) != "07" : raw[at] is < '0' or > '4') ||
+                raw[(at + length)..].Any(c => c is not (' ' or '\t' or '\r')))
                 throw new InvalidDataException("Ambiguous target value.");
-            lines[i] = raw[..at] + value + raw[(at + 1)..];
+            lines[i] = raw[..at] + value + raw[(at + length)..];
             missing.Remove(key);
         }
         if (missing.Count == 0) return;
@@ -121,7 +123,7 @@ public static class NativeEcmScenarioApply
         return ReadBounded(stream);
     }
 
-    // Only exact VC080/VC081 backups beside the selected profile are accepted.
+    // Only exact VC080/VC081/VC082 backups beside the selected profile are accepted.
     private static string ValidateBackup(string profile, string backup)
     {
         if (!Path.IsPathFullyQualified(backup)) throw new InvalidDataException("Absolute backup path required.");
@@ -133,7 +135,7 @@ public static class NativeEcmScenarioApply
         const string prefix = "virtualcar.vc08";
         if (name.Length != prefix.Length + 2 + 32 + 4 ||
             !name.StartsWith(prefix, StringComparison.Ordinal) ||
-            name[prefix.Length] is not ('0' or '1') || name[prefix.Length + 1] != '-' ||
+            name[prefix.Length] is not ('0' or '1' or '2') || name[prefix.Length + 1] != '-' ||
             !name.EndsWith(".bak", StringComparison.Ordinal) ||
             !Guid.TryParseExact(name.Substring(prefix.Length + 2, 32), "N", out _))
             throw new InvalidDataException("Unrecognized backup name.");
@@ -201,11 +203,26 @@ public static class NativeEcmScenarioApply
                 catch (InvalidOperationException) { }
                 catch (InvalidDataException) { }
             }
+            foreach (var ignition in Enum.GetValues<NativeIgnitionSelection>())
+            {
+                try
+                {
+                    if (NativeIgnitionPlan.Build(original, ignition).AsSpan().SequenceEqual(current)) return original;
+                }
+                catch (InvalidOperationException) { }
+                catch (InvalidDataException) { }
+                try
+                {
+                    if (NativeIgnitionPlan.Build(current, ignition).AsSpan().SequenceEqual(original)) return original;
+                }
+                catch (InvalidOperationException) { }
+                catch (InvalidDataException) { }
+            }
             throw new InvalidOperationException("Backup is not a verified scenario-only relative of this profile.");
         }, "vc081");
     }
 
-    private static NativeScenarioApplyResult Replace(string path, string expectedSha256,
+    internal static NativeScenarioApplyResult Replace(string path, string expectedSha256,
         Func<byte[], byte[]> transform, string tag)
     {
         string full = ValidatePath(path);
