@@ -16,7 +16,7 @@ public sealed class CemPreviewWindow : Window
     private readonly ComboBox _filter = new() { MinWidth = 150 };
     private readonly ListView _rows = new() { SelectionMode = ListViewSelectionMode.Single };
     private readonly ComboBox _options = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly TextBlock _counts = new() { Text = "No profile loaded" };
+    private readonly TextBlock _counts = new() { Text = "No profile loaded", TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _detail = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _audit = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
@@ -27,7 +27,7 @@ public sealed class CemPreviewWindow : Window
     private readonly Button _revert = new() { Content = "Revert to baseline" };
     private readonly Button _clear = new() { Content = "Reset all changes" };
     private readonly ComboBox _language = new() { MinWidth = 88 };
-    private readonly TextBlock _heading = new() { FontSize = 28 };
+    private readonly TextBlock _heading = new() { FontSize = 28, TextWrapping = TextWrapping.Wrap };
     private readonly ListView _navigation = new() { SelectionMode = ListViewSelectionMode.Single, MinWidth = 180 };
     private readonly Grid _editor = new() { RowSpacing = 12 };
     private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
@@ -264,6 +264,7 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_placeholderText, "VC077.PlaceholderText");
         page.Children.Add(_editor);
         _workspaceScroll.Content = _placeholder;
+        AutomationId(_workspaceScroll, "VC089.WorkspaceScroll");
         page.Children.Add(_workspaceScroll);
         Add(body, page, 0, 1);
         Add(shell, body, 1);
@@ -350,7 +351,9 @@ public sealed class CemPreviewWindow : Window
         right.Children.Add(_preview); right.Children.Add(_revert); right.Children.Add(_clear);
         right.Children.Add(_auditHeading);
         right.Children.Add(_audit);
-        Add(workspace, new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }, 0, 1);
+        var detailScroll = new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        AutomationId(detailScroll, "VC089.DetailScroll");
+        Add(workspace, detailScroll, 0, 1);
         Add(root, workspace, 2);
         Add(root, _status, 3);
         Content = shell;
