@@ -25,7 +25,7 @@ foreach ($entry in $manifest.files) {
     if ($seen.ContainsKey($entry.path)) { throw 'Duplicate inventory path.' }
     $seen[$entry.path] = $true
     $file = Get-Item -LiteralPath (Join-Path $app $entry.path)
-    if ($file.PSIsContainer -or $file.Length -ne $entry.bytes -or
+    if ($file -isnot [IO.FileInfo] -or $file.Length -ne $entry.bytes -or
         (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $entry.sha256) {
         throw 'Published file fingerprint mismatch.'
     }
@@ -188,7 +188,10 @@ foreach ($path in @($PythonExe,$PrivateDirectory,$script)) {
     $item = Get-Item -LiteralPath $full
     while ($null -ne $item) {
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Reparse-point paths not allowed.' }
-        if ($item.PSIsContainer) { $item = $item.Parent } else { $item = $item.Directory }
+        # Parent and Directory return CLR objects, not provider-decorated PS objects.
+        if ($item -is [IO.DirectoryInfo]) { $item = $item.Parent }
+        elseif ($item -is [IO.FileInfo]) { $item = $item.Directory }
+        else { throw 'Unexpected filesystem object.' }
     }
 }
 if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf) -or -not (Test-Path -LiteralPath $script -PathType Leaf) -or
@@ -206,7 +209,7 @@ $inputNames = @(
 function Fingerprints {
     foreach ($name in $inputNames) {
         $file = Get-Item -LiteralPath (Join-Path $PrivateDirectory $name)
-        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Invalid input file.' }
+        if ($file -isnot [IO.FileInfo] -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Invalid input file.' }
         (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
     }
 }
@@ -281,7 +284,7 @@ function Select-FirstRow($window) {
 }
 function Get-SelectionId($window,[string]$id) {
     $element = Wait-Element $window $id
-    $selection = $element.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetSelection()
+    $selection = @($element.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetSelection())
     if ($selection.Length -ne 1) { throw "Unexpected selection: $id" }
     return $selection[0].Current.AutomationId
 }
