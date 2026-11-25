@@ -20,7 +20,7 @@ public sealed class UiLanguageSettings
         {
             using var file = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             Span<byte> bytes = stackalloc byte[65];
-            int length = file.ReadAtLeast(bytes, bytes.Length, throwIfEndOfStream: false);
+            int length = file.ReadAtLeast(bytes, bytes.Length, false);
             return bytes[..length].SequenceEqual("VC076-LANGUAGE-1\nRU\n"u8)
                 ? UiLanguage.Russian : UiLanguage.English;
         }
