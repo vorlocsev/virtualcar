@@ -84,62 +84,7 @@ try {
         $_ -match '^VirtualCar\.Core synthetic checks: (\d+)/(\d+)$'
     })
     if ($summary.Count -ne 1) { throw 'Managed check summary missing or ambiguous.' }
-    $match = [regex]::Match($summary[0], '^VirtualCar\.Core synthetic checks: (\d+)/(\d+)
-    $report['core_summary'] = $summary[0]
-    $gates.core_checks = 'pass'
-    Assert-Checkout
-    $stage = 'winui_publish'
-    $build = Join-Path $out 'build'
-    & (Join-Path $PSScriptRoot 'Build-VC075.ps1') -ExpectedSha $ExpectedSha -OutputDirectory $build -LaunchSmoke *> (Join-Path $out 'build.log')
-    $manifest = Get-Content -LiteralPath (Join-Path $build 'build-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($manifest.schema -ne 'vc075-winui-build-v1' -or $manifest.source_sha -ne $ExpectedSha -or
-        $manifest.platform -ne 'win-x64' -or $manifest.publish -ne 'pass' -or $manifest.native_pe -ne 'amd64') {
-        throw 'Publish manifest mismatch.'
-    }
-    $gates.winui_publish = 'pass'
-    $stage = 'empty_window'
-    if ($manifest.launch_smoke -ne 'window_present') { throw 'Launch smoke missing.' }
-    $gates.empty_window = 'pass'
-    $stage = 'bilingual_navigation'
-    $uiLog = Join-Path $out 'ui-smoke.log'
-    & (Join-Path $PSScriptRoot 'Test-VC075Language.ps1') -ExpectedSha $ExpectedSha -BuildDirectory $build *> $uiLog
-    $ui = @(Get-Content -LiteralPath $uiLog)
-    if ($ui -notcontains "VC075_SOURCE_SHA=$ExpectedSha" -or
-        $ui -notcontains 'VC075_EMPTY_UI_LANG=PASS 3/3' -or
-        $ui -notcontains 'VC077_EMPTY_NAVIGATION=PASS 15/15') { throw 'Bilingual navigation evidence missing.' }
-    $gates.bilingual_navigation = 'pass'
-    $stage = 'journal_switch'
-    if ($ui -notcontains 'VC086_EMPTY_JOURNAL=PASS 3/3') { throw 'Journal switching evidence missing.' }
-    $gates.journal_switch = 'pass'
-    $stage = 'empty_mode_lockout'
-    if ($ui -notcontains 'VC086_EMPTY_LOCKOUT=PASS') { throw 'Empty mode lockout evidence missing.' }
-    $gates.empty_mode_lockout = 'pass'
-    $stage = 'final_integrity'
-    Assert-Checkout
-    $app = Join-Path $build 'app'
-    $files = @(Get-ChildItem -LiteralPath $app -Recurse -File)
-    if ($files.Count -ne @($manifest.files).Count) { throw 'Final file inventory count changed.' }
-    foreach ($entry in $manifest.files) {
-        $file = Get-Item -LiteralPath (Join-Path $app $entry.path)
-        if ($file.PSIsContainer -or $file.Length -ne $entry.bytes -or
-            (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $entry.sha256) {
-            throw 'Final build fingerprint mismatch.'
-        }
-    }
-    $gates.final_integrity = 'pass'
-    $report.status = 'pass'
-    Write-Host "VC086_SYNTHETIC_UI_ACCEPTANCE=PASS SHA=$ExpectedSha"
-}
-catch {
-    $gates[$stage] = 'fail'
-    $report.failed_stage = $stage
-    throw
-}
-finally {
-    Pop-Location
-    $report | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'vc086-report.json') -Encoding UTF8
-}
-)
+    $match = [regex]::Match($summary[0], '^VirtualCar\.Core synthetic checks: (\d+)/(\d+)$')
     if (-not $match.Success -or [int]$match.Groups[1].Value -ne [int]$match.Groups[2].Value -or
         [int]$match.Groups[2].Value -lt 80) {
         throw 'Managed check summary incomplete or below expected minimum.'
