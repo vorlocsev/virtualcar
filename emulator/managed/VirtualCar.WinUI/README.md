@@ -100,6 +100,14 @@ At most 512 KiB of the file tail and 500 newest parsed records are shown. A part
 
 Eight managed groups cover context parsing, interleaved clients, stale context, duplicate RX suppression, partial records, truncation, row bounds and bounded shared file read. Windows acceptance: run the exact UI build, verify read-only refresh against a controlled native test log, start/stop, filters, navigation, file rotation/truncation and EN/RU labels; inspect layout and update responsiveness. No managed build or runtime test has been performed in this authoring session.
 
+## VC085 diagnostic journal (pending)
+
+Diagnostics adds a selectable Diagnostic journal view over the same bounded VC084 log snapshot. No extra file read, driver connection, transmission or persistence. Labels distinguish request, positive response shape, negative response shape, START_OF_MESSAGE indication and unclassified data. SID, single DID and NRC are shown when the observed shape supports them; NRC 78 is response pending, not terminal failure. Filters include those labels and the summary counts visible records, not transactions or ECU acceptance.
+
+The classifier requires ISO15765 context, channel, a decoded CAN address, compatible flags and nontruncated data. It recognizes a limited set of native supported diagnostic shapes (including 22/62, 7F, 09/49, 10/50, 19/59 and 3E/7E); protected request SIDs may be observed but never executed by this view. Raw CAN/D2, unknown context, unsupported response forms and ambiguous/malformed records remain unclassified. No transport reassembly, request/response pairing, latency, successful VIN read, DTC interpretation or ECU discovery is inferred. The log may contain multiple clients, partial history and private data; no export added.
+
+Eight isolated managed checks cover single DID, NRC, supported service shapes, context, indication, malformed/truncated records, protected request observation and independent counts. Windows acceptance: switch views, verify filters and visible counts with an owner-local controlled trace, verify EN/RU, stop/refresh/navigation and ephemeral read lockout. No managed compilation or test execution has been performed during authoring.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
