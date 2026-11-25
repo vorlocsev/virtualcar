@@ -11,6 +11,12 @@ dotnet run --project emulator/managed/VirtualCar.WinUI/VirtualCar.WinUI.csproj -
 
 Enter explicitly reviewed absolute paths to Python.exe, the checkout's emulator/tools/cem529_config/vc071_view.py, and the existing pinned seven-file private directory outside Git. No paths are saved by the application. Do not use private data in CI.
 
+## Interface language
+
+EN is the default on each application launch. The EN/RU selector in the header changes application text immediately, including the status and audit headings. Original catalog labels, values and policy messages are not translated. Switching language does not invoke the preview subprocess or change the selected profile, draft, search or filter. Language preference is session-only.
+
+Additional manual acceptance: switch EN/RU/EN before loading, after loading, with a selected row and unapplied option, with a changed draft and non-default filter, and during a refresh. Verify state and audit digest remain intact, no additional process is launched, and the completion status uses the currently selected language. Check both languages at the intended Windows DPI.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
