@@ -26,9 +26,13 @@ The first script publishes an unpackaged folder, verifies required native PE32+ 
 
 ## Interface language
 
-EN is the default on each application launch. The EN/RU selector in the header changes application text immediately, including the status and audit headings. Original catalog labels, values and policy messages are not translated. Switching language does not invoke the preview subprocess or change the selected profile, draft, search or filter. Language preference is session-only.
+EN is the default when no valid preference exists. VC076 restores the last language from `%LOCALAPPDATA%\VirtualCar\WinUI\language.v1`; only the version and EN/RU code are stored. The EN/RU selector in the header changes application text immediately, including the status and audit headings. Original catalog labels, values and policy messages are not translated. Switching language does not invoke the preview subprocess or change the selected profile, draft, search or filter. The application replaces the small settings file atomically; a missing, malformed or oversized file falls back to English. Save failures are nonfatal and reported separately. The VC075 smoke scripts pass `--ephemeral-settings` to start in English without reading or writing the preference. Normal launches do not require this switch.
 
 Additional manual acceptance: switch EN/RU/EN before loading, after loading, with a selected row and unapplied option, with a changed draft and non-default filter, and during a refresh. Verify state and audit digest remain intact, no additional process is launched, and the completion status uses the currently selected language. Check both languages at the intended Windows DPI.
+
+## VC076 settings acceptance (pending)
+
+Run the existing managed Core.Checks project (eight new groups, isolated temporary directories). In a normal interactive launch, select RU, close and reopen; confirm RU, then select EN and reopen. On a disposable Windows account, test missing/corrupt settings and a non-writable destination. Confirm the VC075 ephemeral smoke does not modify normal settings. No private paths or configuration values are persisted.
 
 ## Owner-local acceptance (pending)
 

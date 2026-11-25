@@ -85,7 +85,7 @@ $files = @(Get-ChildItem -LiteralPath $publish -Recurse -File | Sort-Object Full
 })
 $smoke = 'not_tested'
 if ($LaunchSmoke) {
-    $process = Start-Process -FilePath $exe -WorkingDirectory $publish -PassThru
+    $process = Start-Process -FilePath $exe -WorkingDirectory $publish -ArgumentList '--ephemeral-settings' -PassThru
     try {
         $watch = [Diagnostics.Stopwatch]::StartNew()
         $handle = [IntPtr]::Zero

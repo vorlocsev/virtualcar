@@ -10,7 +10,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new CemPreviewWindow();
+        bool ephemeral = Environment.GetCommandLineArgs().Skip(1).SequenceEqual(new[] { "--ephemeral-settings" });
+        _window = new CemPreviewWindow(ephemeral);
         _window.Activate();
     }
 }
