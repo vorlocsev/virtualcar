@@ -33,6 +33,12 @@ public sealed class CemPreviewWindow : Window
     private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
     private readonly TextBlock _placeholderHeading = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _placeholderText = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel _modulePanel = new() { Spacing = 10 };
+    private readonly Button _moduleRefresh = new();
+    private readonly TextBlock _moduleStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly ListView _moduleList = new() { MaxHeight = 360, SelectionMode = ListViewSelectionMode.None };
+    private IReadOnlyList<NativeEcuSlot>? _moduleSlots;
+    private bool _moduleFailed;
     private readonly StackPanel _vehiclePanel = new() { Spacing = 10 };
     private readonly TextBox _vehicleProfile = new();
     private readonly ComboBox _vehicleScenario = new() { MinWidth = 220 };
@@ -116,6 +122,13 @@ public sealed class CemPreviewWindow : Window
         var page = new Grid();
         _placeholder.Children.Add(_placeholderHeading);
         _placeholder.Children.Add(_placeholderText);
+        _modulePanel.Children.Add(_moduleRefresh);
+        _modulePanel.Children.Add(_moduleStatus);
+        _modulePanel.Children.Add(_moduleList);
+        _placeholder.Children.Add(_modulePanel);
+        AutomationId(_moduleRefresh, "VC083.Modules.Refresh");
+        AutomationId(_moduleStatus, "VC083.Modules.Status");
+        _moduleRefresh.Click += (_, _) => InspectModules();
         _vehiclePanel.Children.Add(_vehicleProfile);
         _vehiclePanel.Children.Add(_vehicleInspect);
         _vehiclePanel.Children.Add(_vehicleScenario);
@@ -362,7 +375,11 @@ public sealed class CemPreviewWindow : Window
                 ? T("J2534 Lab Adapter — registration only.", "J2534 Lab Adapter — только регистрация.")
                 : _section == Section.Vehicle
                     ? T("Native ECM scenario preview — not live telemetry.", "Предпросмотр сценария ECM — не текущая телеметрия.")
-                    : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован.");
+                    : _section == Section.Modules
+                        ? T("Configured ECU inventory — not discovery.", "Настроенные ECU — не результат обнаружения.")
+                        : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован."); 
+        _modulePanel.Visibility = _section == Section.Modules ? Visibility.Visible : Visibility.Collapsed;
+        RenderModules();
         _vehiclePanel.Visibility = _section == Section.Vehicle ? Visibility.Visible : Visibility.Collapsed;
         RenderVehicle();
         _driverPanel.Visibility = _section == Section.Connection ? Visibility.Visible : Visibility.Collapsed;
@@ -374,14 +391,78 @@ public sealed class CemPreviewWindow : Window
         {
             Section.Vehicle => T("Inspect the profile beside the registered J2534 DLL. Applying a scenario requires closing all diagnostic clients and editors. Settings take effect on a subsequent PassThruOpen.",
                 "Проверьте профиль рядом с зарегистрированной DLL J2534. Перед применением закройте диагностические программы и редакторы. Настройки вступают в силу при следующем PassThruOpen."),
-            Section.Modules => T("ECU inventory and identification are planned. No ECU discovery is performed.",
-                "Планируется список и идентификация блоков. Поиск ECU не выполняется."),
+            Section.Modules => T("Read the profile beside the registered J2534 Lab Adapter. No diagnostic requests are sent.",
+                "Чтение профиля рядом с зарегистрированным J2534 Lab Adapter. Диагностические запросы не отправляются."),
             Section.Diagnostics => T("Read-only diagnostic tools are planned. No diagnostic messages are sent.",
                 "Планируются инструменты диагностики только для чтения. Запросы не отправляются."),
             Section.Connection => T("J2534 04.04 / x86. Use a reviewed local VirtualCarJ2534.dll in a stable folder. Close VIDA and other diagnostic clients before changing registration. No DLL files are copied or deleted.",
                 "J2534 04.04 / x86. Выберите проверенную локальную VirtualCarJ2534.dll в постоянной папке. Закройте VIDA и другие диагностические программы. Файлы DLL не копируются и не удаляются."),
             _ => ""
         };
+    }
+
+    private void InspectModules()
+    {
+        if (_ephemeral || Busy || _closed || _section != Section.Modules) return;
+        _moduleSlots = null;
+        _moduleFailed = false;
+        try
+        {
+            var info = DriverRegistration.Read();
+            if (info.Status != DriverRegistration.State.Registered || info.Library is null || !File.Exists(info.Library))
+                throw new InvalidOperationException("No recognized adapter.");
+            string path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(info.Library))!, "virtualcar.ini");
+            if (!IsRegisteredProfile(path)) throw new InvalidOperationException("Registration changed.");
+            var bytes = NativeEcmScenarioApply.ReadProfile(path);
+            var slots = NativeEcuInventory.Inspect(bytes);
+            if (!IsRegisteredProfile(path)) throw new InvalidOperationException("Registration changed.");
+            _moduleSlots = slots;
+        }
+        catch (Exception) { _moduleFailed = true; }
+        RenderModules();
+    }
+
+    private void RenderModules()
+    {
+        _moduleRefresh.Content = T("Read configured ECUs", "Прочитать настроенные ECU");
+        _moduleRefresh.IsEnabled = !_ephemeral && !Busy && !_closed;
+        _moduleList.Items.Clear();
+        if (_moduleSlots is null)
+        {
+            _moduleStatus.Text = _moduleFailed
+                ? T("Profile unavailable or ambiguous.", "Профиль недоступен или неоднозначен.")
+                : T("No inventory read. Discovery not performed.", "Список не прочитан. Обнаружение не выполнялось.");
+            return;
+        }
+        _moduleStatus.Text = T("Profile snapshot: ", "Снимок профиля: ") + _moduleSlots.Count +
+            T(" slots. Discovery not performed. Refresh after external changes.",
+              " слотов. Обнаружение не выполнялось. Обновите после внешних изменений.");
+        foreach (var slot in _moduleSlots)
+        {
+            string address(uint? id) => id.HasValue ? id.Value.ToString("X") : "—";
+            string state = slot.State switch
+            {
+                EcuRouteState.Configured => T("Configured", "Настроен"),
+                EcuRouteState.DefaultsUsed => T("Defaults or missing fields", "Значения по умолчанию или отсутствующие поля"),
+                EcuRouteState.DuplicateRequest => T("Duplicate request ID", "Дублирующийся ID запроса"),
+                EcuRouteState.FunctionalRequest => T("Functional request ID", "Функциональный ID запроса"),
+                _ => T("Invalid or unsupported route", "Некорректный или неподдерживаемый маршрут")
+            };
+            string rate = slot.ExpectedBaud switch
+            {
+                null => "—",
+                0 => T("Unrestricted", "Без ограничения"),
+                _ => slot.ExpectedBaud.Value.ToString()
+            };
+            var row = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = $"ECU{slot.Index} · {state}\nTX {address(slot.RequestId)} / RX {address(slot.ResponseId)} · {rate}\n" +
+                    T("Configured part: ", "Настроенный номер: ") + (slot.PartNumber ?? "—") + " · " +
+                    T("Software: ", "ПО: ") + (slot.Software ?? "—")
+            };
+            _moduleList.Items.Add(row);
+        }
     }
 
     private string ScenarioLabel(EcmScenario scenario) => scenario switch
