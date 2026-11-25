@@ -1,5 +1,12 @@
 # Virtual Car: продолжение разработки в новом чате
 
+## B3A329 — deterministic dynamic warm-up (candidate)
+
+- Base `a57c52c4ed251ea4e78927e732e5a8c147b291ef` exact CI #284 PASS. Owner B3A325/B3A326 voltage GUI 5/5 and protocol accepted; B3A327/B3A328 extended ECM GUI 4/4 and protocol accepted. See PR #453 comments 7152309991, 7152341374, 7152708461. Loaded DLL hash, physical J2534, T111/T122 remain unproven.
+- New default-off [B3A329_DynamicEcmLab] Enabled=1 requires baseline/extended ECM, existing D2/current-data, GGD CEM and both supply sync gates (which require B3A319). Select timeline at device Open, independent of static scenario; exact keyframes 0,2,4,60,180 s. Linear integer interpolation of existing synthetic snapshots; speed/pedal zero; A45F unchanged. Last state latched. Per-request and READ_VBATT refresh under existing lock; independent requests may straddle a change. No new ECU routes/writes. No thread/timer or control interface.
+- Local GCC -Werror ASan/UBSan PASS on exact timeline and harness (FNV1a dd3a62a2/ef8f4445), matching model with comments omitted (f9f1f5e6). Five endpoints, 180001 millisecond samples and existing encoders, disabled/static, wrap within 180 s, terminal latch, restart. Clock assumes no more than one full GetTickCount wrap between Open and first completion observation. No Windows/native or original VIDA dynamic run yet.
+- Next: add native timeline matrix (including prerequisite negatives, close/reopen and cross-channel voltage tolerance), inspect full regression, merge only after review. Preserve installed B3A325 and original owner logs.
+
 ## B3A324 R2 — fix actual D2 response length header
 
 - Exact development `cac78811d82d8ba82ef748c0616bed0eb4a5f7ac` [CI #283](https://github.com/vorlocsev/virtualcar/actions/runs/45506708435) FAILED native supply scenario 0, D2 RX payload. Previous native ECM/READ_VBATT/REM D0D4 controls passed. No deployment of failed build.
