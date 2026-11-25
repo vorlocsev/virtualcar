@@ -42,7 +42,7 @@ try {
     [void](New-Item -ItemType Directory -Path $out)
     $publish = Join-Path $out 'app'
     $log = Join-Path $out 'publish.log'
-    $publishArgs = @('publish',$project,'-c','Release','-r','win-x64','--self-contained','true',
+    $publishArgs = @('publish',$project,'-c','Release','-r','win-x64','--self-contained','true','--disable-build-servers','-p:UseSharedCompilation=false',
         '-p:Platform=x64','-p:PublishSingleFile=false','-p:PublishTrimmed=false',
         '-p:PublishReadyToRun=false','-p:PublishAot=false','-o',$publish)
     # Keep native Windows App SDK dependencies as separate files.
@@ -51,7 +51,7 @@ try {
     $toolProject = Join-Path $PSScriptRoot '..\VirtualCar.DriverTool\VirtualCar.DriverTool.csproj'
     $toolOut = Join-Path $publish 'driver-tools'
     $toolLog = Join-Path $out 'driver-tool-publish.log'
-    $toolArgs = @('publish',$toolProject,'-c','Release','-r','win-x64','--self-contained','true',
+    $toolArgs = @('publish',$toolProject,'-c','Release','-r','win-x64','--self-contained','true','--disable-build-servers','-p:UseSharedCompilation=false',
         '-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:PublishAot=false','-o',$toolOut)
     $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments $toolArgs -WorkingDirectory $repo -Log $toolLog
     if ($exitCode -ne 0) { throw "Driver tool publish failed (exit $exitCode). See driver-tool-publish.log and driver-tool-publish.log.stderr." }
