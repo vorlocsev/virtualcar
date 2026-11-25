@@ -40,6 +40,9 @@ public sealed class CemPreviewWindow : Window
     private readonly TextBox _vehiclePatch = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
     private readonly Button _vehicleInspect = new();
     private readonly Button _vehicleApply = new();
+    private readonly ComboBox _ignition = new() { MinWidth = 220 };
+    private readonly TextBlock _ignitionInfo = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Button _ignitionApply = new();
     private readonly TextBox _vehicleBackup = new();
     private readonly Button _vehicleRestore = new();
     private readonly TextBlock _vehicleResult = new() { TextWrapping = TextWrapping.Wrap };
@@ -119,6 +122,16 @@ public sealed class CemPreviewWindow : Window
         _vehiclePanel.Children.Add(_vehicleInfo);
         _vehiclePanel.Children.Add(_vehiclePatch);
         _vehiclePanel.Children.Add(_vehicleApply);
+        foreach (NativeIgnitionSelection choice in Enum.GetValues<NativeIgnitionSelection>())
+            _ignition.Items.Add(new ComboBoxItem { Tag = choice, Content = IgnitionLabel(choice) });
+        _ignition.SelectedIndex = 0;
+        _vehiclePanel.Children.Add(_ignition);
+        _vehiclePanel.Children.Add(_ignitionInfo);
+        _vehiclePanel.Children.Add(_ignitionApply);
+        AutomationId(_ignitionApply, "VC082.Ignition.Apply");
+        AutomationId(_ignition, "VC082.Ignition.Selection");
+        _ignitionApply.Click += async (_, _) => await ApplyVehicleAsync(ignition: true);
+        _ignition.SelectionChanged += (_, _) => { if (!_vehicleUpdating) RenderIgnition(); };
         _vehiclePanel.Children.Add(_vehicleBackup);
         _vehiclePanel.Children.Add(_vehicleRestore);
         AutomationId(_vehicleRestore, "VC081.Vehicle.Restore");
@@ -398,6 +411,7 @@ public sealed class CemPreviewWindow : Window
             _inspectedPath = Path.GetFullPath(path);
             _vehicleUpdating = true;
             _vehicleScenario.SelectedIndex = (int)plan.Selection;
+            SyncIgnition();
         }
         catch (Exception) { _vehicleFailed = true; }
         finally { _vehicleUpdating = false; RenderVehicle(); }
@@ -424,6 +438,7 @@ public sealed class CemPreviewWindow : Window
             !string.IsNullOrWhiteSpace(_vehicleBackup.Text);
         _vehicleResult.Text = T(_vehicleResultEn, _vehicleResultRu);
         _vehiclePatch.Text = "";
+        RenderIgnition();
         if (_vehicleBytes is null)
         {
             _vehicleInfo.Text = _vehicleFailed ? T("Profile unavailable or ambiguous.", "Профиль недоступен или неоднозначен.") :
@@ -443,6 +458,45 @@ public sealed class CemPreviewWindow : Window
         }
     }
 
+    private string IgnitionLabel(NativeIgnitionSelection choice) =>
+        choice == NativeIgnitionSelection.PositionIICandidate
+            ? T("Position II candidate (07)", "Кандидат положения II (07)")
+            : T("Baseline (04)", "Исходное значение (04)");
+
+    private void SyncIgnition()
+    {
+        if (_vehicleBytes is null) return;
+        try { _ignition.SelectedIndex = (int)NativeIgnitionPlan.Inspect(_vehicleBytes).Configured; }
+        catch (InvalidDataException) { _ignition.SelectedIndex = 0; }
+    }
+
+    private void RenderIgnition()
+    {
+        _ignition.Header = T("CEM A45F laboratory candidate", "Лабораторный кандидат CEM A45F");
+        _ignitionApply.Content = T("Apply ignition candidate", "Применить кандидат зажигания");
+        foreach (var item in _ignition.Items.OfType<ComboBoxItem>())
+            item.Content = IgnitionLabel((NativeIgnitionSelection)item.Tag);
+        _ignition.IsEnabled = _ignitionApply.IsEnabled = false;
+        _ignitionInfo.Text = T("No inspected profile.", "Профиль не проверен.");
+        if (_vehicleBytes is null) return;
+        try
+        {
+            var state = NativeIgnitionPlan.Inspect(_vehicleBytes);
+            _ignitionInfo.Text = T("Configured: ", "Настроено: ") + IgnitionLabel(state.Configured) + "\n" +
+                (state.CanApply
+                    ? T("Synthetic response on the next J2534 open; not a verified key position.",
+                        "Синтетический ответ при следующем открытии J2534; положение ключа не подтверждено.")
+                    : T("GGD CEM lab flag is disabled. No change permitted.",
+                        "Флаг GGD CEM отключён. Изменение недоступно."));
+            _ignition.IsEnabled = _ignitionApply.IsEnabled =
+                state.CanApply && !_ephemeral && !_closed && !Busy && _inspectedPath is not null;
+        }
+        catch (InvalidDataException)
+        {
+            _ignitionInfo.Text = T("Ambiguous ignition configuration.", "Неоднозначная конфигурация зажигания.");
+        }
+    }
+
     private void VehicleResult(string en, string ru)
     {
         _vehicleResultEn = en;
@@ -458,14 +512,21 @@ public sealed class CemPreviewWindow : Window
         return string.Equals(expected, path, StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task ApplyVehicleAsync()
+    private async Task ApplyVehicleAsync(bool ignition = false)
     {
         if (_ephemeral || Busy || _closed || _section != Section.Vehicle ||
             _vehicleBytes is null || _inspectedPath is null ||
             (_vehicleScenario.SelectedItem as ComboBoxItem)?.Tag is not EcmScenario selected) return;
         string path = _inspectedPath;
         string sha = NativeEcmScenarioApply.Digest(_vehicleBytes);
-        if (!NativeEcmScenarioPlan.Inspect(_vehicleBytes, selected).CanApply) return;
+        var ignitionChoice = (_ignition.SelectedItem as ComboBoxItem)?.Tag is NativeIgnitionSelection choice
+            ? choice : NativeIgnitionSelection.Baseline;
+        if (ignition)
+        {
+            try { if (!NativeIgnitionPlan.Inspect(_vehicleBytes).CanApply) return; }
+            catch (InvalidDataException) { return; }
+        }
+        else if (!NativeEcmScenarioPlan.Inspect(_vehicleBytes, selected).CanApply) return;
         _vehicleBusy = true;
         UpdateControls();
         RenderVehicle();
@@ -476,8 +537,8 @@ public sealed class CemPreviewWindow : Window
             var dialog = new ContentDialog
             {
                 XamlRoot = _vehiclePanel.XamlRoot,
-                Title = T("Apply ECM scenario?", "Применить сценарий ECM?"),
-                Content = path + "\n" + ScenarioLabel(selected) + "\nSHA256: " + sha + "\n\n" +
+                Title = ignition ? T("Apply ignition candidate?", "Применить кандидат зажигания?") : T("Apply ECM scenario?", "Применить сценарий ECM?"),
+                Content = path + "\n" + (ignition ? IgnitionLabel(ignitionChoice) : ScenarioLabel(selected)) + "\nSHA256: " + sha + "\n\n" +
                     T("Confirm all diagnostic clients and profile editors are closed. A backup will be created if the file changes. Reopen the diagnostic connection manually afterward.",
                       "Подтвердите закрытие диагностических программ и редакторов. При изменении создаётся резервная копия. Затем вручную откройте диагностическое подключение."),
                 PrimaryButtonText = T("Apply", "Применить"),
@@ -489,7 +550,7 @@ public sealed class CemPreviewWindow : Window
             {
                 if (!IsRegisteredProfile(path))
                     throw new InvalidOperationException("Registration changed.");
-                return NativeEcmScenarioApply.Apply(path, sha, selected);
+                return ignition ? NativeIgnitionPlan.Apply(path, sha, ignitionChoice) : NativeEcmScenarioApply.Apply(path, sha, selected);
             });
             if (_closed) return;
             _vehicleBytes = NativeEcmScenarioApply.ReadProfile(path);
@@ -560,7 +621,7 @@ public sealed class CemPreviewWindow : Window
             if (NativeEcmScenarioApply.Digest(_vehicleBytes) != result.Sha256)
                 throw new IOException("Profile changed after restore.");
             _vehicleUpdating = true;
-            try { _vehicleScenario.SelectedIndex = (int)NativeEcmScenarioPlan.Inspect(_vehicleBytes).Selection; }
+            try { _vehicleScenario.SelectedIndex = (int)NativeEcmScenarioPlan.Inspect(_vehicleBytes).Selection; SyncIgnition(); }
             finally { _vehicleUpdating = false; }
             if (result.BackupPath is not null) _vehicleBackup.Text = result.BackupPath;
             VehicleResult(result.Changed
