@@ -80,6 +80,12 @@ Restore is deliberately narrower than generic file recovery: the current and bac
 
 Eight managed temporary-directory groups cover exact restoration, undo, unrelated changes, stale active/backup digests, wrong name, wrong folder and no-op. Windows and native acceptance remain pending; test actual apply/restore/reopen in a disposable VM.
 
+## VC082 ignition candidate (pending)
+
+The Vehicle page exposes the existing B3A157 laboratory setting: baseline synthetic CEM A45F byte 04 or position-II hypothesis byte 07. Neither label establishes an OEM key-position mapping. No arbitrary raw value, physical ignition control, live change or write to ECU is supported. Diagnostics/EnableGGDCemLab must already equal 1; the feature does not enable this gate. The selected registered-adapter profile must pass inspection and explicit confirmation. The only edited values are B3A157_IgnitionLab Enabled and A45FRawByte (literal 07); other settings are preserved. Reopen J2534 manually. The response is conditional on the existing native route and gates.
+
+Uses VC080 digest checks, same-directory replacement and new VC082 backup. VC081 restoration accepts VC082 backups only if equality or an exact allowed single ECM/ignition transformation (either direction) relates the two files. This is not a general rollback of multiple changes. No automatic restart. Malformed or unsupported relevant INI values are rejected. Eight isolated managed checks and the bilingual ephemeral UI smoke lockout are prepared; none has been executed. Owner acceptance: on a disposable VM, use the existing exact native GGD route and compare 04 versus 07 after reopening; keep actual VIDA interpretation separate from byte-level proof.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
