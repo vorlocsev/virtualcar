@@ -40,6 +40,8 @@ public sealed class CemPreviewWindow : Window
     private readonly TextBox _vehiclePatch = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
     private readonly Button _vehicleInspect = new();
     private readonly Button _vehicleApply = new();
+    private readonly TextBox _vehicleBackup = new();
+    private readonly Button _vehicleRestore = new();
     private readonly TextBlock _vehicleResult = new() { TextWrapping = TextWrapping.Wrap };
     private string? _inspectedPath;
     private bool _vehicleBusy;
@@ -117,6 +119,11 @@ public sealed class CemPreviewWindow : Window
         _vehiclePanel.Children.Add(_vehicleInfo);
         _vehiclePanel.Children.Add(_vehiclePatch);
         _vehiclePanel.Children.Add(_vehicleApply);
+        _vehiclePanel.Children.Add(_vehicleBackup);
+        _vehiclePanel.Children.Add(_vehicleRestore);
+        AutomationId(_vehicleRestore, "VC081.Vehicle.Restore");
+        _vehicleRestore.Click += async (_, _) => await RestoreVehicleAsync();
+        _vehicleBackup.TextChanged += (_, _) => RenderVehicle();
         _vehiclePanel.Children.Add(_vehicleResult);
         AutomationId(_vehicleApply, "VC080.Vehicle.Apply");
         _vehicleApply.Click += async (_, _) => await ApplyVehicleAsync();
@@ -131,6 +138,7 @@ public sealed class CemPreviewWindow : Window
         {
             _vehicleBytes = null;
             _inspectedPath = null;
+            _vehicleBackup.Text = "";
             _vehicleFailed = false;
             VehicleResult("", "");
             RenderVehicle();
@@ -409,6 +417,11 @@ public sealed class CemPreviewWindow : Window
         _vehicleScenario.IsEnabled = _vehicleBytes is not null && !Busy;
         _vehicleApply.Content = T("Apply scenario", "Применить сценарий");
         _vehicleApply.IsEnabled = false;
+        _vehicleBackup.Header = T("Local scenario backup (absolute path)", "Локальная копия сценария (абсолютный путь)");
+        _vehicleRestore.Content = T("Restore backup", "Восстановить копию");
+        _vehicleBackup.IsEnabled = !_ephemeral && !Busy && !_closed && _inspectedPath is not null;
+        _vehicleRestore.IsEnabled = _vehicleBackup.IsEnabled && _vehicleBytes is not null &&
+            !string.IsNullOrWhiteSpace(_vehicleBackup.Text);
         _vehicleResult.Text = T(_vehicleResultEn, _vehicleResultRu);
         _vehiclePatch.Text = "";
         if (_vehicleBytes is null)
@@ -482,6 +495,7 @@ public sealed class CemPreviewWindow : Window
             _vehicleBytes = NativeEcmScenarioApply.ReadProfile(path);
             if (NativeEcmScenarioApply.Digest(_vehicleBytes) != result.Sha256)
                 throw new IOException("Profile changed after apply.");
+            if (result.BackupPath is not null) _vehicleBackup.Text = result.BackupPath;
             VehicleResult(result.Changed
                 ? "Saved. Reopen J2534 manually. Backup: " + result.BackupPath
                 : "No changes needed.",
@@ -496,6 +510,71 @@ public sealed class CemPreviewWindow : Window
             _vehicleFailed = true;
             VehicleResult("Apply not confirmed. Check registration, profile and backups; inspect again.",
                 "Применение не подтверждено. Проверьте регистрацию, профиль и копии; повторите проверку.");
+        }
+        finally
+        {
+            _vehicleBusy = false;
+            if (!_closed) { UpdateControls(); RenderVehicle(); }
+        }
+    }
+
+    private async Task RestoreVehicleAsync()
+    {
+        if (_ephemeral || Busy || _closed || _section != Section.Vehicle ||
+            _vehicleBytes is null || _inspectedPath is null ||
+            string.IsNullOrWhiteSpace(_vehicleBackup.Text)) return;
+        string path = _inspectedPath;
+        string backup = _vehicleBackup.Text.Trim();
+        string sha = NativeEcmScenarioApply.Digest(_vehicleBytes);
+        _vehicleBusy = true;
+        UpdateControls();
+        RenderVehicle();
+        try
+        {
+            if (!IsRegisteredProfile(path))
+                throw new InvalidOperationException("Profile does not match current registration.");
+            var backupBytes = NativeEcmScenarioApply.ReadBackup(path, backup);
+            string backupSha = NativeEcmScenarioApply.Digest(backupBytes);
+            var backupPlan = NativeEcmScenarioPlan.Inspect(backupBytes);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = _vehiclePanel.XamlRoot,
+                Title = T("Restore scenario backup?", "Восстановить копию сценария?"),
+                Content = path + "\n" + T("Current SHA256: ", "Текущий SHA256: ") + sha +
+                    "\n" + backup + "\n" + T("Backup SHA256: ", "SHA256 копии: ") + backupSha +
+                    "\n" + ScenarioLabel(backupPlan.Selection) + "\n\n" +
+                    T("Close all diagnostic clients and profile editors. Only scenario-related backups are accepted. The current file will be backed up if changed.",
+                      "Закройте диагностические программы и редакторы. Допустимы только копии, относящиеся к сценарию. Текущий файл будет сохранён при изменении."),
+                PrimaryButtonText = T("Restore", "Восстановить"),
+                CloseButtonText = T("Cancel", "Отмена"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _closed) return;
+            var result = await Task.Run(() =>
+            {
+                if (!IsRegisteredProfile(path)) throw new InvalidOperationException("Registration changed.");
+                return NativeEcmScenarioApply.Restore(path, backup, sha, backupSha);
+            });
+            if (_closed) return;
+            _vehicleBytes = NativeEcmScenarioApply.ReadProfile(path);
+            if (NativeEcmScenarioApply.Digest(_vehicleBytes) != result.Sha256)
+                throw new IOException("Profile changed after restore.");
+            _vehicleUpdating = true;
+            try { _vehicleScenario.SelectedIndex = (int)NativeEcmScenarioPlan.Inspect(_vehicleBytes).Selection; }
+            finally { _vehicleUpdating = false; }
+            if (result.BackupPath is not null) _vehicleBackup.Text = result.BackupPath;
+            VehicleResult(result.Changed
+                ? "Restored. Reopen J2534 manually. Recovery copy: " + result.BackupPath : "No changes needed.",
+                result.Changed
+                ? "Восстановлено. Откройте J2534 заново вручную. Копия для отмены: " + result.BackupPath : "Изменения не требуются.");
+        }
+        catch (Exception)
+        {
+            _vehicleBytes = null;
+            _inspectedPath = null;
+            _vehicleFailed = true;
+            VehicleResult("Restore not confirmed. Review the profile and backups; inspect again.",
+                "Восстановление не подтверждено. Проверьте профиль и копии; повторите проверку.");
         }
         finally
         {
