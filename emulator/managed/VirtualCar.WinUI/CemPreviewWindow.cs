@@ -397,7 +397,7 @@ public sealed class CemPreviewWindow : Window
         _cancel.Click += (_, _) => _operation?.Cancel();
         _reset.Click += (_, _) => ResetProfile();
         _search.TextChanged += (_, _) => RefreshRows(Selected?.Offset);
-        _filter.SelectionChanged += (_, _) => RefreshRows(Selected?.Offset);
+        _filter.SelectionChanged += (_, _) => { if (!_rebuilding) RefreshRows(Selected?.Offset); };
         _rows.SelectionChanged += (_, _) => { if (!_rebuilding) RefreshDetail(); };
         _options.SelectionChanged += (_, _) => UpdateControls();
         _preview.Click += async (_, _) =>
@@ -445,7 +445,6 @@ public sealed class CemPreviewWindow : Window
         }
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_navigation, T("Workspace navigation", "Навигация"));
         ShowSection();
-        RefreshLocalizedComboSelections();
         _python.Header = T("Python.exe (absolute path)", "Python.exe (абсолютный путь)");
         _script.Header = T("vc071_view.py (absolute path)", "vc071_view.py (абсолютный путь)");
         _data.Header = T("Local CEM529 directory (outside Git)", "Локальный каталог CEM529 (вне Git)");
@@ -462,6 +461,7 @@ public sealed class CemPreviewWindow : Window
             T("Locked", "Защищённые"), T("Editable", "Доступные")];
         for (int i = 0; i < labels.Length; i++)
             ((ComboBoxItem)_filter.Items[i]).Content = labels[i];
+        RefreshLocalizedComboSelections();
         _languageNotice.Text = _languageSaveFailed
             ? T("Language could not be saved.", "Не удалось сохранить язык.") : "";
         _languageNotice.Visibility = _languageSaveFailed ? Visibility.Visible : Visibility.Collapsed;
@@ -480,12 +480,14 @@ public sealed class CemPreviewWindow : Window
     {
         // WinUI's closed ComboBox selection presenter may retain the original
         // string when an existing ComboBoxItem.Content changes. Re-select the
-        // same index after localization; never change the underlying scenario.
+        // same index after localization; keep the underlying scenario and filter.
         bool wasUpdating = _vehicleUpdating;
+        bool wasRebuilding = _rebuilding;
         _vehicleUpdating = true;
+        _rebuilding = true;
         try
         {
-            foreach (var combo in new[] { _vehicleScenario, _ignition, _monitorDirection })
+            foreach (var combo in new[] { _vehicleScenario, _ignition, _monitorDirection, _filter })
             {
                 int index = combo.SelectedIndex;
                 if (index < 0) continue;
@@ -493,7 +495,11 @@ public sealed class CemPreviewWindow : Window
                 combo.SelectedIndex = index;
             }
         }
-        finally { _vehicleUpdating = wasUpdating; }
+        finally
+        {
+            _vehicleUpdating = wasUpdating;
+            _rebuilding = wasRebuilding;
+        }
     }
 
     private string SectionLabel(Section section) => section switch
