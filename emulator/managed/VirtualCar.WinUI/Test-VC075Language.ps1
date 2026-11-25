@@ -1,0 +1,123 @@
+﻿# VC075: interactive desktop bilingual UI Automation smoke, empty profile only.
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSha,
+    [Parameter(Mandatory=$true)][string]$BuildDirectory
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+if ($env:OS -ne 'Windows_NT' -or -not [Environment]::UserInteractive) { throw 'Interactive Windows desktop required.' }
+$directory = (Resolve-Path -LiteralPath $BuildDirectory).Path
+$manifest = Get-Content -LiteralPath (Join-Path $directory 'build-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($manifest.schema -ne 'vc075-winui-build-v1' -or $manifest.source_sha -ne $ExpectedSha -or
+    $manifest.publish -ne 'pass' -or $manifest.platform -ne 'win-x64') { throw 'Build manifest mismatch.' }
+$app = Join-Path $directory 'app'
+# Verify complete inventory before starting the exact published application.
+$actual = @(Get-ChildItem -LiteralPath $app -Recurse -File)
+if ($actual.Count -ne @($manifest.files).Count) { throw 'Published inventory count mismatch.' }
+$seen = @{}
+foreach ($entry in $manifest.files) {
+    if ($entry.path -notmatch '^[^\\/:]+(?:/[^\\/:]+)*$' -or ($entry.path.Split('/') | Where-Object { $_ -in @('.','..') })) {
+        throw 'Invalid relative inventory path.'
+    }
+    if ($seen.ContainsKey($entry.path)) { throw 'Duplicate inventory path.' }
+    $seen[$entry.path] = $true
+    $file = Get-Item -LiteralPath (Join-Path $app $entry.path)
+    if ($file.PSIsContainer -or $file.Length -ne $entry.bytes -or
+        (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $entry.sha256) {
+        throw 'Published file fingerprint mismatch.'
+    }
+}
+Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+function Find-Element($root, [string]$id) {
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+    return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+function Wait-Element($root, [string]$id) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $element = Find-Element $root $id
+        if ($null -ne $element) { return $element }
+        Start-Sleep -Milliseconds 100
+    } while ($timer.Elapsed.TotalSeconds -lt 5)
+    throw "Missing automation element: $id"
+}
+function Assert-Name($root, [string]$id, [string]$name) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $element = Find-Element $root $id
+        if ($null -ne $element -and $element.Current.Name -ceq $name) { return }
+        Start-Sleep -Milliseconds 100
+    } while ($timer.Elapsed.TotalSeconds -lt 5)
+    throw "Unexpected localized text: $id"
+}
+function Set-Language($window, [string]$code) {
+    $selector = Wait-Element $window 'VC075.Language'
+    $expand = $selector.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand.Expand()
+    # WinUI may put the popup in the desktop tree instead of under the ComboBox.
+    $pidCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
+    $idCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, "VC075.Language.$code")
+    $condition = New-Object System.Windows.Automation.AndCondition($pidCondition,$idCondition)
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $item = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($null -ne $item) { break }
+        Start-Sleep -Milliseconds 100
+    } while ($timer.Elapsed.TotalSeconds -lt 5)
+    if ($null -eq $item) { throw "Language option unavailable: $code" }
+    $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    if ($expand.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+        $expand.Collapse()
+    }
+}
+$exe = Join-Path $app 'VirtualCar.WinUI.exe'
+$process = Start-Process -FilePath $exe -WorkingDirectory $app -PassThru
+$passed = 0
+try {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $process.Refresh()
+        if ($process.HasExited) { throw 'Application exited.' }
+        if ($process.MainWindowHandle -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 200
+    } while ($timer.Elapsed.TotalSeconds -lt 20)
+    if ($process.MainWindowHandle -eq [IntPtr]::Zero) { throw 'No application window.' }
+    $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+    if ($window.Current.ProcessId -ne $process.Id) { throw 'Window process mismatch.' }
+    foreach ($case in @(
+        @{ code='EN'; heading='CEM529 Configuration'; load='Load profile'; audit='Configuration audit' },
+        @{ code='RU'; heading='Конфигурация CEM529'; load='Загрузить профиль'; audit='Аудит конфигурации' },
+        @{ code='EN'; heading='CEM529 Configuration'; load='Load profile'; audit='Configuration audit' }
+    )) {
+        if ($passed -gt 0) { Set-Language $window $case.code }
+        Assert-Name $window 'VC075.Heading' $case.heading
+        Assert-Name $window 'VC075.Load' $case.load
+        Assert-Name $window 'VC075.AuditHeading' $case.audit
+        $passed++
+        Write-Host "PASS language $($case.code)"
+    }
+}
+finally {
+    try {
+        $process.Refresh()
+        if (-not $process.HasExited) {
+            [void]$process.CloseMainWindow()
+            if (-not $process.WaitForExit(5000)) {
+                $process.Kill()
+                [void]$process.WaitForExit(5000)
+                throw 'Application did not close normally.'
+            }
+        }
+    }
+    finally { $process.Dispose() }
+}
+if ($passed -ne 3) { throw 'Language checks incomplete.' }
+Write-Host "VC075_SOURCE_SHA=$ExpectedSha"
+Write-Host 'VC075_EMPTY_UI_LANG=PASS 3/3'
+Write-Host 'VC075_LOADED_PROFILE_LANG=NOT_TESTED'
+Write-Host 'VC075_PRIVATE_PREVIEW=NOT_TESTED'
