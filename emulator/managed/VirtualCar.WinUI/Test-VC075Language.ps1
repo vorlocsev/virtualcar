@@ -76,7 +76,7 @@ function Set-Language($window, [string]$code) {
     }
 }
 $exe = Join-Path $app 'VirtualCar.WinUI.exe'
-$process = Start-Process -FilePath $exe -WorkingDirectory $app -PassThru
+$process = Start-Process -FilePath $exe -WorkingDirectory $app -ArgumentList '--ephemeral-settings' -PassThru
 $passed = 0
 try {
     $timer = [Diagnostics.Stopwatch]::StartNew()
