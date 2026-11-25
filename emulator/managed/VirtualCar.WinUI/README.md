@@ -58,6 +58,12 @@ Acceptance on a disposable Windows VM, pending:
 
 No actual installation, removal, registry modification or Windows execution has been performed in this development session.
 
+## VC079 native ECM scenario preview
+
+The Virtual vehicle workspace reads an explicitly selected local virtualcar.ini (maximum 1 MiB) and inspects only the native B3A316/B3A329 selection and required flags. It distinguishes configured static selections 0–4 and dynamic warm-up from live telemetry; it does not load or start the DLL. Selection labels use the existing native synthetic RPM snapshots. Dynamic requires all seven native prerequisite flags. The proposed two-section patch is displayed only if the relevant gates are enabled. Merge the keys into existing sections manually; never append duplicate sections. Native settings take effect on a subsequent PassThruOpen, not a live session. No private data is persisted or logged, no INI is written, and smoke mode disables profile inspection. This conservative parser accepts simple unquoted relevant values and rejects ambiguous or oversized input; it is not a complete Windows INI parser. Reinspect after any external edit. The registered library path is not automatically bound to the inspected file.
+
+Eight new managed checks cover default-off, five static states, disabled fallback, individual missing prerequisites, dynamic precedence, patch scope, ambiguous profile and size/selector limits. Windows UI and actual native effect remain pending. Next: controlled application of the patch to an owner-approved profile with backup, fingerprint and explicit client-close confirmation, followed by native x86 reopen verification.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
