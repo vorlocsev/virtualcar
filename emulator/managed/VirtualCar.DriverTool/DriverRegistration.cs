@@ -33,10 +33,11 @@ internal static class DriverRegistration
         using (var pe = new PEReader(stream, PEStreamOptions.LeaveOpen))
         {
             var headers = pe.PEHeaders;
+            var optional = headers.PEHeader;
             if (headers.CoffHeader.Machine != Machine.I386 ||
-                headers.PEHeader?.Magic != PEMagic.PE32 ||
+                optional is null || optional.Magic != PEMagic.PE32 ||
                 (headers.CoffHeader.Characteristics & Characteristics.Dll) == 0 ||
-                headers.PEHeader.ExportTableDirectory.Size < 40)
+                optional.ExportTableDirectory.Size < 40)
                 throw new InvalidDataException();
         }
         stream.Position = 0;
