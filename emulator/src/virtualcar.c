@@ -31,6 +31,8 @@ typedef unsigned long U32; /* Windows LLP64: 32-bit unsigned long */
 #include "p2core/p2_j2534_bridge.h"
 #include "p2core/p2_b9f0_fixture_guard.h"
 #include "vc054_f106_lab.h"
+#include "vc0662_f110.h"
+#include "vc0663_identity.h"
 typedef unsigned char U8;
 typedef unsigned long long U64;
 typedef long long I64;
@@ -165,6 +167,8 @@ static U32 g_strict_j2534_filters=0;
 /* B3A150: default OFF; never activates GGD CEM from ECU identity alone. */
 static U32 g_b3a150_ggd_cem_lab=0;
 static VC054_F106 g_vc054_f106;
+static U32 g_vc0662_f110=0u;
+static U32 g_vc0663_identity=0u;
 /* B3A157 GGD key switch candidate: defaults OFF for all existing profiles. */
 static U32 g_b3a157_posii_candidate=0;
 /* PS is isolated to an explicitly enabled emulator profile; legacy defaults stay off. */
@@ -883,6 +887,10 @@ static void load_config(void) {
     g_b3a150_ggd_cem_lab=0;
     GetPrivateProfileStringA("Diagnostics","EnableGGDCemLab","0",v,sizeof(v),g_profile_path);
     g_b3a150_ggd_cem_lab=parse_num(v,0)==1u?1u:0u;
+    GetPrivateProfileStringA("VC0662_F110Lab","Enabled","0",v,sizeof(v),g_profile_path);
+    g_vc0662_f110=g_b3a150_ggd_cem_lab && vc0662_f110_enabled(v);
+    GetPrivateProfileStringA("VC0663_IdentityLab","Enabled","0",v,sizeof(v),g_profile_path);
+    g_vc0663_identity=g_vc0662_f110 && vc0662_f110_enabled(v);
     vc054_clear(&g_vc054_f106);
     GetPrivateProfileStringA("VC054_F106Lab","Enabled","0",v,sizeof(v),g_profile_path);
     if(g_b3a150_ggd_cem_lab && vc054_literal(v,"1")){
@@ -2095,6 +2103,16 @@ static U32 answer_b3a150_ggd_cem50_lab(const CHANNEL *c,const ECU *ecu,
        can_id!=0x18DA50F1u || ecu->req!=0x18DA50F1u ||
        ecu->resp!=0x18DAF150u || ecu->expected_baud!=500000u ||
        len!=3u || req[0]!=0x22u)return 0;
+    if(req[1]==0xF1u && req[2]==0x10u){
+        U32 n=vc0662_f110_answer(g_vc0662_f110,req,len,res,256u);
+        if(n)logline("VC0662 CEM529 F110 catalog LAB reply (not OEM verified)",0,0);
+        return n;
+    }
+    if(req[1]==0xF1u && (req[2]==0x91u || req[2]==0x88u || req[2]==0x8Cu || req[2]==0x20u)){
+        U32 n=vc0663_identity_answer(g_vc0663_identity,req,len,res,256u);
+        if(n)logline("VC0663 CEM529 synthetic identity LAB reply (not OEM verified)",req,len);
+        return n;
+    }
     if(req[1]==0xF1u && req[2]==0x06u){
         U32 n=vc054_answer(&g_vc054_f106,req,len,res,256u);
         if(n)logline("VC054 F106 donor-format LAB reply (not OEM verified)",0,0);
