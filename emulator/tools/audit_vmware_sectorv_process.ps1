@@ -720,7 +720,15 @@ try {
         [Microsoft.Win32.RegistryHive]::LocalMachine,
         [Microsoft.Win32.RegistryView]::Registry32)
     try {
-        $key = $base.OpenSubKey('SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car', $false)
+        $key = $base.OpenSubKey('SOFTWARE\PassThruSupport.04.04\J2534 Lab Adapter', $false)
+        $legacy = $base.OpenSubKey('SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car', $false)
+        if ($null -ne $key -and $null -ne $legacy) {
+            $key.Dispose()
+            $legacy.Dispose()
+            $key = $null
+        } elseif ($null -eq $key) {
+            $key = $legacy
+        }
         if ($null -ne $key) {
             try {
                 $kind = $key.GetValueKind('FunctionLibrary')

@@ -1,6 +1,8 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using VirtualCar.Core;
+using VirtualCar.DriverTool;
+using System.Diagnostics;
 
 namespace VirtualCar.WinUI;
 
@@ -31,6 +33,17 @@ public sealed class CemPreviewWindow : Window
     private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
     private readonly TextBlock _placeholderHeading = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _placeholderText = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel _driverPanel = new() { Spacing = 10 };
+    private readonly TextBox _driverPath = new();
+    private readonly TextBlock _driverStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _driverResult = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Button _driverRefresh = new();
+    private readonly Button _driverInstall = new();
+    private readonly Button _driverRemove = new();
+    private DriverRegistration.Info _driverInfo = new(DriverRegistration.State.Unavailable, null);
+    private bool _driverBusy;
+    private string _driverResultEn = "";
+    private string _driverResultRu = "";
     private enum Section { Vehicle, Configuration, Modules, Diagnostics, Connection }
     private Section _section = Section.Configuration;
     private readonly TextBlock _subtitle = new() { TextWrapping = TextWrapping.Wrap };
@@ -50,7 +63,7 @@ public sealed class CemPreviewWindow : Window
     private Dictionary<int, string> _edits = new();
     private bool _closed;
     private bool _rebuilding;
-    private bool Busy => _operation is not null;
+    private bool Busy => _operation is not null || _driverBusy;
     private CemPreview? Snapshot => _model?.Snapshot;
     private CemRow? Selected => (_rows.SelectedItem as ListViewItem)?.Tag as CemRow;
 
@@ -83,6 +96,22 @@ public sealed class CemPreviewWindow : Window
         var page = new Grid();
         _placeholder.Children.Add(_placeholderHeading);
         _placeholder.Children.Add(_placeholderText);
+        _driverPanel.Children.Add(_driverStatus);
+        _driverPanel.Children.Add(_driverPath);
+        var driverActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        driverActions.Children.Add(_driverRefresh);
+        driverActions.Children.Add(_driverInstall);
+        driverActions.Children.Add(_driverRemove);
+        _driverPanel.Children.Add(driverActions);
+        _driverPanel.Children.Add(_driverResult);
+        _placeholder.Children.Add(_driverPanel);
+        AutomationId(_driverInstall, "VC078.Driver.Install");
+        AutomationId(_driverRemove, "VC078.Driver.Remove");
+        AutomationId(_driverRefresh, "VC078.Driver.Refresh");
+        AutomationId(_driverStatus, "VC078.Driver.Status");
+        _driverRefresh.Click += (_, _) => RefreshDriver();
+        _driverInstall.Click += async (_, _) => await ChangeDriverAsync(true);
+        _driverRemove.Click += async (_, _) => await ChangeDriverAsync(false);
         AutomationId(_placeholderHeading, "VC077.PlaceholderHeading");
         AutomationId(_placeholderText, "VC077.PlaceholderText");
         page.Children.Add(_editor);
@@ -170,6 +199,7 @@ public sealed class CemPreviewWindow : Window
                 return;
             }
             _section = section;
+            if (section == Section.Connection) RefreshDriver();
             ShowSection();
         };
         _load.Click += async (_, _) => await LoadAsync();
@@ -267,7 +297,11 @@ public sealed class CemPreviewWindow : Window
         _subtitle.Text = configuration
             ? T("Lab preview only. Export and ECU writes are unavailable.",
                 "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.")
-            : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован.");
+            : _section == Section.Connection
+                ? T("J2534 Lab Adapter — registration only.", "J2534 Lab Adapter — только регистрация.")
+                : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован.");
+        _driverPanel.Visibility = _section == Section.Connection ? Visibility.Visible : Visibility.Collapsed;
+        RenderDriver();
         _editor.Visibility = configuration ? Visibility.Visible : Visibility.Collapsed;
         _placeholder.Visibility = configuration ? Visibility.Collapsed : Visibility.Visible;
         _placeholderHeading.Text = SectionLabel(_section);
@@ -279,10 +313,119 @@ public sealed class CemPreviewWindow : Window
                 "Планируется список и идентификация блоков. Поиск ECU не выполняется."),
             Section.Diagnostics => T("Read-only diagnostic tools are planned. No diagnostic messages are sent.",
                 "Планируются инструменты диагностики только для чтения. Запросы не отправляются."),
-            Section.Connection => T("Virtual adapter and connection status are planned. No provider is installed or opened.",
-                "Планируется подключение виртуального адаптера. Установка и открытие провайдера не выполняются."),
+            Section.Connection => T("J2534 04.04 / x86. Use a reviewed local VirtualCarJ2534.dll in a stable folder. Close VIDA and other diagnostic clients before changing registration. No DLL files are copied or deleted.",
+                "J2534 04.04 / x86. Выберите проверенную локальную VirtualCarJ2534.dll в постоянной папке. Закройте VIDA и другие диагностические программы. Файлы DLL не копируются и не удаляются."),
             _ => ""
         };
+    }
+
+    private string DriverToolPath => Path.Combine(AppContext.BaseDirectory, "driver-tools", "VirtualCar.DriverTool.exe");
+
+    private void RefreshDriver()
+    {
+        if (_driverBusy || _closed) return;
+        _driverInfo = DriverRegistration.Read();
+        RenderDriver();
+    }
+
+    private void RenderDriver()
+    {
+        _driverPath.Header = T("Reviewed x86 DLL (absolute path)", "Проверенная x86 DLL (абсолютный путь)");
+        _driverRefresh.Content = T("Refresh", "Обновить");
+        _driverInstall.Content = T("Install driver", "Установить драйвер");
+        _driverRemove.Content = T("Remove driver", "Удалить драйвер");
+        _driverStatus.Text = _driverInfo.Status switch
+        {
+            DriverRegistration.State.Absent => T("Not registered", "Не зарегистрирован"),
+            DriverRegistration.State.Registered => T("Registered (registry only)", "Зарегистрирован (только реестр)") + "\n" + _driverInfo.Library,
+            DriverRegistration.State.LegacyRegistered => T("Previous registration found. Remove it before installing.", "Обнаружена прежняя регистрация. Удалите её перед установкой.") + "\n" + _driverInfo.Library,
+            DriverRegistration.State.Conflict => T("Conflicting registration — manual review required.", "Конфликт регистрации — требуется ручная проверка."),
+            _ => T("Registry unavailable", "Реестр недоступен")
+        };
+        _driverResult.Text = T(_driverResultEn, _driverResultRu);
+        bool enabled = !_ephemeral && !Busy && !_closed && File.Exists(DriverToolPath);
+        _driverPath.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
+        _driverRefresh.IsEnabled = !Busy;
+        _driverInstall.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
+        _driverRemove.IsEnabled = enabled && (_driverInfo.Status is DriverRegistration.State.Registered or DriverRegistration.State.LegacyRegistered);
+        if (_ephemeral)
+            _driverResult.Text = T("Driver changes disabled in smoke mode.", "Изменения драйвера отключены в тестовом режиме.");
+        else if (!File.Exists(DriverToolPath))
+            _driverResult.Text = T("Driver tool not published.", "Утилита регистрации не собрана.");
+    }
+
+    private void DriverResult(string en, string ru)
+    {
+        _driverResultEn = en;
+        _driverResultRu = ru;
+    }
+
+    private async Task ChangeDriverAsync(bool install)
+    {
+        if (_ephemeral || Busy || _closed || _section != Section.Connection || !File.Exists(DriverToolPath)) return;
+        RefreshDriver();
+        if (install ? _driverInfo.Status != DriverRegistration.State.Absent :
+            _driverInfo.Status is not (DriverRegistration.State.Registered or DriverRegistration.State.LegacyRegistered)) return;
+        string path = install ? _driverPath.Text.Trim() : _driverInfo.Library!;
+        _driverBusy = true;
+        UpdateControls();
+        RenderDriver();
+        try
+        {
+            string? hash = install ? await Task.Run(() => DriverRegistration.Fingerprint(path)) : null;
+            if (_closed) return;
+            var dialog = new ContentDialog
+            {
+                XamlRoot = _driverPanel.XamlRoot,
+                Title = install ? T("Install J2534 Lab Adapter?", "Установить J2534 Lab Adapter?") :
+                    T("Remove J2534 registration?", "Удалить регистрацию J2534?"),
+                Content = path + (hash is null ? "" : "\nSHA256: " + hash) + "\n\n" +
+                    T("Confirm that diagnostic clients are closed. Administrator approval is required.",
+                      "Подтвердите, что диагностические программы закрыты. Требуются права администратора."),
+                PrimaryButtonText = install ? T("Install", "Установить") : T("Remove", "Удалить"),
+                CloseButtonText = T("Cancel", "Отмена"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _closed) return;
+            var start = new ProcessStartInfo
+            {
+                FileName = DriverToolPath,
+                WorkingDirectory = Path.GetDirectoryName(DriverToolPath)!,
+                UseShellExecute = true,
+                Verb = "runas"
+            };
+            start.ArgumentList.Add(install ? "install" : "remove");
+            start.ArgumentList.Add(path);
+            if (hash is not null) start.ArgumentList.Add(hash);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException();
+            await process.WaitForExitAsync();
+            var after = DriverRegistration.Read();
+            bool verified = install
+                ? after.Status == DriverRegistration.State.Registered &&
+                  string.Equals(after.Library, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase)
+                : after.Status == DriverRegistration.State.Absent;
+            if (process.ExitCode == 0 && verified)
+                DriverResult("Registration updated.", "Регистрация обновлена.");
+            else
+                DriverResult("Registration not confirmed. Review the status.", "Регистрация не подтверждена. Проверьте состояние.");
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            DriverResult("Administrator approval cancelled.", "Запрос прав администратора отменён.");
+        }
+        catch (Exception)
+        {
+            DriverResult("Operation rejected or failed. Check the DLL and registration.", "Операция отклонена или не выполнена. Проверьте DLL и регистрацию.");
+        }
+        finally
+        {
+            _driverBusy = false;
+            if (!_closed)
+            {
+                RefreshDriver();
+                UpdateControls();
+            }
+        }
     }
 
     private void SetStatus(string en, string ru)

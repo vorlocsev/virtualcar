@@ -36,9 +36,27 @@ Run the existing managed Core.Checks project (eight new groups, isolated tempora
 
 ## VC077 main window and navigation
 
-The shell opens on CEM529 Configuration to preserve the existing acceptance entry point. Left navigation contains Virtual vehicle, CEM529 Configuration, ECU modules, Diagnostics and Connection. Only the CEM529 workspace is functional at this stage. Other pages explicitly state that they are planned; no simulated connection or running status is presented. The CEM editor stays mounted in memory, retaining its local draft, paths, search, filter and selection while navigating. Navigation is disabled during a preview so the cancel control remains reachable. EN/RU applies to all page names and placeholder messages; catalog and audit data remain unchanged.
+The shell opens on CEM529 Configuration to preserve the existing acceptance entry point. Left navigation contains Virtual vehicle, CEM529 Configuration, ECU modules, Diagnostics and Connection. At VC077 only the CEM529 workspace was functional; VC078 additionally implements Connection registration. Other pages explicitly state that they are planned; no simulated connection or running status is presented. The CEM editor stays mounted in memory, retaining its local draft, paths, search, filter and selection while navigating. Navigation is disabled during a preview so the cancel control remains reachable. EN/RU applies to all page names and placeholder messages; catalog and audit data remain unchanged.
 
 The VC075 language smoke now includes 15 empty-window navigation checks (five sections for each EN/RU/EN round). It checks the headings, that the CEM load control is hidden on placeholder pages, and that the editor is available again on returning. Run with the exact VC077 published inventory. Loaded-profile navigation remains untested: manually change a lab parameter, record the audit digest, navigate through all sections and back, and verify the draft, selection and digest are preserved. Test switching languages on a placeholder and verify navigation is disabled while a real preview is in progress. Check layout at the intended DPI; the initial window size is unchanged.
+
+## VC078 J2534 Lab Adapter installation and removal (pending Windows acceptance)
+
+Connection exposes Refresh, Install driver and Remove driver. This is the existing J2534 04.04 user-mode x86 provider registration, not a Windows kernel driver. The WinUI application is x64. Publish via Build-VC075.ps1 to include the separate x64 registration helper. The chosen VirtualCarJ2534.dll must be an explicitly reviewed local x86 build at a stable absolute path; keep the DLL and its existing INI in place. No binary is copied or deleted by this feature. The static PE shape and SHA256 checks are not publisher authentication or an export-contract test; verify the DLL's provenance and exact 14 exports independently before use.
+
+Close VIDA and other clients. Install requires explicit confirmation of the path and SHA256, followed by UAC. The helper rechecks the digest, writes only the canonical HKLM Registry32 J2534 Lab Adapter entry and refuses to overwrite a different or unrecognized entry. Remove requires confirmation and UAC; only the recognized entry with the expected path is removed, never other adapters or files. A previous registration is recognized for removal only; remove it explicitly before installing under the new name. If both identities exist, operations are blocked for review. The scripts and read-only provider audits recognize the transition; no automatic registry migration is performed. Registry status is not proof that a DLL is loaded or that VIDA communicates with the virtual vehicle. An interrupted or partial registration requires manual review; there is no automatic destructive rollback. Do not run concurrent external installers. Use a trusted reviewed application build. The ephemeral UI smoke cannot perform registry writes.
+
+Acceptance on a disposable Windows VM, pending:
+1. Build the application and helper, inspect exact x64/x86 roles and published hashes.
+2. Inspect missing and existing registration without elevation; verify other provider entries unchanged.
+3. Reject wrong filename, invalid PE, x64 DLL, remote path and changed SHA256.
+4. Cancel the confirmation and UAC; verify no registration changes.
+5. Register a reviewed x86 DLL and compare the seven values against the updated installer; verify Registry32 and actual client discovery separately.
+6. Refuse conflicts, extra values/subkeys and path mismatch; preserve all unrelated entries.
+7. Remove the recognized registration; verify DLL/INI and other providers remain unchanged.
+8. Run EN/RU UIA smoke and verify mutation controls disabled in ephemeral mode.
+
+No actual installation, removal, registry modification or Windows execution has been performed in this development session.
 
 ## Owner-local acceptance (pending)
 

@@ -295,5 +295,38 @@ class ProviderProvenanceTests(unittest.TestCase):
 
 
 
+class ProviderRenameTests(unittest.TestCase):
+    def read(self, entries):
+        reg = mock.MagicMock()
+        reg.REG_SZ, reg.REG_EXPAND_SZ = 1, 2
+        reg.KEY_READ, reg.KEY_WOW64_32KEY = 1, 2
+        def open_key(hive, name, reserved, access):
+            if name not in entries:
+                raise FileNotFoundError
+            key = mock.MagicMock()
+            key.__enter__.return_value = name
+            return key
+        reg.OpenKey.side_effect = open_key
+        reg.QueryValueEx.side_effect = lambda key, name: (entries[key], reg.REG_SZ)
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.dict(sys.modules, {"winreg": reg}):
+            result = audit.read_registry32()
+        self.assertEqual(reg.OpenKey.call_count, 2)
+        self.assertEqual(reg.QueryValueEx.call_count, len(entries))
+        return result
+
+    def test_current_only(self):
+        self.assertEqual(self.read({audit.KEY: "new.dll"}), (True, "new.dll", None))
+
+    def test_previous_only(self):
+        self.assertEqual(self.read({audit.LEGACY_KEY: "old.dll"}), (True, "old.dll", None))
+
+    def test_both_blocked(self):
+        self.assertEqual(self.read({audit.KEY: "new.dll", audit.LEGACY_KEY: "old.dll"}),
+                         (None, None, "conflicting_provider_registrations"))
+
+    def test_neither(self):
+        self.assertEqual(self.read({}), (False, None, None))
+
+
 if __name__ == "__main__":
     unittest.main()

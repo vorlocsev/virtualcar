@@ -47,6 +47,13 @@ try {
     # Keep native Windows App SDK dependencies as separate files.
     & $dotnet @publishArgs *> $log
     if ($LASTEXITCODE -ne 0) { throw 'Publish failed. See local publish.log.' }
+    $toolProject = Join-Path $PSScriptRoot '..\VirtualCar.DriverTool\VirtualCar.DriverTool.csproj'
+    $toolOut = Join-Path $publish 'driver-tools'
+    $toolLog = Join-Path $out 'driver-tool-publish.log'
+    $toolArgs = @('publish',$toolProject,'-c','Release','-r','win-x64','--self-contained','true',
+        '-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:PublishAot=false','-o',$toolOut)
+    & $dotnet @toolArgs *> $toolLog
+    if ($LASTEXITCODE -ne 0) { throw 'Driver tool publish failed. See local driver-tool-publish.log.' }
 }
 finally { Pop-Location }
 function Assert-Amd64([string]$Path) {
@@ -73,6 +80,12 @@ foreach ($name in @('VirtualCar.WinUI.exe','Microsoft.UI.Xaml.dll','coreclr.dll'
 }
 foreach ($name in @('VirtualCar.WinUI.dll','VirtualCar.Core.dll','VirtualCar.WinUI.deps.json','VirtualCar.WinUI.runtimeconfig.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish $name) -PathType Leaf)) { throw "Missing managed file: $name" }
+}
+Assert-Amd64 (Join-Path $publish 'driver-tools\VirtualCar.DriverTool.exe')
+foreach ($name in @('VirtualCar.DriverTool.dll','VirtualCar.DriverTool.deps.json','VirtualCar.DriverTool.runtimeconfig.json','coreclr.dll')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $publish ('driver-tools\' + $name)) -PathType Leaf)) {
+        throw "Missing driver tool runtime file: $name"
+    }
 }
 if (GitText @('status','--porcelain','--untracked-files=all')) { throw 'Build altered the clean checkout.' }
 if ((GitText @('rev-parse','HEAD')) -ne $head) { throw 'HEAD changed during build.' }

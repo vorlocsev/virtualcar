@@ -134,6 +134,18 @@ try {
             Assert-Name $window 'VC075.Heading' $section.label
             Assert-Name $window 'VC077.PlaceholderHeading' $section.label
             Assert-EditorHidden $window
+            if ($section.key -eq 'Connection') {
+                $install = Wait-Element $window 'VC078.Driver.Install'
+                $remove = Wait-Element $window 'VC078.Driver.Remove'
+                if ($install.Current.IsEnabled -or $remove.Current.IsEnabled) { throw 'Driver mutation enabled in ephemeral smoke.' }
+                if ($case.code -eq 'RU') {
+                    Assert-Name $window 'VC078.Driver.Install' 'Установить драйвер'
+                    Assert-Name $window 'VC078.Driver.Remove' 'Удалить драйвер'
+                } else {
+                    Assert-Name $window 'VC078.Driver.Install' 'Install driver'
+                    Assert-Name $window 'VC078.Driver.Remove' 'Remove driver'
+                }
+            }
             $navigationPassed++
             Write-Host "PASS navigation $($case.code) $($section.key)"
         }
