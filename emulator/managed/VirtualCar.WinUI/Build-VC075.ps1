@@ -60,7 +60,7 @@ function Assert-Amd64([string]$Path) {
     $stream = [IO.File]::OpenRead($Path)
     $reader = $null
     try {
-        $reader = New-Object IO.BinaryReader($stream)
+        $reader = [IO.BinaryReader]::new($stream)
         if ($stream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) { throw 'Invalid DOS header.' }
         $stream.Position = 60
         $offset = $reader.ReadInt32()
@@ -81,7 +81,9 @@ foreach ($name in @('VirtualCar.WinUI.exe','Microsoft.UI.Xaml.dll','coreclr.dll'
 foreach ($name in @('VirtualCar.WinUI.dll','VirtualCar.Core.dll','VirtualCar.WinUI.deps.json','VirtualCar.WinUI.runtimeconfig.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish $name) -PathType Leaf)) { throw "Missing managed file: $name" }
 }
-Assert-Amd64 (Join-Path $publish 'driver-tools\VirtualCar.DriverTool.exe')
+foreach ($name in @('VirtualCar.DriverTool.exe','coreclr.dll','hostfxr.dll','hostpolicy.dll')) {
+    Assert-Amd64 (Join-Path $publish ('driver-tools\' + $name))
+}
 foreach ($name in @('VirtualCar.DriverTool.dll','VirtualCar.DriverTool.deps.json','VirtualCar.DriverTool.runtimeconfig.json','coreclr.dll')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publish ('driver-tools\' + $name)) -PathType Leaf)) {
         throw "Missing driver tool runtime file: $name"
