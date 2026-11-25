@@ -19,6 +19,8 @@ internal static class Program
             ("08 Shutdown remains invalid after stop fault", Test08)
         ];
 
+        checks = [..checks, ..CemPreviewChecks.All];
+
         int passed = 0;
         foreach (var (name, test) in checks)
         {
