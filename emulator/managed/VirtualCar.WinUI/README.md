@@ -92,6 +92,14 @@ The ECU modules workspace reads the registered J2534 Lab Adapter's adjacent virt
 
 No communication, VIN read, discovery, ECU identification, profile write or data export is performed. Results are a local profile snapshot; refresh after any registration or profile change. Ephemeral smoke disables reading. Eight managed regression groups cover defaults, explicit routes, 32-slot bound, duplicates, malformed values, functional requests, ambiguous input and text/size bounds. Windows compile and UI acceptance remain pending.
 
+## VC084 CAN log monitor (pending)
+
+Diagnostics now exposes Start monitor, Stop monitor and Refresh snapshot, a local log path, TX/RX filter and case-insensitive CAN ID/payload/PID/process text filter. The existing native DLL temporary log filename remains the default for compatibility; it is not the adapter name. Only an explicitly started read-only snapshot refreshes every second. Stop, navigation away, close or read failure stops the timer; changing the path clears the previous snapshot. Ephemeral smoke cannot open the log.
+
+At most 512 KiB of the file tail and 500 newest parsed records are shown. A partial first line in a tail and incomplete last line are discarded. Only TX (app request) and PassThruReadMsgs -> delivered are included; queued RX records are not duplicated. Exact adjacent per-PID/process context records provide channel, protocol, status/flags, bitrate and wrapping 32-bit microsecond value; CAN ID is decoded only with matching CAN/ISO15765 context. Missing context remains unknown and retains the complete recorded byte prefix. The native log can truncate data to 52 bytes; records of that length are marked possibly truncated. The display is not a continuous capture, bus timestamp, physical CAN sniffer, complete ISO-TP frame trace, or verified ECU discovery. Multiple processes and earlier sessions may be present. Raw local log data may contain private diagnostic information; no upload, export or persistence is added.
+
+Eight managed groups cover context parsing, interleaved clients, stale context, duplicate RX suppression, partial records, truncation, row bounds and bounded shared file read. Windows acceptance: run the exact UI build, verify read-only refresh against a controlled native test log, start/stop, filters, navigation, file rotation/truncation and EN/RU labels; inspect layout and update responsiveness. No managed build or runtime test has been performed in this authoring session.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
