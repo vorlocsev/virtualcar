@@ -354,7 +354,7 @@ public sealed class CemPreviewWindow : Window
         Add(root, workspace, 2);
         Add(root, _status, 3);
         Content = shell;
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
+        ResizeForDisplay();
 
         _navigation.SelectionChanged += (_, _) =>
         {
@@ -460,6 +460,21 @@ public sealed class CemPreviewWindow : Window
         Section.Connection => T("Connection", "Подключение"),
         _ => throw new ArgumentOutOfRangeException(nameof(section))
     };
+
+    private void ResizeForDisplay()
+    {
+        var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest);
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        double scale = Math.Max(1.0, GetDpiForWindow(hwnd) / 96.0);
+        var work = area.WorkArea;
+        int width = Math.Min(work.Width, (int)Math.Round(1200 * scale));
+        int height = Math.Min(work.Height, (int)Math.Round(800 * scale));
+        if (width > 0 && height > 0)
+            AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 2, width, height));
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     private void ShowSection()
     {
