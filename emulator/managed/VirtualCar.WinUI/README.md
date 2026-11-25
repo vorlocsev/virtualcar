@@ -108,6 +108,21 @@ The classifier requires ISO15765 context, channel, a decoded CAN address, compat
 
 Eight isolated managed checks cover single DID, NRC, supported service shapes, context, indication, malformed/truncated records, protected request observation and independent counts. Windows acceptance: switch views, verify filters and visible counts with an owner-local controlled trace, verify EN/RU, stop/refresh/navigation and ephemeral read lockout. No managed compilation or test execution has been performed during authoring.
 
+## VC086 integrated synthetic/empty UI acceptance (pending)
+
+Run in a disposable interactive Windows x64 VM, on the reviewed exact VC086 head, using stable .NET 10 SDK and Windows PowerShell 5.1. Do not run an unreviewed PR on the persistent development runner. The output directory must not exist, and its existing parent must be outside Git on a fixed local drive.
+
+```powershell
+$sha = (git rev-parse HEAD).Trim()
+& .\emulator\managed\VirtualCar.WinUI\Test-VC086Acceptance.ps1 -ExpectedSha $sha -OutputDirectory C:\VC086-Review
+```
+
+Supply the independently verified 40-character PR head instead of calculating it from an unknown checkout. The runner requires a clean checkout and eight gates: exact checkout, managed core checks (80 registered groups at authoring), self-contained WinUI and driver helper publish, empty window launch, EN/RU/EN language and 15 navigation checks, three empty journal view switches, ephemeral read/mutation lockout, and post-smoke checkout/file inventory integrity. It writes local logs and vc086-report.json; failed stages stop further execution. The build wrapper includes launch smoke, so a launch failure before its manifest is emitted is reported as a publish-stage failure; later stages remain not_tested.
+
+The accumulated workspace panels are now vertically scrollable; navigating away clears the static ECU inventory. Ephemeral mode disables even private CEM profile load and registry refresh, in addition to all previous mutation and log-read lockouts. No private inputs, original diagnostic software, J2534 DLL launch, provider registration or hardware access is required.
+
+The report explicitly leaves private CEM preview, actual registration, scenario application/restoration, native ignition responses, loaded profile UI, DPI/layout, actual ECU inventory, live log monitoring, VIDA ReadVin/T111/T122 and physical J2534 not_tested. Passing this runner is not final vehicle or OEM acceptance. No release or merge is authorized by its report. Windows execution remains required; no results are asserted by the source changes alone.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
