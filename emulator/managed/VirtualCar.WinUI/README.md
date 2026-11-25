@@ -11,6 +11,19 @@ dotnet run --project emulator/managed/VirtualCar.WinUI/VirtualCar.WinUI.csproj -
 
 Enter explicitly reviewed absolute paths to Python.exe, the checkout's emulator/tools/cem529_config/vc071_view.py, and the existing pinned seven-file private directory outside Git. No paths are saved by the application. Do not use private data in CI.
 
+## Exact-head build and empty-window UI Automation (VC075)
+
+Use a clean checkout of the reviewed VC075 commit, Windows x64, stable .NET 10 SDK and WinUI build prerequisites. The output parent must already exist, outside Git; the output directory must not exist.
+
+```powershell
+$sha = (git rev-parse HEAD).Trim() # Compare with the reviewed full PR head first.
+$out = Join-Path $env:USERPROFILE 'Downloads\VirtualCar-VC075'
+& .\emulator\managed\VirtualCar.WinUI\Build-VC075.ps1 -ExpectedSha $sha -OutputDirectory $out -LaunchSmoke
+& .\emulator\managed\VirtualCar.WinUI\Test-VC075Language.ps1 -ExpectedSha $sha -BuildDirectory $out
+```
+
+The first script publishes an unpackaged folder, verifies required native PE32+ AMD64 files and managed dependencies, writes a SHA256 inventory, and optionally starts and closes an empty window. The second checks the full published inventory and uses UI Automation on that exact application process to validate EN → RU → EN using three localized controls per language. Run in an interactive desktop, not a headless service. No private profile is loaded. Successful checks do not prove loaded-profile language switching, original VIDA or hardware acceptance. Keep local publish logs and manifests outside Git; no release is created. These scripts have not yet been run on Windows.
+
 ## Interface language
 
 EN is the default on each application launch. The EN/RU selector in the header changes application text immediately, including the status and audit headings. Original catalog labels, values and policy messages are not translated. Switching language does not invoke the preview subprocess or change the selected profile, draft, search or filter. Language preference is session-only.
