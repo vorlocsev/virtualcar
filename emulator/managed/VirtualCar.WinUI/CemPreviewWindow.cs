@@ -29,6 +29,10 @@ public sealed class CemPreviewWindow : Window
     private readonly TextBlock _subtitle = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _parameterHeading = new() { FontSize = 20 };
     private readonly TextBlock _auditHeading = new() { FontSize = 20 };
+    private readonly UiLanguageSettings? _languageSettings;
+    private readonly TextBlock _languageNotice = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly bool _ephemeral;
+    private bool _languageSaveFailed;
     private bool _russian;
     private string _statusEn = "";
     private string _statusRu = "";
@@ -43,8 +47,16 @@ public sealed class CemPreviewWindow : Window
     private CemPreview? Snapshot => _model?.Snapshot;
     private CemRow? Selected => (_rows.SelectedItem as ListViewItem)?.Tag as CemRow;
 
-    public CemPreviewWindow()
+    public CemPreviewWindow(bool ephemeral = false)
     {
+        _ephemeral = ephemeral;
+        if (!ephemeral)
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (Path.IsPathFullyQualified(local))
+                _languageSettings = new UiLanguageSettings(Path.Combine(local, "VirtualCar", "WinUI", "language.v1"));
+            _russian = _languageSettings?.Load() == UiLanguage.Russian;
+        }
         Title = "Virtual Car — CEM529 Preview";
         var root = new Grid { Padding = new Thickness(20), RowSpacing = 12 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -64,7 +76,7 @@ public sealed class CemPreviewWindow : Window
         AutomationId(russian, "VC075.Language.RU");
         _language.Items.Add(english);
         _language.Items.Add(russian);
-        _language.SelectedIndex = 0;
+        _language.SelectedIndex = _russian ? 1 : 0;
         AutomationId(_language, "VC075.Language");
         AutomationId(_heading, "VC075.Heading");
         AutomationId(_load, "VC075.Load");
@@ -73,7 +85,10 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_auditHeading, "VC075.AuditHeading");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_language, "Language / Язык");
         Add(header, heading, 0);
-        Add(header, _language, 0, 1);
+        var languagePanel = new StackPanel { Spacing = 4, MaxWidth = 220 };
+        languagePanel.Children.Add(_language);
+        languagePanel.Children.Add(_languageNotice);
+        Add(header, languagePanel, 0, 1);
         Add(root, header, 0);
 
         var inputs = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
@@ -144,6 +159,8 @@ public sealed class CemPreviewWindow : Window
         {
             if (_closed || _language.SelectedIndex < 0) return;
             _russian = _language.SelectedIndex == 1;
+            _languageSaveFailed = !_ephemeral && !(_languageSettings?.TrySave(
+                _russian ? UiLanguage.Russian : UiLanguage.English) ?? false);
             ApplyLanguage();
         };
         ApplyLanguage();
@@ -175,6 +192,9 @@ public sealed class CemPreviewWindow : Window
             T("Locked", "Защищённые"), T("Editable", "Доступные")];
         for (int i = 0; i < labels.Length; i++)
             ((ComboBoxItem)_filter.Items[i]).Content = labels[i];
+        _languageNotice.Text = _languageSaveFailed
+            ? T("Language could not be saved.", "Не удалось сохранить язык.") : "";
+        _languageNotice.Visibility = _languageSaveFailed ? Visibility.Visible : Visibility.Collapsed;
         _status.Text = T(_statusEn, _statusRu);
         RefreshRows(offset);
         if (optionCode is not null)
