@@ -79,7 +79,7 @@ try {
     $report.sdk = $sdk
     $coreLog = Join-Path $out 'core-checks.log'
     $core = Join-Path $PSScriptRoot '..\VirtualCar.Core.Checks\VirtualCar.Core.Checks.csproj'
-    $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments @('run','--project',$core,'-c','Release') -WorkingDirectory $repo -Log $coreLog
+    $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments @('run','--project',$core,'-c','Release','--disable-build-servers','-p:UseSharedCompilation=false') -WorkingDirectory $repo -Log $coreLog
     if ($exitCode -ne 0) { throw "Managed core checks failed (exit $exitCode). See core-checks.log and core-checks.log.stderr." }
     $summary = @(Get-Content -LiteralPath $coreLog | Where-Object {
         $_ -match '^VirtualCar\.Core synthetic checks: (\d+)/(\d+)$'
