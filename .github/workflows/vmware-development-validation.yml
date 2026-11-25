@@ -92,6 +92,7 @@ on:
           - 0f888d2aee15fb14b377ded40dfcb76825a56d94
           - c788cf656aebd6828e8019029beb605885e08e13
           - a89e20ada0e725785be5f1478b132b0f7009f70a
+          - 8377ee9a117d4fffd1609eb21d609b20a855887a
 
 permissions:
   contents: read
@@ -156,6 +157,7 @@ jobs:
             '0f888d2aee15fb14b377ded40dfcb76825a56d94'
             'c788cf656aebd6828e8019029beb605885e08e13'
             'a89e20ada0e725785be5f1478b132b0f7009f70a'
+            '8377ee9a117d4fffd1609eb21d609b20a855887a'
           )
           if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
               $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
