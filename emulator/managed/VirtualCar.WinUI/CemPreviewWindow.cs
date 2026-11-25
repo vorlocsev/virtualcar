@@ -33,6 +33,15 @@ public sealed class CemPreviewWindow : Window
     private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
     private readonly TextBlock _placeholderHeading = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _placeholderText = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel _vehiclePanel = new() { Spacing = 10 };
+    private readonly TextBox _vehicleProfile = new();
+    private readonly ComboBox _vehicleScenario = new() { MinWidth = 220 };
+    private readonly TextBlock _vehicleInfo = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBox _vehiclePatch = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
+    private readonly Button _vehicleInspect = new();
+    private byte[]? _vehicleBytes;
+    private bool _vehicleUpdating;
+    private bool _vehicleFailed;
     private readonly StackPanel _driverPanel = new() { Spacing = 10 };
     private readonly TextBox _driverPath = new();
     private readonly TextBlock _driverStatus = new() { TextWrapping = TextWrapping.Wrap };
@@ -96,6 +105,25 @@ public sealed class CemPreviewWindow : Window
         var page = new Grid();
         _placeholder.Children.Add(_placeholderHeading);
         _placeholder.Children.Add(_placeholderText);
+        _vehiclePanel.Children.Add(_vehicleProfile);
+        _vehiclePanel.Children.Add(_vehicleInspect);
+        _vehiclePanel.Children.Add(_vehicleScenario);
+        _vehiclePanel.Children.Add(_vehicleInfo);
+        _vehiclePanel.Children.Add(_vehiclePatch);
+        _placeholder.Children.Add(_vehiclePanel);
+        foreach (EcmScenario scenario in Enum.GetValues<EcmScenario>())
+            _vehicleScenario.Items.Add(new ComboBoxItem { Tag = scenario, Content = ScenarioLabel(scenario) });
+        _vehicleScenario.SelectedIndex = 0;
+        AutomationId(_vehicleInspect, "VC079.Vehicle.Inspect");
+        AutomationId(_vehicleScenario, "VC079.Vehicle.Scenario");
+        _vehicleInspect.Click += (_, _) => InspectVehicle();
+        _vehicleProfile.TextChanged += (_, _) =>
+        {
+            _vehicleBytes = null;
+            _vehicleFailed = false;
+            RenderVehicle();
+        };
+        _vehicleScenario.SelectionChanged += (_, _) => { if (!_vehicleUpdating) RenderVehicle(); };
         _driverPanel.Children.Add(_driverStatus);
         _driverPanel.Children.Add(_driverPath);
         var driverActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -299,7 +327,11 @@ public sealed class CemPreviewWindow : Window
                 "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.")
             : _section == Section.Connection
                 ? T("J2534 Lab Adapter — registration only.", "J2534 Lab Adapter — только регистрация.")
-                : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован.");
+                : _section == Section.Vehicle
+                    ? T("Native ECM scenario preview — not live telemetry.", "Предпросмотр сценария ECM — не текущая телеметрия.")
+                    : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован.");
+        _vehiclePanel.Visibility = _section == Section.Vehicle ? Visibility.Visible : Visibility.Collapsed;
+        RenderVehicle();
         _driverPanel.Visibility = _section == Section.Connection ? Visibility.Visible : Visibility.Collapsed;
         RenderDriver();
         _editor.Visibility = configuration ? Visibility.Visible : Visibility.Collapsed;
@@ -307,8 +339,8 @@ public sealed class CemPreviewWindow : Window
         _placeholderHeading.Text = SectionLabel(_section);
         _placeholderText.Text = _section switch
         {
-            Section.Vehicle => T("Vehicle state and scenario controls are planned. No runtime is started here.",
-                "Планируется управление состоянием и сценариями автомобиля. Запуск эмулятора недоступен."),
+            Section.Vehicle => T("Inspect the existing native profile. The proposed settings apply only after manual editing and a subsequent PassThruOpen. No profile is modified here.",
+                "Проверьте существующий профиль DLL. Предложенные настройки действуют только после ручного редактирования и следующего PassThruOpen. Профиль здесь не изменяется."),
             Section.Modules => T("ECU inventory and identification are planned. No ECU discovery is performed.",
                 "Планируется список и идентификация блоков. Поиск ECU не выполняется."),
             Section.Diagnostics => T("Read-only diagnostic tools are planned. No diagnostic messages are sent.",
@@ -317,6 +349,71 @@ public sealed class CemPreviewWindow : Window
                 "J2534 04.04 / x86. Выберите проверенную локальную VirtualCarJ2534.dll в постоянной папке. Закройте VIDA и другие диагностические программы. Файлы DLL не копируются и не удаляются."),
             _ => ""
         };
+    }
+
+    private string ScenarioLabel(EcmScenario scenario) => scenario switch
+    {
+        EcmScenario.Stationary => T("Stationary / 0 rpm", "Стоянка / 0 об/мин"),
+        EcmScenario.Cranking => T("Cranking / 200 rpm", "Прокрутка / 200 об/мин"),
+        EcmScenario.ColdIdle => T("Cold idle / 1100 rpm", "Холодный двигатель / 1100 об/мин"),
+        EcmScenario.Warming => T("Warming / 900 rpm", "Прогрев / 900 об/мин"),
+        EcmScenario.WarmIdle => T("Warm idle / 700 rpm", "Прогретый двигатель / 700 об/мин"),
+        EcmScenario.Dynamic => T("Dynamic warm-up / 180 s", "Динамический прогрев / 180 с"),
+        _ => throw new ArgumentOutOfRangeException(nameof(scenario))
+    };
+
+    private void InspectVehicle()
+    {
+        if (_closed || Busy || _ephemeral) return;
+        _vehicleBytes = null;
+        _vehicleFailed = false;
+        try
+        {
+            string path = _vehicleProfile.Text.Trim();
+            if (!Path.IsPathFullyQualified(path) || path.StartsWith(@"\\", StringComparison.Ordinal) ||
+                !string.Equals(Path.GetFileName(path), "virtualcar.ini", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException();
+            string full = Path.GetFullPath(path);
+            if (new DriveInfo(Path.GetPathRoot(full)!).DriveType != DriveType.Fixed)
+                throw new InvalidDataException();
+            using var stream = File.OpenRead(full);
+            byte[] bytes = new byte[1024 * 1024 + 1];
+            int length = stream.ReadAtLeast(bytes, bytes.Length, throwIfEndOfStream: false);
+            var input = bytes[..length];
+            var plan = NativeEcmScenarioPlan.Inspect(input);
+            _vehicleBytes = input;
+            _vehicleUpdating = true;
+            _vehicleScenario.SelectedIndex = (int)plan.Selection;
+        }
+        catch (Exception) { _vehicleFailed = true; }
+        finally { _vehicleUpdating = false; RenderVehicle(); }
+    }
+
+    private void RenderVehicle()
+    {
+        _vehicleProfile.Header = T("Local virtualcar.ini (absolute path)", "Локальный virtualcar.ini (абсолютный путь)");
+        _vehicleInspect.Content = T("Inspect profile", "Проверить профиль");
+        _vehicleScenario.Header = T("Proposed ECM scenario", "Предлагаемый сценарий ECM");
+        _vehiclePatch.Header = T("Merge these keys into existing sections (do not append duplicates)",
+            "Замените ключи в существующих секциях (не добавляйте дубликаты)");
+        foreach (var item in _vehicleScenario.Items.OfType<ComboBoxItem>())
+            item.Content = ScenarioLabel((EcmScenario)item.Tag);
+        _vehicleInspect.IsEnabled = !_ephemeral && !Busy && !_closed;
+        _vehicleScenario.IsEnabled = _vehicleBytes is not null && !Busy;
+        _vehiclePatch.Text = "";
+        if (_vehicleBytes is null)
+        {
+            _vehicleInfo.Text = _vehicleFailed ? T("Profile unavailable or ambiguous.", "Профиль недоступен или неоднозначен.") :
+                T("No inspected profile. No live state available.", "Профиль не проверен. Текущее состояние неизвестно.");
+            return;
+        }
+        var current = NativeEcmScenarioPlan.Inspect(_vehicleBytes);
+        if ((_vehicleScenario.SelectedItem as ComboBoxItem)?.Tag is not EcmScenario selected) return;
+        var plan = NativeEcmScenarioPlan.Inspect(_vehicleBytes, selected);
+        _vehicleInfo.Text = T("Configured selection: ", "Настроенный сценарий: ") + ScenarioLabel(current.Selection) + "\n" +
+            (plan.CanApply ? T("Required gates enabled; preview only.", "Требуемые флаги включены; только предпросмотр.") :
+                T("Required gates missing. No changes proposed.", "Не включены требуемые флаги. Изменения не предлагаются."));
+        if (plan.CanApply) _vehiclePatch.Text = plan.IniPatch;
     }
 
     private string DriverToolPath => Path.Combine(AppContext.BaseDirectory, "driver-tools", "VirtualCar.DriverTool.exe");
