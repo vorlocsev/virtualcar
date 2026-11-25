@@ -173,6 +173,12 @@ The test intentionally appends two records to its own generated log; it checks t
 
 The VC086 Core and both publish commands additionally pass --disable-build-servers and UseSharedCompilation=false to avoid persistent compiler processes after owner-local builds. This is intended to address the prior manual .NET build-server shutdown workaround; it has not been validated on Windows yet. No global build-server shutdown or unrelated process termination is added.
 
+## VC089 measured DPI capture (pending)
+
+VC088 owner-local acceptance passed on 442406d310bad66c4b8c220136b20a418b7e0140. VC089 is a new candidate. Initial window targets 1200 x 800 DIPs, clamped to the current monitor work area. Counts reflow below filters under 1000 DIP; headings wrap. Rerun VC086, VC087 and VC088 on the new exact head first.
+
+On an unlocked unobstructed desktop select actual Windows scale 100, 125, 150, 175 or 200 percent. Run Test-VC089Layout.ps1 with ExpectedSha, BuildDirectory, a new external OutputDirectory and ExpectedScale. Use a separate directory for each actual scale. The script does not change DPI. It checks owner PID, actual DPI, DWM frame within work area, minimum 850 x 450 DIP client, UIA anchors and bottom control visibility/scroll. Ten empty-window top views plus applicable bottom views are captured with SHA256 and measured dimensions. Screen capture is limited to the foreground window rectangle; sampled occlusion checks cannot rule out small overlays. Keep screenshots local and notifications closed. The manifest marks visual_review=not_tested; inspect PNGs separately for clipping, overlap and readability. Loaded-profile/real-log visuals and unsupported scales remain pending. Windows compile and execution are not yet verified.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
