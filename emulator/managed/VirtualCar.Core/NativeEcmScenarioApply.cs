@@ -154,7 +154,7 @@ public static class NativeEcmScenarioApply
     private static byte[] ReadBounded(Stream stream)
     {
         byte[] bytes = new byte[MaxBytes + 1];
-        int count = stream.ReadAtLeast(bytes, bytes.Length, throwIfEndOfStream: false);
+        int count = stream.ReadAtLeast(bytes, bytes.Length, false);
         if (count is < 1 or > MaxBytes) throw new InvalidDataException("Profile size rejected.");
         return bytes[..count];
     }
