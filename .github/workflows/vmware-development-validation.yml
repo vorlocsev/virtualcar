@@ -309,6 +309,23 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'B3A324 battery prerequisite failed' }
             & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'supply-baseline-off') -Expanded -Scenario 4 -BatterySync -RemProbe -SupplyProbe -SupplySync
             if ($LASTEXITCODE -ne 0) { throw 'B3A324 baseline prerequisite failed' }
+            & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir 'dynamic-timeline') -Enabled -Expanded -Scenario 4 -BatterySync -RemProbe -RemSync -SupplyProbe -SupplySync -Dynamic -DynamicProbe
+            if ($LASTEXITCODE -ne 0) { throw 'B3A330 dynamic timeline failed' }
+            $dynamicControls=@(
+              @{Name='baseline';Args=@('-Expanded','-BatterySync','-RemProbe','-RemSync','-SupplyProbe','-SupplySync')},
+              @{Name='extended';Args=@('-Enabled','-BatterySync','-RemProbe','-RemSync','-SupplyProbe','-SupplySync')},
+              @{Name='battery';Args=@('-Enabled','-Expanded','-RemProbe','-RemSync','-SupplyProbe','-SupplySync')},
+              @{Name='rem';Args=@('-Enabled','-Expanded','-BatterySync','-RemProbe','-SupplyProbe','-SupplySync')},
+              @{Name='supply';Args=@('-Enabled','-Expanded','-BatterySync','-RemProbe','-RemSync','-SupplyProbe')},
+              @{Name='ggd';Args=@('-Enabled','-Expanded','-BatterySync','-RemProbe','-RemSync','-SupplySync')},
+              @{Name='current';Args=@('-Enabled','-Expanded','-BatterySync','-RemSync','-SupplySync')}
+            )
+            foreach ($control in $dynamicControls) {
+              $controlArgs=$control.Args
+              & $ps32 -NoProfile -NonInteractive -ExecutionPolicy Bypass -File emulator/tools/verify_b3a310_ecm_live.ps1 -DllPath $dll -OutputDirectory (Join-Path $dir ('dynamic-no-'+$control.Name)) -Scenario 4 -Dynamic @controlArgs
+              if ($LASTEXITCODE -ne 0) { throw "B3A330 prerequisite control failed: $($control.Name)" }
+              Write-Host "B3A330_NATIVE_PREREQUISITE_PASS missing=$($control.Name)"
+            }
           } finally {
             if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
           }

@@ -10,7 +10,9 @@ param(
     [switch]$RemProbe,
     [switch]$RemSync,
     [switch]$SupplyProbe,
-    [switch]$SupplySync
+    [switch]$SupplySync,
+    [switch]$Dynamic,
+    [switch]$DynamicProbe
 )
 $ErrorActionPreference='Stop'
 if ([IntPtr]::Size -ne 4) { throw 'Use 32-bit Windows PowerShell' }
@@ -54,6 +56,8 @@ if ($SupplyProbe) {
     $profile += [Environment]::NewLine + "[ECU1]" + [Environment]::NewLine + "RequestId=18DA50F1" + [Environment]::NewLine + "ResponseId=18DAF150" + [Environment]::NewLine + "ExpectedBaud=500000" + [Environment]::NewLine + "PartNumber=LAB-CEM-HW"
 }
 if ($SupplySync) { $profile += [Environment]::NewLine + "[B3A324_SupplyVoltageSyncLab]" + [Environment]::NewLine + "Enabled=1" }
+if ($DynamicProbe -and -not ($Dynamic -and $Enabled -and $Expanded -and $BatterySync -and $RemProbe -and $RemSync -and $SupplyProbe -and $SupplySync)) { throw 'DynamicProbe requires all dynamic prerequisites' }
+if ($Dynamic) { $profile += [Environment]::NewLine + "[B3A329_DynamicEcmLab]" + [Environment]::NewLine + "Enabled=1" }
 [IO.File]::WriteAllText((Join-Path $dir 'virtualcar.ini'),$profile,[Text.Encoding]::ASCII)
 $savedLocal=$env:LOCALAPPDATA
 $savedTemp=$env:TEMP
@@ -114,6 +118,141 @@ public static class EcmLiveNative {
             for(int i=0;i<8;i++)Check(m.Data[4+i]==payload[i],"D2 RX payload index="+i+" expected="+BitConverter.ToString(payload)+" actual="+BitConverter.ToString(m.Data,4,8));
         }finally{Marshal.FreeHGlobal(p);}
         Empty(ch);
+    }
+    // B3A330: independent elapsed-time oracle, including Open and request timing uncertainty.
+    [DllImport("kernel32.dll")] static extern uint GetTickCount();
+    static readonly int[] Times={0,2000,4000,60000,180000};
+    static readonly int[] Volts={12500,10500,14200,14000,14000};
+    static readonly int[] Rpm={0,200,1100,900,700};
+    static readonly int[] Coolant={20,20,20,60,90};
+    static readonly int[] Maf={0,200,900,700,550};
+    static readonly int[] Load={0,150,250,200,180};
+    static int Interpolate(int[] points,int t){
+        int i=0;
+        while(i<3 && t>=Times[i+1])i++;
+        int pos=Math.Min(t,Times[i+1])-Times[i];
+        return points[i]+(points[i+1]-points[i])*pos/(Times[i+1]-Times[i]);
+    }
+    static uint FloatBits(float value){return BitConverter.ToUInt32(BitConverter.GetBytes(value),0);}
+    static uint ExpectedRaw(int kind,int t){
+        int mv=Interpolate(Volts,t),rpm=Interpolate(Rpm,t);
+        switch(kind){
+            case 0:return (uint)mv;
+            case 1:return (uint)(rpm*4);
+            case 2:return FloatBits(rpm);
+            case 3:return (uint)((mv*65536+10000)/20000);
+            case 4:return (uint)((mv+62)/125);
+            case 5:return (uint)((mv*65535+12500)/25000);
+            case 6:return (uint)((mv*64+500)/1000);
+            case 7:return (uint)((mv+125)/250);
+            case 8:return (uint)((Interpolate(Coolant,t)+40)*8+2)/5;
+            case 9:return FloatBits((float)(Interpolate(Maf,t)/100.0));
+            case 10:return (uint)((Interpolate(Load,t)*255+500)/1000);
+            default:throw new Exception("unknown timeline kind");
+        }
+    }
+    static int Elapsed(uint now,uint epoch){return (int)Math.Min(180000u,unchecked(now-epoch));}
+    static void AssertTimeline(int kind,uint raw,uint openBefore,uint openAfter,uint txBefore,uint rxAfter){
+        int lo=Elapsed(txBefore,openAfter),hi=Elapsed(rxAfter,openBefore);
+        Check(lo<=hi,"timeline clock range");
+        uint min=UInt32.MaxValue,max=0;
+        for(int t=lo;t<=hi;t++){
+            uint expected=ExpectedRaw(kind,t);
+            min=Math.Min(min,expected);max=Math.Max(max,expected);
+        }
+        Check(raw>=min && raw<=max,"timeline kind="+kind+" raw="+raw+" expected="+min+".."+max+" ms="+lo+".."+hi);
+    }
+    static uint DynamicRead(uint ch,uint tx,uint rx,uint protocol,byte[] request,byte[] header,int length,int tail,int kind,uint openBefore,uint openAfter){
+        uint before=GetTickCount();
+        Send(ch,tx,0x140,request,protocol);
+        IntPtr ptr=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+        uint raw=0,after;
+        try{
+            uint count=1;
+            Check(PassThruReadMsgs(ch,ptr,ref count,200)==0 && count==1,"dynamic missing RX");
+            after=GetTickCount();
+            Msg m=(Msg)Marshal.PtrToStructure(ptr,typeof(Msg));
+            uint id=((uint)m.Data[0]<<24)|((uint)m.Data[1]<<16)|((uint)m.Data[2]<<8)|m.Data[3];
+            Check(m.ProtocolID==protocol && id==rx && m.DataSize==4+header.Length+length+tail,"dynamic RX metadata");
+            if(protocol==6)Check(m.RxStatus==0x100 && m.ExtraDataIndex==m.DataSize,"dynamic ISO metadata");
+            for(int i=0;i<header.Length;i++)Check(m.Data[4+i]==header[i],"dynamic RX header");
+            for(int i=0;i<length;i++)raw=(raw<<8)|m.Data[4+header.Length+i];
+            for(int i=0;i<tail;i++)Check(m.Data[4+header.Length+length+i]==0,"dynamic D2 padding");
+        }finally{Marshal.FreeHGlobal(ptr);}
+        AssertTimeline(kind,raw,openBefore,openAfter,before,after);Empty(ch);
+        return raw;
+    }
+    static uint DynamicVoltage(uint ch,uint openBefore,uint openAfter){
+        uint raw,before=GetTickCount();
+        Check(PassThruIoctl(ch,3,IntPtr.Zero,out raw)==0,"dynamic READ_VBATT");
+        AssertTimeline(0,raw,openBefore,openAfter,before,GetTickCount());return raw;
+    }
+    static uint DynamicDid(uint ch,uint tx,uint rx,byte a,byte b,int len,int kind,uint openBefore,uint openAfter){
+        return DynamicRead(ch,tx,rx,6,new byte[]{0x22,a,b},new byte[]{0x62,a,b},len,0,kind,openBefore,openAfter);
+    }
+    static uint DynamicD2(uint ch,byte target,byte a,byte b,int len,int kind,uint openBefore,uint openAfter){
+        // D2 exact request uses 0x100; ISO15765_FRAME_PAD is not a CAN flag.
+        uint before=GetTickCount();
+        Send(ch,0x000FFFFE,0x100,new byte[]{0xCD,target,0xA6,a,b,1,0,0},5);
+        IntPtr ptr=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Msg)));
+        uint raw=0,after;
+        try{
+            uint count=1;Check(PassThruReadMsgs(ch,ptr,ref count,200)==0&&count==1,"dynamic D2 missing RX");after=GetTickCount();
+            Msg m=(Msg)Marshal.PtrToStructure(ptr,typeof(Msg));
+            Check(m.ProtocolID==5&&m.DataSize==12&&m.Data[0]==0&&m.Data[1]==0x80&&m.Data[2]==0&&m.Data[3]==3,"dynamic D2 metadata");
+            Check(m.Data[4]==0xCC+len&&m.Data[5]==target&&m.Data[6]==0xE6&&m.Data[7]==a&&m.Data[8]==b,"dynamic D2 header");
+            for(int i=0;i<len;i++)raw=(raw<<8)|m.Data[9+i];
+            for(int i=9+len;i<12;i++)Check(m.Data[i]==0,"dynamic D2 padding");
+        }finally{Marshal.FreeHGlobal(ptr);}
+        AssertTimeline(kind,raw,openBefore,openAfter,before,after);Empty(ch);return raw;
+    }
+    static void WaitPhase(uint epoch,uint target){
+        while(unchecked(GetTickCount()-epoch)<target)System.Threading.Thread.Sleep(10);
+    }
+    public static void RunDynamic(){
+        Check(IntPtr.Size==4 && Marshal.SizeOf(typeof(Msg))==4152,"dynamic x86 ABI");
+        for(int session=0;session<2;session++){
+            uint dev=0,hs=0,ls=0,can=0;bool opened=false;
+            uint openBefore=GetTickCount(),openAfter;
+            try{
+                Check(PassThruOpen(IntPtr.Zero,out dev)==0,"dynamic open");opened=true;openAfter=GetTickCount();
+                Check(PassThruConnect(dev,6,0x100,500000,out hs)==0,"dynamic HS connect");
+                Check(PassThruConnect(dev,6,0x100,125000,out ls)==0 && ls!=hs,"dynamic LS connect");
+                Check(PassThruConnect(dev,5,0x100,125000,out can)==0 && can!=hs && can!=ls,"dynamic CAN connect");
+                uint[] phases=session==0?new uint[]{750,2000,5000,60000,180000,181000}:new uint[]{750};
+                foreach(uint phase in phases){
+                    WaitPhase(openAfter,phase);
+                    uint v=DynamicVoltage(hs,openBefore,openAfter);DynamicVoltage(ls,openBefore,openAfter);
+                    uint rpm=DynamicDid(hs,Tx,Rx,0xF4,0x0C,2,1,openBefore,openAfter);
+                    DynamicDid(hs,Tx,Rx,0xDA,0x48,4,2,openBefore,openAfter);
+                    DynamicDid(hs,Tx,Rx,0x12,0x0D,2,3,openBefore,openAfter);
+                    DynamicD2(can,0x46,0xD0,0xD4,1,4,openBefore,openAfter);
+                    DynamicD2(can,0x46,0x1A,0x02,2,5,openBefore,openAfter);
+                    DynamicD2(can,0x29,0x00,0x80,2,6,openBefore,openAfter);
+                    DynamicDid(hs,0x18DA50F1,0x18DAF150,0xDD,0x02,1,7,openBefore,openAfter);
+                    DynamicDid(hs,Tx,Rx,0xD9,0x9B,1,8,openBefore,openAfter);
+                    DynamicDid(hs,Tx,Rx,0xD9,0x94,4,9,openBefore,openAfter);
+                    DynamicDid(hs,Tx,Rx,0xF4,0x43,2,10,openBefore,openAfter);
+                    if(phase==750)Check(v>11000 && v<12500 && rpm<800,"initial/reopened phase");
+                    if(phase==2000)Check(v<11500,"crank voltage dip");
+                    if(phase==5000)Check(v>13500 && rpm>3600,"post-start phase");
+                    if(phase>=180000)Check(v==14000 && rpm==2800,"terminal latch");
+                    Send(hs,0x18DA50F1,0x140,new byte[]{0x22,0xA4,0x5F});
+                    Expect(hs,new byte[]{0x62,0xA4,0x5F,0x04},0x18DAF150);
+                    Send(ls,Tx,0x140,new byte[]{0x22,0x12,0x0D});Empty(ls);Empty(hs);
+                    Send(hs,Tx,0x140,new byte[]{0x22,0x12,0x0E});Expect(hs,new byte[]{0x7F,0x22,0x31});
+                    Console.WriteLine("B3A330_NATIVE_PHASE_PASS session="+session+" ms="+phase+" voltage="+v+" rpm="+rpm/4.0);
+                }
+            }finally{
+                bool clean=true;
+                if(can!=0)clean &= PassThruDisconnect(can)==0;
+                if(ls!=0)clean &= PassThruDisconnect(ls)==0;
+                if(hs!=0)clean &= PassThruDisconnect(hs)==0;
+                if(opened)clean &= PassThruClose(dev)==0;
+                Check(clean,"dynamic cleanup");
+            }
+        }
+        Console.WriteLine("B3A330_NATIVE_DYNAMIC_PASS");
     }
     static void ApplyScenario(byte[][] replies,uint[] values,int offset){
         for(int i=0;i<replies.Length;i++){
@@ -253,7 +392,8 @@ public static class EcmLiveNative {
     Add-Type -TypeDefinition $source -Language CSharp
     $expectedState=0
     if ($Scenario -ne 'invalid') { $expectedState=[int]$Scenario }
-    [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState,[bool]$BatterySync,[bool]$RemProbe,[bool]$RemSync,[bool]$SupplyProbe,[bool]$SupplySync)
+    if ($DynamicProbe) { [EcmLiveNative]::RunDynamic() }
+    else { [EcmLiveNative]::Run([bool]$Enabled,[bool]$Expanded,$expectedState,[bool]$BatterySync,[bool]$RemProbe,[bool]$RemSync,[bool]$SupplyProbe,[bool]$SupplySync) }
 } finally {
     $env:LOCALAPPDATA=$savedLocal
     $env:TEMP=$savedTemp
