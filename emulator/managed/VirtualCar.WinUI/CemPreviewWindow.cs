@@ -39,6 +39,12 @@ public sealed class CemPreviewWindow : Window
     private readonly TextBlock _vehicleInfo = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBox _vehiclePatch = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap };
     private readonly Button _vehicleInspect = new();
+    private readonly Button _vehicleApply = new();
+    private readonly TextBlock _vehicleResult = new() { TextWrapping = TextWrapping.Wrap };
+    private string? _inspectedPath;
+    private bool _vehicleBusy;
+    private string _vehicleResultEn = "";
+    private string _vehicleResultRu = "";
     private byte[]? _vehicleBytes;
     private bool _vehicleUpdating;
     private bool _vehicleFailed;
@@ -72,7 +78,7 @@ public sealed class CemPreviewWindow : Window
     private Dictionary<int, string> _edits = new();
     private bool _closed;
     private bool _rebuilding;
-    private bool Busy => _operation is not null || _driverBusy;
+    private bool Busy => _operation is not null || _driverBusy || _vehicleBusy;
     private CemPreview? Snapshot => _model?.Snapshot;
     private CemRow? Selected => (_rows.SelectedItem as ListViewItem)?.Tag as CemRow;
 
@@ -110,6 +116,10 @@ public sealed class CemPreviewWindow : Window
         _vehiclePanel.Children.Add(_vehicleScenario);
         _vehiclePanel.Children.Add(_vehicleInfo);
         _vehiclePanel.Children.Add(_vehiclePatch);
+        _vehiclePanel.Children.Add(_vehicleApply);
+        _vehiclePanel.Children.Add(_vehicleResult);
+        AutomationId(_vehicleApply, "VC080.Vehicle.Apply");
+        _vehicleApply.Click += async (_, _) => await ApplyVehicleAsync();
         _placeholder.Children.Add(_vehiclePanel);
         foreach (EcmScenario scenario in Enum.GetValues<EcmScenario>())
             _vehicleScenario.Items.Add(new ComboBoxItem { Tag = scenario, Content = ScenarioLabel(scenario) });
@@ -120,7 +130,9 @@ public sealed class CemPreviewWindow : Window
         _vehicleProfile.TextChanged += (_, _) =>
         {
             _vehicleBytes = null;
+            _inspectedPath = null;
             _vehicleFailed = false;
+            VehicleResult("", "");
             RenderVehicle();
         };
         _vehicleScenario.SelectionChanged += (_, _) => { if (!_vehicleUpdating) RenderVehicle(); };
@@ -339,8 +351,8 @@ public sealed class CemPreviewWindow : Window
         _placeholderHeading.Text = SectionLabel(_section);
         _placeholderText.Text = _section switch
         {
-            Section.Vehicle => T("Inspect the existing native profile. The proposed settings apply only after manual editing and a subsequent PassThruOpen. No profile is modified here.",
-                "Проверьте существующий профиль DLL. Предложенные настройки действуют только после ручного редактирования и следующего PassThruOpen. Профиль здесь не изменяется."),
+            Section.Vehicle => T("Inspect the profile beside the registered J2534 DLL. Applying a scenario requires closing all diagnostic clients and editors. Settings take effect on a subsequent PassThruOpen.",
+                "Проверьте профиль рядом с зарегистрированной DLL J2534. Перед применением закройте диагностические программы и редакторы. Настройки вступают в силу при следующем PassThruOpen."),
             Section.Modules => T("ECU inventory and identification are planned. No ECU discovery is performed.",
                 "Планируется список и идентификация блоков. Поиск ECU не выполняется."),
             Section.Diagnostics => T("Read-only diagnostic tools are planned. No diagnostic messages are sent.",
@@ -366,22 +378,16 @@ public sealed class CemPreviewWindow : Window
     {
         if (_closed || Busy || _ephemeral) return;
         _vehicleBytes = null;
+        _inspectedPath = null;
         _vehicleFailed = false;
+        VehicleResult("", "");
         try
         {
             string path = _vehicleProfile.Text.Trim();
-            if (!Path.IsPathFullyQualified(path) || path.StartsWith(@"\\", StringComparison.Ordinal) ||
-                !string.Equals(Path.GetFileName(path), "virtualcar.ini", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException();
-            string full = Path.GetFullPath(path);
-            if (new DriveInfo(Path.GetPathRoot(full)!).DriveType != DriveType.Fixed)
-                throw new InvalidDataException();
-            using var stream = File.OpenRead(full);
-            byte[] bytes = new byte[1024 * 1024 + 1];
-            int length = stream.ReadAtLeast(bytes, bytes.Length, throwIfEndOfStream: false);
-            var input = bytes[..length];
+            var input = NativeEcmScenarioApply.ReadProfile(path);
             var plan = NativeEcmScenarioPlan.Inspect(input);
             _vehicleBytes = input;
+            _inspectedPath = Path.GetFullPath(path);
             _vehicleUpdating = true;
             _vehicleScenario.SelectedIndex = (int)plan.Selection;
         }
@@ -399,7 +405,11 @@ public sealed class CemPreviewWindow : Window
         foreach (var item in _vehicleScenario.Items.OfType<ComboBoxItem>())
             item.Content = ScenarioLabel((EcmScenario)item.Tag);
         _vehicleInspect.IsEnabled = !_ephemeral && !Busy && !_closed;
+        _vehicleProfile.IsEnabled = !_ephemeral && !Busy && !_closed;
         _vehicleScenario.IsEnabled = _vehicleBytes is not null && !Busy;
+        _vehicleApply.Content = T("Apply scenario", "Применить сценарий");
+        _vehicleApply.IsEnabled = false;
+        _vehicleResult.Text = T(_vehicleResultEn, _vehicleResultRu);
         _vehiclePatch.Text = "";
         if (_vehicleBytes is null)
         {
@@ -413,7 +423,85 @@ public sealed class CemPreviewWindow : Window
         _vehicleInfo.Text = T("Configured selection: ", "Настроенный сценарий: ") + ScenarioLabel(current.Selection) + "\n" +
             (plan.CanApply ? T("Required gates enabled; preview only.", "Требуемые флаги включены; только предпросмотр.") :
                 T("Required gates missing. No changes proposed.", "Не включены требуемые флаги. Изменения не предлагаются."));
-        if (plan.CanApply) _vehiclePatch.Text = plan.IniPatch;
+        if (plan.CanApply)
+        {
+            _vehiclePatch.Text = plan.IniPatch;
+            _vehicleApply.IsEnabled = !_ephemeral && !Busy && !_closed && _inspectedPath is not null;
+        }
+    }
+
+    private void VehicleResult(string en, string ru)
+    {
+        _vehicleResultEn = en;
+        _vehicleResultRu = ru;
+    }
+
+    private static bool IsRegisteredProfile(string path)
+    {
+        var info = DriverRegistration.Read();
+        if (info.Status != DriverRegistration.State.Registered || info.Library is null ||
+            !File.Exists(info.Library)) return false;
+        string expected = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(info.Library))!, "virtualcar.ini");
+        return string.Equals(expected, path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task ApplyVehicleAsync()
+    {
+        if (_ephemeral || Busy || _closed || _section != Section.Vehicle ||
+            _vehicleBytes is null || _inspectedPath is null ||
+            (_vehicleScenario.SelectedItem as ComboBoxItem)?.Tag is not EcmScenario selected) return;
+        string path = _inspectedPath;
+        string sha = NativeEcmScenarioApply.Digest(_vehicleBytes);
+        if (!NativeEcmScenarioPlan.Inspect(_vehicleBytes, selected).CanApply) return;
+        _vehicleBusy = true;
+        UpdateControls();
+        RenderVehicle();
+        try
+        {
+            if (!IsRegisteredProfile(path))
+                throw new InvalidOperationException("Profile does not match current registration.");
+            var dialog = new ContentDialog
+            {
+                XamlRoot = _vehiclePanel.XamlRoot,
+                Title = T("Apply ECM scenario?", "Применить сценарий ECM?"),
+                Content = path + "\n" + ScenarioLabel(selected) + "\nSHA256: " + sha + "\n\n" +
+                    T("Confirm all diagnostic clients and profile editors are closed. A backup will be created if the file changes. Reopen the diagnostic connection manually afterward.",
+                      "Подтвердите закрытие диагностических программ и редакторов. При изменении создаётся резервная копия. Затем вручную откройте диагностическое подключение."),
+                PrimaryButtonText = T("Apply", "Применить"),
+                CloseButtonText = T("Cancel", "Отмена"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _closed) return;
+            var result = await Task.Run(() =>
+            {
+                if (!IsRegisteredProfile(path))
+                    throw new InvalidOperationException("Registration changed.");
+                return NativeEcmScenarioApply.Apply(path, sha, selected);
+            });
+            if (_closed) return;
+            _vehicleBytes = NativeEcmScenarioApply.ReadProfile(path);
+            if (NativeEcmScenarioApply.Digest(_vehicleBytes) != result.Sha256)
+                throw new IOException("Profile changed after apply.");
+            VehicleResult(result.Changed
+                ? "Saved. Reopen J2534 manually. Backup: " + result.BackupPath
+                : "No changes needed.",
+                result.Changed
+                ? "Сохранено. Откройте J2534 заново вручную. Копия: " + result.BackupPath
+                : "Изменения не требуются.");
+        }
+        catch (Exception)
+        {
+            _vehicleBytes = null;
+            _inspectedPath = null;
+            _vehicleFailed = true;
+            VehicleResult("Apply not confirmed. Check registration, profile and backups; inspect again.",
+                "Применение не подтверждено. Проверьте регистрацию, профиль и копии; повторите проверку.");
+        }
+        finally
+        {
+            _vehicleBusy = false;
+            if (!_closed) { UpdateControls(); RenderVehicle(); }
+        }
     }
 
     private string DriverToolPath => Path.Combine(AppContext.BaseDirectory, "driver-tools", "VirtualCar.DriverTool.exe");

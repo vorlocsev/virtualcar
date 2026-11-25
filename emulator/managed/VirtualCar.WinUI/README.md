@@ -64,6 +64,14 @@ The Virtual vehicle workspace reads an explicitly selected local virtualcar.ini 
 
 Eight new managed checks cover default-off, five static states, disabled fallback, individual missing prerequisites, dynamic precedence, patch scope, ambiguous profile and size/selector limits. Windows UI and actual native effect remain pending. Next: controlled application of the patch to an owner-approved profile with backup, fingerprint and explicit client-close confirmation, followed by native x86 reopen verification.
 
+## VC080 guarded scenario apply (pending)
+
+Apply scenario is enabled only after a valid inspection and a gate-compatible selection. Before confirmation and again before replacement, the application requires the selected path to be the virtualcar.ini beside the currently recognized J2534 Lab Adapter DLL. The dialog shows the path, scenario and source SHA256 and requires the operator to close diagnostic clients and editors. The helper does not elevate or stop clients. The application cannot independently prove that every external client is closed; do not run concurrent editors or installers.
+
+Only B3A316 Enabled/State and B3A329 Enabled can be changed. Missing target keys/sections are inserted, existing unrelated bytes are preserved, and other prerequisite flags are never enabled automatically. The bounded local file is rechecked against the inspected digest; reparse-point paths are rejected. Same-directory File.Replace writes a unique backup, then the new bytes and backup are verified. An unchanged candidate creates no backup. An error is not proof the original remained unchanged after a replacement attempt: inspect the profile and backup before retrying. No automatic rollback or native session restart occurs. Backups contain the original private profile and must remain local. Ephemeral smoke disables inspection and apply.
+
+Eight new isolated managed checks cover scoped edits, inserted sections/keys, missing gates, ambiguous input, backup, stale digest and no-op. Windows acceptance: inspect the registered profile; cancel confirmation; verify a mismatched path and external edit are refused; apply one static and one eligible dynamic selection in a disposable VM; compare the backup and unrelated settings; close/reopen J2534 manually and verify the native responses; test EN/RU and ephemeral mode. No actual profile mutation or Windows/native execution was performed during authoring.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
