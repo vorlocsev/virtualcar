@@ -322,7 +322,7 @@ public sealed class CemPreviewWindow : Window
             {
                 // Retain a valid selection even if a selection is cleared programmatically.
                 var current = _navigation.Items.OfType<ListViewItem>().Single(i => (Section)i.Tag == _section);
-                if (_navigation.SelectedItem != current) _navigation.SelectedItem = current;
+                if (!ReferenceEquals(_navigation.SelectedItem, current)) _navigation.SelectedItem = current;
                 return;
             }
             _section = section;
@@ -1032,7 +1032,7 @@ public sealed class CemPreviewWindow : Window
     private static void AutomationId(DependencyObject element, string id) =>
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(element, id);
 
-    private static void Add(Grid grid, UIElement child, int row, int column = 0)
+    private static void Add(Grid grid, FrameworkElement child, int row, int column = 0)
     {
         Grid.SetRow(child, row); Grid.SetColumn(child, column); grid.Children.Add(child);
     }
