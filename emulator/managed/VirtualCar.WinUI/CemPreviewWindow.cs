@@ -137,7 +137,13 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_navigation, "VC077.Navigation");
         foreach (Section section in Enum.GetValues<Section>())
         {
-            var item = new ListViewItem { Tag = section, Content = SectionLabel(section) };
+            var item = new ListViewItem
+            {
+                Tag = section,
+                Content = new TextBlock { Text = SectionLabel(section), TextWrapping = TextWrapping.Wrap },
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, SectionLabel(section));
             AutomationId(item, "VC077.Nav." + section);
             _navigation.Items.Add(item);
             if (section == _section) _navigation.SelectedItem = item;
@@ -432,9 +438,14 @@ public sealed class CemPreviewWindow : Window
         string? optionCode = ((_options.SelectedItem as ComboBoxItem)?.Tag as CemOption)?.Code;
         Title = "Virtual Car";
         foreach (var item in _navigation.Items.OfType<ListViewItem>())
-            item.Content = SectionLabel((Section)item.Tag);
+        {
+            string label = SectionLabel((Section)item.Tag);
+            ((TextBlock)item.Content).Text = label;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, label);
+        }
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_navigation, T("Workspace navigation", "Навигация"));
         ShowSection();
+        RefreshLocalizedComboSelections();
         _python.Header = T("Python.exe (absolute path)", "Python.exe (абсолютный путь)");
         _script.Header = T("vc071_view.py (absolute path)", "vc071_view.py (абсолютный путь)");
         _data.Header = T("Local CEM529 directory (outside Git)", "Локальный каталог CEM529 (вне Git)");
@@ -463,6 +474,26 @@ public sealed class CemPreviewWindow : Window
                     _options.SelectedItem = item;
                     break;
                 }
+    }
+
+    private void RefreshLocalizedComboSelections()
+    {
+        // WinUI's closed ComboBox selection presenter may retain the original
+        // string when an existing ComboBoxItem.Content changes. Re-select the
+        // same index after localization; never change the underlying scenario.
+        bool wasUpdating = _vehicleUpdating;
+        _vehicleUpdating = true;
+        try
+        {
+            foreach (var combo in new[] { _vehicleScenario, _ignition, _monitorDirection })
+            {
+                int index = combo.SelectedIndex;
+                if (index < 0) continue;
+                combo.SelectedIndex = -1;
+                combo.SelectedIndex = index;
+            }
+        }
+        finally { _vehicleUpdating = wasUpdating; }
     }
 
     private string SectionLabel(Section section) => section switch
