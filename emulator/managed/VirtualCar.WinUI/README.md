@@ -34,6 +34,12 @@ Additional manual acceptance: switch EN/RU/EN before loading, after loading, wit
 
 Run the existing managed Core.Checks project (eight new groups, isolated temporary directories). In a normal interactive launch, select RU, close and reopen; confirm RU, then select EN and reopen. On a disposable Windows account, test missing/corrupt settings and a non-writable destination. Confirm the VC075 ephemeral smoke does not modify normal settings. No private paths or configuration values are persisted.
 
+## VC077 main window and navigation
+
+The shell opens on CEM529 Configuration to preserve the existing acceptance entry point. Left navigation contains Virtual vehicle, CEM529 Configuration, ECU modules, Diagnostics and Connection. Only the CEM529 workspace is functional at this stage. Other pages explicitly state that they are planned; no simulated connection or running status is presented. The CEM editor stays mounted in memory, retaining its local draft, paths, search, filter and selection while navigating. Navigation is disabled during a preview so the cancel control remains reachable. EN/RU applies to all page names and placeholder messages; catalog and audit data remain unchanged.
+
+The VC075 language smoke now includes 15 empty-window navigation checks (five sections for each EN/RU/EN round). It checks the headings, that the CEM load control is hidden on placeholder pages, and that the editor is available again on returning. Run with the exact VC077 published inventory. Loaded-profile navigation remains untested: manually change a lab parameter, record the audit digest, navigate through all sections and back, and verify the draft, selection and digest are preserved. Test switching languages on a placeholder and verify navigation is disabled while a real preview is in progress. Check layout at the intended DPI; the initial window size is unchanged.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
