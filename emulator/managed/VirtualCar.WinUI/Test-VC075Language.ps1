@@ -134,6 +134,16 @@ try {
             Assert-Name $window 'VC075.Heading' $section.label
             Assert-Name $window 'VC077.PlaceholderHeading' $section.label
             Assert-EditorHidden $window
+            if ($section.key -eq 'Vehicle') {
+                $apply = Wait-Element $window 'VC080.Vehicle.Apply'
+                $inspect = Wait-Element $window 'VC079.Vehicle.Inspect'
+                if ($apply.Current.IsEnabled -or $inspect.Current.IsEnabled) { throw 'Profile modification or inspection enabled in ephemeral smoke.' }
+                if ($case.code -eq 'RU') {
+                    Assert-Name $window 'VC080.Vehicle.Apply' 'Применить сценарий'
+                } else {
+                    Assert-Name $window 'VC080.Vehicle.Apply' 'Apply scenario'
+                }
+            }
             if ($section.key -eq 'Connection') {
                 $install = Wait-Element $window 'VC078.Driver.Install'
                 $remove = Wait-Element $window 'VC078.Driver.Remove'
