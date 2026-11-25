@@ -30,6 +30,7 @@ typedef unsigned long U32; /* Windows LLP64: 32-bit unsigned long */
 #endif
 #include "p2core/p2_j2534_bridge.h"
 #include "p2core/p2_b9f0_fixture_guard.h"
+#include "vc054_f106_lab.h"
 typedef unsigned char U8;
 typedef unsigned long long U64;
 typedef long long I64;
@@ -163,6 +164,7 @@ static U32 g_iso_rx_start=0;
 static U32 g_strict_j2534_filters=0;
 /* B3A150: default OFF; never activates GGD CEM from ECU identity alone. */
 static U32 g_b3a150_ggd_cem_lab=0;
+static VC054_F106 g_vc054_f106;
 /* B3A157 GGD key switch candidate: defaults OFF for all existing profiles. */
 static U32 g_b3a157_posii_candidate=0;
 /* PS is isolated to an explicitly enabled emulator profile; legacy defaults stay off. */
@@ -881,6 +883,17 @@ static void load_config(void) {
     g_b3a150_ggd_cem_lab=0;
     GetPrivateProfileStringA("Diagnostics","EnableGGDCemLab","0",v,sizeof(v),g_profile_path);
     g_b3a150_ggd_cem_lab=parse_num(v,0)==1u?1u:0u;
+    vc054_clear(&g_vc054_f106);
+    GetPrivateProfileStringA("VC054_F106Lab","Enabled","0",v,sizeof(v),g_profile_path);
+    if(g_b3a150_ggd_cem_lab && vc054_literal(v,"1")){
+        GetPrivateProfileStringA("VC054_F106Lab","Layout","",v,sizeof(v),g_profile_path);
+        if(vc054_literal(v,"donor-142")){
+            GetPrivateProfileStringA("VC054_F106Lab","BlockHex","",v,sizeof(v),g_profile_path);
+            if(vc054_load(&g_vc054_f106,"1","donor-142",v))
+                logline("VC054 F106 donor-format LAB enabled (not OEM verified)",0,0);
+            else logline("VC054 F106 LAB rejected",0,0);
+        }
+    }
     g_b3a157_posii_candidate=0u;
     GetPrivateProfileStringA("B3A157_IgnitionLab","Enabled","0",v,sizeof(v),g_profile_path);
     if(parse_num(v,0)==1u){
@@ -2082,6 +2095,11 @@ static U32 answer_b3a150_ggd_cem50_lab(const CHANNEL *c,const ECU *ecu,
        can_id!=0x18DA50F1u || ecu->req!=0x18DA50F1u ||
        ecu->resp!=0x18DAF150u || ecu->expected_baud!=500000u ||
        len!=3u || req[0]!=0x22u)return 0;
+    if(req[1]==0xF1u && req[2]==0x06u){
+        U32 n=vc054_answer(&g_vc054_f106,req,len,res,256u);
+        if(n)logline("VC054 F106 donor-format LAB reply (not OEM verified)",0,0);
+        return n;
+    }
     if(req[1]==0xA4u && req[2]==0x5Fu){
         /* B3A157: raw 0x07 is only a laboratory hypothesis about switch bits.
            Original B3A150 0x04 remains the default for every existing INI. */
