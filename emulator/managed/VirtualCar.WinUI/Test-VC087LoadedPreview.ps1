@@ -284,7 +284,8 @@ function Select-FirstRow($window) {
 }
 function Get-SelectionId($window,[string]$id) {
     $element = Wait-Element $window $id
-    $selection = @($element.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetSelection())
+    $pattern = $element.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern)
+    $selection = @($pattern.Current.GetSelection())
     if ($selection.Length -ne 1) { throw "Unexpected selection: $id" }
     return $selection[0].Current.AutomationId
 }
