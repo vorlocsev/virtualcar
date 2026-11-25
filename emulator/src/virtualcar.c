@@ -174,6 +174,7 @@ static U32 g_b3a309_ecm_live_lab=0;
 static U32 g_b3a314_ecm_live_lab=0;
 static U32 g_b3a320_rem_sync=0;
 static U32 g_b3a324_supply_sync=0;
+static U32 g_b3a329_dynamic_lab=0;
 static U32 g_b3a228_cem40_empty_dtc=0;
 static U32 g_d2_spacing_ms=12; /* 0 means immediate, P2 replay defaults to paced */
 typedef struct {U32 req,resp,expected_baud; U8 lab_dtc_mask,lab_dtc_single,lab_dtc_details; char part[48];char sw[48]; U8 extra_did[2][MAX_EXTRA_DID]; U32 extra_len[2]; U32 did_code[MAX_EXTRA_DID_SLOTS],did_len[MAX_EXTRA_DID_SLOTS]; U8 did_bytes[MAX_EXTRA_DID_SLOTS][MAX_EXTRA_DID];} ECU;
@@ -1007,6 +1008,10 @@ static void load_config(void) {
         g_b3a320_rem_sync=(battery_sync && g_b3a309_ecm_live_lab && str_len(v)==1u && v[0]=='1')?1u:0u;
         GetPrivateProfileStringA("B3A324_SupplyVoltageSyncLab","Enabled","0",v,sizeof(v),g_profile_path);
         g_b3a324_supply_sync=(battery_sync && g_b3a309_ecm_live_lab && str_len(v)==1u && v[0]=='1')?1u:0u;
+        GetPrivateProfileStringA("B3A329_DynamicEcmLab","Enabled","0",v,sizeof(v),g_profile_path);
+        g_b3a329_dynamic_lab=(g_b3a309_ecm_live_lab && g_b3a314_ecm_live_lab &&
+            g_b3a267_current_lab && g_b3a150_ggd_cem_lab && g_b3a320_rem_sync &&
+            g_b3a324_supply_sync && str_len(v)==1u && v[0]=='1')?1u:0u;
     }
     /* Recorded bus traffic: exact source frames are configured per network.
        Never enable the trace through a guessed vehicle or part number. */
@@ -2108,12 +2113,15 @@ static const ECM_LAB_STATE g_ecm_lab_scenarios[]={
     {14000u,700u,0u,0u,180u,550u,100u,35u,90,30,45}
 };
 static U32 g_ecm_lab_scenario=0u;
+static ECM_LAB_STATE g_ecm_lab_dynamic_state;
+static U32 g_ecm_lab_dynamic_active=0u;
 static void ecm_lab_select_scenario(U32 enabled,const char *state){
+    g_ecm_lab_dynamic_active=0u;
     g_ecm_lab_scenario=0u;
     if(enabled==1u && state && state[0]>='0' && state[0]<='4' && state[1]=='\0')
         g_ecm_lab_scenario=(U32)(state[0]-'0');
 }
-#define g_ecm_lab_state (g_ecm_lab_scenarios[g_ecm_lab_scenario])
+#define g_ecm_lab_state (*(g_ecm_lab_dynamic_active?&g_ecm_lab_dynamic_state:&g_ecm_lab_scenarios[g_ecm_lab_scenario]))
 /* B3A319: explicit lab opt-in; preserve configured voltage outside ECM baseline mode. */
 static U32 ecm_lab_battery_mv(U32 configured,U32 sync_enabled,U32 baseline_enabled){
     return sync_enabled==1u && baseline_enabled==1u ? g_ecm_lab_state.battery_mv : configured;
@@ -2182,6 +2190,43 @@ static U32 ecm_lab_encode(const ECM_LAB_STATE *s,U32 extended,U32 did,U8 *out){
     return n;
 }
 /* B3A315 shared ECM snapshot end */
+/* B3A329 deterministic synthetic timeline; no diagnostic writes. */
+static int ecm_lab_lerp(int a,int b,U32 pos,U32 span){
+    return a+(b-a)*(int)pos/(int)span;
+}
+static void ecm_lab_sample(U32 elapsed,ECM_LAB_STATE *out){
+    static const U32 times[]={0u,2000u,4000u,60000u,180000u};
+    U32 i=0u,pos,span;
+    const ECM_LAB_STATE *a,*b;
+    while(i<3u && elapsed>=times[i+1u])i++;
+    a=&g_ecm_lab_scenarios[i];b=&g_ecm_lab_scenarios[i+1u];
+    span=times[i+1u]-times[i];pos=elapsed>=times[i+1u]?span:elapsed-times[i];
+#define MIX(field) out->field=ecm_lab_lerp((int)a->field,(int)b->field,pos,span)
+    MIX(battery_mv);MIX(rpm);MIX(speed_kph);MIX(pedal_permille);MIX(load_permille);MIX(maf_centi_gps);
+    MIX(ambient_kpa);MIX(manifold_kpa);MIX(coolant_c);MIX(intake_c);MIX(ecm_c);
+#undef MIX
+}
+static U32 g_ecm_lab_epoch=0u,g_ecm_lab_finished=0u;
+static void ecm_lab_dynamic_start(U32 enabled,U32 now){
+    g_ecm_lab_dynamic_active=enabled==1u;
+    g_ecm_lab_epoch=now;g_ecm_lab_finished=0u;
+    if(g_ecm_lab_dynamic_active)ecm_lab_sample(0u,&g_ecm_lab_dynamic_state);
+}
+static void ecm_lab_dynamic_tick(U32 now){
+    U32 elapsed;
+    if(!g_ecm_lab_dynamic_active||g_ecm_lab_finished)return;
+    elapsed=now-g_ecm_lab_epoch;
+    ecm_lab_sample(elapsed,&g_ecm_lab_dynamic_state);
+    if(elapsed>=180000u)g_ecm_lab_finished=1u;
+}
+/* B3A329 timeline end */
+/* All callers hold the state lock; one snapshot per processed request/IOCTL. */
+static void ecm_lab_refresh(void){
+    if(g_open && g_ecm_lab_dynamic_active){
+        ecm_lab_dynamic_tick(GetTickCount());
+        g_battery_mv=g_ecm_lab_state.battery_mv;
+    }
+}
 /* B3A309: synthetic stationary ECM 30670321 AA live data. Catalog
    scaling and runtime requests are evidence; payloads are not OEM captures.
    Keep this independent of the generic F1xx identification whitelist. */
@@ -2228,6 +2273,7 @@ static void process_request(CHANNEL *c,const PASSTHRU_MSG *msg){
     int matched=0,answered=0;
     const U8 *data;
     if(msg->DataSize<5||msg->DataSize>MAX_DATA)return;
+    ecm_lab_refresh();
     id=((U32)msg->Data[0]<<24)|((U32)msg->Data[1]<<16)|((U32)msg->Data[2]<<8)|msg->Data[3];
     if(process_d2(c,id,msg->Data+4,msg->DataSize-4,msg->TxFlags))return;
     /* FF C8 is documented as a broadcast ECU reset in published P2 logs.
@@ -2425,7 +2471,8 @@ EXPORT U32 WINCALL PassThruOpen(PTR name,U32 *device) {
        A concurrent first Open may finish after an earlier unlocked check. */
     lock_state();
     if(g_open){unlock_state();return error(ERR_DEVICE_IN_USE);}
-    g_open=1;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);load_config();*device=1;
+    g_open=1;bytes_zero(g_ch,sizeof(g_ch));p2_bridge_init(&g_vehicle_bridge);load_config();
+    ecm_lab_dynamic_start(g_b3a329_dynamic_lab,GetTickCount());ecm_lab_refresh();*device=1;
     logline("PassThruOpen -> device 1",0,0);unlock_state();return error(ERR_OK);
 }
 EXPORT U32 WINCALL PassThruClose(U32 device) {
@@ -2766,9 +2813,10 @@ EXPORT U32 WINCALL PassThruIoctl(U32 id,U32 ioctl,void *input,void *output){
     U32 i;
     if(ioctl==IO_READ_VBATT){
         U8 value[4];if(!output)return error(ERR_NULL_PARAMETER);
+        lock_state();ecm_lab_refresh();
         *(U32*)output=g_battery_mv;u32_be(value,g_battery_mv);
         logline("PassThruIoctl READ_VBATT (mV, BE)",value,4);
-        return error(ERR_OK);
+        unlock_state();return error(ERR_OK);
     }
     if(ioctl==IO_READ_PROG_VOLTAGE){if(!output)return error(ERR_NULL_PARAMETER);*(U32*)output=0;return error(ERR_OK);}
     lock_state();CHANNEL *c=channel(id);if(!c){unlock_state();return error(ERR_INVALID_CHANNEL_ID);}
