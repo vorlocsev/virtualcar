@@ -337,6 +337,8 @@ public sealed class CemPreviewWindow : Window
             _filter.Items.Add(filterItem);
         }
         _filter.SelectedIndex = 0;
+        filters.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        filters.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Add(filters, _search, 0); Add(filters, _filter, 0, 1); Add(filters, _counts, 0, 2);
         Add(root, filters, 1);
 
@@ -358,6 +360,15 @@ public sealed class CemPreviewWindow : Window
         Add(root, _status, 3);
         Content = shell;
         ResizeForDisplay();
+        shell.SizeChanged += (_, _) =>
+        {
+            // Keep the search usable when localized count text grows at narrow widths.
+            bool compact = shell.ActualWidth < 1000;
+            Grid.SetRow(_counts, compact ? 1 : 0);
+            Grid.SetColumn(_counts, compact ? 0 : 2);
+            Grid.SetColumnSpan(_counts, compact ? 3 : 1);
+            filters.ColumnDefinitions[2].Width = compact ? new GridLength(0) : GridLength.Auto;
+        };
 
         _navigation.SelectionChanged += (_, _) =>
         {
