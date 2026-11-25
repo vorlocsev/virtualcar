@@ -134,6 +134,19 @@ try {
             Assert-Name $window 'VC075.Heading' $section.label
             Assert-Name $window 'VC077.PlaceholderHeading' $section.label
             Assert-EditorHidden $window
+            if ($section.key -eq 'Diagnostics') {
+                $start = Wait-Element $window 'VC084.Monitor.Start'
+                $stop = Wait-Element $window 'VC084.Monitor.Stop'
+                $refresh = Wait-Element $window 'VC084.Monitor.Refresh'
+                if ($start.Current.IsEnabled -or $stop.Current.IsEnabled -or $refresh.Current.IsEnabled) {
+                    throw 'Log monitoring enabled in ephemeral smoke.'
+                }
+                if ($case.code -eq 'RU') {
+                    Assert-Name $window 'VC084.Monitor.Start' 'Запустить монитор'
+                } else {
+                    Assert-Name $window 'VC084.Monitor.Start' 'Start monitor'
+                }
+            }
             if ($section.key -eq 'Modules') {
                 $read = Wait-Element $window 'VC083.Modules.Refresh'
                 if ($read.Current.IsEnabled) { throw 'ECU inventory inspection enabled in ephemeral smoke.' }
