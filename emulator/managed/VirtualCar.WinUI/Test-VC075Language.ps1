@@ -55,7 +55,7 @@ function Wait-OwnedWindow($process) {
     $last = 'No HWND'
     do {
         $process.Refresh()
-        if ($process.HasExited) { throw 'Application exited before UIA readiness.' }
+        if ($process.HasExited) { throw ('Application exited before UIA readiness: 0x{0:X8}' -f $process.ExitCode) }
         $hwnd = $process.MainWindowHandle
         if ($hwnd -ne [IntPtr]::Zero) {
             [uint32]$owner = 0
@@ -291,6 +291,7 @@ finally {
                 throw 'Application did not close normally.'
             }
         }
+        if ($process.ExitCode -ne 0) { throw ('Application did not exit cleanly: 0x{0:X8}' -f $process.ExitCode) }
     }
     finally { $process.Dispose() }
 }
