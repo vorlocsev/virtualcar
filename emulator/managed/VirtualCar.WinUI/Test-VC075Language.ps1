@@ -30,7 +30,7 @@ foreach ($entry in $manifest.files) {
 }
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
 function Find-Element($root, [string]$id) {
-    $condition = New-Object System.Windows.Automation.PropertyCondition(
+    $condition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
     return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
@@ -57,11 +57,11 @@ function Set-Language($window, [string]$code) {
     $expand = $selector.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
     $expand.Expand()
     # WinUI may put the popup in the desktop tree instead of under the ComboBox.
-    $pidCondition = New-Object System.Windows.Automation.PropertyCondition(
+    $pidCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
-    $idCondition = New-Object System.Windows.Automation.PropertyCondition(
+    $idCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, "VC075.Language.$code")
-    $condition = New-Object System.Windows.Automation.AndCondition($pidCondition,$idCondition)
+    $condition = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@($pidCondition,$idCondition))
     $timer = [Diagnostics.Stopwatch]::StartNew()
     do {
         $item = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
