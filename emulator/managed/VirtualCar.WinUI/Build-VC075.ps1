@@ -7,6 +7,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-VCNative.ps1')
 if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem) {
     throw 'Windows x64 is required.'
 }
@@ -45,15 +46,15 @@ try {
         '-p:Platform=x64','-p:PublishSingleFile=false','-p:PublishTrimmed=false',
         '-p:PublishReadyToRun=false','-p:PublishAot=false','-o',$publish)
     # Keep native Windows App SDK dependencies as separate files.
-    & $dotnet @publishArgs *> $log
-    if ($LASTEXITCODE -ne 0) { throw 'Publish failed. See local publish.log.' }
+    $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments $publishArgs -WorkingDirectory $repo -Log $log
+    if ($exitCode -ne 0) { throw "Publish failed (exit $exitCode). See publish.log and publish.log.stderr." }
     $toolProject = Join-Path $PSScriptRoot '..\VirtualCar.DriverTool\VirtualCar.DriverTool.csproj'
     $toolOut = Join-Path $publish 'driver-tools'
     $toolLog = Join-Path $out 'driver-tool-publish.log'
     $toolArgs = @('publish',$toolProject,'-c','Release','-r','win-x64','--self-contained','true',
         '-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:PublishAot=false','-o',$toolOut)
-    & $dotnet @toolArgs *> $toolLog
-    if ($LASTEXITCODE -ne 0) { throw 'Driver tool publish failed. See local driver-tool-publish.log.' }
+    $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments $toolArgs -WorkingDirectory $repo -Log $toolLog
+    if ($exitCode -ne 0) { throw "Driver tool publish failed (exit $exitCode). See driver-tool-publish.log and driver-tool-publish.log.stderr." }
 }
 finally { Pop-Location }
 function Assert-Amd64([string]$Path) {
