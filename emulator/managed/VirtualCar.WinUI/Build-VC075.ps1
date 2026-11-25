@@ -107,16 +107,23 @@ if ($LaunchSmoke) {
         $handle = [IntPtr]::Zero
         while ($watch.Elapsed.TotalSeconds -lt 20) {
             $process.Refresh()
-            if ($process.HasExited) { throw 'Application exited before showing a window.' }
+            if ($process.HasExited) { throw ('Application exited before showing a window: 0x{0:X8}' -f $process.ExitCode) }
             $handle = $process.MainWindowHandle
             if ($handle -ne [IntPtr]::Zero) { break }
             Start-Sleep -Milliseconds 200
         }
         if ($handle -eq [IntPtr]::Zero) { throw 'No main window within 20 seconds.' }
-        Start-Sleep -Milliseconds 1000
-        $process.Refresh()
-        if ($process.HasExited) { throw 'Application exited during empty-window smoke.' }
-        $smoke = 'window_present'
+        # A crash dialog can transiently look like a main window. Require the
+        # owned process to remain alive and show the actual application title.
+        $ready = [Diagnostics.Stopwatch]::StartNew()
+        while ($ready.Elapsed.TotalSeconds -lt 5) {
+            $process.Refresh()
+            if ($process.HasExited) { throw ('Application exited during smoke: 0x{0:X8}' -f $process.ExitCode) }
+            if ($process.MainWindowHandle -eq [IntPtr]::Zero -or $process.MainWindowTitle -ne 'Virtual Car') {
+                throw 'Expected Virtual Car window not present during smoke.'
+            }
+            Start-Sleep -Milliseconds 200
+        }
     }
     finally {
         try {
@@ -129,9 +136,11 @@ if ($LaunchSmoke) {
                     throw 'Application did not close normally.'
                 }
             }
+            if ($process.ExitCode -ne 0) { throw ('Application did not exit cleanly: 0x{0:X8}' -f $process.ExitCode) }
         }
         finally { $process.Dispose() }
     }
+    $smoke = 'window_present'
 }
 $report = [ordered]@{
     schema = 'vc075-winui-build-v1'
