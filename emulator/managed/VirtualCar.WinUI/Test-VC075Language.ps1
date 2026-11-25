@@ -75,9 +75,23 @@ function Set-Language($window, [string]$code) {
         $expand.Collapse()
     }
 }
+function Select-Section($window, [string]$section) {
+    $item = Wait-Element $window "VC077.Nav.$section"
+    $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+}
+function Assert-EditorHidden($window) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $load = Find-Element $window 'VC075.Load'
+        if ($null -eq $load -or $load.Current.IsOffscreen) { return }
+        Start-Sleep -Milliseconds 100
+    } while ($timer.Elapsed.TotalSeconds -lt 5)
+    throw 'CEM editor visible outside configuration workspace.'
+}
 $exe = Join-Path $app 'VirtualCar.WinUI.exe'
 $process = Start-Process -FilePath $exe -WorkingDirectory $app -ArgumentList '--ephemeral-settings' -PassThru
 $passed = 0
+$navigationPassed = 0
 try {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     do {
@@ -100,6 +114,35 @@ try {
         Assert-Name $window 'VC075.AuditHeading' $case.audit
         $passed++
         Write-Host "PASS language $($case.code)"
+        $sections = if ($case.code -eq 'RU') {
+            @(
+                @{ key='Vehicle'; label='Виртуальный автомобиль' },
+                @{ key='Modules'; label='Электронные блоки' },
+                @{ key='Diagnostics'; label='Диагностика' },
+                @{ key='Connection'; label='Подключение' }
+            )
+        } else {
+            @(
+                @{ key='Vehicle'; label='Virtual vehicle' },
+                @{ key='Modules'; label='ECU modules' },
+                @{ key='Diagnostics'; label='Diagnostics' },
+                @{ key='Connection'; label='Connection' }
+            )
+        }
+        foreach ($section in $sections) {
+            Select-Section $window $section.key
+            Assert-Name $window 'VC075.Heading' $section.label
+            Assert-Name $window 'VC077.PlaceholderHeading' $section.label
+            Assert-EditorHidden $window
+            $navigationPassed++
+            Write-Host "PASS navigation $($case.code) $($section.key)"
+        }
+        Select-Section $window 'Configuration'
+        Assert-Name $window 'VC075.Heading' $case.heading
+        Assert-Name $window 'VC075.Load' $case.load
+        Assert-Name $window 'VC075.AuditHeading' $case.audit
+        $navigationPassed++
+        Write-Host "PASS navigation $($case.code) Configuration"
     }
 }
 finally {
@@ -116,8 +159,10 @@ finally {
     }
     finally { $process.Dispose() }
 }
-if ($passed -ne 3) { throw 'Language checks incomplete.' }
+if ($passed -ne 3 -or $navigationPassed -ne 15) { throw 'Language/navigation checks incomplete.' }
 Write-Host "VC075_SOURCE_SHA=$ExpectedSha"
 Write-Host 'VC075_EMPTY_UI_LANG=PASS 3/3'
+Write-Host 'VC077_EMPTY_NAVIGATION=PASS 15/15'
+Write-Host 'VC077_LOADED_PROFILE_NAVIGATION=NOT_TESTED'
 Write-Host 'VC075_LOADED_PROFILE_LANG=NOT_TESTED'
 Write-Host 'VC075_PRIVATE_PREVIEW=NOT_TESTED'
