@@ -86,6 +86,12 @@ The Vehicle page exposes the existing B3A157 laboratory setting: baseline synthe
 
 Uses VC080 digest checks, same-directory replacement and new VC082 backup. VC081 restoration accepts VC082 backups only if equality or an exact allowed single ECM/ignition transformation (either direction) relates the two files. This is not a general rollback of multiple changes. No automatic restart. Malformed or unsupported relevant INI values are rejected. Eight isolated managed checks and the bilingual ephemeral UI smoke lockout are prepared; none has been executed. Owner acceptance: on a disposable VM, use the existing exact native GGD route and compare 04 versus 07 after reopening; keep actual VIDA interpretation separate from byte-level proof.
 
+## VC083 configured ECU inventory (pending)
+
+The ECU modules workspace reads the registered J2534 Lab Adapter's adjacent virtualcar.ini on explicit request. It lists ECU0..ECU31 according to ECUCount, with request/response addresses, expected bitrate and configured part/software text. Missing ECUCount uses the native default of two; absent legacy addresses use the source defaults and are marked. Missing identity text is not replaced by fabricated ECU identities. Extended missing addresses, malformed or overflowing numerics, functional requests, mixed address widths and duplicate request identifiers are flagged conservatively. Invalid or duplicate relevant sections/counts are rejected rather than guessing native fallback. This is a bounded simple INI subset, not an exact Windows INI emulator, full D2 replay inventory or route eligibility proof.
+
+No communication, VIN read, discovery, ECU identification, profile write or data export is performed. Results are a local profile snapshot; refresh after any registration or profile change. Ephemeral smoke disables reading. Eight managed regression groups cover defaults, explicit routes, 32-slot bound, duplicates, malformed values, functional requests, ambiguous input and text/size bounds. Windows compile and UI acceptance remain pending.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
