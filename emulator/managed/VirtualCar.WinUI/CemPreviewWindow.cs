@@ -26,6 +26,13 @@ public sealed class CemPreviewWindow : Window
     private readonly Button _clear = new() { Content = "Reset all changes" };
     private readonly ComboBox _language = new() { MinWidth = 88 };
     private readonly TextBlock _heading = new() { FontSize = 28 };
+    private readonly ListView _navigation = new() { SelectionMode = ListViewSelectionMode.Single, MinWidth = 180 };
+    private readonly Grid _editor = new() { RowSpacing = 12 };
+    private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
+    private readonly TextBlock _placeholderHeading = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _placeholderText = new() { TextWrapping = TextWrapping.Wrap };
+    private enum Section { Vehicle, Configuration, Modules, Diagnostics, Connection }
+    private Section _section = Section.Configuration;
     private readonly TextBlock _subtitle = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _parameterHeading = new() { FontSize = 20 };
     private readonly TextBlock _auditHeading = new() { FontSize = 20 };
@@ -58,8 +65,31 @@ public sealed class CemPreviewWindow : Window
             _russian = _languageSettings?.Load() == UiLanguage.Russian;
         }
         Title = "Virtual Car — CEM529 Preview";
-        var root = new Grid { Padding = new Thickness(20), RowSpacing = 12 };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var shell = new Grid { Padding = new Thickness(20), RowSpacing = 12 };
+        shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        shell.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var body = new Grid { ColumnSpacing = 16 };
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        AutomationId(_navigation, "VC077.Navigation");
+        foreach (Section section in Enum.GetValues<Section>())
+        {
+            var item = new ListViewItem { Tag = section, Content = SectionLabel(section) };
+            AutomationId(item, "VC077.Nav." + section);
+            _navigation.Items.Add(item);
+            if (section == _section) _navigation.SelectedItem = item;
+        }
+        Add(body, _navigation, 0);
+        var page = new Grid();
+        _placeholder.Children.Add(_placeholderHeading);
+        _placeholder.Children.Add(_placeholderText);
+        AutomationId(_placeholderHeading, "VC077.PlaceholderHeading");
+        AutomationId(_placeholderText, "VC077.PlaceholderText");
+        page.Children.Add(_editor);
+        page.Children.Add(_placeholder);
+        Add(body, page, 0, 1);
+        Add(shell, body, 1);
+        var root = _editor;
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -89,7 +119,7 @@ public sealed class CemPreviewWindow : Window
         languagePanel.Children.Add(_language);
         languagePanel.Children.Add(_languageNotice);
         Add(header, languagePanel, 0, 1);
-        Add(root, header, 0);
+        Add(shell, header, 0);
 
         var inputs = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
         for (int i = 0; i < 3; i++) inputs.ColumnDefinitions.Add(new ColumnDefinition());
@@ -101,7 +131,7 @@ public sealed class CemPreviewWindow : Window
         actions.Children.Add(_progress);
         Grid.SetColumnSpan(actions, 3);
         Add(inputs, actions, 1);
-        Add(root, inputs, 1);
+        Add(root, inputs, 0);
 
         var filters = new Grid { ColumnSpacing = 12 };
         filters.ColumnDefinitions.Add(new ColumnDefinition());
@@ -110,7 +140,7 @@ public sealed class CemPreviewWindow : Window
         foreach (string item in new[] { "All", "Changed", "Locked", "Editable" }) _filter.Items.Add(new ComboBoxItem { Content = item });
         _filter.SelectedIndex = 0;
         Add(filters, _search, 0); Add(filters, _filter, 0, 1); Add(filters, _counts, 0, 2);
-        Add(root, filters, 2);
+        Add(root, filters, 1);
 
         var workspace = new Grid { ColumnSpacing = 20 };
         workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
@@ -124,11 +154,24 @@ public sealed class CemPreviewWindow : Window
         right.Children.Add(_auditHeading);
         right.Children.Add(_audit);
         Add(workspace, new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }, 0, 1);
-        Add(root, workspace, 3);
-        Add(root, _status, 4);
-        Content = root;
+        Add(root, workspace, 2);
+        Add(root, _status, 3);
+        Content = shell;
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
 
+        _navigation.SelectionChanged += (_, _) =>
+        {
+            if (_closed) return;
+            if (Busy || (_navigation.SelectedItem as ListViewItem)?.Tag is not Section section)
+            {
+                // Retain a valid selection even if a selection is cleared programmatically.
+                var current = _navigation.Items.OfType<ListViewItem>().Single(i => (Section)i.Tag == _section);
+                if (_navigation.SelectedItem != current) _navigation.SelectedItem = current;
+                return;
+            }
+            _section = section;
+            ShowSection();
+        };
         _load.Click += async (_, _) => await LoadAsync();
         _cancel.Click += (_, _) => _operation?.Cancel();
         _reset.Click += (_, _) => ResetProfile();
@@ -172,10 +215,11 @@ public sealed class CemPreviewWindow : Window
     {
         int? offset = Selected?.Offset;
         string? optionCode = ((_options.SelectedItem as ComboBoxItem)?.Tag as CemOption)?.Code;
-        Title = T("Virtual Car — CEM529 Preview", "Virtual Car — Предпросмотр CEM529");
-        _heading.Text = T("CEM529 Configuration", "Конфигурация CEM529");
-        _subtitle.Text = T("Lab preview only. Export and ECU writes are unavailable.",
-            "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.");
+        Title = "Virtual Car";
+        foreach (var item in _navigation.Items.OfType<ListViewItem>())
+            item.Content = SectionLabel((Section)item.Tag);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_navigation, T("Workspace navigation", "Навигация"));
+        ShowSection();
         _python.Header = T("Python.exe (absolute path)", "Python.exe (абсолютный путь)");
         _script.Header = T("vc071_view.py (absolute path)", "vc071_view.py (абсолютный путь)");
         _data.Header = T("Local CEM529 directory (outside Git)", "Локальный каталог CEM529 (вне Git)");
@@ -204,6 +248,41 @@ public sealed class CemPreviewWindow : Window
                     _options.SelectedItem = item;
                     break;
                 }
+    }
+
+    private string SectionLabel(Section section) => section switch
+    {
+        Section.Vehicle => T("Virtual vehicle", "Виртуальный автомобиль"),
+        Section.Configuration => T("CEM529 Configuration", "Конфигурация CEM529"),
+        Section.Modules => T("ECU modules", "Электронные блоки"),
+        Section.Diagnostics => T("Diagnostics", "Диагностика"),
+        Section.Connection => T("Connection", "Подключение"),
+        _ => throw new ArgumentOutOfRangeException(nameof(section))
+    };
+
+    private void ShowSection()
+    {
+        bool configuration = _section == Section.Configuration;
+        _heading.Text = SectionLabel(_section);
+        _subtitle.Text = configuration
+            ? T("Lab preview only. Export and ECU writes are unavailable.",
+                "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.")
+            : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован.");
+        _editor.Visibility = configuration ? Visibility.Visible : Visibility.Collapsed;
+        _placeholder.Visibility = configuration ? Visibility.Collapsed : Visibility.Visible;
+        _placeholderHeading.Text = SectionLabel(_section);
+        _placeholderText.Text = _section switch
+        {
+            Section.Vehicle => T("Vehicle state and scenario controls are planned. No runtime is started here.",
+                "Планируется управление состоянием и сценариями автомобиля. Запуск эмулятора недоступен."),
+            Section.Modules => T("ECU inventory and identification are planned. No ECU discovery is performed.",
+                "Планируется список и идентификация блоков. Поиск ECU не выполняется."),
+            Section.Diagnostics => T("Read-only diagnostic tools are planned. No diagnostic messages are sent.",
+                "Планируются инструменты диагностики только для чтения. Запросы не отправляются."),
+            Section.Connection => T("Virtual adapter and connection status are planned. No provider is installed or opened.",
+                "Планируется подключение виртуального адаптера. Установка и открытие провайдера не выполняются."),
+            _ => ""
+        };
     }
 
     private void SetStatus(string en, string ru)
@@ -368,6 +447,7 @@ public sealed class CemPreviewWindow : Window
         _cancel.IsEnabled = Busy;
         _reset.IsEnabled = _model is not null && !Busy;
         _progress.IsActive = Busy;
+        _navigation.IsEnabled = !Busy;
         _search.IsEnabled = _filter.IsEnabled = _rows.IsEnabled = loaded;
         _options.IsEnabled = loaded && Selected is { Locked: false } && _options.Items.Count > 0;
         _preview.IsEnabled = _options.IsEnabled && (_options.SelectedItem as ComboBoxItem)?.Tag is CemOption { Selectable: true };
