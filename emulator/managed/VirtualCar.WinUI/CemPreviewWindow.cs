@@ -298,7 +298,7 @@ public sealed class CemPreviewWindow : Window
             ? T("Lab preview only. Export and ECU writes are unavailable.",
                 "Лабораторный предварительный просмотр. Экспорт и запись в ECU недоступны.")
             : _section == Section.Connection
-                ? T("Virtual J2534 provider — registration only.", "Виртуальный J2534 — только регистрация.")
+                ? T("J2534 Lab Adapter — registration only.", "J2534 Lab Adapter — только регистрация.")
                 : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован.");
         _driverPanel.Visibility = _section == Section.Connection ? Visibility.Visible : Visibility.Collapsed;
         RenderDriver();
@@ -338,6 +338,7 @@ public sealed class CemPreviewWindow : Window
         {
             DriverRegistration.State.Absent => T("Not registered", "Не зарегистрирован"),
             DriverRegistration.State.Registered => T("Registered (registry only)", "Зарегистрирован (только реестр)") + "\n" + _driverInfo.Library,
+            DriverRegistration.State.LegacyRegistered => T("Previous registration found. Remove it before installing.", "Обнаружена прежняя регистрация. Удалите её перед установкой.") + "\n" + _driverInfo.Library,
             DriverRegistration.State.Conflict => T("Conflicting registration — manual review required.", "Конфликт регистрации — требуется ручная проверка."),
             _ => T("Registry unavailable", "Реестр недоступен")
         };
@@ -346,7 +347,7 @@ public sealed class CemPreviewWindow : Window
         _driverPath.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
         _driverRefresh.IsEnabled = !Busy;
         _driverInstall.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
-        _driverRemove.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Registered;
+        _driverRemove.IsEnabled = enabled && (_driverInfo.Status is DriverRegistration.State.Registered or DriverRegistration.State.LegacyRegistered);
         if (_ephemeral)
             _driverResult.Text = T("Driver changes disabled in smoke mode.", "Изменения драйвера отключены в тестовом режиме.");
         else if (!File.Exists(DriverToolPath))
@@ -364,7 +365,7 @@ public sealed class CemPreviewWindow : Window
         if (_ephemeral || Busy || _closed || _section != Section.Connection || !File.Exists(DriverToolPath)) return;
         RefreshDriver();
         if (install ? _driverInfo.Status != DriverRegistration.State.Absent :
-            _driverInfo.Status != DriverRegistration.State.Registered) return;
+            _driverInfo.Status is not (DriverRegistration.State.Registered or DriverRegistration.State.LegacyRegistered)) return;
         string path = install ? _driverPath.Text.Trim() : _driverInfo.Library!;
         _driverBusy = true;
         UpdateControls();
@@ -376,8 +377,8 @@ public sealed class CemPreviewWindow : Window
             var dialog = new ContentDialog
             {
                 XamlRoot = _driverPanel.XamlRoot,
-                Title = install ? T("Install virtual J2534?", "Установить виртуальный J2534?") :
-                    T("Remove virtual J2534?", "Удалить виртуальный J2534?"),
+                Title = install ? T("Install J2534 Lab Adapter?", "Установить J2534 Lab Adapter?") :
+                    T("Remove J2534 registration?", "Удалить регистрацию J2534?"),
                 Content = path + (hash is null ? "" : "\nSHA256: " + hash) + "\n\n" +
                     T("Confirm that diagnostic clients are closed. Administrator approval is required.",
                       "Подтвердите, что диагностические программы закрыты. Требуются права администратора."),
