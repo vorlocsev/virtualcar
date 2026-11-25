@@ -6,6 +6,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-VCNative.ps1')
 if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem -or
     -not [Environment]::UserInteractive) { throw 'Interactive Windows x64 required.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -78,8 +79,8 @@ try {
     $report.sdk = $sdk
     $coreLog = Join-Path $out 'core-checks.log'
     $core = Join-Path $PSScriptRoot '..\VirtualCar.Core.Checks\VirtualCar.Core.Checks.csproj'
-    & $dotnet run --project $core -c Release *> $coreLog
-    if ($LASTEXITCODE -ne 0) { throw 'Managed core checks failed.' }
+    $exitCode = Invoke-VCNativeLogged -Executable $dotnet -Arguments @('run','--project',$core,'-c','Release') -WorkingDirectory $repo -Log $coreLog
+    if ($exitCode -ne 0) { throw "Managed core checks failed (exit $exitCode). See core-checks.log and core-checks.log.stderr." }
     $summary = @(Get-Content -LiteralPath $coreLog | Where-Object {
         $_ -match '^VirtualCar\.Core synthetic checks: (\d+)/(\d+)$'
     })
