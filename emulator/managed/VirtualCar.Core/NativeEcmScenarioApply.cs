@@ -98,6 +98,11 @@ public static class NativeEcmScenarioApply
         if (!Path.IsPathFullyQualified(path) ||
             !string.Equals(Path.GetFileName(path), "virtualcar.ini", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Explicit profile path required.");
+        return ValidateLocalFile(path);
+    }
+
+    private static string ValidateLocalFile(string path)
+    {
         string full = Path.GetFullPath(path);
         if (OperatingSystem.IsWindows() &&
             (full.StartsWith(@"\\", StringComparison.Ordinal) ||
@@ -116,6 +121,34 @@ public static class NativeEcmScenarioApply
         return ReadBounded(stream);
     }
 
+    // Only exact VC080/VC081 backups beside the selected profile are accepted.
+    private static string ValidateBackup(string profile, string backup)
+    {
+        if (!Path.IsPathFullyQualified(backup)) throw new InvalidDataException("Absolute backup path required.");
+        string full = ValidateLocalFile(backup);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.GetDirectoryName(profile), Path.GetDirectoryName(full), comparison))
+            throw new InvalidDataException("Backup must be beside the profile.");
+        string name = Path.GetFileName(full);
+        const string prefix = "virtualcar.vc08";
+        if (name.Length != prefix.Length + 2 + 32 + 4 ||
+            !name.StartsWith(prefix, StringComparison.Ordinal) ||
+            name[prefix.Length] is not ('0' or '1') || name[prefix.Length + 1] != '-' ||
+            !name.EndsWith(".bak", StringComparison.Ordinal) ||
+            !Guid.TryParseExact(name.Substring(prefix.Length + 2, 32), "N", out _))
+            throw new InvalidDataException("Unrecognized backup name.");
+        return full;
+    }
+
+    public static byte[] ReadBackup(string path, string backup)
+    {
+        string profile = ValidatePath(path);
+        using var stream = File.Open(ValidateBackup(profile, backup), FileMode.Open, FileAccess.Read, FileShare.Read);
+        byte[] bytes = ReadBounded(stream);
+        NativeEcmScenarioPlan.Inspect(bytes);
+        return bytes;
+    }
+
     private static byte[] ReadBounded(Stream stream)
     {
         byte[] bytes = new byte[MaxBytes + 1];
@@ -130,11 +163,56 @@ public static class NativeEcmScenarioApply
     /// Same-directory replace with backup; not a lock against unrelated rename operations.</summary>
     public static NativeScenarioApplyResult Apply(string path, string expectedSha256, EcmScenario selection)
     {
+        return Replace(path, expectedSha256, before => Build(before, selection), "vc080");
+    }
+
+    // Restore only a verified ancestor produced by a scoped scenario edit.
+    // Full-byte equality against one of the six forward transformations proves
+    // that unrelated configuration was not changed since this backup.
+    public static NativeScenarioApplyResult Restore(string path, string backup,
+        string expectedCurrentSha256, string expectedBackupSha256)
+    {
+        string full = ValidatePath(path);
+        string source = ValidateBackup(full, backup);
+        using var input = File.Open(source, FileMode.Open, FileAccess.Read, FileShare.Read);
+        byte[] original = ReadBounded(input);
+        NativeEcmScenarioPlan.Inspect(original);
+        if (!string.Equals(Digest(original), expectedBackupSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Backup changed since inspection.");
+        return Replace(full, expectedCurrentSha256, current =>
+        {
+            if (current.AsSpan().SequenceEqual(original)) return original;
+            foreach (var scenario in Enum.GetValues<EcmScenario>())
+            {
+                try
+                {
+                    if (Build(original, scenario).AsSpan().SequenceEqual(current)) return original;
+                }
+                catch (InvalidOperationException) { }
+                catch (InvalidDataException) { }
+            }
+            // Also allow undoing a previous restore (reverse transformation).
+            foreach (var scenario in Enum.GetValues<EcmScenario>())
+            {
+                try
+                {
+                    if (Build(current, scenario).AsSpan().SequenceEqual(original)) return original;
+                }
+                catch (InvalidOperationException) { }
+                catch (InvalidDataException) { }
+            }
+            throw new InvalidOperationException("Backup is not a verified scenario-only relative of this profile.");
+        }, "vc081");
+    }
+
+    private static NativeScenarioApplyResult Replace(string path, string expectedSha256,
+        Func<byte[], byte[]> transform, string tag)
+    {
         string full = ValidatePath(path);
         string directory = Path.GetDirectoryName(full)!;
         string suffix = Guid.NewGuid().ToString("N");
-        string temp = Path.Combine(directory, ".vc080-" + suffix + ".tmp");
-        string backup = Path.Combine(directory, "virtualcar.vc080-" + suffix + ".bak");
+        string temp = Path.Combine(directory, "." + tag + "-" + suffix + ".tmp");
+        string backup = Path.Combine(directory, "virtualcar." + tag + "-" + suffix + ".bak");
         bool created = false;
         try
         {
@@ -143,7 +221,7 @@ public static class NativeEcmScenarioApply
             byte[] before = ReadBounded(original);
             if (!string.Equals(Digest(before), expectedSha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Profile changed since inspection.");
-            byte[] after = Build(before, selection);
+            byte[] after = transform(before);
             string digest = Digest(after);
             if (before.AsSpan().SequenceEqual(after))
                 return new(false, null, digest);
@@ -159,7 +237,7 @@ public static class NativeEcmScenarioApply
                 throw new InvalidOperationException("Profile changed before replacement.");
             File.Replace(temp, full, backup);
             if (Digest(ReadProfile(full)) != digest ||
-                !File.ReadAllBytes(backup).AsSpan().SequenceEqual(before))
+                !ReadBackup(full, backup).AsSpan().SequenceEqual(before))
                 throw new IOException("Replacement verification failed. Preserve the backup for review.");
             return new(true, backup, digest);
         }

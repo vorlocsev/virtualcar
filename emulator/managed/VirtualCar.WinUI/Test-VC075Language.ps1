@@ -137,11 +137,15 @@ try {
             if ($section.key -eq 'Vehicle') {
                 $apply = Wait-Element $window 'VC080.Vehicle.Apply'
                 $inspect = Wait-Element $window 'VC079.Vehicle.Inspect'
+                $restore = Wait-Element $window 'VC081.Vehicle.Restore'
+                if ($restore.Current.IsEnabled) { throw 'Restore enabled in ephemeral smoke.' }
                 if ($apply.Current.IsEnabled -or $inspect.Current.IsEnabled) { throw 'Profile modification or inspection enabled in ephemeral smoke.' }
                 if ($case.code -eq 'RU') {
                     Assert-Name $window 'VC080.Vehicle.Apply' 'Применить сценарий'
+                    Assert-Name $window 'VC081.Vehicle.Restore' 'Восстановить копию'
                 } else {
                     Assert-Name $window 'VC080.Vehicle.Apply' 'Apply scenario'
+                    Assert-Name $window 'VC081.Vehicle.Restore' 'Restore backup'
                 }
             }
             if ($section.key -eq 'Connection') {

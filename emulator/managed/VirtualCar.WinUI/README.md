@@ -72,6 +72,14 @@ Only B3A316 Enabled/State and B3A329 Enabled can be changed. Missing target keys
 
 Eight new isolated managed checks cover scoped edits, inserted sections/keys, missing gates, ambiguous input, backup, stale digest and no-op. Windows acceptance: inspect the registered profile; cancel confirmation; verify a mismatched path and external edit are refused; apply one static and one eligible dynamic selection in a disposable VM; compare the backup and unrelated settings; close/reopen J2534 manually and verify the native responses; test EN/RU and ephemeral mode. No actual profile mutation or Windows/native execution was performed during authoring.
 
+## VC081 guarded backup restore (pending)
+
+Restore backup accepts an explicit absolute VC080/VC081 backup path beside the inspected profile of the currently registered J2534 Lab Adapter. The last created backup path is populated automatically. The confirmation includes current and backup SHA256 and the backed-up scenario. The operator must close diagnostic clients and editors. Both digests are checked again before replacement.
+
+Restore is deliberately narrower than generic file recovery: the current and backup bytes must match exactly or one must be the exact result of an allowed VC080 scenario transformation of the other. This permits undo of an immediate scenario change and undo of that restore, but may reject older backups after successive changes or unrelated edits. The name is not authentication; this relation check limits changes rather than proving historical provenance. A successful changed restore preserves the previous current file in a new VC081 backup, retains the input backup and verifies both output files. No automatic rollback, arbitrary profile replacement, backup deletion or client restart. Reopen J2534 manually. Ephemeral smoke disables restore. Private backups stay local.
+
+Eight managed temporary-directory groups cover exact restoration, undo, unrelated changes, stale active/backup digests, wrong name, wrong folder and no-op. Windows and native acceptance remain pending; test actual apply/restore/reopen in a disposable VM.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
