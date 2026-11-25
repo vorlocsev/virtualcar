@@ -40,6 +40,8 @@ public sealed class CemPreviewWindow : Window
     private readonly Button _monitorRefresh = new();
     private readonly ComboBox _monitorDirection = new() { MinWidth = 120 };
     private readonly TextBox _monitorFilter = new();
+    private readonly ComboBox _monitorView = new() { MinWidth = 180 };
+    private readonly TextBlock _journalSummary = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _monitorStatus = new() { TextWrapping = TextWrapping.Wrap };
     private readonly ListView _monitorRows = new() { MaxHeight = 300, SelectionMode = ListViewSelectionMode.None };
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _monitorTimer;
@@ -145,6 +147,14 @@ public sealed class CemPreviewWindow : Window
             _monitorDirection.Items.Add(new ComboBoxItem { Content = label });
         _monitorDirection.SelectedIndex = 0;
         _monitorPanel.Children.Add(_monitorDirection);
+        _monitorView.Items.Add(new ComboBoxItem { Content = "CAN Monitor" });
+        _monitorView.Items.Add(new ComboBoxItem { Content = "Diagnostic journal" });
+        _monitorView.SelectedIndex = 0;
+        _monitorPanel.Children.Add(_monitorView);
+        _monitorPanel.Children.Add(_journalSummary);
+        AutomationId(_monitorView, "VC085.Diagnostics.View");
+        AutomationId(_journalSummary, "VC085.Diagnostics.Summary");
+        _monitorView.SelectionChanged += (_, _) => RenderMonitor();
         _monitorPanel.Children.Add(_monitorFilter);
         _monitorPanel.Children.Add(_monitorStatus);
         _monitorPanel.Children.Add(_monitorRows);
@@ -484,7 +494,18 @@ public sealed class CemPreviewWindow : Window
         _monitorDirection.Header = T("Direction", "Направление");
         if (_monitorDirection.Items.Count > 0 && _monitorDirection.Items[0] is ComboBoxItem all)
             all.Content = T("All", "Все");
-        _monitorFilter.Header = T("Filter CAN ID / payload / PID / process", "Фильтр CAN ID / данных / PID / процесса");
+        _monitorView.Header = T("View", "Представление");
+        if (_monitorView.Items.Count == 2)
+        {
+            ((ComboBoxItem)_monitorView.Items[0]).Content = "CAN Monitor";
+            ((ComboBoxItem)_monitorView.Items[1]).Content = T("Diagnostic journal", "Журнал диагностики");
+        }
+        bool journal = _monitorView.SelectedIndex == 1;
+        _journalSummary.Visibility = journal ? Visibility.Visible : Visibility.Collapsed;
+        _journalSummary.Text = "";
+        _monitorFilter.Header = journal
+            ? T("Filter CAN ID / payload / PID / process / SID / DID / NRC", "Фильтр CAN ID / данных / PID / процесса / SID / DID / NRC")
+            : T("Filter CAN ID / payload / PID / process", "Фильтр CAN ID / данных / PID / процесса");
         bool enabled = !_ephemeral && !Busy && !_closed;
         _monitorPath.IsEnabled = enabled && !_monitorRunning;
         _monitorStart.IsEnabled = _monitorRefresh.IsEnabled = enabled && !_monitorRunning;
@@ -499,6 +520,7 @@ public sealed class CemPreviewWindow : Window
         }
         string filter = _monitorFilter.Text.Trim();
         int shown = 0;
+        var visibleEntries = new List<DiagnosticEntry>();
         foreach (var row in _monitorSnapshot.Rows)
         {
             if (_monitorDirection.SelectedIndex == 1 && row.Direction != NativeTraceDirection.Tx ||
@@ -506,21 +528,56 @@ public sealed class CemPreviewWindow : Window
             string can = row.CanId?.ToString("X") ?? "—";
             string protocol = row.Protocol switch { 5 => "CAN", 6 => "ISO15765", _ => "—" };
             string pid = row.Pid.ToString("X8");
-            if (filter.Length > 0 && !string.Join(" ", can, row.DataHex, pid, row.Host)
+            DiagnosticEntry? entry = journal ? NativeDiagnosticJournal.Classify(row) : null;
+            string detail = entry is null ? "" : DiagnosticLabel(entry);
+            if (filter.Length > 0 && !string.Join(" ", can, row.DataHex, pid, row.Host, detail)
                     .Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            if (entry is not null) visibleEntries.Add(entry);
             _monitorRows.Items.Add(new TextBlock
             {
                 TextWrapping = TextWrapping.Wrap,
                 Text = $"{row.Direction.ToString().ToUpperInvariant()} · {can} · {protocol} · {row.Baud?.ToString() ?? "—"} · PID {pid} {row.Host}\n" +
                     $"CH {row.Channel?.ToString() ?? "—"} · t32 {row.TimeUs?.ToString() ?? "—"} µs · {row.DataHex}" +
-                    (row.PossibleTruncation ? T(" [possibly truncated]", " [возможно усечено]") : "")
+                    (row.PossibleTruncation ? T(" [possibly truncated]", " [возможно усечено]") : "") +
+                    (journal ? "\n" + detail : "")
             });
             shown++;
+        }
+        if (journal)
+        {
+            var counts = NativeDiagnosticJournal.Summarize(visibleEntries);
+            _journalSummary.Text = T("Visible records: ", "Видимые записи: ") +
+                T("Requests ", "Запросы ") + counts.Requests + " · " +
+                T("Positive ", "Положительные ") + counts.Positive + " · " +
+                T("Negative ", "Отрицательные ") + counts.Negative + " · " +
+                T("Indications ", "Индикации ") + counts.Indications + " · " +
+                T("Unclassified ", "Без классификации ") + counts.Unclassified + "\n" +
+                T("No request/response matching or ECU acceptance inferred.", "Сопоставление запросов и ответов и приёмка ECU не подтверждаются.");
         }
         _monitorStatus.Text = (_monitorRunning ? T("Monitoring log", "Мониторинг журнала") : T("Snapshot", "Снимок")) +
             $" · {shown}/{_monitorSnapshot.Rows.Count} · " +
             T("Latest 500 records max; not a complete capture.", "До 500 последних записей; не полный захват.") +
             (_monitorSnapshot.TailOnly ? T(" Tail only.", " Только конец файла.") : "");
+    }
+
+    private string DiagnosticLabel(DiagnosticEntry entry)
+    {
+        string label = entry.Kind switch
+        {
+            DiagnosticKind.Request => T("Request", "Запрос"),
+            DiagnosticKind.Positive => T("Positive response shape", "Форма положительного ответа"),
+            DiagnosticKind.Negative => T("Negative response shape", "Форма отрицательного ответа"),
+            DiagnosticKind.Indication => T("Start of message", "Начало сообщения"),
+            _ => T("Unclassified", "Без классификации")
+        };
+        if (entry.Service is byte sid) label += $" · SID {sid:X2}";
+        if (entry.Did is ushort did) label += $" · DID {did:X4}";
+        if (entry.Nrc is byte nrc)
+        {
+            label += $" · NRC {nrc:X2}";
+            if (nrc == 0x78) label += T(" (response pending)", " (ответ ожидается)");
+        }
+        return label;
     }
 
     private void InspectModules()
