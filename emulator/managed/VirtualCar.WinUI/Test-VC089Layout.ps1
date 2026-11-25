@@ -300,8 +300,9 @@ function Capture-View($window,[string]$language,[string]$section,[string]$positi
     Write-Host ("PASS capture {0} {1} {2} DPI={3} client={4}x{5}" -f $language,$section,$position,$dpi,$clientWidth,$clientHeight)
 }
 function Scroll-Workspace($window,[double]$percent) {
-    $element = Wait-Element $window 'VC089.WorkspaceScroll'
-    $pattern = $element.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    $element = Find-Element $window 'VC089.WorkspaceScroll'
+    $pattern = $null
+    if ($null -eq $element -or -not $element.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern,[ref]$pattern)) { return $false }
     if ($pattern.Current.VerticallyScrollable) {
         $pattern.SetScrollPercent(-1,$percent)
         Start-Sleep -Milliseconds 300
@@ -333,11 +334,13 @@ try {
                 [void](Scroll-Workspace $window 0)
                 $anchor = @{Vehicle='VC079.Vehicle.Inspect';Modules='VC083.Modules.Refresh';Diagnostics='VC084.Monitor.Start';Connection='VC078.Driver.Refresh'}[$section]
                 Capture-View $window $lang $section 'top' @('VC077.PlaceholderHeading',$anchor)
+                $bottom = @{Vehicle='VC081.Vehicle.Restore';Modules='VC083.Modules.Status';Diagnostics='VC088.Monitor.Status';Connection='VC078.Driver.Remove'}[$section]
                 $scrolled = Scroll-Workspace $window 100
                 if ($scrolled) {
-                    $bottom = @{Vehicle='VC081.Vehicle.Restore';Modules='VC083.Modules.Status';Diagnostics='VC088.Monitor.Status';Connection='VC078.Driver.Remove'}[$section]
                     Capture-View $window $lang $section 'bottom' @($bottom)
                     [void](Scroll-Workspace $window 0)
+                } else {
+                    Assert-Visible $window $bottom ([VC089.NativeLayout]::Frame($process.MainWindowHandle))
                 }
             }
         }
