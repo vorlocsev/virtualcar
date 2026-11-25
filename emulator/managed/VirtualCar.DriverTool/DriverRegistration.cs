@@ -7,13 +7,17 @@ namespace VirtualCar.DriverTool;
 internal static class DriverRegistration
 {
     internal const string Parent = @"SOFTWARE\PassThruSupport.04.04";
-    internal const string Provider = "SectorV Virtual Car";
-    private const string Vendor = "SectorV Virtual Lab";
-    private const string Name = "SectorV Virtual Car (J2534)";
+    internal const string Provider = "J2534 Lab Adapter";
+    private const string Vendor = "J2534 Lab";
+    private const string Name = Provider;
+    // Historical identity is recognized only to allow explicit removal.
+    private const string LegacyProvider = "SectorV Virtual Car";
+    private const string LegacyVendor = "SectorV Virtual Lab";
+    private const string LegacyName = "SectorV Virtual Car (J2534)";
     private static readonly string[] Names =
         ["Vendor", "Name", "FunctionLibrary", "ConfigApplication", "CAN", "ISO15765", "MessageVersion"];
 
-    internal enum State { Absent, Registered, Conflict, Unavailable }
+    internal enum State { Absent, Registered, LegacyRegistered, Conflict, Unavailable }
     internal sealed record Info(State Status, string? Library);
 
     // Validate a local, explicitly chosen x86 DLL without loading it.
@@ -47,10 +51,11 @@ internal static class DriverRegistration
     private static object? Value(RegistryKey key, string name) =>
         key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
 
-    private static bool Owned(RegistryKey key) =>
+    private static bool Owned(RegistryKey key, bool legacy = false) =>
         key.SubKeyCount == 0 &&
         new HashSet<string>(key.GetValueNames(), StringComparer.OrdinalIgnoreCase).SetEquals(Names) &&
-        Equals(Value(key, "Vendor"), Vendor) && Equals(Value(key, "Name"), Name) &&
+        Equals(Value(key, "Vendor"), legacy ? LegacyVendor : Vendor) &&
+        Equals(Value(key, "Name"), legacy ? LegacyName : Name) &&
         Value(key, "FunctionLibrary") is string library &&
         Path.IsPathFullyQualified(library) &&
         string.Equals(Path.GetFileName(library), "VirtualCarJ2534.dll", StringComparison.OrdinalIgnoreCase) &&
@@ -65,8 +70,13 @@ internal static class DriverRegistration
         {
             using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32);
             using var key = root.OpenSubKey(Parent + @"\" + Provider);
-            if (key is null) return new(State.Absent, null);
-            return Owned(key) ? new(State.Registered, (string?)Value(key, "FunctionLibrary")) : new(State.Conflict, null);
+            using var legacy = root.OpenSubKey(Parent + @"\" + LegacyProvider);
+            if (key is not null && legacy is not null) return new(State.Conflict, null);
+            if (key is not null)
+                return Owned(key) ? new(State.Registered, (string?)Value(key, "FunctionLibrary")) : new(State.Conflict, null);
+            if (legacy is not null)
+                return Owned(legacy, legacy: true) ? new(State.LegacyRegistered, (string?)Value(legacy, "FunctionLibrary")) : new(State.Conflict, null);
+            return new(State.Absent, null);
         }
         catch (Exception) { return new(State.Unavailable, null); }
     }
@@ -80,6 +90,8 @@ internal static class DriverRegistration
             throw new InvalidDataException();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32);
         using var parent = root.CreateSubKey(Parent);
+        using (var legacy = parent.OpenSubKey(LegacyProvider))
+            if (legacy is not null) throw new InvalidOperationException("Remove the previous registration first.");
         using (var existing = parent.OpenSubKey(Provider))
         {
             if (existing is not null)
@@ -116,14 +128,20 @@ internal static class DriverRegistration
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32);
         using var parent = root.OpenSubKey(Parent, writable: true);
         if (parent is null) return;
+        string target;
         using (var key = parent.OpenSubKey(Provider))
+        using (var legacy = parent.OpenSubKey(LegacyProvider))
         {
-            if (key is null) return;
-            if (!Owned(key) || !string.Equals((string?)Value(key, "FunctionLibrary"),
+            if (key is not null && legacy is not null) throw new InvalidOperationException("Conflicting registrations.");
+            var selected = key ?? legacy;
+            if (selected is null) return;
+            bool isLegacy = key is null;
+            if (!Owned(selected, isLegacy) || !string.Equals((string?)Value(selected, "FunctionLibrary"),
                 expectedPath, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Registration changed or is not recognized.");
+            target = isLegacy ? LegacyProvider : Provider;
         }
         // Never recursive, never delete the parent or files on disk.
-        parent.DeleteSubKey(Provider, throwOnMissingSubKey: false);
+        parent.DeleteSubKey(target, throwOnMissingSubKey: false);
     }
 }
