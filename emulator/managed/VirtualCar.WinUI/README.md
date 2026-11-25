@@ -173,6 +173,14 @@ The test intentionally appends two records to its own generated log; it checks t
 
 The VC086 Core and both publish commands additionally pass --disable-build-servers and UseSharedCompilation=false to avoid persistent compiler processes after owner-local builds. This is intended to address the prior manual .NET build-server shutdown workaround; it has not been validated on Windows yet. No global build-server shutdown or unrelated process termination is added.
 
+## VC089 measured DPI capture (pending)
+
+VC088 owner-local acceptance passed on 442406d310bad66c4b8c220136b20a418b7e0140. VC089 is a new candidate. Initial window targets 1200 x 800 DIPs, clamped to the current monitor work area. Counts reflow below filters under 1000 DIP; headings wrap. Rerun VC086, VC087 and VC088 on the new exact head first.
+
+On an unlocked unobstructed desktop select actual Windows scale 100, 125, 150, 175 or 200 percent. Run Test-VC089Layout.ps1 with ExpectedSha, BuildDirectory, a new external OutputDirectory and ExpectedScale. Use a separate directory for each actual scale. The script does not change DPI. It checks owner PID, actual DPI, DWM frame within work area, minimum 850 x 450 DIP client, UIA anchors and bottom control visibility/scroll. Ten empty-window top views plus applicable bottom views are captured with SHA256 and measured dimensions. Screen capture is limited to the foreground window rectangle; sampled occlusion checks cannot rule out small overlays. Keep screenshots local and notifications closed. The manifest marks visual_review=not_tested; inspect PNGs separately for clipping, overlap and readability. Loaded-profile/real-log visuals and unsupported scales remain pending. Windows compile and execution are not yet verified.
+
+VC089 first owner run at bc64db22f7c61d64f714b497eeab14ecde7f607b: VC086/087/088 passed (Core 80/80, 705-file inventory, seven unchanged private inputs); layout blocked because the 150% desktop yielded DPI-unaware window DPI 96. Twelve diagnostic PNGs obtained at ExpectedScale=100 are not actual-scale acceptance. Owner reported clipped Russian vehicle navigation and stale English selected values for direction, ECM scenario and ignition. New candidate embeds a PerMonitorV2 application manifest, wraps navigation labels, refreshes the same selected combo indices after localization, and rejects non-PerMonitorV2 window contexts before capture. New exact-head regressions, actual 144-DPI capture and screenshot review remain pending. No ZIP/PNG bytes independently inspected here.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.

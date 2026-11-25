@@ -16,7 +16,7 @@ public sealed class CemPreviewWindow : Window
     private readonly ComboBox _filter = new() { MinWidth = 150 };
     private readonly ListView _rows = new() { SelectionMode = ListViewSelectionMode.Single };
     private readonly ComboBox _options = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly TextBlock _counts = new() { Text = "No profile loaded" };
+    private readonly TextBlock _counts = new() { Text = "No profile loaded", TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _detail = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _audit = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
@@ -27,7 +27,7 @@ public sealed class CemPreviewWindow : Window
     private readonly Button _revert = new() { Content = "Revert to baseline" };
     private readonly Button _clear = new() { Content = "Reset all changes" };
     private readonly ComboBox _language = new() { MinWidth = 88 };
-    private readonly TextBlock _heading = new() { FontSize = 28 };
+    private readonly TextBlock _heading = new() { FontSize = 28, TextWrapping = TextWrapping.Wrap };
     private readonly ListView _navigation = new() { SelectionMode = ListViewSelectionMode.Single, MinWidth = 180 };
     private readonly Grid _editor = new() { RowSpacing = 12 };
     private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
@@ -137,7 +137,13 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_navigation, "VC077.Navigation");
         foreach (Section section in Enum.GetValues<Section>())
         {
-            var item = new ListViewItem { Tag = section, Content = SectionLabel(section) };
+            var item = new ListViewItem
+            {
+                Tag = section,
+                Content = new TextBlock { Text = SectionLabel(section), TextWrapping = TextWrapping.Wrap },
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, SectionLabel(section));
             AutomationId(item, "VC077.Nav." + section);
             _navigation.Items.Add(item);
             if (section == _section) _navigation.SelectedItem = item;
@@ -264,6 +270,7 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_placeholderText, "VC077.PlaceholderText");
         page.Children.Add(_editor);
         _workspaceScroll.Content = _placeholder;
+        AutomationId(_workspaceScroll, "VC089.WorkspaceScroll");
         page.Children.Add(_workspaceScroll);
         Add(body, page, 0, 1);
         Add(shell, body, 1);
@@ -336,6 +343,8 @@ public sealed class CemPreviewWindow : Window
             _filter.Items.Add(filterItem);
         }
         _filter.SelectedIndex = 0;
+        filters.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        filters.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Add(filters, _search, 0); Add(filters, _filter, 0, 1); Add(filters, _counts, 0, 2);
         Add(root, filters, 1);
 
@@ -350,11 +359,22 @@ public sealed class CemPreviewWindow : Window
         right.Children.Add(_preview); right.Children.Add(_revert); right.Children.Add(_clear);
         right.Children.Add(_auditHeading);
         right.Children.Add(_audit);
-        Add(workspace, new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }, 0, 1);
+        var detailScroll = new ScrollViewer { Content = right, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        AutomationId(detailScroll, "VC089.DetailScroll");
+        Add(workspace, detailScroll, 0, 1);
         Add(root, workspace, 2);
         Add(root, _status, 3);
         Content = shell;
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
+        ResizeForDisplay();
+        shell.SizeChanged += (_, _) =>
+        {
+            // Keep the search usable when localized count text grows at narrow widths.
+            bool compact = shell.ActualWidth < 1000;
+            Grid.SetRow(_counts, compact ? 1 : 0);
+            Grid.SetColumn(_counts, compact ? 0 : 2);
+            Grid.SetColumnSpan(_counts, compact ? 3 : 1);
+            filters.ColumnDefinitions[2].Width = compact ? new GridLength(0) : GridLength.Auto;
+        };
 
         _navigation.SelectionChanged += (_, _) =>
         {
@@ -377,7 +397,7 @@ public sealed class CemPreviewWindow : Window
         _cancel.Click += (_, _) => _operation?.Cancel();
         _reset.Click += (_, _) => ResetProfile();
         _search.TextChanged += (_, _) => RefreshRows(Selected?.Offset);
-        _filter.SelectionChanged += (_, _) => RefreshRows(Selected?.Offset);
+        _filter.SelectionChanged += (_, _) => { if (!_rebuilding) RefreshRows(Selected?.Offset); };
         _rows.SelectionChanged += (_, _) => { if (!_rebuilding) RefreshDetail(); };
         _options.SelectionChanged += (_, _) => UpdateControls();
         _preview.Click += async (_, _) =>
@@ -418,7 +438,11 @@ public sealed class CemPreviewWindow : Window
         string? optionCode = ((_options.SelectedItem as ComboBoxItem)?.Tag as CemOption)?.Code;
         Title = "Virtual Car";
         foreach (var item in _navigation.Items.OfType<ListViewItem>())
-            item.Content = SectionLabel((Section)item.Tag);
+        {
+            string label = SectionLabel((Section)item.Tag);
+            ((TextBlock)item.Content).Text = label;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, label);
+        }
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_navigation, T("Workspace navigation", "Навигация"));
         ShowSection();
         _python.Header = T("Python.exe (absolute path)", "Python.exe (абсолютный путь)");
@@ -437,6 +461,7 @@ public sealed class CemPreviewWindow : Window
             T("Locked", "Защищённые"), T("Editable", "Доступные")];
         for (int i = 0; i < labels.Length; i++)
             ((ComboBoxItem)_filter.Items[i]).Content = labels[i];
+        RefreshLocalizedComboSelections();
         _languageNotice.Text = _languageSaveFailed
             ? T("Language could not be saved.", "Не удалось сохранить язык.") : "";
         _languageNotice.Visibility = _languageSaveFailed ? Visibility.Visible : Visibility.Collapsed;
@@ -451,6 +476,32 @@ public sealed class CemPreviewWindow : Window
                 }
     }
 
+    private void RefreshLocalizedComboSelections()
+    {
+        // WinUI's closed ComboBox selection presenter may retain the original
+        // string when an existing ComboBoxItem.Content changes. Re-select the
+        // same index after localization; keep the underlying scenario and filter.
+        bool wasUpdating = _vehicleUpdating;
+        bool wasRebuilding = _rebuilding;
+        _vehicleUpdating = true;
+        _rebuilding = true;
+        try
+        {
+            foreach (var combo in new[] { _vehicleScenario, _ignition, _monitorDirection, _filter })
+            {
+                int index = combo.SelectedIndex;
+                if (index < 0) continue;
+                combo.SelectedIndex = -1;
+                combo.SelectedIndex = index;
+            }
+        }
+        finally
+        {
+            _vehicleUpdating = wasUpdating;
+            _rebuilding = wasRebuilding;
+        }
+    }
+
     private string SectionLabel(Section section) => section switch
     {
         Section.Vehicle => T("Virtual vehicle", "Виртуальный автомобиль"),
@@ -460,6 +511,21 @@ public sealed class CemPreviewWindow : Window
         Section.Connection => T("Connection", "Подключение"),
         _ => throw new ArgumentOutOfRangeException(nameof(section))
     };
+
+    private void ResizeForDisplay()
+    {
+        var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest);
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        double scale = Math.Max(1.0, GetDpiForWindow(hwnd) / 96.0);
+        var work = area.WorkArea;
+        int width = Math.Min(work.Width, (int)Math.Round(1200 * scale));
+        int height = Math.Min(work.Height, (int)Math.Round(800 * scale));
+        if (width > 0 && height > 0)
+            AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 2, width, height));
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     private void ShowSection()
     {
