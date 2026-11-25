@@ -51,6 +51,7 @@ public sealed class CemPreviewWindow : Window
     private bool _monitorFailed;
     private readonly StackPanel _modulePanel = new() { Spacing = 10 };
     private readonly Button _moduleRefresh = new();
+    private readonly TextBox _moduleProfile = new();
     private readonly TextBlock _moduleStatus = new() { TextWrapping = TextWrapping.Wrap };
     private readonly ListView _moduleList = new() { MaxHeight = 360, SelectionMode = ListViewSelectionMode.None };
     private IReadOnlyList<NativeEcuSlot>? _moduleSlots;
@@ -95,6 +96,8 @@ public sealed class CemPreviewWindow : Window
     private readonly TextBlock _languageNotice = new() { TextWrapping = TextWrapping.Wrap };
     private readonly bool _ephemeral;
     private readonly bool _previewOnly;
+    private readonly bool _diagnosticsOnly;
+    private bool CanReadDiagnostics => !_ephemeral || _diagnosticsOnly;
     private bool CanLoadProfile => !_ephemeral || _previewOnly;
     private bool _languageSaveFailed;
     private bool _russian;
@@ -111,10 +114,11 @@ public sealed class CemPreviewWindow : Window
     private CemPreview? Snapshot => _model?.Snapshot;
     private CemRow? Selected => (_rows.SelectedItem as ListViewItem)?.Tag as CemRow;
 
-    public CemPreviewWindow(bool ephemeral = false, bool previewOnly = false)
+    public CemPreviewWindow(bool ephemeral = false, bool previewOnly = false, bool diagnosticsOnly = false)
     {
         _previewOnly = previewOnly;
-        _ephemeral = ephemeral || previewOnly;
+        _diagnosticsOnly = diagnosticsOnly;
+        _ephemeral = ephemeral || previewOnly || diagnosticsOnly;
         ephemeral = _ephemeral;
         if (!ephemeral)
         {
@@ -149,7 +153,11 @@ public sealed class CemPreviewWindow : Window
         monitorActions.Children.Add(_monitorRefresh);
         _monitorPanel.Children.Add(monitorActions);
         foreach (string label in new[] { "All", "TX", "RX" })
-            _monitorDirection.Items.Add(new ComboBoxItem { Content = label });
+        {
+            var item = new ComboBoxItem { Content = label };
+            AutomationId(item, "VC088.Direction." + label);
+            _monitorDirection.Items.Add(item);
+        }
         _monitorDirection.SelectedIndex = 0;
         _monitorPanel.Children.Add(_monitorDirection);
         var canView = new ComboBoxItem { Content = "CAN Monitor" };
@@ -169,6 +177,11 @@ public sealed class CemPreviewWindow : Window
         _monitorPanel.Children.Add(_monitorRows);
         _placeholder.Children.Add(_monitorPanel);
         if (!_ephemeral) _monitorPath.Text = Path.Combine(Path.GetTempPath(), NativeCanTrace.LegacyLogFile);
+        AutomationId(_monitorPath, "VC088.Monitor.Path");
+        AutomationId(_monitorDirection, "VC088.Monitor.Direction");
+        AutomationId(_monitorFilter, "VC088.Monitor.Filter");
+        AutomationId(_monitorStatus, "VC088.Monitor.Status");
+        AutomationId(_monitorRows, "VC088.Monitor.Rows");
         AutomationId(_monitorStart, "VC084.Monitor.Start");
         AutomationId(_monitorStop, "VC084.Monitor.Stop");
         AutomationId(_monitorRefresh, "VC084.Monitor.Refresh");
@@ -178,6 +191,11 @@ public sealed class CemPreviewWindow : Window
         _monitorPath.TextChanged += (_, _) => { StopMonitor(); _monitorSnapshot = null; _monitorFailed = false; RenderMonitor(); };
         _monitorDirection.SelectionChanged += (_, _) => RenderMonitor();
         _monitorFilter.TextChanged += (_, _) => RenderMonitor();
+        _modulePanel.Children.Add(_moduleProfile);
+        _moduleProfile.Visibility = _diagnosticsOnly ? Visibility.Visible : Visibility.Collapsed;
+        AutomationId(_moduleProfile, "VC088.Modules.Profile");
+        AutomationId(_moduleList, "VC088.Modules.Rows");
+        _moduleProfile.TextChanged += (_, _) => { _moduleSlots = null; _moduleFailed = false; RenderModules(); };
         _modulePanel.Children.Add(_moduleRefresh);
         _modulePanel.Children.Add(_moduleStatus);
         _modulePanel.Children.Add(_moduleList);
@@ -488,7 +506,7 @@ public sealed class CemPreviewWindow : Window
 
     private void StartMonitor()
     {
-        if (_ephemeral || Busy || _closed || _section != Section.Diagnostics || _monitorRunning) return;
+        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics || _monitorRunning) return;
         _monitorRunning = true;
         _monitorTimer ??= DispatcherQueue.CreateTimer();
         _monitorTimer.Interval = TimeSpan.FromSeconds(1);
@@ -512,7 +530,7 @@ public sealed class CemPreviewWindow : Window
 
     private void ReadMonitor()
     {
-        if (_ephemeral || Busy || _closed || _section != Section.Diagnostics) return;
+        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics) return;
         _monitorSnapshot = null;
         _monitorFailed = false;
         try { _monitorSnapshot = NativeCanTrace.ReadFile(_monitorPath.Text.Trim()); }
@@ -541,7 +559,7 @@ public sealed class CemPreviewWindow : Window
         _monitorFilter.Header = journal
             ? T("Filter CAN ID / payload / PID / process / SID / DID / NRC", "Фильтр CAN ID / данных / PID / процесса / SID / DID / NRC")
             : T("Filter CAN ID / payload / PID / process", "Фильтр CAN ID / данных / PID / процесса");
-        bool enabled = !_ephemeral && !Busy && !_closed;
+        bool enabled = CanReadDiagnostics && !Busy && !_closed;
         _monitorPath.IsEnabled = enabled && !_monitorRunning;
         _monitorStart.IsEnabled = _monitorRefresh.IsEnabled = enabled && !_monitorRunning;
         _monitorStop.IsEnabled = _monitorRunning;
@@ -617,20 +635,27 @@ public sealed class CemPreviewWindow : Window
 
     private void InspectModules()
     {
-        if (_ephemeral || Busy || _closed || _section != Section.Modules) return;
+        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Modules) return;
         _moduleSlots = null;
         _moduleFailed = false;
         try
         {
-            var info = DriverRegistration.Read();
-            if (info.Status != DriverRegistration.State.Registered || info.Library is null || !File.Exists(info.Library))
-                throw new InvalidOperationException("No recognized adapter.");
-            string path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(info.Library))!, "virtualcar.ini");
-            if (!IsRegisteredProfile(path)) throw new InvalidOperationException("Registration changed.");
-            var bytes = NativeEcmScenarioApply.ReadProfile(path);
-            var slots = NativeEcuInventory.Inspect(bytes);
-            if (!IsRegisteredProfile(path)) throw new InvalidOperationException("Registration changed.");
-            _moduleSlots = slots;
+            if (_diagnosticsOnly)
+            {
+                _moduleSlots = NativeEcuInventory.Inspect(NativeEcmScenarioApply.ReadProfile(_moduleProfile.Text.Trim()));
+            }
+            else
+            {
+                var info = DriverRegistration.Read();
+                if (info.Status != DriverRegistration.State.Registered || info.Library is null || !File.Exists(info.Library))
+                    throw new InvalidOperationException("No recognized adapter.");
+                string path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(info.Library))!, "virtualcar.ini");
+                if (!IsRegisteredProfile(path)) throw new InvalidOperationException("Registration changed.");
+                var bytes = NativeEcmScenarioApply.ReadProfile(path);
+                var slots = NativeEcuInventory.Inspect(bytes);
+                if (!IsRegisteredProfile(path)) throw new InvalidOperationException("Registration changed.");
+                _moduleSlots = slots;
+            }
         }
         catch (Exception) { _moduleFailed = true; }
         RenderModules();
@@ -639,7 +664,9 @@ public sealed class CemPreviewWindow : Window
     private void RenderModules()
     {
         _moduleRefresh.Content = T("Read configured ECUs", "Прочитать настроенные ECU");
-        _moduleRefresh.IsEnabled = !_ephemeral && !Busy && !_closed;
+        _moduleProfile.Header = T("Local virtualcar.ini (read-only, not registered)", "Локальный virtualcar.ini (только чтение, без регистрации)");
+        _moduleProfile.IsEnabled = _diagnosticsOnly && !Busy && !_closed;
+        _moduleRefresh.IsEnabled = CanReadDiagnostics && !Busy && !_closed;
         _moduleList.Items.Clear();
         if (_moduleSlots is null)
         {
@@ -675,6 +702,7 @@ public sealed class CemPreviewWindow : Window
                     T("Configured part: ", "Настроенный номер: ") + (slot.PartNumber ?? "—") + " · " +
                     T("Software: ", "ПО: ") + (slot.Software ?? "—")
             };
+            AutomationId(row, "VC088.Ecu." + slot.Index.ToString(System.Globalization.CultureInfo.InvariantCulture));
             _moduleList.Items.Add(row);
         }
     }

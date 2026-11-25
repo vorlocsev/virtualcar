@@ -147,6 +147,32 @@ The runner accepts explicit absolute local paths only. The seven pinned private 
 
 The result marker VC087_LOADED_CEM_ACCEPTANCE=PASS is emitted only after all gates and normal process exit. Failure stops execution; the runner closes only its own process. UIA control realization, private input compatibility and loaded-state behavior require actual Windows testing. This runner does not prove DPI/layout, normal-mode registry/INI access, live log, ECU inventory, cancellation during real preview, all filter cases, reset-all, dependency-blocked variants, original VIDA acceptance or hardware behavior; those remain separate gates. Do not upload the seven private files or run this on automated CI.
 
+## VC088 isolated ECU inventory and diagnostic monitor acceptance (pending)
+
+VC086 and VC087 passed owner-local at exact head 2de6b78fbaeb5d145834bef2c82bdcf8e7e76551 (PR #473, owner-reported unmodified script markers, Core 80/80, 705-file build inventory, seven unchanged private inputs). VC088 is a new candidate; those results are not automatically carried forward.
+
+Explicit --diagnostics-only launch retains ephemeral preferences and locks out CEM loading, native INI modifications, vehicle profile inspection and driver registration/refresh. It enables read-only inventory from an explicitly selected local virtualcar.ini without querying the registry, and monitoring of an explicitly selected local .log. No default native log is opened in this mode. This is application-level isolation, not a security sandbox. The inventory represents configuration, not actual ECU identification; the log represents recorded application traffic, not wire capture or VIDA acceptance. Normal mode, --ephemeral-settings and --preview-only retain their previous roles.
+
+Build and rerun the VC086 and VC087 scripts on the reviewed exact VC088 head first. Then run:
+
+```powershell
+& .\emulator\managed\VirtualCar.WinUI\Test-VC088Diagnostics.ps1 -ExpectedSha $sha -BuildDirectory C:\VC088-Review\build -FixtureDirectory C:\VC088-Fixtures
+```
+
+The new fixture directory must not exist. The runner creates three synthetic INI files and a small synthetic log outside Git and the build, checks the exact published inventory, and validates:
+1. Configured ECU addresses, bitrates and part label.
+2. Duplicate and invalid routes.
+3. Ambiguous profile refusal and stale inventory clearing.
+4. CAN snapshot with queued RX excluded.
+5. TX/RX and payload filters.
+6. Journal classification counts, NRC filter and EN/RU.
+7. Timer append, stop, manual refresh, navigation and missing log refusal.
+8. Disabled unrelated operations, fixture integrity, exact checkout and final build integrity.
+
+The test intentionally appends two records to its own generated log; it checks the exact expected final contents and unchanged INI hashes. It does not read private CEM data or native provider logs, register adapters, invoke native J2534, or exercise real vehicle traffic. The output marker is VC088_DIAGNOSTICS_ACCEPTANCE=PASS 8/8 only after normal process exit and final checks. Generated fixtures remain local for review. Actual registered profile, real native log, file rotation, large-log performance, DPI/layout, and VIDA/hardware gates remain separate. The runner has not yet been executed.
+
+The VC086 Core and both publish commands additionally pass --disable-build-servers and UseSharedCompilation=false to avoid persistent compiler processes after owner-local builds. This is intended to address the prior manual .NET build-server shutdown workaround; it has not been validated on Windows yet. No global build-server shutdown or unrelated process termination is added.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
