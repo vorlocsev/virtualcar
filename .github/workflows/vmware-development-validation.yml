@@ -91,6 +91,7 @@ on:
           # B3A302/B3A305: previous native PASS heads with the CI-validated R2 infrastructure port; new exact-head runs pending.
           - 0f888d2aee15fb14b377ded40dfcb76825a56d94
           - c788cf656aebd6828e8019029beb605885e08e13
+          - a89e20ada0e725785be5f1478b132b0f7009f70a
 
 permissions:
   contents: read
@@ -154,6 +155,7 @@ jobs:
             '7ca4904fb227a124743fefec002d15458025f128'
             '0f888d2aee15fb14b377ded40dfcb76825a56d94'
             'c788cf656aebd6828e8019029beb605885e08e13'
+            'a89e20ada0e725785be5f1478b132b0f7009f70a'
           )
           if ([string]::IsNullOrWhiteSpace($env:VC_SELECTED_SOURCE_REF) -or
               $approved -cnotcontains $env:VC_SELECTED_SOURCE_REF) {
