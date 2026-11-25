@@ -16,7 +16,8 @@ import struct
 import sys
 
 SCHEMA = "virtualcar-vmware-provider-provenance-v1"
-KEY = r"SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car"
+KEY = r"SOFTWARE\PassThruSupport.04.04\J2534 Lab Adapter"
+LEGACY_KEY = r"SOFTWARE\PassThruSupport.04.04\SectorV Virtual Car"
 MAX_DLL = 64 * 1024 * 1024
 
 
@@ -283,22 +284,29 @@ def assess(provider_present, function_library, built_path):
 
 
 def read_registry32():
-    """Open exactly one HKLM canonical key with read rights, never enumerate keys."""
+    """Read only the current and historical exact HKLM Registry32 keys."""
     if sys.platform != "win32":
         return None, None, "runner_not_windows"
     try:
         import winreg
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, KEY, 0,
-                            winreg.KEY_READ | winreg.KEY_WOW64_32KEY) as key:
+        found = []
+        for name in (KEY, LEGACY_KEY):
             try:
-                value, kind = winreg.QueryValueEx(key, "FunctionLibrary")
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, name, 0,
+                                     winreg.KEY_READ | winreg.KEY_WOW64_32KEY)
             except FileNotFoundError:
-                value, kind = None, None
-            if kind not in (winreg.REG_SZ, winreg.REG_EXPAND_SZ):
-                value = None
-            return True, value, None
-    except FileNotFoundError:
-        return False, None, None
+                continue
+            with key:
+                try:
+                    value, kind = winreg.QueryValueEx(key, "FunctionLibrary")
+                except FileNotFoundError:
+                    value, kind = None, None
+                if kind not in (winreg.REG_SZ, winreg.REG_EXPAND_SZ):
+                    value = None
+                found.append(value)
+        if len(found) > 1:
+            return None, None, "conflicting_provider_registrations"
+        return (True, found[0], None) if found else (False, None, None)
     except (OSError, PermissionError):
         return None, None, "registry_read_unavailable"
 
