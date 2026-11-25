@@ -29,10 +29,71 @@ foreach ($entry in $manifest.files) {
     }
 }
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+if (-not ('VC086.WindowOwnership' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace VC086 {
+    public static class WindowOwnership {
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    }
+}
+'@
+}
 function Find-Element($root, [string]$id) {
-    $condition = [System.Windows.Automation.PropertyCondition]::new(
+    $idCondition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+    $pidCondition = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
+    $condition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.Condition[]]@($idCondition,$pidCondition))
     return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+function Wait-OwnedWindow($process) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $last = 'No HWND'
+    do {
+        $process.Refresh()
+        if ($process.HasExited) { throw 'Application exited before UIA readiness.' }
+        $hwnd = $process.MainWindowHandle
+        if ($hwnd -ne [IntPtr]::Zero) {
+            [uint32]$owner = 0
+            $thread = [VC086.WindowOwnership]::GetWindowThreadProcessId($hwnd, [ref]$owner)
+            $last = "HWND=$hwnd owner=$owner expected=$($process.Id)"
+            if ($thread -ne 0 -and $owner -eq $process.Id) {
+                try {
+                    $candidate = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+                    if ($null -ne $candidate) {
+                        $uiaPid = $candidate.Current.ProcessId
+                        $uiaHwnd = $candidate.Current.NativeWindowHandle
+                        $last += " UIA_PID=$uiaPid UIA_HWND=$uiaHwnd"
+                        # WinUI may expose a host provider at the native window root.
+                        # Require the exact HWND and unique app-owned anchors instead
+                        # of trusting the provider PID or selecting an arbitrary window.
+                        if ([int64]$uiaHwnd -eq $hwnd.ToInt64()) {
+                            $heading = Find-Element $candidate 'VC075.Heading'
+                            $nav = Find-Element $candidate 'VC077.Navigation'
+                            $lang = Find-Element $candidate 'VC075.Language'
+                            if ($null -ne $heading -and $null -ne $nav -and $null -ne $lang) {
+                                [uint32]$confirmedOwner = 0
+                                $confirmedThread = [VC086.WindowOwnership]::GetWindowThreadProcessId($hwnd, [ref]$confirmedOwner)
+                                if ($confirmedThread -ne 0 -and $confirmedOwner -eq $process.Id -and -not $process.HasExited) {
+                                    Write-Host "VC086_UIA_OWNED_WINDOW=PASS $last"
+                                    return $candidate
+                                }
+                            }
+                        }
+                    }
+                }
+                catch [System.Windows.Automation.ElementNotAvailableException] {
+                    $last += ' UIA provider not ready'
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 200
+    } while ($timer.Elapsed.TotalSeconds -lt 30)
+    throw "No owned and ready WinUI window: $last"
 }
 function Wait-Element($root, [string]$id) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
@@ -116,16 +177,7 @@ $passed = 0
 $navigationPassed = 0
 $journalPassed = 0
 try {
-    $timer = [Diagnostics.Stopwatch]::StartNew()
-    do {
-        $process.Refresh()
-        if ($process.HasExited) { throw 'Application exited.' }
-        if ($process.MainWindowHandle -ne [IntPtr]::Zero) { break }
-        Start-Sleep -Milliseconds 200
-    } while ($timer.Elapsed.TotalSeconds -lt 20)
-    if ($process.MainWindowHandle -eq [IntPtr]::Zero) { throw 'No application window.' }
-    $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
-    if ($window.Current.ProcessId -ne $process.Id) { throw 'Window process mismatch.' }
+    $window = Wait-OwnedWindow $process
     foreach ($case in @(
         @{ code='EN'; heading='CEM529 Configuration'; load='Load profile'; audit='Configuration audit' },
         @{ code='RU'; heading='Конфигурация CEM529'; load='Загрузить профиль'; audit='Аудит конфигурации' },
