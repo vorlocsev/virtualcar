@@ -58,9 +58,19 @@ public sealed class CemPreviewWindow : Window
         var heading = new StackPanel { Spacing = 4 };
         heading.Children.Add(_heading);
         heading.Children.Add(_subtitle);
-        _language.Items.Add("EN");
-        _language.Items.Add("RU");
+        var english = new ComboBoxItem { Content = "EN" };
+        var russian = new ComboBoxItem { Content = "RU" };
+        AutomationId(english, "VC075.Language.EN");
+        AutomationId(russian, "VC075.Language.RU");
+        _language.Items.Add(english);
+        _language.Items.Add(russian);
         _language.SelectedIndex = 0;
+        AutomationId(_language, "VC075.Language");
+        AutomationId(_heading, "VC075.Heading");
+        AutomationId(_load, "VC075.Load");
+        AutomationId(_search, "VC075.Search");
+        AutomationId(_filter, "VC075.Filter");
+        AutomationId(_auditHeading, "VC075.AuditHeading");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_language, "Language / Язык");
         Add(header, heading, 0);
         Add(header, _language, 0, 1);
@@ -182,6 +192,9 @@ public sealed class CemPreviewWindow : Window
         _statusRu = ru;
         _status.Text = T(en, ru);
     }
+
+    private static void AutomationId(DependencyObject element, string id) =>
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(element, id);
 
     private static void Add(Grid grid, UIElement child, int row, int column = 0)
     {
