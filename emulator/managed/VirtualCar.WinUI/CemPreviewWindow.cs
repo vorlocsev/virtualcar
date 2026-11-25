@@ -33,6 +33,19 @@ public sealed class CemPreviewWindow : Window
     private readonly StackPanel _placeholder = new() { Spacing = 12, Padding = new Thickness(12) };
     private readonly TextBlock _placeholderHeading = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _placeholderText = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel _monitorPanel = new() { Spacing = 8 };
+    private readonly TextBox _monitorPath = new();
+    private readonly Button _monitorStart = new();
+    private readonly Button _monitorStop = new();
+    private readonly Button _monitorRefresh = new();
+    private readonly ComboBox _monitorDirection = new() { MinWidth = 120 };
+    private readonly TextBox _monitorFilter = new();
+    private readonly TextBlock _monitorStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly ListView _monitorRows = new() { MaxHeight = 300, SelectionMode = ListViewSelectionMode.None };
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _monitorTimer;
+    private NativeTraceSnapshot? _monitorSnapshot;
+    private bool _monitorRunning;
+    private bool _monitorFailed;
     private readonly StackPanel _modulePanel = new() { Spacing = 10 };
     private readonly Button _moduleRefresh = new();
     private readonly TextBlock _moduleStatus = new() { TextWrapping = TextWrapping.Wrap };
@@ -122,6 +135,30 @@ public sealed class CemPreviewWindow : Window
         var page = new Grid();
         _placeholder.Children.Add(_placeholderHeading);
         _placeholder.Children.Add(_placeholderText);
+        _monitorPanel.Children.Add(_monitorPath);
+        var monitorActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        monitorActions.Children.Add(_monitorStart);
+        monitorActions.Children.Add(_monitorStop);
+        monitorActions.Children.Add(_monitorRefresh);
+        _monitorPanel.Children.Add(monitorActions);
+        foreach (string label in new[] { "All", "TX", "RX" })
+            _monitorDirection.Items.Add(new ComboBoxItem { Content = label });
+        _monitorDirection.SelectedIndex = 0;
+        _monitorPanel.Children.Add(_monitorDirection);
+        _monitorPanel.Children.Add(_monitorFilter);
+        _monitorPanel.Children.Add(_monitorStatus);
+        _monitorPanel.Children.Add(_monitorRows);
+        _placeholder.Children.Add(_monitorPanel);
+        if (!_ephemeral) _monitorPath.Text = Path.Combine(Path.GetTempPath(), NativeCanTrace.LegacyLogFile);
+        AutomationId(_monitorStart, "VC084.Monitor.Start");
+        AutomationId(_monitorStop, "VC084.Monitor.Stop");
+        AutomationId(_monitorRefresh, "VC084.Monitor.Refresh");
+        _monitorStart.Click += (_, _) => StartMonitor();
+        _monitorStop.Click += (_, _) => { StopMonitor(); RenderMonitor(); };
+        _monitorRefresh.Click += (_, _) => ReadMonitor();
+        _monitorPath.TextChanged += (_, _) => { StopMonitor(); _monitorSnapshot = null; _monitorFailed = false; RenderMonitor(); };
+        _monitorDirection.SelectionChanged += (_, _) => RenderMonitor();
+        _monitorFilter.TextChanged += (_, _) => RenderMonitor();
         _modulePanel.Children.Add(_moduleRefresh);
         _modulePanel.Children.Add(_moduleStatus);
         _modulePanel.Children.Add(_moduleList);
@@ -301,7 +338,7 @@ public sealed class CemPreviewWindow : Window
             await RunAsync(edits, row.Offset);
         };
         _clear.Click += async (_, _) => { if (!Busy && _edits.Count > 0) await RunAsync(new(), Selected?.Offset); };
-        Closed += (_, _) => { _closed = true; _operation?.Cancel(); };
+        Closed += (_, _) => { _closed = true; StopMonitor(); _operation?.Cancel(); };
         _language.SelectionChanged += (_, _) =>
         {
             if (_closed || _language.SelectedIndex < 0) return;
@@ -377,7 +414,10 @@ public sealed class CemPreviewWindow : Window
                     ? T("Native ECM scenario preview — not live telemetry.", "Предпросмотр сценария ECM — не текущая телеметрия.")
                     : _section == Section.Modules
                         ? T("Configured ECU inventory — not discovery.", "Настроенные ECU — не результат обнаружения.")
-                        : T("Planned workspace — not implemented.", "Запланированный раздел — не реализован."); 
+                        : T("CAN monitor — application log, not wire capture.", "CAN Monitor — журнал приложения, не захват с шины.");
+        if (_section != Section.Diagnostics) StopMonitor();
+        _monitorPanel.Visibility = _section == Section.Diagnostics ? Visibility.Visible : Visibility.Collapsed;
+        RenderMonitor(); 
         _modulePanel.Visibility = _section == Section.Modules ? Visibility.Visible : Visibility.Collapsed;
         RenderModules();
         _vehiclePanel.Visibility = _section == Section.Vehicle ? Visibility.Visible : Visibility.Collapsed;
@@ -393,12 +433,94 @@ public sealed class CemPreviewWindow : Window
                 "Проверьте профиль рядом с зарегистрированной DLL J2534. Перед применением закройте диагностические программы и редакторы. Настройки вступают в силу при следующем PassThruOpen."),
             Section.Modules => T("Read the profile beside the registered J2534 Lab Adapter. No diagnostic requests are sent.",
                 "Чтение профиля рядом с зарегистрированным J2534 Lab Adapter. Диагностические запросы не отправляются."),
-            Section.Diagnostics => T("Read-only diagnostic tools are planned. No diagnostic messages are sent.",
-                "Планируются инструменты диагностики только для чтения. Запросы не отправляются."),
+            Section.Diagnostics => T("Read existing TX and delivered RX records from the selected local J2534 log. No connection is opened and no messages are sent.",
+                "Чтение существующих TX и доставленных RX из локального журнала J2534. Подключение не открывается, запросы не отправляются."),
             Section.Connection => T("J2534 04.04 / x86. Use a reviewed local VirtualCarJ2534.dll in a stable folder. Close VIDA and other diagnostic clients before changing registration. No DLL files are copied or deleted.",
                 "J2534 04.04 / x86. Выберите проверенную локальную VirtualCarJ2534.dll в постоянной папке. Закройте VIDA и другие диагностические программы. Файлы DLL не копируются и не удаляются."),
             _ => ""
         };
+    }
+
+    private void StartMonitor()
+    {
+        if (_ephemeral || Busy || _closed || _section != Section.Diagnostics || _monitorRunning) return;
+        _monitorRunning = true;
+        _monitorTimer ??= DispatcherQueue.CreateTimer();
+        _monitorTimer.Interval = TimeSpan.FromSeconds(1);
+        _monitorTimer.Tick -= MonitorTick;
+        _monitorTimer.Tick += MonitorTick;
+        ReadMonitor();
+        if (_monitorRunning) _monitorTimer.Start();
+    }
+
+    private void MonitorTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        if (_closed || Busy || _section != Section.Diagnostics) { StopMonitor(); RenderMonitor(); return; }
+        ReadMonitor();
+    }
+
+    private void StopMonitor()
+    {
+        _monitorRunning = false;
+        _monitorTimer?.Stop();
+    }
+
+    private void ReadMonitor()
+    {
+        if (_ephemeral || Busy || _closed || _section != Section.Diagnostics) return;
+        _monitorSnapshot = null;
+        _monitorFailed = false;
+        try { _monitorSnapshot = NativeCanTrace.ReadFile(_monitorPath.Text.Trim()); }
+        catch (Exception) { _monitorFailed = true; StopMonitor(); }
+        RenderMonitor();
+    }
+
+    private void RenderMonitor()
+    {
+        _monitorPath.Header = T("Local J2534 log (absolute path)", "Локальный журнал J2534 (абсолютный путь)");
+        _monitorStart.Content = T("Start monitor", "Запустить монитор");
+        _monitorStop.Content = T("Stop monitor", "Остановить монитор");
+        _monitorRefresh.Content = T("Refresh snapshot", "Обновить снимок");
+        _monitorDirection.Header = T("Direction", "Направление");
+        if (_monitorDirection.Items.Count > 0 && _monitorDirection.Items[0] is ComboBoxItem all)
+            all.Content = T("All", "Все");
+        _monitorFilter.Header = T("Filter CAN ID / payload / PID / process", "Фильтр CAN ID / данных / PID / процесса");
+        bool enabled = !_ephemeral && !Busy && !_closed;
+        _monitorPath.IsEnabled = enabled && !_monitorRunning;
+        _monitorStart.IsEnabled = _monitorRefresh.IsEnabled = enabled && !_monitorRunning;
+        _monitorStop.IsEnabled = _monitorRunning;
+        _monitorRows.Items.Clear();
+        if (_monitorSnapshot is null)
+        {
+            _monitorStatus.Text = _monitorFailed
+                ? T("Log unavailable. Monitoring stopped.", "Журнал недоступен. Монитор остановлен.")
+                : T("No log read.", "Журнал не прочитан.");
+            return;
+        }
+        string filter = _monitorFilter.Text.Trim();
+        int shown = 0;
+        foreach (var row in _monitorSnapshot.Rows)
+        {
+            if (_monitorDirection.SelectedIndex == 1 && row.Direction != NativeTraceDirection.Tx ||
+                _monitorDirection.SelectedIndex == 2 && row.Direction != NativeTraceDirection.Rx) continue;
+            string can = row.CanId?.ToString("X") ?? "—";
+            string protocol = row.Protocol switch { 5 => "CAN", 6 => "ISO15765", _ => "—" };
+            string pid = row.Pid.ToString("X8");
+            if (filter.Length > 0 && !string.Join(" ", can, row.DataHex, pid, row.Host)
+                    .Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            _monitorRows.Items.Add(new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = $"{row.Direction.ToString().ToUpperInvariant()} · {can} · {protocol} · {row.Baud?.ToString() ?? "—"} · PID {pid} {row.Host}\n" +
+                    $"CH {row.Channel?.ToString() ?? "—"} · t32 {row.TimeUs?.ToString() ?? "—"} µs · {row.DataHex}" +
+                    (row.PossibleTruncation ? T(" [possibly truncated]", " [возможно усечено]") : "")
+            });
+            shown++;
+        }
+        _monitorStatus.Text = (_monitorRunning ? T("Monitoring log", "Мониторинг журнала") : T("Snapshot", "Снимок")) +
+            $" · {shown}/{_monitorSnapshot.Rows.Count} · " +
+            T("Latest 500 records max; not a complete capture.", "До 500 последних записей; не полный захват.") +
+            (_monitorSnapshot.TailOnly ? T(" Tail only.", " Только конец файла.") : "");
     }
 
     private void InspectModules()
