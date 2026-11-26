@@ -67,7 +67,10 @@ function Check-PythonCount([string]$log,[int]$count,[int]$skips) {
 }
 $stage = 'package_before'
 try {
+    $evidenceHashes = @{}
+    foreach ($file in @($manifest,$managed,$native)) { $evidenceHashes[$file]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
     Check-Package 'package-before'
+    $packageInfo = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     $report.gates[$stage]='pass'
     $stage='core'
     $core = Join-Path $PSScriptRoot '..\VirtualCar.Core.Checks\VirtualCar.Core.Checks.csproj'
@@ -105,6 +108,7 @@ try {
                             $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$id)
                             $element = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
                             if ($null -eq $element -or $element.Current.ProcessId -ne $process.Id) { $ready=$false; break }
+                            if ($id -eq 'VC094A.Vehicle.Name' -and $packageInfo.private_profile_included -and $element.Current.Name -notlike '*XC90 V8*2009*') { $ready=$false; break }
                         }
                     }
                 } catch { $ready=$false }
@@ -127,6 +131,9 @@ try {
     $report.gates[$stage]='pass'
     $stage='final_integrity'
     Assert-Checkout
+    foreach ($file in $evidenceHashes.Keys) {
+        if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $evidenceHashes[$file]) { throw 'Evidence manifest changed.' }
+    }
     Check-Package 'package-after'
     $report.gates[$stage]='pass'
     $report.status='pass'
