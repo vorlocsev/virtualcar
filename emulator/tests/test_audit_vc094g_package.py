@@ -37,7 +37,7 @@ class PackageChecks(unittest.TestCase):
         for name in sorted(audit.RUNTIME):
             raw = pe() if name.endswith((".exe", ".dll")) else b"synthetic runtime"
             self.put(name, raw)
-            self.base.append(self.row("VirtualCar.WinUI.exe" if name == "VirtualCar.exe" else name, raw))
+            self.base.append(self.row(name, raw))
         profiles = []
         for ident, source in audit.PROFILES.items():
             raw = ("synthetic profile " + ident).encode()
@@ -92,7 +92,7 @@ class PackageChecks(unittest.TestCase):
             self.verify()
 
     def test_03_missing_extra_and_changed_files(self):
-        path = self.root / "VirtualCar.exe"
+        path = self.root / "VirtualCar.WinUI.exe"
         original = path.read_bytes()
         path.unlink()
         with self.assertRaises(ValueError):
@@ -190,13 +190,13 @@ class PackageChecks(unittest.TestCase):
             self.verify()
         self.manifest["original_vida"] = "not_tested"
         expected, private = self.verify()
-        (self.root / "VirtualCar.exe").write_bytes(b"changed")
+        (self.root / "VirtualCar.WinUI.exe").write_bytes(b"changed")
         output = self.root.parent / "demo.zip"
         with self.assertRaises(ValueError):
             audit.archive(self.root, expected, private, output)
         self.assertFalse(output.exists())
         self.assertFalse(list(output.parent.glob(".vc094g-*")))
-        (self.root / "VirtualCar.exe").write_bytes(pe())
+        (self.root / "VirtualCar.WinUI.exe").write_bytes(pe())
         (self.root / "unexpected.txt").write_bytes(b"unexpected")
         with self.assertRaises(ValueError):
             audit.archive(self.root, expected, private, output)
@@ -245,6 +245,20 @@ class PackageChecks(unittest.TestCase):
         row = next(r for r in self.files if r["path"] == name)
         row["path"] = "Microsoft.UI.Xaml.dll"
         with self.assertRaisesRegex(ValueError, "unexpected packaged file"):
+            self.verify()
+
+
+    def test_13_reject_renamed_winui_apphost(self):
+        original = "VirtualCar.WinUI.exe"
+        renamed = "VirtualCar.exe"
+        (self.root / original).rename(self.root / renamed)
+        row = next(r for r in self.files if r["path"] == original)
+        row["path"] = renamed
+        with self.assertRaisesRegex(ValueError, "unexpected packaged file"):
+            self.verify()
+        # Even matching a forged publish inventory cannot authorize that name.
+        next(r for r in self.base if r["path"] == original)["path"] = renamed
+        with self.assertRaisesRegex(ValueError, "invalid apphost name"):
             self.verify()
 
 

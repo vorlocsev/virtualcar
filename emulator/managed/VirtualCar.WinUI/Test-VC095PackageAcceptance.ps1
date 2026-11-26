@@ -113,25 +113,25 @@ try {
     $report.gates[$stage]='pass'
     $stage='python_target'
     $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests','-p','test_audit_vc094g_package.py','-v') 'python-target'
-    Check-PythonCount $log 12 0
+    Check-PythonCount $log 13 0
     $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests','-p','test_prepare_vc094b_local_profile.py','-v') 'python-private-package'
     Check-PythonCount $log 24 0
     $report.gates[$stage]='pass'
     $stage='python_full'
-    # Exact Windows guest baseline: 1284 discovered, one skip. Do not
+    # Exact Windows guest baseline: 1285 discovered, one skip. Do not
     # reuse the four-skip non-Windows expectation or relax the count.
     $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests','-v') 'python-full'
-    Check-PythonCount $log 1284 1
-    Write-Host 'VC096E_PYTHON_FULL=PASS 1283/1284 skipped=1'
+    Check-PythonCount $log 1285 1
+    Write-Host 'VC096E_PYTHON_FULL=PASS 1284/1285 skipped=1'
     $report.gates[$stage]='pass'
     $stage='compileall'
     [void](Run-Logged $python @('-X',('pycache_prefix='+(Join-Path $out 'pycache')),'-m','compileall','-q','emulator') 'compileall')
     $report.gates[$stage]='pass'
     $stage='normal_home_smoke'
-    # Launch the actual renamed apphost with no arguments. Only observe controls;
+    # Launch the unchanged published apphost with no arguments. Only observe controls;
     # no UI actions or registry modifications are requested by this script.
     Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
-    $process = Start-Process -FilePath (Join-Path $package 'VirtualCar.exe') -WorkingDirectory $package -PassThru
+    $process = Start-Process -FilePath (Join-Path $package 'VirtualCar.WinUI.exe') -WorkingDirectory $package -PassThru
     try {
         $timer = [Diagnostics.Stopwatch]::StartNew()
         $ready = $false
@@ -196,7 +196,7 @@ try {
     }
     # A separate process exercises actual language switching in a no-write mode.
     # The real no-argument startup check above remains mandatory.
-    $process = Start-Process -FilePath (Join-Path $package 'VirtualCar.exe') -WorkingDirectory $package -ArgumentList '--home-preview' -PassThru
+    $process = Start-Process -FilePath (Join-Path $package 'VirtualCar.WinUI.exe') -WorkingDirectory $package -ArgumentList '--home-preview' -PassThru
     try {
         function Find-HomeControl($root, [string]$id, [switch]$Desktop) {
             $byId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$id)

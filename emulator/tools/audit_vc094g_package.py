@@ -23,7 +23,7 @@ PROFILES = {
 }
 PRIVATE = "xc90-v8-2009"
 RUNTIME = {
-    "VirtualCar.exe", "VirtualCar.WinUI.dll", "VirtualCar.Core.dll",
+    "VirtualCar.WinUI.exe", "VirtualCar.WinUI.dll", "VirtualCar.Core.dll",
     "VirtualCar.WinUI.deps.json", "VirtualCar.WinUI.runtimeconfig.json",
     "Microsoft.UI.Xaml.dll", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll",
     "driver-tools/VirtualCar.DriverTool.exe", "driver-tools/VirtualCar.DriverTool.dll",
@@ -35,7 +35,7 @@ RUNTIME = {
 # case-insensitively, but keep the original inventory paths and fingerprints.
 RUNTIME_ROLES = {name.casefold() for name in RUNTIME}
 AMD64_ROLES = {name.casefold() for name in (
-    "VirtualCar.exe", "driver-tools/VirtualCar.DriverTool.exe",
+    "VirtualCar.WinUI.exe", "driver-tools/VirtualCar.DriverTool.exe",
     "Microsoft.UI.Xaml.dll", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll",
     "driver-tools/coreclr.dll", "driver-tools/hostfxr.dll", "driver-tools/hostpolicy.dll")}
 ART = {"artwork/" + name for name in (
@@ -193,9 +193,11 @@ def verify(root, manifest, build, expected_head, emulator):
         raise ValueError("invalid scope")
     native = hexstr(manifest.get("native_sha256"), 64)
     base = inventory(build["files"])
-    if "VirtualCar.WinUI.exe" not in base or "VirtualCar.exe" in base:
-        raise ValueError("invalid apphost mapping")
-    base["VirtualCar.exe"] = base.pop("VirtualCar.WinUI.exe")
+    # WinUI resource initialization depends on the published apphost name.
+    # The package must preserve that name and all other published paths.
+    if "VirtualCar.WinUI.exe" not in base or any(
+            name.casefold() == "virtualcar.exe" for name in base):
+        raise ValueError("invalid apphost name")
     base_roles = {name.casefold() for name in base}
     if (not RUNTIME_ROLES <= base_roles or
             any(n.startswith(("vehicle-data/", "artwork/")) for n in base_roles) or
