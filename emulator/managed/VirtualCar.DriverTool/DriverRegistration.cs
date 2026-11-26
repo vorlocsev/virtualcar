@@ -123,8 +123,11 @@ internal static class DriverRegistration
         }
     }
 
-    internal static void Remove(string expectedPath)
+    internal static void Remove(string expectedPath, bool canonicalOnly = false, string? expectedSha256 = null)
     {
+        if (canonicalOnly && (expectedSha256 is null || expectedSha256.Length != 64 ||
+            !string.Equals(Fingerprint(expectedPath), expectedSha256, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException();
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32);
         using var parent = root.OpenSubKey(Parent, writable: true);
         if (parent is null) return;
@@ -136,6 +139,7 @@ internal static class DriverRegistration
             var selected = key ?? legacy;
             if (selected is null) return;
             bool isLegacy = key is null;
+            if (canonicalOnly && isLegacy) throw new InvalidOperationException("Legacy registration is outside the canonical acceptance scope.");
             if (!Owned(selected, isLegacy) || !string.Equals((string?)Value(selected, "FunctionLibrary"),
                 expectedPath, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Registration changed or is not recognized.");
