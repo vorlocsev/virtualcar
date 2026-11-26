@@ -118,8 +118,11 @@ try {
     Check-PythonCount $log 24 0
     $report.gates[$stage]='pass'
     $stage='python_full'
-    $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests') 'python-full'
-    Check-PythonCount $log 1284 4
+    # Exact Windows guest baseline: 1284 discovered, one skip. Do not
+    # reuse the four-skip non-Windows expectation or relax the count.
+    $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests','-v') 'python-full'
+    Check-PythonCount $log 1284 1
+    Write-Host 'VC096E_PYTHON_FULL=PASS 1283/1284 skipped=1'
     $report.gates[$stage]='pass'
     $stage='compileall'
     [void](Run-Logged $python @('-X',('pycache_prefix='+(Join-Path $out 'pycache')),'-m','compileall','-q','emulator') 'compileall')

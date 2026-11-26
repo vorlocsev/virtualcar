@@ -427,6 +427,10 @@ Owner-local VMware execution of 2b36d479bafa154e1c73623eea1928bc3f38478a confirm
 
 Owner-local VMware execution at d7e98d65968b1b04f2c3cc5f598b379ea357a9e3 confirmed PowerShell parse, VC075 publish/window smoke, VC090 native preflight 8/8, registry absent, VC094G public demo integrity PASS (714 files), and Core 191/192. VC094D3 03 failed with InvalidDataException: its negative test only caught IOException, although the shared checked reader can reject a missing detached file during attribute validation before opening it. The regression now accepts either rejection type, still requires no variant directory, and also tests a present corrupt detached draft without publication or mutation. Production validation is unchanged. Core expectation remains 192/192; Python not reached on the previous HEAD. New HEAD not executed. No CI dispatch, registry changes or release.
 
+## VC096E Windows Python summary (pending)
+
+Owner-local VMware execution at 305b1676021d4baf9ba073679ac4e62d80a7188c confirmed PowerShell parse, VC075 publish/window smoke, VC090 native preflight 8/8, registry absent, VC094G public-demo integrity PASS (714 files), Core 192/192, targeted Python audit 12/12 and private-package synthetic checks 24/24. Full unittest discovery ran 1284 tests in 50.082 seconds, OK (skipped=1). The acceptance script rejected this successful run because it expected four skips. Require the observed Windows baseline of exactly 1284 discovered and one skip; keep exit-code and exact summary checks, and use verbose discovery to capture the identity and reason of the skipped test. The prior four-skip expectation was not validated for this guest. The supplied output also includes diagnostic prompts and expected-negative-looking messages; the prompt source and skipped test identity have not yet been verified. No assertion of original-client acceptance. Compileall, UIA, screenshots and final package integrity were not reached. New HEAD not executed. No CI dispatch, registration or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
