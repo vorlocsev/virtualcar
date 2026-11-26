@@ -58,6 +58,70 @@ internal static class HomePresentationChecks
                         var plan = HomeConnectionPlan.Create(registration, candidate, owned, true);
                         Require(!plan.CanEnable && !plan.CanDisable);
                     }
+        })),
+        ("VC095D 01 recognize each embedded provider path", () => Run(() =>
+        {
+            string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "VC095D"));
+            foreach (var v in BuiltInVehicles.All)
+            {
+                var path = BuiltInVehicles.PackageLibrary(root, v.Id);
+                var found = HomeProviderPaths.Recognize(root, path, []);
+                Require(found is not null && found.VehicleId == v.Id && found.Library == path &&
+                    found.State.IsOriginal && found.Variant is null);
+            }
+        })),
+        ("VC095D 02 recognize original and derived state paths", () => Run(() =>
+        {
+            string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "VC095D"));
+            foreach (var state in new[] { VehicleStateChoice.Original,
+                new VehicleStateChoice(NativeIgnitionSelection.PositionIICandidate, EcmScenario.WarmIdle),
+                new VehicleStateChoice(null, EcmScenario.Dynamic) })
+            {
+                string path = Path.Combine(VehicleStatePackages.Folder(root,state),"VirtualCarJ2534.dll");
+                var found = HomeProviderPaths.Recognize(root,path,[]);
+                Require(found is not null && found.VehicleId == LocalVehicleData.Id && found.State == state && found.Variant is null);
+            }
+        })),
+        ("VC095D 03 recognize only catalogued equipment variants", () => Run(() =>
+        {
+            string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "VC095D"));
+            var variant = new EquipmentVariant(60,"01",new string('a',64));
+            string path = EquipmentVariantPackages.Library(root,variant);
+            Require(HomeProviderPaths.Recognize(root,path,[variant])?.Variant == variant);
+            Require(HomeProviderPaths.Recognize(root,path,[]) is null);
+        })),
+        ("VC095D 04 reject unknown or noncanonical provider paths", () => Run(() =>
+        {
+            string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "VC095D"));
+            foreach (string? path in new string?[] { null, "VirtualCarJ2534.dll",
+                Path.Combine(root,"unrelated","VirtualCarJ2534.dll"),
+                Path.Combine(root,"vehicle-data","p2","..","p2","VirtualCarJ2534.dll"),
+                Path.Combine(root,"vehicle-data","xc90-v8-2009-states","i99-e99","VirtualCarJ2534.dll") })
+                Require(HomeProviderPaths.Recognize(root,path,[]) is null);
+        })),
+        ("VC095D 05 recoverable registration permits disconnect only", () => Run(() =>
+        {
+            Require(HomeConnectionPlan.Create(HomeRegistration.Registered,false,false,false,true) ==
+                new HomeConnectionPlan(HomeConnectionState.Recovery,false,true));
+            Require(HomeConnectionPlan.Create(HomeRegistration.Registered,true,true,false,true) ==
+                new HomeConnectionPlan(HomeConnectionState.Owned,false,true));
+        })),
+        ("VC095D 06 unknown registration still blocks both actions", () => Run(() =>
+        {
+            Require(HomeConnectionPlan.Create(HomeRegistration.Registered,false,false,false,false) ==
+                new HomeConnectionPlan(HomeConnectionState.Other,false,false));
+        })),
+        ("VC095D 07 recovery cannot bypass absent or conflict state", () => Run(() =>
+        {
+            Require(HomeConnectionPlan.Create(HomeRegistration.Absent,false,false,false,true) ==
+                new HomeConnectionPlan(HomeConnectionState.Unavailable,false,false));
+            Require(HomeConnectionPlan.Create(HomeRegistration.Review,true,true,false,true) ==
+                new HomeConnectionPlan(HomeConnectionState.Review,false,false));
+        })),
+        ("VC095D 08 busy blocks recovery", () => Run(() =>
+        {
+            Require(HomeConnectionPlan.Create(HomeRegistration.Registered,false,false,true,true) ==
+                new HomeConnectionPlan(HomeConnectionState.Recovery,false,false));
         }))
     ];
     private static Task Run(Action action) { action(); return Task.CompletedTask; }

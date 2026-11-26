@@ -345,6 +345,37 @@ public sealed class VehicleHomeWindow : Window
         catch (Exception) { return null; }
     }
 
+    private HomeProviderLocation? RegisteredLocation(DriverRegistration.Info registration)
+    {
+        if (registration.Status != DriverRegistration.State.Registered) return null;
+        try
+        {
+            return HomeProviderPaths.Recognize(AppContext.BaseDirectory, registration.Library,
+                _localProfile?.References?.Variants ?? Array.Empty<EquipmentVariant>());
+        }
+        catch (Exception) { return null; }
+    }
+
+    private (string Path, string Sha)? DisconnectCandidate(DriverRegistration.Info registration,
+        (string Path, string Sha)? selectedCandidate)
+    {
+        if (registration.Status != DriverRegistration.State.Registered) return null;
+        if (selectedCandidate is { } c && SamePath(registration.Library, c.Path)) return c;
+        var location = RegisteredLocation(registration);
+        if (location is null) return null;
+        // Recovery does not depend on the damaged INI. It still requires the
+        // registered native library to match an independently checked demo copy
+        // from this same distribution. Never remove unknown or changed DLLs.
+        try
+        {
+            var reference = BaseCandidate(BuiltInVehicles.All.Single(v => v.Id == "p2"));
+            if (reference is not { } known || !DriverRegistration.Fingerprint(location.Library)
+                    .Equals(known.Sha, StringComparison.OrdinalIgnoreCase)) return null;
+            return (location.Library, known.Sha);
+        }
+        catch (Exception) { return null; }
+    }
+
     private string IgnitionLabel(NativeIgnitionSelection? state) => state switch
     {
         NativeIgnitionSelection.Baseline => T("Baseline position", "Исходное положение"),
@@ -691,7 +722,14 @@ public sealed class VehicleHomeWindow : Window
         _rendering = true;
         try
         {
+            var registration = DriverRegistration.Read();
+            var registered = RegisteredLocation(registration);
             int selection = Math.Max(0, _vehicle.SelectedIndex);
+            if (registered is not null)
+            {
+                int index = _profiles.FindIndex(v => v.Id == registered.VehicleId);
+                if (index >= 0) selection = index;
+            }
             for (int i = 0; i < _profiles.Count; i++)
                 ((ComboBoxItem)_vehicle.Items[i]).Content = T(_profiles[i].NameEn, _profiles[i].NameRu);
             _vehicle.SelectedIndex = -1; _vehicle.SelectedIndex = selection;
@@ -736,25 +774,26 @@ public sealed class VehicleHomeWindow : Window
             _availability.Text = local ? T("Equipment snapshot included. Select prepared configuration separately.", "Комплектация включена. Подготовленная конфигурация выбирается отдельно.") :
                 T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
                 "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
-            var registration = DriverRegistration.Read();
             RenderVariant(profile, registration);
             RenderState(profile, registration);
             var candidate = Candidate(profile);
             bool own = candidate is { } c && registration.Status == DriverRegistration.State.Registered &&
                 SamePath(registration.Library, c.Path);
+            var disconnectCandidate = DisconnectCandidate(registration, candidate);
             bool activationCandidate = candidate is not null && (_localAvailability != LocalVehicleData.Availability.Invalid || own);
             var connection = HomeConnectionPlan.Create(registration.Status switch
             {
                 DriverRegistration.State.Absent => HomeRegistration.Absent,
                 DriverRegistration.State.Registered => HomeRegistration.Registered,
                 _ => HomeRegistration.Review
-            }, activationCandidate, own, _busy);
+            }, activationCandidate, own, _busy, disconnectCandidate is not null);
             _status.Text = connection.State switch
             {
                 HomeConnectionState.Ready => T("Ready to connect", "Готов к подключению"),
                 HomeConnectionState.Unavailable => T("Simulation not ready", "Эмуляция не подготовлена"),
                 HomeConnectionState.Owned => T("Adapter enabled", "Адаптер включён"),
                 HomeConnectionState.Other => T("Another adapter profile is active", "Активен другой профиль адаптера"),
+                HomeConnectionState.Recovery => T("Registered profile requires recovery", "Зарегистрированный профиль требует восстановления"),
                 _ => T("Connection requires review in advanced mode", "Требуется проверка подключения в расширенном режиме")
             };
             _connect.Content = T("Enable adapter", "Включить адаптер");
@@ -762,16 +801,19 @@ public sealed class VehicleHomeWindow : Window
             _refresh.Content = T("Refresh", "Обновить");
             _advanced.Content = T("Advanced settings", "Расширенные настройки");
             _vehicle.IsEnabled = _language.IsEnabled = _advanced.IsEnabled = _refresh.IsEnabled = !_busy;
+            _vehicle.IsEnabled = !_busy && registration.Status == DriverRegistration.State.Absent;
             _advanced.IsEnabled = !_homePreview && !_busy;
             _connect.IsEnabled = !_homePreview && _localAvailability != LocalVehicleData.Availability.Invalid && connection.CanEnable;
             _disconnect.IsEnabled = !_homePreview && connection.CanDisable;
-            _connect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Collapsed : Visibility.Visible;
-            _disconnect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Visible : Visibility.Collapsed;
+            bool showDisconnect = connection.State is HomeConnectionState.Owned or HomeConnectionState.Recovery;
+            _connect.Visibility = showDisconnect ? Visibility.Collapsed : Visibility.Visible;
+            _disconnect.Visibility = showDisconnect ? Visibility.Visible : Visibility.Collapsed;
             _notice.Text = (connection.State switch
             {
                 HomeConnectionState.Ready => T("Enable the adapter, then open your diagnostic program.", "Включите адаптер, затем откройте диагностическую программу."),
                 HomeConnectionState.Owned => T("Open your diagnostic program. Close it before disabling the adapter.", "Откройте диагностическую программу. Закройте её перед отключением адаптера."),
                 HomeConnectionState.Unavailable => T("Check that the selected vehicle or state is prepared.", "Проверьте подготовку выбранного автомобиля или состояния."),
+                HomeConnectionState.Recovery => T("Close diagnostic clients, then disable this registered adapter. No profile files will be changed.", "Закройте диагностические программы и отключите зарегистрированный адаптер. Файлы профилей не изменятся."),
                 _ => T("Check the connection in advanced settings.", "Проверьте подключение в расширенных настройках.")
             }) + "\n" + T("VIDA compatibility is not yet confirmed.", "Совместимость с VIDA пока не подтверждена.") +
                 (string.IsNullOrEmpty(_resultEn) ? "" : "\n" + T(_resultEn, _resultRu));
@@ -784,7 +826,7 @@ public sealed class VehicleHomeWindow : Window
         if (_homePreview || _busy || _closed || (enable && _localAvailability == LocalVehicleData.Availability.Invalid) ||
             !(enable ? _connect.IsEnabled : _disconnect.IsEnabled)) return;
         var profile = Selected;
-        var candidate = Candidate(profile);
+        var candidate = enable ? Candidate(profile) : DisconnectCandidate(DriverRegistration.Read(), Candidate(profile));
         if (candidate is not { } c) { Render(); return; }
         _busy = true; Render();
         try
@@ -805,8 +847,8 @@ public sealed class VehicleHomeWindow : Window
             {
                 _resultEn = "Cancelled."; _resultRu = "Отменено."; return;
             }
-            var now = Candidate(profile);
             var before = DriverRegistration.Read();
+            var now = enable ? Candidate(profile) : DisconnectCandidate(before, Candidate(profile));
             if (now is not { } n || n != c ||
                 (enable ? before.Status != DriverRegistration.State.Absent :
                     before.Status != DriverRegistration.State.Registered || !SamePath(before.Library, c.Path)))

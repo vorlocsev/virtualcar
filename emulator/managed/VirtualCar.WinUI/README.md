@@ -357,6 +357,14 @@ LocalVehicleData now distinguishes a missing optional owner-local profile from a
 
 Eight additional Core checks exercise missing/incomplete/malformed local packages and section-scoped identity parsing using synthetic input. Expected Core total is now 168/168; Python counts unchanged. The real private package and Windows startup remain unverified. No registry writes, private input modifications, CI dispatch or release.
 
+## VC095D registered profile recovery (pending)
+
+Ordinary home recognizes canonical registered provider paths for embedded vehicles, original owner-local profile, deterministic state directories and equipment variants from the validated local reference catalog. It restores the recognized vehicle selection when that vehicle is available; vehicle switching is disabled until registration is absent. Exact path recognition is not authentication or runtime acceptance.
+
+If a registered known copy has invalid or missing profile data, ordinary home can offer disconnect-only recovery when its DLL fingerprint matches the independently checked built-in P2 candidate from the same distribution. This does not relax activation validation, authorize unknown paths, accept changed DLLs, or remove legacy/conflicting registrations. The existing elevated remove-canonical helper still requires the same exact path and fingerprint and recognized registry ownership; user confirmation and fresh checks remain mandatory. No files are repaired or overwritten. If the reference copy cannot be validated or equipment variant metadata is unavailable, use explicit advanced review rather than automatic removal. The helper and registry contract are unchanged.
+
+Eight Core checks cover recognized and unknown paths plus recovery-only permissions and busy/conflict lockout. Expected Core total 176/176; Python unchanged. Windows execution, actual registry restoration and original VIDA acceptance remain pending. No registry changes or CI dispatch were performed.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
