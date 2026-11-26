@@ -1,4 +1,4 @@
-# VC095: exact-head package acceptance. No adapter operation or VIDA launch.
+﻿# VC095: exact-head package acceptance. No adapter operation or VIDA launch.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSha,
@@ -153,6 +153,96 @@ try {
                 }
             }
             if ($process.ExitCode -ne 0) { throw 'Packaged application exited abnormally.' }
+        } finally { $process.Dispose() }
+    }
+    # A separate process exercises actual language switching in a no-write mode.
+    # The real no-argument startup check above remains mandatory.
+    $process = Start-Process -FilePath (Join-Path $package 'VirtualCar.exe') -WorkingDirectory $package -ArgumentList '--home-preview' -PassThru
+    try {
+        function Find-HomeControl($root, [string]$id, [switch]$Desktop) {
+            $byId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$id)
+            $byPid = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)
+            $condition = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@($byId,$byPid))
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $process.Refresh()
+                if ($process.HasExited) { throw 'Preview process exited.' }
+                $item = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+                if ($null -eq $item -and $Desktop) {
+                    $item = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+                }
+                if ($null -ne $item) { return $item }
+                Start-Sleep -Milliseconds 100
+            } until ($timer.Elapsed.TotalSeconds -ge 5)
+            throw "Preview control missing: $id"
+        }
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $previewWindow = $null
+        do {
+            $process.Refresh()
+            if ($process.HasExited) { throw 'Preview process exited before readiness.' }
+            if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -eq 'Virtual Car') {
+                try {
+                    $candidate = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+                    if ($candidate.Current.ProcessId -eq $process.Id) {
+                        [void](Find-HomeControl $candidate 'VC094A.Language')
+                        $previewWindow = $candidate
+                    }
+                } catch { $previewWindow = $null }
+            }
+            if ($null -eq $previewWindow) { Start-Sleep -Milliseconds 200 }
+        } until ($null -ne $previewWindow -or $timer.Elapsed.TotalSeconds -ge 60)
+        if ($null -eq $previewWindow) { throw 'Home preview not ready.' }
+        $selector = Find-HomeControl $previewWindow 'VC094A.Language'
+        $originalVehicle = (Find-HomeControl $previewWindow 'VC094A.Vehicle.Name').Current.Name
+        $cases = @(
+            @{code='EN';advanced='Advanced settings';connection='Connection'},
+            @{code='RU';advanced='Расширенные настройки';connection='Подключение'},
+            @{code='EN';advanced='Advanced settings';connection='Connection'}
+        )
+        $count = 0
+        foreach ($case in $cases) {
+            if ($count -gt 0) {
+                $expand = $selector.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+                $expand.Expand()
+                $choice = Find-HomeControl $previewWindow ('VC094A.Language.'+$case.code) -Desktop
+                $choice.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                if ($expand.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded) { $expand.Collapse() }
+            }
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $advanced = Find-HomeControl $previewWindow 'VC094A.Advanced'
+                $connection = Find-HomeControl $previewWindow 'VC094F.Connection.Title'
+                if ($advanced.Current.Name -eq $case.advanced -and $connection.Current.Name -eq $case.connection) { break }
+                Start-Sleep -Milliseconds 100
+            } until ($timer.Elapsed.TotalSeconds -ge 5)
+            if ($advanced.Current.Name -ne $case.advanced -or $connection.Current.Name -ne $case.connection -or $advanced.Current.IsEnabled) { throw 'Preview localization or advanced lockout failed.' }
+            # Model display names can legitimately change across languages. EN must round-trip.
+            if ($case.code -eq 'EN' -and (Find-HomeControl $previewWindow 'VC094A.Vehicle.Name').Current.Name -ne $originalVehicle) { throw 'Vehicle selection changed.' }
+            $observedActions = 0
+            foreach ($id in @('VC094A.Connection.Enable','VC094A.Connection.Disable')) {
+                $byId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$id)
+                $action = $previewWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$byId)
+                if ($null -ne $action) {
+                    $observedActions++
+                    if ($action.Current.ProcessId -ne $process.Id -or $action.Current.IsEnabled) { throw 'Adapter action enabled in preview.' }
+                }
+            }
+            if ($observedActions -eq 0) { throw 'No adapter control observed.' }
+            $count++
+        }
+        if ($count -ne 3) { throw 'Incomplete language regression.' }
+        Write-Host 'VC095B_HOME_LANGUAGE=PASS 3/3'
+    } finally {
+        try {
+            $process.Refresh()
+            if (-not $process.HasExited) {
+                [void]$process.CloseMainWindow()
+                if (-not $process.WaitForExit(10000)) {
+                    $process.Kill(); [void]$process.WaitForExit(5000); throw 'Preview close failed.'
+                }
+            }
+            if ($process.ExitCode -ne 0) { throw 'Preview exited abnormally.' }
         } finally { $process.Dispose() }
     }
     $report.gates[$stage]='pass'
