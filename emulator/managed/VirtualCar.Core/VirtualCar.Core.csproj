@@ -6,4 +6,9 @@
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../virtualcar-default.ini" LogicalName="VirtualCar.Profiles.obd.ini" />
+    <EmbeddedResource Include="../../virtualcar-p2.ini" LogicalName="VirtualCar.Profiles.p2.ini" />
+    <EmbeddedResource Include="../../virtualcar-p2-b9fb-lab-vin.ini" LogicalName="VirtualCar.Profiles.p2-vin-demo.ini" />
+  </ItemGroup>
 </Project>
