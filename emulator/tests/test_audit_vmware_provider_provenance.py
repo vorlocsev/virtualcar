@@ -300,18 +300,38 @@ class ProviderRenameTests(unittest.TestCase):
         reg = mock.MagicMock()
         reg.REG_SZ, reg.REG_EXPAND_SZ = 1, 2
         reg.KEY_READ, reg.KEY_WOW64_32KEY = 1, 2
+        handles = {}
+
         def open_key(hive, name, reserved, access):
+            self.assertIs(hive, reg.HKEY_LOCAL_MACHINE)
+            self.assertEqual(reserved, 0)
+            self.assertEqual(access, reg.KEY_READ | reg.KEY_WOW64_32KEY)
             if name not in entries:
                 raise FileNotFoundError
             key = mock.MagicMock()
-            key.__enter__.return_value = name
+            # Real PyHKEY is a context manager; QueryValueEx receives the
+            # original handle, not the registry subkey name or __enter__ value.
+            key.__enter__.return_value = key
+            handles[key] = name
             return key
+
+        def query_value(key, name):
+            self.assertEqual(name, "FunctionLibrary")
+            self.assertIn(key, handles)
+            return entries[handles[key]], reg.REG_SZ
+
         reg.OpenKey.side_effect = open_key
-        reg.QueryValueEx.side_effect = lambda key, name: (entries[key], reg.REG_SZ)
+        reg.QueryValueEx.side_effect = query_value
         with mock.patch.object(sys, "platform", "win32"), mock.patch.dict(sys.modules, {"winreg": reg}):
             result = audit.read_registry32()
-        self.assertEqual(reg.OpenKey.call_count, 2)
+        self.assertEqual(reg.OpenKey.call_args_list, [
+            mock.call(reg.HKEY_LOCAL_MACHINE, name, 0, reg.KEY_READ | reg.KEY_WOW64_32KEY)
+            for name in (audit.KEY, audit.LEGACY_KEY)
+        ])
         self.assertEqual(reg.QueryValueEx.call_count, len(entries))
+        for handle in handles:
+            handle.__enter__.assert_called_once_with()
+            handle.__exit__.assert_called_once_with(None, None, None)
         return result
 
     def test_current_only(self):
