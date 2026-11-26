@@ -22,6 +22,7 @@ public sealed class VehicleHomeWindow : Window
     private readonly Grid _dashboard = new();
     private Border? _stateCard, _equipmentCard;
     private bool? _wideLayout;
+    private bool _hasDetails;
     private readonly TextBlock _name = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private readonly Image _vehiclePhoto = new() { Height = 210, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, Visibility = Visibility.Collapsed };
     private readonly TextBlock _photoCaption = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
@@ -194,7 +195,7 @@ public sealed class VehicleHomeWindow : Window
         Id(_equipmentTitle, "VC094F.Equipment.Title");
         Content = new ScrollViewer { Content = _content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Disabled,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = Brush(21,25,32) };
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, RequestedTheme = ElementTheme.Dark, Background = Brush(21,25,32) };
         Id(_vehicle, "VC094A.Vehicle"); Id(_language, "VC094A.Language");
         Id(_status, "VC094A.Connection.Status"); Id(_connect, "VC094A.Connection.Enable");
         Id(_disconnect, "VC094A.Connection.Disable"); Id(_refresh, "VC094A.Refresh");
@@ -233,7 +234,8 @@ public sealed class VehicleHomeWindow : Window
 
     private void ApplyLayout(double width)
     {
-        var plan = HomeLayoutPlan.ForWidth(width);
+        var plan = HomeLayoutPlan.ForWidth(width, _hasDetails);
+        _right.Visibility = _hasDetails ? Visibility.Visible : Visibility.Collapsed;
         if (_wideLayout == plan.TwoColumns) return;
         _wideLayout = plan.TwoColumns;
         _dashboard.ColumnSpacing = plan.Gap;
@@ -694,6 +696,8 @@ public sealed class VehicleHomeWindow : Window
             bool local = profile.Id == LocalVehicleData.Id;
             _identity.Text = (local ? "VIN: " : T("Demo VIN: ", "Демонстрационный VIN: ")) + profile.Vin;
             _configuration.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+            _hasDetails = local;
+            ApplyLayout(_dashboard.ActualWidth);
             if (_stateCard is not null) _stateCard.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
             if (_equipmentCard is not null) _equipmentCard.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
             _equipmentHint.Text = local && _localProfile is not null ? T("Equipment parameters: ", "Параметры комплектации: ") + _localProfile.Rows.Count +
@@ -720,12 +724,18 @@ public sealed class VehicleHomeWindow : Window
             var candidate = Candidate(profile);
             bool own = candidate is { } c && registration.Status == DriverRegistration.State.Registered &&
                 SamePath(registration.Library, c.Path);
-            _status.Text = registration.Status switch
+            var connection = HomeConnectionPlan.Create(registration.Status switch
             {
-                DriverRegistration.State.Absent when candidate is not null => T("Ready to enable diagnostic adapter", "Готов к включению адаптера"),
-                DriverRegistration.State.Absent => T("Selected simulation unavailable. Check preparation.", "Выбранная эмуляция недоступна. Проверьте подготовку."),
-                DriverRegistration.State.Registered when own => T("Adapter enabled for this vehicle", "Адаптер включён для этого автомобиля"),
-                DriverRegistration.State.Registered => T("Another profile or installation is active", "Активен другой профиль или установка"),
+                DriverRegistration.State.Absent => HomeRegistration.Absent,
+                DriverRegistration.State.Registered => HomeRegistration.Registered,
+                _ => HomeRegistration.Review
+            }, candidate is not null, own, _busy);
+            _status.Text = connection.State switch
+            {
+                HomeConnectionState.Ready => T("Ready to connect", "Готов к подключению"),
+                HomeConnectionState.Unavailable => T("Simulation not ready", "Эмуляция не подготовлена"),
+                HomeConnectionState.Owned => T("Adapter enabled", "Адаптер включён"),
+                HomeConnectionState.Other => T("Another adapter profile is active", "Активен другой профиль адаптера"),
                 _ => T("Connection requires review in advanced mode", "Требуется проверка подключения в расширенном режиме")
             };
             _connect.Content = T("Enable adapter", "Включить адаптер");
@@ -733,10 +743,17 @@ public sealed class VehicleHomeWindow : Window
             _refresh.Content = T("Refresh", "Обновить");
             _advanced.Content = T("Advanced settings", "Расширенные настройки");
             _vehicle.IsEnabled = _language.IsEnabled = _advanced.IsEnabled = _refresh.IsEnabled = !_busy;
-            _connect.IsEnabled = !_busy && candidate is not null && registration.Status == DriverRegistration.State.Absent;
-            _disconnect.IsEnabled = !_busy && own;
-            _notice.Text = T("Enable the adapter, then open your diagnostic program. VIDA compatibility is not yet confirmed.",
-                "Включите адаптер, затем откройте диагностическую программу. Совместимость с VIDA пока не подтверждена.") +
+            _connect.IsEnabled = connection.CanEnable;
+            _disconnect.IsEnabled = connection.CanDisable;
+            _connect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Collapsed : Visibility.Visible;
+            _disconnect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Visible : Visibility.Collapsed;
+            _notice.Text = (connection.State switch
+            {
+                HomeConnectionState.Ready => T("Enable the adapter, then open your diagnostic program.", "Включите адаптер, затем откройте диагностическую программу."),
+                HomeConnectionState.Owned => T("Open your diagnostic program. Close it before disabling the adapter.", "Откройте диагностическую программу. Закройте её перед отключением адаптера."),
+                HomeConnectionState.Unavailable => T("Check that the selected vehicle or state is prepared.", "Проверьте подготовку выбранного автомобиля или состояния."),
+                _ => T("Check the connection in advanced settings.", "Проверьте подключение в расширенных настройках.")
+            }) + "\n" + T("VIDA compatibility is not yet confirmed.", "Совместимость с VIDA пока не подтверждена.") +
                 (string.IsNullOrEmpty(_resultEn) ? "" : "\n" + T(_resultEn, _resultRu));
         }
         finally { _rendering = false; }
