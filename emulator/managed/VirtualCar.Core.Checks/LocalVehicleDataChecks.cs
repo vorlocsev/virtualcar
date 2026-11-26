@@ -22,7 +22,15 @@ internal static class LocalVehicleDataChecks
         ("VC095C 05 reject missing or duplicate vehicle identity", () => Run(Test13)),
         ("VC095C 06 reject wrong year and VIN syntax", () => Run(Test14)),
         ("VC095C 07 reject duplicate Vehicle section", () => Run(Test15)),
-        ("VC095C 08 reject invalid identity encoding and oversized bytes", () => Run(Test16))
+        ("VC095C 08 reject invalid identity encoding and oversized bytes", () => Run(Test16)),
+        ("VC095H 01 native reference matches", () => Run(Test17)),
+        ("VC095H 02 reject different native hash", () => Run(Test18)),
+        ("VC095H 03 reject changed reference DLL", () => Run(Test19)),
+        ("VC095H 04 reject changed reference INI", () => Run(Test20)),
+        ("VC095H 05 reject missing or invalid reference marker", () => Run(Test21)),
+        ("VC095H 06 exact inventory for all supported schemas", () => Run(Test22)),
+        ("VC095H 07 reject incomplete inventory", () => Run(Test23)),
+        ("VC095H 08 reject extra, pending or directory entries", () => Run(Test24))
     ];
     private static Task Run(Action action) { action(); return Task.CompletedTask; }
     private static void Require(bool value) { if (!value) throw new InvalidOperationException(); }
@@ -147,4 +155,83 @@ internal static class LocalVehicleDataChecks
         Reject(()=>LocalVehicleData.ReadVehicleVin(Ini(Identity+"\0")));
         Reject(()=>LocalVehicleData.ReadVehicleVin(Ini(Identity).Concat(new byte[]{0xff}).ToArray()));
     }
+
+    private static void WithNativeReference(Action<string,string,string> check) => WithFolder((root, _) =>
+    {
+        string dll = BuiltInVehicles.PackageLibrary(root, "p2");
+        string dir = Path.GetDirectoryName(dll)!;
+        Directory.CreateDirectory(dir);
+        byte[] bytes = [1,2,3,4];
+        string sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        File.WriteAllBytes(dll, bytes);
+        File.WriteAllBytes(Path.Combine(dir, "virtualcar.ini"), BuiltInVehicles.ReadProfile("p2"));
+        File.WriteAllText(Path.Combine(dir, "candidate.sha256"), sha);
+        check(root, dir, sha);
+    });
+    private static void Test17() => WithNativeReference((root, dir, sha) =>
+    {
+        LocalVehicleData.ValidateNativeBinding(root, sha.ToLowerInvariant());
+    });
+    private static void Test18() => WithNativeReference((root, dir, sha) =>
+    {
+        Reject(() => LocalVehicleData.ValidateNativeBinding(root, new string('0', 64)));
+    });
+    private static void Test19() => WithNativeReference((root, dir, sha) =>
+    {
+        File.WriteAllBytes(Path.Combine(dir, "VirtualCarJ2534.dll"), [4,3,2,1]);
+        Reject(() => LocalVehicleData.ValidateNativeBinding(root, sha));
+    });
+    private static void Test20() => WithNativeReference((root, dir, sha) =>
+    {
+        File.AppendAllText(Path.Combine(dir, "virtualcar.ini"), "; changed");
+        Reject(() => LocalVehicleData.ValidateNativeBinding(root, sha));
+    });
+    private static void Test21() => WithNativeReference((root, dir, sha) =>
+    {
+        string marker = Path.Combine(dir, "candidate.sha256");
+        File.WriteAllText(marker, "invalid");
+        Reject(() => LocalVehicleData.ValidateNativeBinding(root, sha));
+        File.Delete(marker);
+        Reject(() => LocalVehicleData.ValidateNativeBinding(root, sha));
+    });
+    private static void AddInventory(string folder, params string[] extras)
+    {
+        Directory.CreateDirectory(folder);
+        foreach (string file in new[] { "local-profile.json", "virtualcar.ini", "VirtualCarJ2534.dll",
+                     "candidate.sha256", "configuration.json" }.Concat(extras))
+            File.WriteAllText(Path.Combine(folder, file), "synthetic");
+    }
+    private static void Test22() => WithFolder((root, folder) =>
+    {
+        AddInventory(folder);
+        LocalVehicleData.ValidateInventory(folder, "vc094b-local-profile-v1");
+        File.WriteAllText(Path.Combine(folder, "configuration-options.json"), "synthetic");
+        LocalVehicleData.ValidateInventory(folder, "vc094d-local-profile-v2");
+        File.WriteAllText(Path.Combine(folder, "configuration-references.json"), "synthetic");
+        LocalVehicleData.ValidateInventory(folder, "vc094d2-local-profile-v3");
+    });
+    private static void Test23() => WithFolder((root, folder) =>
+    {
+        AddInventory(folder, "configuration-options.json");
+        Reject(() => LocalVehicleData.ValidateInventory(folder, "vc094d2-local-profile-v3"));
+        File.Delete(Path.Combine(folder, "virtualcar.ini"));
+        Reject(() => LocalVehicleData.ValidateInventory(folder, "vc094d-local-profile-v2"));
+    });
+    private static void Test24() => WithFolder((root, folder) =>
+    {
+        AddInventory(folder, "configuration-options.json", "configuration-references.json");
+        const string schema = "vc094d2-local-profile-v3";
+        foreach (string extra in new[] { ".local-profile.json.pending", "unknown.txt" })
+        {
+            string path = Path.Combine(folder, extra);
+            File.WriteAllText(path, "preserve");
+            Reject(() => LocalVehicleData.ValidateInventory(folder, schema));
+            Require(File.ReadAllText(path) == "preserve");
+            File.Delete(path);
+        }
+        string nested = Path.Combine(folder, "configuration.json");
+        File.Delete(nested);
+        Directory.CreateDirectory(nested);
+        Reject(() => LocalVehicleData.ValidateInventory(folder, schema));
+    });
 }
