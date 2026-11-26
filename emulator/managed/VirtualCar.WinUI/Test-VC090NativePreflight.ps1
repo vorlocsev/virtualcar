@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSha,
     [Parameter(Mandatory=$true)][string]$BuildDirectory,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [Parameter(Mandatory=$true)][string]$PythonExe
+    [Parameter(Mandatory=$true)][string]$PythonExe,
+    [string]$BashExe
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -64,7 +65,12 @@ while ($null -ne $cursor) {
 if ($PythonExe -notmatch '^[a-zA-Z]:[\\/]' -or -not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) { throw 'Absolute existing local Python executable required.' }
 $python = (Resolve-Path -LiteralPath $PythonExe).Path
 $git = (Get-Command git -CommandType Application | Select-Object -First 1).Source
-$bash = (Get-Command bash -CommandType Application | Select-Object -First 1).Source
+if ($BashExe) {
+    if ($BashExe -notmatch '^[a-zA-Z]:[\\/]' -or -not (Test-Path -LiteralPath $BashExe -PathType Leaf)) { throw 'Absolute existing Bash executable required.' }
+    $bash = (Resolve-Path -LiteralPath $BashExe).Path
+} else {
+    $bash = (Get-Command bash -CommandType Application | Select-Object -First 1).Source
+}
 $tar = (Get-Command tar.exe -CommandType Application | Select-Object -First 1).Source
 $ps32 = Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
 if (-not (Test-Path -LiteralPath $ps32 -PathType Leaf)) { throw 'Windows x86 PowerShell required.' }
@@ -146,7 +152,11 @@ try {
     Run-Logged $python @('-B',$verifier,$dll,'Win32') $repo 'exports'
     Require-Log 'exports' @('PASS: PE machine/format and exact 14 exports (Win32)')
     $gates[$stage]='pass'
+    $stage='registry32_preflight'
     $before = Read-Registration 'registration-before'
+    $report.registry_state = $before.state
+    $report.registered_dll_match = $before.match
+    if ($before.state -eq 'Unavailable') { throw 'Registry32 observation unavailable.' }
     $route = Join-Path $repo 'emulator\tools\verify_native_routes.ps1'
     $common = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$route,'-DllPath',$dll,'-OutputDirectory')
     $stage='native_silence_and_evidence'
