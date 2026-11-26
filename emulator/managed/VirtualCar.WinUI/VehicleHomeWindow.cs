@@ -28,6 +28,7 @@ public sealed class VehicleHomeWindow : Window
     private readonly ComboBox _equipmentParameter = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ComboBox _equipmentValue = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Button _equipmentReset = new();
+    private readonly Button _equipmentPrepare = new();
     private readonly TextBlock _equipmentStatus = new() { TextWrapping = TextWrapping.Wrap };
     private readonly StackPanel _equipmentEditor = new() { Spacing = 8 };
     private readonly Dictionary<int, string> _equipmentEdits = new();
@@ -92,11 +93,13 @@ public sealed class VehicleHomeWindow : Window
         _prepareState.Click += async (_, _) => await PrepareStateAsync();
         var equipmentContent = new StackPanel { Spacing = 8 };
         equipmentContent.Children.Add(_configurationRows);
-        foreach (var item in new FrameworkElement[] { _equipmentParameter, _equipmentValue, _equipmentReset, _equipmentStatus })
+        foreach (var item in new FrameworkElement[] { _equipmentParameter, _equipmentValue, _equipmentReset, _equipmentPrepare, _equipmentStatus })
             _equipmentEditor.Children.Add(item);
         equipmentContent.Children.Add(_equipmentEditor);
         _configuration.Content = equipmentContent;
         Id(_equipmentParameter, "VC094D.Equipment.Parameter"); Id(_equipmentValue, "VC094D.Equipment.Value");
+        Id(_equipmentPrepare, "VC094D2.Equipment.Prepare");
+        _equipmentPrepare.Click += async (_, _) => await PrepareEquipmentAsync();
         Id(_equipmentReset, "VC094D.Equipment.Reset"); Id(_equipmentStatus, "VC094D.Equipment.Status");
         _equipmentParameter.SelectionChanged += (_, _) =>
         {
@@ -344,6 +347,40 @@ public sealed class VehicleHomeWindow : Window
         finally { _busy = false; if (!_closed) Render(); }
     }
 
+    private async Task PrepareEquipmentAsync()
+    {
+        if (_busy || _closed || !_equipmentPrepare.IsEnabled || Selected.Id != LocalVehicleData.Id) return;
+        var edits = new Dictionary<int, string>(_equipmentEdits);
+        _busy = true; Render();
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = _content.XamlRoot,
+                Title = T("Prepare equipment copy?", "Подготовить копию комплектации?"),
+                Content = T("The original vehicle stays unchanged. This copy is not activated or connected.",
+                    "Исходный автомобиль останется без изменений. Копия не будет активирована или подключена."),
+                PrimaryButtonText = T("Prepare", "Подготовить"),
+                CloseButtonText = T("Cancel", "Отмена"), DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _closed) return;
+            if (DriverRegistration.Read().Status != DriverRegistration.State.Absent) throw new InvalidOperationException();
+            var current = LocalVehicleData.Load(AppContext.BaseDirectory);
+            if (current.Vehicle != Selected || current.Editor is not { } editor || current.References is not { } refs)
+                throw new InvalidDataException();
+            byte[] baseline = LocalVehicleData.ReadProfile(AppContext.BaseDirectory);
+            await Task.Run(() => refs.Prepare(AppContext.BaseDirectory, editor, baseline, edits));
+            _resultEn = "Equipment copy prepared and compared with original compiler. Not activated.";
+            _resultRu = "Копия комплектации подготовлена и сверена с исходным компилятором. Не активирована.";
+        }
+        catch (Exception)
+        {
+            _resultEn = "Equipment copy not prepared.";
+            _resultRu = "Не удалось подготовить копию комплектации.";
+        }
+        finally { _busy = false; if (!_closed) Render(); }
+    }
+
     private string EquipmentFinding(string id) => id switch
     {
         "PETROL_HEATER" => T("Diesel heater is incompatible with the petrol scenario.", "Дизельный отопитель несовместим с бензиновым двигателем."),
@@ -400,6 +437,9 @@ public sealed class VehicleHomeWindow : Window
             _equipmentParameter.IsEnabled = !_busy && selectable.Count > 0;
             _equipmentValue.IsEnabled = !_busy && _equipmentOffset >= 0;
             _equipmentReset.IsEnabled = !_busy && _equipmentEdits.Count > 0;
+            _equipmentPrepare.Content = T("Prepare equipment copy", "Подготовить копию комплектации");
+            bool eligible = preview.Status == "pass" && _localProfile.References?.Supports(_equipmentEdits) == true;
+            _equipmentPrepare.IsEnabled = !_busy && eligible && DriverRegistration.Read().Status == DriverRegistration.State.Absent;
             string status = preview.Status switch
             {
                 "blocked" => T("Incompatible selection", "Несовместимые параметры"),
@@ -410,7 +450,8 @@ public sealed class VehicleHomeWindow : Window
                 (preview.Errors.Count == 0 ? "" : "\n" + T("Errors: ", "Ошибки: ") + string.Join("\n", preview.Errors.Select(EquipmentFinding))) +
                 (preview.Warnings.Count == 0 ? "" : "\n" + T("Warnings: ", "Предупреждения: ") + string.Join("\n", preview.Warnings.Select(EquipmentFinding))) +
                 (preview.TopologyReview ? "\n" + T("Equipment topology requires review.", "Требуется проверка состава оборудования.") : "") +
-                "\n" + T("Nothing is applied to the simulator or vehicle.", "Изменения не применяются к эмулятору или автомобилю.");
+                "\n" + T("Nothing is applied to the simulator or vehicle.", "Изменения не применяются к эмулятору или автомобилю.") +
+                "\n" + (eligible ? T("Independent reference available for this selection.", "Есть эталон исходного компилятора для выбранного изменения.") : T("Preparation requires a referenced single change without warnings.", "Подготовка требует одного изменения с эталоном и без предупреждений."));
         }
         finally { _equipmentRendering = false; }
     }
