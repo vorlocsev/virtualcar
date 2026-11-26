@@ -25,6 +25,18 @@ function Assert-Source {
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw 'Clean checkout required.' }
 }
 Assert-Source
+# Parse every WinUI PowerShell script with the running engine before expensive
+# build/publish work. Parsing does not invoke script bodies.
+foreach ($script in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File)) {
+    $tokens = $null
+    $parseErrors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) {
+        $first = $parseErrors[0]
+        throw ('PowerShell syntax preflight failed: {0}:{1}: {2}' -f $script.Name,$first.Extent.StartLineNumber,$first.Message)
+    }
+}
+Write-Host 'VC096C_POWERSHELL_PARSE=PASS'
 if ($OutputDirectory -notmatch '^[A-Za-z]:[\\/]') { throw 'Absolute local output required.' }
 $out = [IO.Path]::GetFullPath($OutputDirectory)
 if ($out.Length -gt 145 -or $out -match '[^\x20-\x7E]' -or
