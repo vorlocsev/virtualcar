@@ -9,6 +9,7 @@ public sealed record LocalVehicleProfile(BuiltInVehicle Vehicle, IReadOnlyList<L
 {
     public ManagedEquipmentPreview? Editor { get; init; }
     public EquipmentReferences? References { get; init; }
+    public string NativeSha { get; init; } = "";
 }
 
 public static class LocalVehicleData
@@ -109,10 +110,56 @@ public static class LocalVehicleData
             throw new InvalidDataException();
     }
 
+    // The built-in package is an independent consistency anchor, not a signature.
+    public static void ValidateNativeBinding(string root, string expected)
+    {
+        if (!AcceptanceReportReader.IsHash(expected, 64)) throw new InvalidDataException();
+        string reference = BuiltInVehicles.PackageLibrary(root, "p2");
+        string dir = Path.GetDirectoryName(reference)!;
+        if (!BuiltInVehicles.MatchesProfile("p2", Read(Path.Combine(dir, "virtualcar.ini"), 1024 * 1024)))
+            throw new InvalidDataException();
+        string declared = Encoding.ASCII.GetString(Read(Path.Combine(dir, "candidate.sha256"), 128)).Trim();
+        if (!declared.Equals(expected, StringComparison.OrdinalIgnoreCase) ||
+            !NativeEcmScenarioApply.Digest(Read(reference, 64 * 1024 * 1024)).Equals(expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException();
+    }
+
+    public static void ValidateInventory(string dir, string schema)
+    {
+        var expected = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "local-profile.json", "virtualcar.ini", "VirtualCarJ2534.dll",
+            "candidate.sha256", "configuration.json"
+        };
+        switch (schema)
+        {
+            case "vc094d2-local-profile-v3":
+                expected.Add("configuration-references.json");
+                goto case "vc094d-local-profile-v2";
+            case "vc094d-local-profile-v2":
+                expected.Add("configuration-options.json");
+                break;
+            case "vc094b-local-profile-v1":
+                break;
+            default:
+                throw new InvalidDataException();
+        }
+        if (!Path.IsPathFullyQualified(dir)) throw new InvalidDataException();
+        for (DirectoryInfo? parent = new(dir); parent is not null; parent = parent.Parent)
+            if ((parent.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException();
+        foreach (var item in new DirectoryInfo(dir).EnumerateFileSystemInfos())
+            if ((item.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0 ||
+                !expected.Remove(item.Name)) throw new InvalidDataException();
+        if (expected.Count != 0) throw new InvalidDataException();
+    }
+
     public static LocalVehicleProfile Load(string root)
     {
         string dir = Folder(root);
-        using var manifest = JsonDocument.Parse(Read(Path.Combine(dir, "local-profile.json"), 4096));
+        string marker = Path.Combine(dir, "local-profile.json");
+        byte[] manifestBytes = Read(marker, 4096);
+        using var manifest = JsonDocument.Parse(manifestBytes);
         var m = manifest.RootElement;
         string? schema = m.GetProperty("schema").GetString();
         bool referencesIncluded = schema == "vc094d2-local-profile-v3";
@@ -122,7 +169,9 @@ public static class LocalVehicleData
         else Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256");
         if ((!editable && schema != "vc094b-local-profile-v1") || Hash(m, "profile_sha256") != PinnedProfile)
             throw new InvalidDataException();
+        ValidateInventory(dir, schema!);
         string native = Hash(m, "native_sha256");
+        ValidateNativeBinding(root, native);
         if (!Encoding.ASCII.GetString(Read(Path.Combine(dir, "candidate.sha256"), 128)).Trim().Equals(native, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException();
         byte[] profile = ReadProfile(root);
@@ -153,10 +202,12 @@ public static class LocalVehicleData
             references = new EquipmentReferences(rawReferences);
             references.VerifyAll(editor!, profile);
         }
+        ValidateInventory(dir, schema!);
+        if (!Read(marker, 4096).AsSpan().SequenceEqual(manifestBytes)) throw new InvalidDataException();
         return new(new BuiltInVehicle(Id, "Volvo XC90 V8 · 2009", "Volvo XC90 V8 · 2009",
             "Owner-local reviewed simulator profile. Original VIDA acceptance remains separate.",
             "Проверенный локальный профиль эмулятора. Фактическая приёмка VIDA проверяется отдельно.",
-            vin, false), rows) { Editor = editor, References = references };
+            vin, false), rows) { Editor = editor, References = references, NativeSha = native };
     }
 
     public static IReadOnlyList<LocalConfigurationRow> ParseCatalog(byte[] bytes)
