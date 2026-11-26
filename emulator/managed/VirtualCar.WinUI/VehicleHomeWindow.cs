@@ -11,9 +11,19 @@ public sealed class VehicleHomeWindow : Window
 {
     private readonly ComboBox _vehicle = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ComboBox _language = new() { MinWidth = 88 };
-    private readonly TextBlock _heading = new() { FontSize = 30, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock _name = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
-    private readonly Image _vehiclePhoto = new() { Height = 216, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, Visibility = Visibility.Collapsed };
+    private readonly TextBlock _heading = new() { FontSize = 28, TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly TextBlock _subheading = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _connectionTitle = new() { FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly TextBlock _stateTitle = new() { FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly TextBlock _equipmentTitle = new() { FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly TextBlock _equipmentHint = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel _left = new() { Spacing = 14 };
+    private readonly StackPanel _right = new() { Spacing = 14 };
+    private readonly Grid _dashboard = new();
+    private Border? _stateCard, _equipmentCard;
+    private bool? _wideLayout;
+    private readonly TextBlock _name = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly Image _vehiclePhoto = new() { Height = 210, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, Visibility = Visibility.Collapsed };
     private readonly TextBlock _photoCaption = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private string? _photoVehicleId;
     private int _photoRequest;
@@ -49,7 +59,7 @@ public sealed class VehicleHomeWindow : Window
     private readonly TextBlock _status = new() { FontSize = 18, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _notice = new() { TextWrapping = TextWrapping.Wrap };
     private readonly Button _connect = new(), _disconnect = new(), _refresh = new(), _advanced = new();
-    private readonly StackPanel _content = new() { Spacing = 12, Padding = new Thickness(24) };
+    private readonly StackPanel _content = new() { Spacing = 16, Padding = new Thickness(20), HorizontalAlignment = HorizontalAlignment.Stretch, RequestedTheme = ElementTheme.Dark };
     private readonly UiLanguageSettings? _settings;
     private readonly Action _openAdvanced;
     private bool _russian, _busy, _closed, _rendering;
@@ -74,7 +84,10 @@ public sealed class VehicleHomeWindow : Window
         top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _language.Items.Add("EN"); _language.Items.Add("RU");
         _language.SelectedIndex = _russian ? 1 : 0;
-        top.Children.Add(_heading); Grid.SetColumn(_language, 1); top.Children.Add(_language);
+        var headingGroup = new StackPanel { Spacing = 3 };
+        headingGroup.Children.Add(_heading); headingGroup.Children.Add(_subheading);
+        top.Children.Add(headingGroup); Grid.SetColumn(_language, 1); top.Children.Add(_language);
+        _language.VerticalAlignment = VerticalAlignment.Center;
         _content.Children.Add(top);
         try
         {
@@ -85,15 +98,12 @@ public sealed class VehicleHomeWindow : Window
         foreach (var profile in _profiles)
             _vehicle.Items.Add(new ComboBoxItem { Tag = profile.Id, Content = profile.NameEn });
         _vehicle.SelectedIndex = 0;
-        _content.Children.Add(_vehicle);
-        var card = new StackPanel { Spacing = 8, Padding = new Thickness(18) };
+        var card = new StackPanel { Spacing = 10 };
+        card.Children.Add(_vehicle);
         Id(_vehiclePhoto, "VC094E.Vehicle.Photo"); Id(_photoCaption, "VC094E.Vehicle.PhotoCaption");
         foreach (var item in new FrameworkElement[] { _name, _vehiclePhoto, _photoCaption, _description, _identity, _modules, _availability })
             card.Children.Add(item);
-        _content.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
-            BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray), Child = card });
-        _content.Children.Add(_equipmentVariant);
-        _content.Children.Add(_equipmentVariantStatus);
+        _left.Children.Add(Card(card));
         Id(_equipmentVariant, "VC094D3.Variant");
         Id(_equipmentVariantStatus, "VC094D3.Variant.Status");
         _equipmentVariant.SelectionChanged += (_, _) =>
@@ -106,9 +116,11 @@ public sealed class VehicleHomeWindow : Window
             _resultEn = _resultRu = "";
             Render();
         };
+        _statePanel.Children.Add(_stateTitle);
         foreach (var item in new FrameworkElement[] { _ignition, _engine, _prepareState, _stateStatus })
             _statePanel.Children.Add(item);
-        _content.Children.Add(_statePanel);
+        _stateCard = Card(_statePanel);
+        _right.Children.Add(_stateCard);
         Id(_ignition, "VC094C.Ignition"); Id(_engine, "VC094C.Engine");
         Id(_prepareState, "VC094C.Prepare"); Id(_stateStatus, "VC094C.State.Status");
         _ignition.SelectionChanged += (_, _) => SelectState();
@@ -149,17 +161,40 @@ public sealed class VehicleHomeWindow : Window
             Render();
         };
         _equipmentReset.Click += (_, _) => { if (!_busy) { _equipmentEdits.Clear(); Render(); } };
-        _content.Children.Add(_configuration);
+        var equipmentPanel = new StackPanel { Spacing = 10 };
+        foreach (var item in new FrameworkElement[] { _equipmentTitle, _equipmentVariant, _equipmentVariantStatus, _equipmentHint, _configuration })
+            equipmentPanel.Children.Add(item);
+        _equipmentCard = Card(equipmentPanel);
+        _right.Children.Add(_equipmentCard);
         Id(_configuration, "VC094B.Configuration");
         Id(_configurationRows, "VC094B.Configuration.Rows");
-        _content.Children.Add(_status);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        actions.Children.Add(_connect); actions.Children.Add(_disconnect); actions.Children.Add(_refresh);
-        _content.Children.Add(actions);
-        _content.Children.Add(_notice);
-        _content.Children.Add(_advanced);
+        var connection = new StackPanel { Spacing = 10 };
+        foreach (var item in new FrameworkElement[] { _connectionTitle, _status, _connect, _disconnect, _refresh, _notice })
+            connection.Children.Add(item);
+        _left.Children.Add(Card(connection));
+        _left.Children.Add(_advanced);
+        foreach (var button in new[] { _connect, _disconnect, _refresh, _advanced, _prepareState, _equipmentPrepare, _equipmentReset })
+        {
+            button.HorizontalAlignment = HorizontalAlignment.Stretch;
+            button.MinHeight = 36;
+        }
+        if (Application.Current.Resources.TryGetValue("AccentButtonStyle", out var accent) && accent is Style style)
+            _connect.Style = style;
+        _dashboard.ColumnDefinitions.Add(new ColumnDefinition());
+        _dashboard.ColumnDefinitions.Add(new ColumnDefinition());
+        _dashboard.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _dashboard.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _dashboard.Children.Add(_left); _dashboard.Children.Add(_right);
+        _content.Children.Add(_dashboard);
+        _dashboard.SizeChanged += (_, args) => ApplyLayout(args.NewSize.Width);
+        ApplyLayout(0);
+        Id(_dashboard, "VC094F.Dashboard");
+        Id(_connectionTitle, "VC094F.Connection.Title");
+        Id(_stateTitle, "VC094F.State.Title");
+        Id(_equipmentTitle, "VC094F.Equipment.Title");
         Content = new ScrollViewer { Content = _content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = Brush(21,25,32) };
         Id(_vehicle, "VC094A.Vehicle"); Id(_language, "VC094A.Language");
         Id(_status, "VC094A.Connection.Status"); Id(_connect, "VC094A.Connection.Enable");
         Id(_disconnect, "VC094A.Connection.Disable"); Id(_refresh, "VC094A.Refresh");
@@ -183,6 +218,33 @@ public sealed class VehicleHomeWindow : Window
         ResizeForDisplay();
     }
 
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush Brush(byte r, byte g, byte b) =>
+        new(Windows.UI.Color.FromArgb(255, r, g, b));
+
+    private static Border Card(FrameworkElement child) => new()
+    {
+        Background = Brush(31, 37, 47),
+        BorderBrush = Brush(56, 65, 78),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(14),
+        Padding = new Thickness(16),
+        Child = child
+    };
+
+    private void ApplyLayout(double width)
+    {
+        var plan = HomeLayoutPlan.ForWidth(width);
+        if (_wideLayout == plan.TwoColumns) return;
+        _wideLayout = plan.TwoColumns;
+        _dashboard.ColumnSpacing = plan.Gap;
+        _dashboard.RowSpacing = plan.TwoColumns ? 0 : 14;
+        _dashboard.ColumnDefinitions[0].Width = new GridLength(plan.LeftWeight, GridUnitType.Star);
+        _dashboard.ColumnDefinitions[1].Width = plan.TwoColumns
+            ? new GridLength(plan.RightWeight, GridUnitType.Star) : new GridLength(0);
+        Grid.SetRow(_right, plan.TwoColumns ? 0 : 1);
+        Grid.SetColumn(_right, plan.TwoColumns ? 1 : 0);
+    }
+
     private static void Id(DependencyObject element, string id) =>
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(element, id);
 
@@ -193,7 +255,7 @@ public sealed class VehicleHomeWindow : Window
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         double scale = Math.Max(1.0, GetDpiForWindow(hwnd) / 96.0);
         var work = area.WorkArea;
-        int w = Math.Min(work.Width, (int)Math.Round(1000 * scale)), h = Math.Min(work.Height, (int)Math.Round(720 * scale));
+        int w = Math.Min(work.Width, (int)Math.Round(1180 * scale)), h = Math.Min(work.Height, (int)Math.Round(800 * scale));
         if (w > 0 && h > 0) AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(
             work.X + (work.Width-w)/2, work.Y + (work.Height-h)/2, w, h));
     }
@@ -620,7 +682,11 @@ public sealed class VehicleHomeWindow : Window
                 ((ComboBoxItem)_vehicle.Items[i]).Content = T(_profiles[i].NameEn, _profiles[i].NameRu);
             _vehicle.SelectedIndex = -1; _vehicle.SelectedIndex = selection;
             var profile = Selected;
-            _heading.Text = T("Virtual Car", "Виртуальный автомобиль");
+            _heading.Text = "Virtual Car";
+            _subheading.Text = T("Your virtual vehicle", "Ваш виртуальный автомобиль");
+            _connectionTitle.Text = T("Connection", "Подключение");
+            _stateTitle.Text = T("Vehicle state", "Состояние автомобиля");
+            _equipmentTitle.Text = T("Equipment", "Комплектация");
             _vehicle.Header = T("Choose a vehicle", "Выберите автомобиль");
             _name.Text = T(profile.NameEn, profile.NameRu);
             _ = UpdatePhotoAsync(profile.Id);
@@ -628,6 +694,10 @@ public sealed class VehicleHomeWindow : Window
             bool local = profile.Id == LocalVehicleData.Id;
             _identity.Text = (local ? "VIN: " : T("Demo VIN: ", "Демонстрационный VIN: ")) + profile.Vin;
             _configuration.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+            if (_stateCard is not null) _stateCard.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+            if (_equipmentCard is not null) _equipmentCard.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+            _equipmentHint.Text = local && _localProfile is not null ? T("Equipment parameters: ", "Параметры комплектации: ") + _localProfile.Rows.Count +
+                T(" · protected: ", " · защищено: ") + _localProfile.Rows.Count(x => x.Locked) : "";
             _configuration.Header = local && _localProfile?.Editor is not null ? T("Vehicle equipment · draft", "Комплектация автомобиля · черновик") : T("Vehicle equipment · read only", "Комплектация автомобиля · просмотр");
             _configurationRows.Items.Clear();
             if (local && _localProfile is not null)
@@ -639,8 +709,8 @@ public sealed class VehicleHomeWindow : Window
             else _configuration.IsExpanded = false;
             RenderEquipment(local);
             var slots = local ? 8 : NativeEcuInventory.Inspect(BuiltInVehicles.ReadProfile(profile.Id)).Count;
-            _modules.Text = T("Configured diagnostic routes: ", "Настроено диагностических маршрутов: ") + slots +
-                T(" (not ECU discovery)", " (не обнаружение блоков)");
+            _modules.Text = T("Configured routes: ", "Настроено маршрутов: ") + slots +
+                T(" · not detected ECUs", " · не обнаруженные блоки");
             _availability.Text = local ? T("Equipment snapshot included. Select prepared configuration separately.", "Комплектация включена. Подготовленная конфигурация выбирается отдельно.") :
                 T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
                 "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
@@ -665,8 +735,8 @@ public sealed class VehicleHomeWindow : Window
             _vehicle.IsEnabled = _language.IsEnabled = _advanced.IsEnabled = _refresh.IsEnabled = !_busy;
             _connect.IsEnabled = !_busy && candidate is not null && registration.Status == DriverRegistration.State.Absent;
             _disconnect.IsEnabled = !_busy && own;
-            _notice.Text = T("Adapter registration does not mean a diagnostic client is connected. Original VIDA acceptance is not verified.",
-                "Регистрация адаптера не означает подключения диагностической программы. Приёмка оригинальной VIDA не подтверждена.") +
+            _notice.Text = T("Enable the adapter, then open your diagnostic program. VIDA compatibility is not yet confirmed.",
+                "Включите адаптер, затем откройте диагностическую программу. Совместимость с VIDA пока не подтверждена.") +
                 (string.IsNullOrEmpty(_resultEn) ? "" : "\n" + T(_resultEn, _resultRu));
         }
         finally { _rendering = false; }
