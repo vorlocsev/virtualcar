@@ -13,6 +13,11 @@ public sealed class VehicleHomeWindow : Window
     private readonly ComboBox _language = new() { MinWidth = 88 };
     private readonly TextBlock _heading = new() { FontSize = 30, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _name = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
+    private readonly Image _vehiclePhoto = new() { Height = 216, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, Visibility = Visibility.Collapsed };
+    private readonly TextBlock _photoCaption = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+    private string? _photoVehicleId;
+    private int _photoRequest;
+    private bool _photoReady;
     private readonly TextBlock _description = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _identity = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _modules = new() { TextWrapping = TextWrapping.Wrap };
@@ -82,7 +87,8 @@ public sealed class VehicleHomeWindow : Window
         _vehicle.SelectedIndex = 0;
         _content.Children.Add(_vehicle);
         var card = new StackPanel { Spacing = 8, Padding = new Thickness(18) };
-        foreach (var item in new FrameworkElement[] { _name, _description, _identity, _modules, _availability })
+        Id(_vehiclePhoto, "VC094E.Vehicle.Photo"); Id(_photoCaption, "VC094E.Vehicle.PhotoCaption");
+        foreach (var item in new FrameworkElement[] { _name, _vehiclePhoto, _photoCaption, _description, _identity, _modules, _availability })
             card.Children.Add(item);
         _content.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
             BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray), Child = card });
@@ -168,7 +174,7 @@ public sealed class VehicleHomeWindow : Window
             _settings?.TrySave(_russian ? UiLanguage.Russian : UiLanguage.English);
             Render();
         };
-        _refresh.Click += (_, _) => Render();
+        _refresh.Click += (_, _) => { _photoVehicleId = null; Render(); };
         _connect.Click += async (_, _) => await ChangeAsync(true);
         _disconnect.Click += async (_, _) => await ChangeAsync(false);
         _advanced.Click += (_, _) => { if (!_busy && !_closed) _openAdvanced(); };
@@ -545,6 +551,64 @@ public sealed class VehicleHomeWindow : Window
         finally { _equipmentRendering = false; }
     }
 
+    private void UpdatePhotoCaption(string vehicleId)
+    {
+        var info = VehicleArtwork.ForVehicle(vehicleId);
+        _photoCaption.Text = info is null ?
+            T("Generic diagnostic profile · no specific vehicle model", "Универсальный профиль · конкретная модель не задана") :
+            _photoReady ? T(info.CaptionEn, info.CaptionRu) + " · " + T("Photo: ", "Фото: ") + info.Author :
+            T("Reference photograph unavailable", "Фото модели недоступно");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_vehiclePhoto,
+            info is null ? "" : T(info.CaptionEn, info.CaptionRu));
+    }
+
+    private async Task UpdatePhotoAsync(string vehicleId)
+    {
+        if (_photoVehicleId == vehicleId)
+        {
+            UpdatePhotoCaption(vehicleId);
+            return;
+        }
+        _photoVehicleId = vehicleId;
+        int request = ++_photoRequest;
+        _photoReady = false;
+        _vehiclePhoto.Source = null;
+        _vehiclePhoto.Visibility = Visibility.Collapsed;
+        UpdatePhotoCaption(vehicleId);
+        var info = VehicleArtwork.ForVehicle(vehicleId);
+        if (info is null) return;
+        try
+        {
+            byte[] bytes = await Task.Run(() => VehicleArtwork.Load(AppContext.BaseDirectory, vehicleId));
+            if (_closed || request != _photoRequest) return;
+            using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            using (var writer = new Windows.Storage.Streams.DataWriter(stream))
+            {
+                writer.WriteBytes(bytes);
+                await writer.StoreAsync();
+                writer.DetachStream();
+            }
+            stream.Seek(0);
+            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+            await bitmap.SetSourceAsync(stream);
+            if (_closed || request != _photoRequest) return;
+            if (bitmap.PixelWidth != info.Width || bitmap.PixelHeight != info.Height)
+                throw new InvalidDataException();
+            _vehiclePhoto.Source = bitmap;
+            _vehiclePhoto.Visibility = Visibility.Visible;
+            _photoReady = true;
+            UpdatePhotoCaption(vehicleId);
+        }
+        catch (Exception)
+        {
+            if (_closed || request != _photoRequest) return;
+            _vehiclePhoto.Source = null;
+            _vehiclePhoto.Visibility = Visibility.Collapsed;
+            _photoReady = false;
+            UpdatePhotoCaption(vehicleId);
+        }
+    }
+
     private void Render()
     {
         if (_closed || _rendering) return;
@@ -559,6 +623,7 @@ public sealed class VehicleHomeWindow : Window
             _heading.Text = T("Virtual Car", "Виртуальный автомобиль");
             _vehicle.Header = T("Choose a vehicle", "Выберите автомобиль");
             _name.Text = T(profile.NameEn, profile.NameRu);
+            _ = UpdatePhotoAsync(profile.Id);
             _description.Text = T(profile.DescriptionEn, profile.DescriptionRu);
             bool local = profile.Id == LocalVehicleData.Id;
             _identity.Text = (local ? "VIN: " : T("Demo VIN: ", "Демонстрационный VIN: ")) + profile.Vin;
