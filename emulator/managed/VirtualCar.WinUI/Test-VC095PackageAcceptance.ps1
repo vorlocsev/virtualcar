@@ -75,7 +75,7 @@ try {
     $stage='core'
     $core = Join-Path $PSScriptRoot '..\VirtualCar.Core.Checks\VirtualCar.Core.Checks.csproj'
     $log = Run-Logged $dotnet @('run','--project',$core,'-c','Release','--disable-build-servers','-p:UseSharedCompilation=false') 'core'
-    if (@(Get-Content -LiteralPath $log | Where-Object { $_ -eq 'VirtualCar.Core synthetic checks: 184/184' }).Count -ne 1) { throw 'Expected exact Core 184/184.' }
+    if (@(Get-Content -LiteralPath $log | Where-Object { $_ -eq 'VirtualCar.Core synthetic checks: 192/192' }).Count -ne 1) { throw 'Expected exact Core 192/192.' }
     $report.gates[$stage]='pass'
     $stage='python_target'
     $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests','-p','test_audit_vc094g_package.py','-v') 'python-target'
