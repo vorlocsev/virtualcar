@@ -8,6 +8,16 @@ public sealed class EquipmentReferences
 {
     private readonly Dictionary<(int, string), string> _cases = new();
     public int Count => _cases.Count;
+    public IReadOnlyList<EquipmentVariant> Variants => _cases.OrderBy(p => p.Key.Item1)
+        .ThenBy(p => p.Key.Item2, StringComparer.Ordinal)
+        .Select(p => new EquipmentVariant(p.Key.Item1, p.Key.Item2, p.Value)).ToArray();
+
+    public byte[] CompileVariant(ManagedEquipmentPreview editor, byte[] baseline, EquipmentVariant variant)
+    {
+        if (!_cases.TryGetValue((variant.Offset, variant.Code), out string? sha) || sha != variant.ProfileSha)
+            throw new InvalidDataException("Unknown equipment variant.");
+        return Compile(editor, baseline, new Dictionary<int, string> { [variant.Offset] = variant.Code });
+    }
     public EquipmentReferences(byte[] bytes)
     {
         if (bytes.Length is < 1 or > 65536) throw new InvalidDataException();
