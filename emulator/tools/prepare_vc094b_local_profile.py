@@ -33,12 +33,17 @@ def checked_inputs(folder):
     if audit["status"] != "pass" or audit["configured_routes"] != 8 or audit["locked_fields"] != 12:
         raise ValueError("baseline_gate")
     rows = []
+    options = []
     for offset, base in sorted(gate.editor.rows.items()):
         info = gate.editor.options(offset)
         rows.append({"offset": offset, "name": info["name"], "value": base["as_text"], "locked": info["locked"]})
+        options.append({"offset": offset, "baseline_code": info["baseline_code"],
+                        "choices": [{"code": item["code"], "text": item["as_text"]}
+                                    for item in info["options"] if item["selectable"]
+                                    and item["code"] != info["baseline_code"]]})
     if len(rows) != 127 or sum(r["locked"] for r in rows) != 12:
         raise ValueError("baseline_row_count")
-    return raw, rows
+    return raw, rows, options
 
 
 def prepare(private_dir, package):
@@ -54,7 +59,7 @@ def prepare(private_dir, package):
             raise ValueError("reparse_path")
     if private_dir.resolve() == package.resolve() or package.resolve() in private_dir.resolve().parents:
         raise ValueError("original_inputs_inside_package")
-    raw, rows = checked_inputs(private_dir)
+    raw, rows, options = checked_inputs(private_dir)
     if len(raw["ini"]) > 1024 * 1024:
         raise ValueError("profile_size")
     base = package / "vehicle-data" / "p2"
@@ -66,7 +71,9 @@ def prepare(private_dir, package):
     # Do not duplicate original research reports, raw dictionaries or VIDA files.
     catalog = json.dumps({"schema": "vc094b-cem-baseline-v1", "rows": rows},
                          ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    if len(catalog) > 1024 * 1024:
+    editor = json.dumps({"schema": "vc094d-cem-options-v1", "rows": options},
+                        ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    if len(catalog) > 1024 * 1024 or len(editor) > 4 * 1024 * 1024:
         raise ValueError("catalog_size")
     for key, name in FILES.items():
         if read_frozen(private_dir / name, MAX_INPUT) != raw[key]:
@@ -74,13 +81,15 @@ def prepare(private_dir, package):
     target = package / "vehicle-data" / PROFILE_ID
     target.mkdir(exist_ok=False)
     files = {"virtualcar.ini": raw["ini"], "VirtualCarJ2534.dll": dll,
-             "candidate.sha256": declared.lower().encode("ascii"), "configuration.json": catalog}
+             "candidate.sha256": declared.lower().encode("ascii"), "configuration.json": catalog,
+             "configuration-options.json": editor}
     # Manifest last: partial writes never qualify as a usable installed profile.
     for name, data in files.items():
         with (target / name).open("xb") as stream:
             stream.write(data)
-    manifest = {"schema": "vc094b-local-profile-v1", "profile_sha256": digest(raw["ini"]),
-                "native_sha256": digest(dll), "catalog_sha256": digest(catalog)}
+    manifest = {"schema": "vc094d-local-profile-v2", "profile_sha256": digest(raw["ini"]),
+                "native_sha256": digest(dll), "catalog_sha256": digest(catalog),
+                "options_sha256": digest(editor)}
     with (target / "local-profile.json").open("xb") as stream:
         stream.write(json.dumps(manifest, sort_keys=True).encode("ascii"))
     return manifest
