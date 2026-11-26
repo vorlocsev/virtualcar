@@ -52,6 +52,7 @@ public static class AcceptanceReportReader
         if (bytes.Span.StartsWith(new byte[] { 0xef, 0xbb, 0xbf })) bytes = bytes[3..];
         using var doc = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 24 });
         var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException();
         CheckTree(root);
         bool hasSchema = root.TryGetProperty("schema", out _);
         bool hasVersion = root.TryGetProperty("schema_version", out _);
@@ -115,8 +116,10 @@ public static class AcceptanceReportReader
     private static AcceptanceReport Native(JsonElement root, string schema, string digest)
     {
         string source = Hash(root, "source_sha", 40);
-        string native = Hash(root, "native_dll_sha256", 64);
         string state = Choice(root, "status", "pass", "fail");
+        string? native = state == "fail" && Str(root, "native_dll_sha256") == "" ? null : Hash(root, "native_dll_sha256", 64);
+        int size = Count(root, "native_dll_bytes", 64 * 1024 * 1024);
+        if ((native is null && size != 0) || (native is not null && size < 256) || (state == "pass" && native is null)) throw new InvalidDataException();
         string[] keys = ["source_and_managed_inventory", "fresh_native_build", "x86_export_contract",
             "native_silence_and_evidence", "synthetic_identity_replay", "can_ms_lifecycle",
             "registry32_preflight", "final_integrity"];
@@ -126,6 +129,9 @@ public static class AcceptanceReportReader
         string[] values = keys.Select(k => Choice(gates, k, "pass", "fail", "not_tested")).ToArray();
         int passed = values.Count(v => v == "pass");
         if ((state == "pass") != (passed == keys.Length)) throw new InvalidDataException();
+        string failedStage = Str(root, "failed_stage");
+        if (state == "pass" ? failedStage != "" : !keys.Contains(failedStage) || Choice(gates, failedStage, "pass", "fail", "not_tested") != "fail")
+            throw new InvalidDataException();
         foreach (string name in new[] { "registration_install_remove", "vida_provider_selection",
             "vida_loaded_module_identity", "vida_readvin", "vida_t111", "vida_t122", "physical_j2534" })
             Choice(root, name, "not_tested");
@@ -166,7 +172,9 @@ public static class AcceptanceReportReader
         if (match && (!Bool(root, "selected_provider_snapshot_stable") ||
             !Bool(root, "reference_fingerprint_verified") ||
             !Bool(root, "registered_dll_module_path_seen_in_name_matched_process") ||
-            Str(root, "installed_vs_reference_dll") != "exact_bytes_at_snapshot"))
+            Str(root, "installed_vs_reference_dll") != "exact_bytes_at_snapshot" ||
+            Str(root, "reference_dll_pe32") != "x86_pe32_header" ||
+            Str(root, "selected_private_pid_starttime_snapshot_stability") != "same_pid_process_starttime_after_snapshot"))
             throw new InvalidDataException();
         return new("VC090C", schema, match ? AcceptanceObservation.Observed : AcceptanceObservation.Review,
             null, null, digest, null, null, gate);
@@ -185,8 +193,10 @@ public static class AcceptanceReportReader
         if (b != be + Count(counts, "b9fb_vin_different") ||
             f != fe + Count(counts, "f190_vin_different")) throw new InvalidDataException();
         bool match = gate == "matching_lab_identity_delivery_observed";
-        if (match && (!Bool(root, "single_closed_logger_session") || b + f == 0 || be + fe != b + f))
-            throw new InvalidDataException();
+        if (match && (!Bool(root, "single_closed_logger_session") || b + f == 0 || be + fe != b + f ||
+            new[] { "boundary_errors", "incomplete", "unattributed_inside_session", "invalid_context",
+                "unattributed_messages", "invalid_d2_sequence", "unpaired_d2_tags", "wrong_context", "invalid_vin_shape", "other_rx" }
+                .Any(k => Count(counts, k) != 0))) throw new InvalidDataException();
         return new("VC090D", schema, match ? AcceptanceObservation.Observed : AcceptanceObservation.Review,
             null, null, digest, be + fe, b + f, gate);
     }
@@ -204,7 +214,10 @@ public static class AcceptanceReportReader
         if (new[] { "alive", "not_alive", "not_present", "not_observed" }
             .Sum(k => Count(states, k, 256)) != modules) throw new InvalidDataException();
         bool consistent = gate == "reported_categories_consistent_only";
-        if (consistent && (modules == 0 || !Bool(root, "same_run_reported"))) throw new InvalidDataException();
+        if (consistent && (modules == 0 || !Bool(root, "same_run_reported") || Count(states, "not_observed", 256) != 0 ||
+            new[] { "discrepancies", "evidence_gaps" }.Any(k => Field(root, k).EnumerateObject().Any(p =>
+                p.Value.ValueKind != JsonValueKind.Number || !p.Value.TryGetInt32(out int n) || n != 0))))
+            throw new InvalidDataException();
         return new("VC090E", schema, consistent ? AcceptanceObservation.Observed : AcceptanceObservation.Review,
             null, null, digest, null, null, gate);
     }
