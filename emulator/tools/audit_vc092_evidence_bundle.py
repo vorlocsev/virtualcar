@@ -211,7 +211,7 @@ def reconcile(manifest, expected_head, files):
         "evidence_sha256_by_role": {role: digest(raw) for role, raw in sorted(files.items())},
         "gates": {"environment": env, "native_preflight": native_state,
                   "registration": reg, "binding": binding, "readvin": vin, "ecu": ecu,
-                  "catalog": catalog["status"], "file_integrity": "supplied_digests_match"},
+                  "catalog": catalog["status"], "file_integrity": "supplied_digests_match" if files else "no_evidence_files"},
         "registration_checkpoints": count, "registration_checkpoints_expected": len(PHASES),
         "catalog_sample": catalog,
         "owner_claims": claims,
@@ -263,7 +263,7 @@ def main(argv=None):
             stream.write("\n")
     except (ValueError, TypeError, OSError, UnicodeError, RecursionError):
         p.exit(2, "ERROR: invalid, inconsistent or unreadable local evidence bundle\n")
-    print("VC092_BUNDLE_INTEGRITY=PASS")
+    print("VC092_BUNDLE_INTEGRITY=" + ("PASS" if raw else "NO_EVIDENCE"))
     print("VC092_RUNTIME_ACCEPTANCE=NOT_VERIFIED")
     return 0
 
