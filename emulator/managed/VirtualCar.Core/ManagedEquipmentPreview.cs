@@ -76,7 +76,7 @@ public sealed class ManagedEquipmentPreview
         _options = new System.Collections.ObjectModel.ReadOnlyDictionary<int, EquipmentChoices>(rows);
     }
 
-    public EquipmentPreview Preview(IReadOnlyDictionary<int, string> edits)
+    private byte[] BuildBlock(IReadOnlyDictionary<int, string> edits)
     {
         byte[] b = _baseline.ToArray();
         foreach (var (offset, code) in edits)
@@ -86,6 +86,29 @@ public sealed class ManagedEquipmentPreview
             b[offset] = byte.Parse(code, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
         }
         b[1] = (byte)(b.Skip(2).Sum(x => (int)x) % 256);
+        return b;
+    }
+
+    public byte[] CompileReviewed(byte[] ini, IReadOnlyDictionary<int, string> edits)
+    {
+        if (!ExtractBlock(ini).AsSpan().SequenceEqual(_baseline) || Preview(edits).Status != "pass")
+            throw new InvalidOperationException("Only an unchanged baseline and clear lab policy are supported.");
+        byte[] block = BuildBlock(edits);
+        string original = Encoding.Latin1.GetString(ini);
+        var match = Regex.Match(original,
+            @"(?m)^\[VC054_F106Lab\]\r?\nBlockHex=([0-9a-f]{284})\r?\nLayout=donor-142\r?\nEnabled=1\r?$");
+        var field = match.Groups[1];
+        string candidate = original[..field.Index] + Convert.ToHexString(block).ToLowerInvariant() +
+            original[(field.Index + field.Length)..];
+        byte[] bytes = Encoding.Latin1.GetBytes(candidate);
+        if (bytes.Length != ini.Length || !ExtractBlock(bytes).AsSpan().SequenceEqual(block))
+            throw new InvalidDataException();
+        return bytes;
+    }
+
+    public EquipmentPreview Preview(IReadOnlyDictionary<int, string> edits)
+    {
+        byte[] b = BuildBlock(edits);
         var errors = new List<string>();
         var warnings = new List<string>();
         void E(string id, bool condition) { if (condition) errors.Add(id); }

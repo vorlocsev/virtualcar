@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "cem529_config"))
 from vc059 import FILES, outside_checkout
 from vc0591 import PINS
 from vc0592 import Editor, strict_json
-from vc0594 import IdentityGate, TOPOLOGY_SHA
+from vc0594 import IdentityGate, TOPOLOGY_SHA, EQUIPMENT
 from audit_vc090d_readvin_evidence import read_frozen
 
 MAX_INPUT = 32 * 1024 * 1024
@@ -43,7 +43,27 @@ def checked_inputs(folder):
                                     and item["code"] != info["baseline_code"]]})
     if len(rows) != 127 or sum(r["locked"] for r in rows) != 12:
         raise ValueError("baseline_row_count")
-    return raw, rows, options
+    # Deterministic bounded independent reference cases. Only clear-policy
+    # single edits outside the equipment topology-review set are eligible.
+    cases = []
+    checked = 0
+    for row in options:
+        if row["offset"] in EQUIPMENT:
+            continue
+        for option in row["choices"]:
+            if checked >= 256:
+                break
+            checked += 1
+            edits = [{"offset": row["offset"], "code": option["code"]}]
+            draft = gate.editor.draft(edits)
+            audit = gate.audit(draft)
+            if audit["status"] != "pass":
+                continue
+            block, pdu, ini, report, final_audit = gate.compile(draft)
+            cases.append({"offset": row["offset"], "code": option["code"], "ini_sha256": digest(ini)})
+        if checked >= 256:
+            break
+    return raw, rows, options, cases
 
 
 def prepare(private_dir, package):
@@ -59,7 +79,7 @@ def prepare(private_dir, package):
             raise ValueError("reparse_path")
     if private_dir.resolve() == package.resolve() or package.resolve() in private_dir.resolve().parents:
         raise ValueError("original_inputs_inside_package")
-    raw, rows, options = checked_inputs(private_dir)
+    raw, rows, options, cases = checked_inputs(private_dir)
     if len(raw["ini"]) > 1024 * 1024:
         raise ValueError("profile_size")
     base = package / "vehicle-data" / "p2"
@@ -73,7 +93,9 @@ def prepare(private_dir, package):
                          ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     editor = json.dumps({"schema": "vc094d-cem-options-v1", "rows": options},
                         ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    if len(catalog) > 1024 * 1024 or len(editor) > 4 * 1024 * 1024:
+    parity = json.dumps({"schema": "vc094d2-single-edit-references-v1", "cases": cases},
+                        separators=(",", ":"), allow_nan=False).encode("ascii")
+    if len(catalog) > 1024 * 1024 or len(editor) > 4 * 1024 * 1024 or len(parity) > 65536:
         raise ValueError("catalog_size")
     for key, name in FILES.items():
         if read_frozen(private_dir / name, MAX_INPUT) != raw[key]:
@@ -82,14 +104,14 @@ def prepare(private_dir, package):
     target.mkdir(exist_ok=False)
     files = {"virtualcar.ini": raw["ini"], "VirtualCarJ2534.dll": dll,
              "candidate.sha256": declared.lower().encode("ascii"), "configuration.json": catalog,
-             "configuration-options.json": editor}
+             "configuration-options.json": editor, "configuration-references.json": parity}
     # Manifest last: partial writes never qualify as a usable installed profile.
     for name, data in files.items():
         with (target / name).open("xb") as stream:
             stream.write(data)
-    manifest = {"schema": "vc094d-local-profile-v2", "profile_sha256": digest(raw["ini"]),
+    manifest = {"schema": "vc094d2-local-profile-v3", "profile_sha256": digest(raw["ini"]),
                 "native_sha256": digest(dll), "catalog_sha256": digest(catalog),
-                "options_sha256": digest(editor)}
+                "options_sha256": digest(editor), "references_sha256": digest(parity)}
     with (target / "local-profile.json").open("xb") as stream:
         stream.write(json.dumps(manifest, sort_keys=True).encode("ascii"))
     return manifest
