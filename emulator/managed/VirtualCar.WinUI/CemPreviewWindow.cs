@@ -42,6 +42,10 @@ public sealed class CemPreviewWindow : Window
     private readonly TextBox _acceptanceDll = new();
     private readonly Button _acceptanceImport = new();
     private readonly Button _acceptanceClear = new();
+    private readonly TextBox _acceptanceExportPath = new();
+    private readonly Button _acceptanceExport = new();
+    private readonly TextBlock _acceptanceExportStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private int _acceptanceExportResult;
     private readonly TextBlock _acceptanceStatus = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBox _acceptanceSummary = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 140, MaxHeight = 420 };
     private readonly SortedDictionary<string, AcceptanceReport> _acceptanceReports = new(StringComparer.Ordinal);
@@ -199,7 +203,8 @@ public sealed class CemPreviewWindow : Window
         _monitorPanel.Children.Add(_monitorStatus);
         _monitorPanel.Children.Add(_monitorRows);
         foreach (var item in new FrameworkElement[] { _acceptanceHead, _acceptanceDll, _acceptancePath,
-            _acceptanceImport, _acceptanceClear, _acceptanceStatus, _acceptanceSummary })
+            _acceptanceImport, _acceptanceClear, _acceptanceStatus, _acceptanceSummary,
+            _acceptanceExportPath, _acceptanceExport, _acceptanceExportStatus })
             _acceptancePanel.Children.Add(item);
         AutomationId(_acceptanceHead, "VC091.Acceptance.Head");
         AutomationId(_acceptanceDll, "VC091.Acceptance.DllSha");
@@ -208,8 +213,13 @@ public sealed class CemPreviewWindow : Window
         AutomationId(_acceptanceClear, "VC091.Acceptance.Clear");
         AutomationId(_acceptanceStatus, "VC091.Acceptance.Status");
         AutomationId(_acceptanceSummary, "VC091.Acceptance.Summary");
+        AutomationId(_acceptanceExportPath, "VC093.Acceptance.ExportPath");
+        AutomationId(_acceptanceExport, "VC093.Acceptance.Export");
+        AutomationId(_acceptanceExportStatus, "VC093.Acceptance.ExportStatus");
+        _acceptanceExport.Click += (_, _) => ExportAcceptance();
+        _acceptanceExportPath.TextChanged += (_, _) => { _acceptanceExportResult = 0; RenderAcceptance(); };
         _acceptanceImport.Click += (_, _) => ImportAcceptance();
-        _acceptanceClear.Click += (_, _) => { _acceptanceReports.Clear(); _acceptanceFailed = false; RenderAcceptance(); };
+        _acceptanceClear.Click += (_, _) => { _acceptanceReports.Clear(); _acceptanceFailed = false; _acceptanceExportResult = 0; RenderAcceptance(); };
         _acceptanceHead.TextChanged += (_, _) => RenderAcceptance();
         _acceptanceDll.TextChanged += (_, _) => RenderAcceptance();
         _acceptancePath.TextChanged += (_, _) => { _acceptanceFailed = false; RenderAcceptance(); };
@@ -730,10 +740,51 @@ public sealed class CemPreviewWindow : Window
             var report = AcceptanceReportReader.ReadFile(_acceptancePath.Text.Trim());
             _acceptanceReports[report.Stage] = report;
             _acceptanceFailed = false;
+            _acceptanceExportResult = 0;
         }
         catch (Exception) { _acceptanceFailed = true; }
         RenderAcceptance();
     }
+
+    private void ExportAcceptance()
+    {
+        if (_ephemeral || Busy || _closed || _section != Section.Diagnostics || !AcceptanceView || !_acceptanceExport.IsEnabled) return;
+        try
+        {
+            AcceptanceSummaryExport.WriteNew(_acceptanceExportPath.Text.Trim(), _acceptanceSummary.Text);
+            _acceptanceExportResult = 1;
+        }
+        catch (Exception) { _acceptanceExportResult = -1; }
+        RenderAcceptance();
+    }
+
+    private string BundleGateLabel(string key) => key switch
+    {
+        "environment" => T("Environment", "Среда"),
+        "native_preflight" => T("Native preflight", "Нативный транспорт"),
+        "registration" => T("Registration", "Регистрация"),
+        "binding" => T("VIDA binding", "Привязка VIDA"),
+        "readvin" => "ReadVin",
+        "ecu" => T("ECU identification", "Идентификация ECU"),
+        "catalog" => "T111/T122",
+        "file_integrity" => T("Evidence integrity", "Целостность доказательств"),
+        _ => key
+    };
+
+    private string BundleGateState(string value) => value switch
+    {
+        "blocked_or_synthetic" => T("Blocked or synthetic", "Заблокировано или синтетика"),
+        "owner_claims_only" => T("Owner claims only", "Только заявления владельца"),
+        "reported_preflight_consistent" => T("Reported preflight consistent", "Заявленная проверка согласована"),
+        "partial_checkpoints" => T("Partial checkpoints", "Неполные контрольные точки"),
+        "reported_checkpoints_consistent" => T("Reported checkpoints consistent", "Заявленные точки согласованы"),
+        "review_required" => T("Review required", "Требуется проверка"),
+        "unbound_report_observation" => T("Unbound observation", "Наблюдение без привязки"),
+        "not_tested" or "not_supplied" => T("Not tested / not supplied", "Не проверено / не предоставлено"),
+        "supplied_digests_match" => T("Reported digests match", "Заявленные отпечатки совпадают"),
+        "no_evidence_files" => T("No evidence files", "Нет файлов доказательств"),
+        _ => value
+    };
 
     private string AcceptanceMatch(AcceptanceSourceMatch match) => match switch
     {
@@ -758,10 +809,36 @@ public sealed class CemPreviewWindow : Window
         _acceptancePath.IsEnabled = _acceptanceHead.IsEnabled = _acceptanceDll.IsEnabled = enabled;
         _acceptanceImport.IsEnabled = enabled && valid && _acceptancePath.Text.Trim().Length > 0;
         _acceptanceClear.IsEnabled = enabled && _acceptanceReports.Count > 0;
+        _acceptanceExportPath.Header = T("New external summary file (.txt)", "Новый внешний файл сводки (.txt)");
+        _acceptanceExport.Content = T("Export summary", "Экспортировать сводку");
+        _acceptanceExportPath.IsEnabled = enabled && !_ephemeral;
+        _acceptanceExport.IsEnabled = enabled && !_ephemeral && valid && _acceptanceReports.Count > 0 && _acceptanceExportPath.Text.Trim().Length > 0;
+        _acceptanceExportStatus.Text = _ephemeral ? T("Export disabled in isolated mode. Copy the summary instead.", "Экспорт отключён в изолированном режиме. Скопируйте сводку.") :
+            _acceptanceExportResult switch { 1 => T("New summary created.", "Новая сводка создана."), -1 => T("Export rejected. Existing files are never overwritten.", "Экспорт отклонён. Существующие файлы не перезаписываются."), _ => "" };
         _acceptanceStatus.Text = !valid ? T("Invalid expected fingerprint.", "Некорректный ожидаемый отпечаток.") :
             _acceptanceFailed ? T("Import rejected; prior reports retained.", "Импорт отклонён; прежние отчёты сохранены.") :
             T("Imported reports: ", "Импортировано отчётов: ") + _acceptanceReports.Count;
         var lines = new List<string> { T("Local report claims only. No runtime acceptance is inferred.", "Только сведения из локальных отчётов. Фактическая приёмка не подтверждается.") };
+        if (_acceptanceReports.TryGetValue("VC092", out var aggregate) && aggregate.Bundle is { } bundle)
+        {
+            lines.Add(T("VC092 · Reported aggregate, not reverified by this application", "VC092 · Заявленная сводка, не перепроверенная приложением"));
+            lines.Add(T("Scope: ", "Источник: ") + bundle.Scope);
+            lines.Add(T("Historical / reported HEAD: ", "Исторический / заявленный HEAD: ") + aggregate.SourceSha);
+            lines.Add(T("Registration checkpoints: ", "Контрольные точки регистрации: ") + bundle.Checkpoints + "/5");
+            foreach (var gate in bundle.Gates)
+                lines.Add(BundleGateLabel(gate.Key) + ": " + BundleGateState(gate.State) + " [" + gate.State + "]");
+            lines.Add(T("Catalog sample: ", "Выборка каталога: ") + bundle.CatalogMatched + "/" + bundle.CatalogSampled);
+            lines.Add(T("Unconfirmed owner claims: ", "Неподтверждённые заявления владельца: ") + (bundle.MissingClaims.Count == 0 ? T("none declared missing; still not verified", "нет заявленных пропусков; всё равно не проверено") : string.Join(", ", bundle.MissingClaims)));
+            lines.Add("Manifest SHA256: " + bundle.ManifestSha);
+            foreach (var entry in bundle.Evidence)
+            {
+                var individual = _acceptanceReports.Values.FirstOrDefault(r => BundleSummary.RoleForStage(r.Stage) == entry.Role);
+                string state = individual is null ? T("individual file not imported", "отдельный файл не импортирован") :
+                    AcceptanceMatch(bundle.CompareReport(individual) == "matches" ? AcceptanceSourceMatch.Matches : AcceptanceSourceMatch.Differs);
+                lines.Add(entry.Role + " · " + state + " · " + entry.Sha256);
+            }
+            lines.Add("");
+        }
         foreach (var report in _acceptanceReports.Values)
         {
             string status = report.Observation switch
@@ -782,7 +859,7 @@ public sealed class CemPreviewWindow : Window
         }
         lines.Add("");
         foreach (string stage in new[] { "VC090A", "VC090B/Baseline", "VC090B/InstallCancelled", "VC090B/Installed",
-            "VC090B/RemoveCancelled", "VC090B/Restored", "VC090C", "VC090D", "VC090E" })
+            "VC090B/RemoveCancelled", "VC090B/Restored", "VC090C", "VC090D", "VC090E", "VC092" })
             if (!_acceptanceReports.ContainsKey(stage)) lines.Add(stage + T(" · No report imported", " · Отчёт не импортирован"));
         lines.Add("");
         lines.Add(T("Outstanding runtime gates (not verified by these reports):", "Открытые этапы фактической приёмки (не подтверждены этими отчётами):"));
