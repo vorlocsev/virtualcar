@@ -225,7 +225,13 @@ public sealed class VehicleHomeWindow : Window
         _refresh.Click += (_, _) =>
         {
             if (_busy || _closed) return;
-            RefreshLocalProfile();
+            if (!RefreshLocalProfile())
+            {
+                bool invalid = _localAvailability == LocalVehicleData.Availability.Invalid;
+                _resultEn = invalid ? "Local profile is still invalid." : "Local profile checked. No changes.";
+                _resultRu = invalid ? "Локальный профиль по-прежнему не прошёл проверку." :
+                    "Локальный профиль проверен. Изменений нет.";
+            }
             _photoVehicleId = null;
             Render();
         };

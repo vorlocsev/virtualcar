@@ -395,6 +395,18 @@ The home window now refreshes the verified local snapshot on explicit Refresh an
 
 Eight synthetic Core snapshot tests added; expected Core 192/192, Python 1280 discovered / 1276 passing / four known skips, private suite 24/24. Actual WinUI refresh, Windows and VIDA remain untested; no registry mutation, CI dispatch or release.
 
+## VC096 integrated offline acceptance (pending)
+
+Run from a clean exact-head Windows x64 interactive test checkout, with .NET SDK, Python, native compiler/Bash, all diagnostic clients closed, no registered Virtual Car provider and no concurrent operator actions. Invoke-VC096IntegratedAcceptance.ps1 composes the existing package build and offline acceptance into one command. Select Scope Demo or OwnerLocal (the latter requires PrivateDirectory); explicitly supply local ArtworkSourceDirectory or SkipArtwork. Output must be new, short, ASCII and on a local fixed drive outside the checkout. No public ZIP, registry mutation or diagnostic client launch is requested. The owner-local output and logs must remain private.
+
+Example (demo without artwork; substitute the exact reviewed HEAD and local Python path):
+
+```powershell
+.\Invoke-VC096IntegratedAcceptance.ps1 -ExpectedSha '<40-char HEAD>' -Scope Demo -OutputDirectory 'C:\VC096-demo' -PythonExe 'C:\Python\python.exe' -SkipArtwork
+```
+
+The final vc096-integrated-offline.json is written only after all eight offline gates, exact scope and artwork policy, stable home Refresh observation and final source/evidence checks pass. The UIA test invokes Refresh in the no-write home preview, requires an explicit unchanged snapshot message, retained vehicle label and disabled adapter/advanced actions. It does not simulate changed private files or exercise actual adapter registration. Core expected 192/192, Python 1280 discovered / 1276 passing / four known skips, private suite 24/24. A successful demo run is not owner-local acceptance. Actual Windows execution, visual review, private editor interaction, original VIDA, SectorV, VDASH and physical J2534 remain not tested. No release authorization follows from this report.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
