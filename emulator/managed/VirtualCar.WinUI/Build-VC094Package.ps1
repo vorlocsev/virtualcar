@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [Parameter(Mandatory=$true)][string]$PythonExe,
     [string]$BashExe,
-    [string]$PrivateDirectory
+    [string]$PrivateDirectory,
+    [string]$ArtworkSourceDirectory,
+    [switch]$SkipArtwork
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -16,6 +18,7 @@ function Assert-Checkout {
     $dirty = @(& git -C $repo status --porcelain --untracked-files=all)
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw 'Clean checkout required.' }
 }
+if ($SkipArtwork -and $ArtworkSourceDirectory) { throw 'Choose artwork source or skip, not both.' }
 Assert-Checkout
 if ($OutputDirectory -notmatch '^[a-zA-Z]:[\\/]') { throw 'Absolute local output required.' }
 $out = [IO.Path]::GetFullPath($OutputDirectory)
@@ -73,11 +76,18 @@ if ($PrivateDirectory) {
     $inventory += [ordered]@{id='xc90-v8-2009';profile_sha256=(Get-FileHash -LiteralPath (Join-Path $local 'virtualcar.ini') -Algorithm SHA256).Hash.ToLowerInvariant();native_sha256=$hash;scope='owner_local_private'}
     $privateIncluded = $true
 }
+$artworkStatus = 'skipped'
+if (-not $SkipArtwork) {
+    $artworkArgs = @{Package=$package;WorkDirectory=$out}
+    if ($ArtworkSourceDirectory) { $artworkArgs.SourceDirectory = $ArtworkSourceDirectory }
+    & (Join-Path $PSScriptRoot 'Prepare-VC094Artwork.ps1') @artworkArgs
+    $artworkStatus = 'two_reference_photos'
+}
 Assert-Checkout
 $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
     [ordered]@{path=$_.FullName.Substring($package.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 })
 [ordered]@{schema='vc094a-package-v1';source_sha=$ExpectedSha;native_sha256=$hash;profiles=$inventory;files=$files;
-    original_vida='not_tested';physical_j2534='not_tested';registration='not_tested';private_profile_included=$privateIncluded;package_ui='not_tested'} |
+    original_vida='not_tested';physical_j2534='not_tested';registration='not_tested';private_profile_included=$privateIncluded;artwork=$artworkStatus;package_ui='not_tested'} |
     ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'package-manifest.json') -Encoding UTF8
 Write-Host 'VC094A_PACKAGE=BUILT_NOT_ACCEPTED'
