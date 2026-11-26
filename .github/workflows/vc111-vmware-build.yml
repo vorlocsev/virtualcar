@@ -1,10 +1,11 @@
-name: VC111 VMware compile only
+name: VC112 VMware publication hotfix
 on:
   push:
     branches:
       - 'vc111-build/20261126'
     paths:
-      - 'vc111-build/vc110-source.zip'
+      - '.github/workflows/vc111-vmware-build.yml'
+      - 'vc111-build/publisher-hotfix.py'
 permissions:
   contents: read
 concurrency:
@@ -27,7 +28,7 @@ jobs:
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
-          $work = Join-Path $env:RUNNER_TEMP ("vc111-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $work = Join-Path $env:RUNNER_TEMP ("vc112-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
           New-Item -ItemType Directory -Path $work | Out-Null
           $proto = Join-Path $work 'proto'
@@ -41,6 +42,8 @@ jobs:
           dotnet --list-sdks
           if ($LASTEXITCODE -ne 0) { throw 'Dotnet unavailable' }
           Expand-Archive -LiteralPath $archive -DestinationPath $proto
+          & $python (Join-Path $env:GITHUB_WORKSPACE 'vc111-build\publisher-hotfix.py') $proto
+          if ($LASTEXITCODE -ne 0) { throw 'VC112 publication hotfix staging failed' }
           git clone --local --no-hardlinks --no-checkout $env:GITHUB_WORKSPACE $repo
           if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
           git -C $repo -c core.autocrlf=false checkout --detach $base
@@ -69,7 +72,7 @@ jobs:
             if (-not (Test-Path -LiteralPath (Join-Path $package ('app\VC109-tools\'+$helper)))) { throw 'Sealed helper missing' }
           }
           @(
-            'VC111 compile-only development candidate (VC108R + VC109C + VC110)',
+            'VC112 compile-only development candidate (VC111 + publisher hotfix)',
             "Base: $base", "Build commit: $env:GITHUB_SHA",
             'Source archive SHA256: 0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951',
             'Runtime, WinUI launch and VIDA: NOT TESTED',
@@ -77,25 +80,26 @@ jobs:
             'DLL x86 is not installed or registered. No working INI is included.',
             'Keep app, provider and provider-package.zip together. Profile tools require Python.',
             'Raw J2534 trace rotation: 4 x 32 MiB; runtime NOT TESTED.',
+            'VC112: bounded transient publication retry and exception details; root cause not yet confirmed.',
             'Do not replace a working provider without a backup and explicit approval.'
           ) | Set-Content -LiteralPath (Join-Path $package 'BUILD-INFO.txt') -Encoding UTF8
           Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
             ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
           } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = Join-Path $work 'VirtualCar-VC111-development.zip'
+          $zip = Join-Path $work 'VirtualCar-VC112-hotfix.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
-          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC111-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC112-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
           New-Item -ItemType Directory -Path $saved -Force | Out-Null
           Copy-Item -LiteralPath $zip -Destination $saved
-          Write-Host ('VC111_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC111-development.zip'))
+          Write-Host ('VC112_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC112-hotfix.zip'))
       - name: Upload compiled candidate
         uses: actions/upload-artifact@v4
         with:
-          name: VirtualCar-VC111-development
-          path: ${{ runner.temp }}/vc111-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC111-development.zip
+          name: VirtualCar-VC112-hotfix
+          path: ${{ runner.temp }}/vc112-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC112-hotfix.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
