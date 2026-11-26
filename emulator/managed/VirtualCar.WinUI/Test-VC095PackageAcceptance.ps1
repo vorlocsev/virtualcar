@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSha,
     [Parameter(Mandatory=$true)][string]$PackageBuildDirectory,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [Parameter(Mandatory=$true)][string]$PythonExe
+    [Parameter(Mandatory=$true)][string]$PythonExe,
+    [ValidateSet('Any','Demo','OwnerLocal')][string]$ExpectedScope = 'Any',
+    [switch]$RequireArtwork
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -48,7 +50,7 @@ $native = Join-Path $build 'native\vc090-native-preflight.json'
 $audit = Join-Path $repo 'emulator\tools\audit_vc094g_package.py'
 $report = [ordered]@{schema='vc095-offline-acceptance-v1';source_sha=$ExpectedSha;status='fail';failed_stage='';
     gates=[ordered]@{source='pass';package_before='not_tested';core='not_tested';python_target='not_tested';python_full='not_tested';compileall='not_tested';normal_home_smoke='not_tested';final_integrity='not_tested'};
-    visual_review='not_tested';private_editor_interaction='not_tested';registration='not_tested';original_vida='not_tested';physical_j2534='not_tested';release_ready=$false}
+    package_scope='not_tested';artwork='not_tested';home_refresh='not_tested';visual_review='not_tested';private_editor_interaction='not_tested';registration='not_tested';original_vida='not_tested';physical_j2534='not_tested';release_ready=$false}
 function Run-Logged([string]$exe,[string[]]$arguments,[string]$name) {
     $log = Join-Path $out ($name+'.log')
     $exitCode = Invoke-VCNativeLogged -Executable $exe -Arguments $arguments -WorkingDirectory $repo -Log $log
@@ -71,6 +73,11 @@ try {
     foreach ($file in @($manifest,$managed,$native)) { $evidenceHashes[$file]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
     Check-Package 'package-before'
     $packageInfo = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    $actualScope = if ($packageInfo.private_profile_included) { 'OwnerLocal' } else { 'Demo' }
+    if ($ExpectedScope -ne 'Any' -and $actualScope -ne $ExpectedScope) { throw 'Unexpected package scope.' }
+    if ($RequireArtwork -and $packageInfo.artwork -ne 'two_reference_photos') { throw 'Required artwork missing.' }
+    $report.package_scope = $actualScope
+    $report.artwork = $packageInfo.artwork
     $report.gates[$stage]='pass'
     $stage='core'
     $core = Join-Path $PSScriptRoot '..\VirtualCar.Core.Checks\VirtualCar.Core.Checks.csproj'
@@ -235,6 +242,35 @@ try {
         }
         if ($count -ne 3) { throw 'Incomplete language regression.' }
         Write-Host 'VC095B_HOME_LANGUAGE=PASS 3/3'
+        $refresh = Find-HomeControl $previewWindow 'VC094A.Refresh'
+        $notice = Find-HomeControl $previewWindow 'VC094A.Notice'
+        if (-not $refresh.Current.IsEnabled -or $notice.Current.Name -like '*Local profile checked. No changes.*') {
+            throw 'Refresh precondition failed.'
+        }
+        $refresh.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $refreshTimer = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            $notice = Find-HomeControl $previewWindow 'VC094A.Notice'
+            if ($notice.Current.Name -like '*Local profile checked. No changes.*') { break }
+            Start-Sleep -Milliseconds 100
+        } until ($refreshTimer.Elapsed.TotalSeconds -ge 15)
+        if ($notice.Current.Name -notlike '*Local profile checked. No changes.*' -or
+            (Find-HomeControl $previewWindow 'VC094A.Vehicle.Name').Current.Name -ne $originalVehicle -or
+            (Find-HomeControl $previewWindow 'VC094A.Advanced').Current.IsEnabled) {
+            throw 'Stable local refresh or selection preservation failed.'
+        }
+        $observedActions = 0
+        foreach ($id in @('VC094A.Connection.Enable','VC094A.Connection.Disable')) {
+            $byId = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$id)
+            $action = $previewWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$byId)
+            if ($null -ne $action) {
+                $observedActions++
+                if ($action.Current.ProcessId -ne $process.Id -or $action.Current.IsEnabled) { throw 'Refresh enabled adapter action in preview.' }
+            }
+        }
+        if ($observedActions -eq 0) { throw 'No adapter action observed after refresh.' }
+        $report.home_refresh = 'pass'
+        Write-Host 'VC096_HOME_STABLE_REFRESH=PASS'
     } finally {
         try {
             $process.Refresh()
