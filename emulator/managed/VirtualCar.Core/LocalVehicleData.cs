@@ -10,6 +10,7 @@ public sealed record LocalVehicleProfile(BuiltInVehicle Vehicle, IReadOnlyList<L
     public ManagedEquipmentPreview? Editor { get; init; }
     public EquipmentReferences? References { get; init; }
     public string NativeSha { get; init; } = "";
+    public string ManifestSha { get; init; } = "";
 }
 
 public static class LocalVehicleData
@@ -28,6 +29,18 @@ public static class LocalVehicleData
     private static byte[] Read(string path, int cap) => VehicleStatePackages.ReadFile(path, cap);
 
     public enum Availability { Missing, Ready, Invalid }
+
+    public static bool SameSnapshot(Availability previous, LocalVehicleProfile? oldProfile,
+        Availability current, LocalVehicleProfile? newProfile)
+    {
+        if (previous != current) return false;
+        if (current != Availability.Ready)
+            return (current is Availability.Missing or Availability.Invalid) &&
+                oldProfile is null && newProfile is null;
+        return oldProfile is not null && newProfile is not null &&
+            AcceptanceReportReader.IsHash(oldProfile.ManifestSha, 64) &&
+            oldProfile.ManifestSha.Equals(newProfile.ManifestSha, StringComparison.OrdinalIgnoreCase);
+    }
 
     public static Availability Probe(string root, out LocalVehicleProfile? profile)
     {
@@ -207,7 +220,8 @@ public static class LocalVehicleData
         return new(new BuiltInVehicle(Id, "Volvo XC90 V8 · 2009", "Volvo XC90 V8 · 2009",
             "Owner-local reviewed simulator profile. Original VIDA acceptance remains separate.",
             "Проверенный локальный профиль эмулятора. Фактическая приёмка VIDA проверяется отдельно.",
-            vin, false), rows) { Editor = editor, References = references, NativeSha = native };
+            vin, false), rows) { Editor = editor, References = references, NativeSha = native,
+                ManifestSha = NativeEcmScenarioApply.Digest(manifestBytes) };
     }
 
     public static IReadOnlyList<LocalConfigurationRow> ParseCatalog(byte[] bytes)
