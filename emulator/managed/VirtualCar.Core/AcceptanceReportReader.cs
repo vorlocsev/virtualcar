@@ -218,7 +218,16 @@ public static class AcceptanceReportReader
             new[] { "discrepancies", "evidence_gaps" }.Any(k => Field(root, k).EnumerateObject().Any(p =>
                 p.Value.ValueKind != JsonValueKind.Number || !p.Value.TryGetInt32(out int n) || n != 0))))
             throw new InvalidDataException();
+        string source = Choice(root, "evidence_source", "synthetic", "owner_reviewed");
+        var catalog = Field(root, "catalog_reference_coverage");
+        string coverage = Choice(catalog, "status", "not_supplied", "empty_sample", "unmatched_references_observed",
+            "null_references_observed", "sample_all_references_matched");
+        int sampled = Count(catalog, "sampled_rows", 1000), matched = Count(catalog, "matching_references", 1000);
+        int missed = Count(catalog, "unmatched_references", 1000), nulls = Count(catalog, "null_references", 1000);
+        if (sampled != matched + missed + nulls || coverage != (coverage == "not_supplied" && sampled == 0 ? "not_supplied" :
+            sampled == 0 ? "empty_sample" : missed > 0 ? "unmatched_references_observed" : nulls > 0 ? "null_references_observed" : "sample_all_references_matched"))
+            throw new InvalidDataException();
         return new("VC090E", schema, consistent ? AcceptanceObservation.Observed : AcceptanceObservation.Review,
-            null, null, digest, null, null, gate);
+            null, null, digest, null, null, $"{source} · {gate} · T111/T122: {coverage} ({matched}/{sampled})");
     }
 }
