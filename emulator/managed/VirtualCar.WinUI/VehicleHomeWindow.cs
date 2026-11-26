@@ -935,7 +935,12 @@ public sealed class VehicleHomeWindow : Window
             _busy = false;
             if (!_closed)
             {
-                RefreshLocalProfile();
+                string operationEn = _resultEn, operationRu = _resultRu;
+                if (RefreshLocalProfile() && !string.IsNullOrEmpty(operationEn))
+                {
+                    _resultEn = operationEn + "\n" + _resultEn;
+                    _resultRu = operationRu + "\n" + _resultRu;
+                }
                 Render();
             }
         }
