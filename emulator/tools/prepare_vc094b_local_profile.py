@@ -21,8 +21,8 @@ def digest(raw):
 
 
 def checked_inputs(folder):
-    raw = {k: read_frozen(outside_checkout(folder / name), MAX_INPUT)
-           for k, name in FILES.items()}
+    outside_checkout(folder)
+    raw = {k: read_frozen(folder / name, MAX_INPUT) for k, name in FILES.items()}
     for key, expected in PINS.items():
         if digest(raw[key]) != expected:
             raise ValueError("pinned_input_mismatch")
@@ -45,8 +45,7 @@ def prepare(private_dir, package):
     private_dir, package = Path(private_dir), Path(package)
     if not private_dir.is_absolute() or not package.is_absolute():
         raise ValueError("absolute_paths_required")
-    if outside_checkout(package) != package.resolve():
-        raise ValueError("package_path")
+    outside_checkout(package)
     if not (package / "VirtualCar.exe").is_file():
         raise ValueError("missing_package")
     for path in (private_dir, package, package / "vehicle-data", *package.parents, *private_dir.parents):
@@ -56,6 +55,8 @@ def prepare(private_dir, package):
     if private_dir.resolve() == package.resolve() or package.resolve() in private_dir.resolve().parents:
         raise ValueError("original_inputs_inside_package")
     raw, rows = checked_inputs(private_dir)
+    if len(raw["ini"]) > 1024 * 1024:
+        raise ValueError("profile_size")
     base = package / "vehicle-data" / "p2"
     dll = read_frozen(base / "VirtualCarJ2534.dll", 64 * 1024 * 1024)
     declared = read_frozen(base / "candidate.sha256", 128).decode("ascii").strip()
@@ -68,7 +69,7 @@ def prepare(private_dir, package):
     if len(catalog) > 1024 * 1024:
         raise ValueError("catalog_size")
     for key, name in FILES.items():
-        if read_frozen(outside_checkout(private_dir / name), MAX_INPUT) != raw[key]:
+        if read_frozen(private_dir / name, MAX_INPUT) != raw[key]:
             raise ValueError("source_changed")
     target = package / "vehicle-data" / PROFILE_ID
     target.mkdir(exist_ok=False)
