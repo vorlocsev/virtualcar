@@ -27,7 +27,8 @@ public partial class App : Application
         bool previewOnly = arguments.SequenceEqual(new[] { "--preview-only" });
         bool diagnosticsOnly = arguments.SequenceEqual(new[] { "--diagnostics-only" });
         bool registrationOnly = arguments.SequenceEqual(new[] { "--registration-only" });
-        bool ephemeral = previewOnly || diagnosticsOnly || registrationOnly || arguments.SequenceEqual(new[] { "--ephemeral-settings" });
+        // Only explicit advanced mode enables the original non-ephemeral workspace.
+        bool ephemeral = !arguments.SequenceEqual(new[] { "--advanced" });
         _window = new CemPreviewWindow(ephemeral, previewOnly, diagnosticsOnly, registrationOnly);
         _window.Activate();
     }
