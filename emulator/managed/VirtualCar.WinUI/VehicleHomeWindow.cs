@@ -344,6 +344,27 @@ public sealed class VehicleHomeWindow : Window
         finally { _busy = false; if (!_closed) Render(); }
     }
 
+    private string EquipmentFinding(string id) => id switch
+    {
+        "PETROL_HEATER" => T("Diesel heater is incompatible with the petrol scenario.", "Дизельный отопитель несовместим с бензиновым двигателем."),
+        "AUTO_STARTBLOCK" => T("Starter interlock does not match automatic transmission.", "Блокировка запуска не соответствует автоматической коробке."),
+        "AC_HEATER_ONLY" => T("Air conditioning conflicts with the selected heater.", "Кондиционер несовместим с выбранным отопителем."),
+        "AC_REAR" => T("Rear air conditioning requires air conditioning.", "Задний кондиционер требует наличия кондиционера."),
+        "AC_CLIMATE" => T("Climate unit conflicts with air conditioning selection.", "Климатический блок не соответствует выбору кондиционера."),
+        "AQS_FILTER" => T("Review air quality system and filter selection.", "Проверьте систему качества воздуха и фильтр."),
+        "PARK_AEM" => T("Parking assistance requires the accessory module.", "Парковочный ассистент требует блока дополнительного оборудования."),
+        "AIRBAG_SWITCH" => T("Passenger airbag switch requires a passenger airbag.", "Выключатель подушки требует наличия пассажирской подушки."),
+        "OWS_CAL" => T("Occupant weight calibration requires the weight sensor system.", "Калибровка веса пассажира требует соответствующего датчика."),
+        "TPMS_LOAD" => T("Tyre pressure and heavy-load warning selections disagree.", "Настройки контроля давления шин и предупреждения о нагрузке не совпадают."),
+        "XENON_ADJUST" => T("Active bi-xenon requires automatic adjustment in this scenario.", "Активный биксенон требует автоматической регулировки в этом сценарии."),
+        "ALARM_OPTIONS" => T("Review alarm accessories.", "Проверьте дополнительное оборудование сигнализации."),
+        "HEATER_CALL" => T("Review remote heater start and heater equipment.", "Проверьте дистанционный запуск отопителя и его наличие."),
+        "RTI_CONTROL" => T("Review navigation system and control unit.", "Проверьте навигационную систему и её блок управления."),
+        "AUDIO_AMP" => T("Review radio and amplifier selection.", "Проверьте магнитолу и усилитель."),
+        "AUDIO_SYSTEM" => T("Review infotainment equipment.", "Проверьте комплектацию мультимедийной системы."),
+        _ => T("Review selection.", "Проверьте выбранное значение.")
+    };
+
     private void RenderEquipment(bool local)
     {
         _equipmentRendering = true;
@@ -386,8 +407,8 @@ public sealed class VehicleHomeWindow : Window
                 _ => T("Lab checks passed", "Лабораторная проверка пройдена")
             };
             _equipmentStatus.Text = T("Draft only · changed: ", "Только черновик · изменено: ") + preview.ChangedCount + " · " + status +
-                (preview.Errors.Count == 0 ? "" : "\n" + T("Errors: ", "Ошибки: ") + string.Join(", ", preview.Errors)) +
-                (preview.Warnings.Count == 0 ? "" : "\n" + T("Warnings: ", "Предупреждения: ") + string.Join(", ", preview.Warnings)) +
+                (preview.Errors.Count == 0 ? "" : "\n" + T("Errors: ", "Ошибки: ") + string.Join("\n", preview.Errors.Select(EquipmentFinding))) +
+                (preview.Warnings.Count == 0 ? "" : "\n" + T("Warnings: ", "Предупреждения: ") + string.Join("\n", preview.Warnings.Select(EquipmentFinding))) +
                 (preview.TopologyReview ? "\n" + T("Equipment topology requires review.", "Требуется проверка состава оборудования.") : "") +
                 "\n" + T("Nothing is applied to the simulator or vehicle.", "Изменения не применяются к эмулятору или автомобилю.");
         }
