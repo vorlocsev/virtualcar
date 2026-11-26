@@ -152,6 +152,24 @@ def scan(root):
     return names
 
 
+def verify_preflight(report, manifest, expected_head):
+    gates = {"source_and_managed_inventory", "fresh_native_build", "x86_export_contract",
+             "native_silence_and_evidence", "synthetic_identity_replay", "can_ms_lifecycle",
+             "registry32_preflight", "final_integrity"}
+    if (report.get("schema") != "vc090-native-preflight-v1" or report.get("status") != "pass" or
+            hexstr(report.get("source_sha"), 40) != hexstr(expected_head, 40) or
+            hexstr(report.get("native_dll_sha256"), 64) != hexstr(manifest.get("native_sha256"), 64) or
+            set(report["gates"]) != gates or any(v != "pass" for v in report["gates"].values()) or
+            report.get("failed_stage") != "" or any(report.get(k) != "not_tested" for k in (
+                "registration_install_remove", "vida_provider_selection", "vida_loaded_module_identity",
+                "vida_readvin", "vida_t111", "vida_t122", "physical_j2534"))):
+        raise ValueError("native preflight mismatch")
+    sizes = [row["bytes"] for row in manifest["files"] if row["path"].endswith("/VirtualCarJ2534.dll")]
+    if type(report.get("native_dll_bytes")) is not int or not sizes or any(
+            size != report["native_dll_bytes"] for size in sizes):
+        raise ValueError("native preflight size mismatch")
+
+
 def verify(root, manifest, build, expected_head, emulator):
     head = hexstr(expected_head, 40)
     if (manifest.get("schema") != "vc094a-package-v1" or
@@ -272,7 +290,7 @@ def digest_file(path):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    for key in ("package", "manifest", "build-manifest"):
+    for key in ("package", "manifest", "build-manifest", "native-preflight"):
         p.add_argument("--"+key, type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--zip", type=Path)
@@ -281,9 +299,13 @@ def main(argv=None):
         root = local_path(a.package)
         mraw = frozen(a.manifest, MAX_MANIFEST)
         braw = frozen(a.build_manifest, MAX_MANIFEST)
-        expected, private = verify(root, parse(mraw), parse(braw), a.expected_head,
+        nraw = frozen(a.native_preflight, MAX_MANIFEST)
+        manifest = parse(mraw)
+        verify_preflight(parse(nraw), manifest, a.expected_head)
+        expected, private = verify(root, manifest, parse(braw), a.expected_head,
                                    Path(__file__).resolve().parents[1])
-        if frozen(a.manifest, MAX_MANIFEST) != mraw or frozen(a.build_manifest, MAX_MANIFEST) != braw:
+        if (frozen(a.manifest, MAX_MANIFEST) != mraw or frozen(a.build_manifest, MAX_MANIFEST) != braw or
+                frozen(a.native_preflight, MAX_MANIFEST) != nraw):
             raise ValueError("manifest changed")
         if a.zip:
             sha = archive(root, expected, private, a.zip)
