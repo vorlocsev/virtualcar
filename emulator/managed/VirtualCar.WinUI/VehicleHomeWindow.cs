@@ -16,6 +16,14 @@ public sealed class VehicleHomeWindow : Window
     private readonly TextBlock _description = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _identity = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _modules = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel _statePanel = new() { Spacing = 8, Visibility = Visibility.Collapsed };
+    private readonly ComboBox _ignition = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _engine = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button _prepareState = new();
+    private readonly TextBlock _stateStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private IReadOnlyList<NativeIgnitionSelection?> _ignitions = new NativeIgnitionSelection?[] { null };
+    private IReadOnlyList<EcmScenario?> _engines = new EcmScenario?[] { null };
+    private VehicleStateChoice _choice = VehicleStateChoice.Original;
     private readonly Expander _configuration = new() { Visibility = Visibility.Collapsed };
     private readonly ListView _configurationRows = new() { MaxHeight = 320, SelectionMode = ListViewSelectionMode.None };
     private readonly List<BuiltInVehicle> _profiles = new(BuiltInVehicles.All);
@@ -66,6 +74,14 @@ public sealed class VehicleHomeWindow : Window
             card.Children.Add(item);
         _content.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
             BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray), Child = card });
+        foreach (var item in new FrameworkElement[] { _ignition, _engine, _prepareState, _stateStatus })
+            _statePanel.Children.Add(item);
+        _content.Children.Add(_statePanel);
+        Id(_ignition, "VC094C.Ignition"); Id(_engine, "VC094C.Engine");
+        Id(_prepareState, "VC094C.Prepare"); Id(_stateStatus, "VC094C.State.Status");
+        _ignition.SelectionChanged += (_, _) => SelectState();
+        _engine.SelectionChanged += (_, _) => SelectState();
+        _prepareState.Click += async (_, _) => await PrepareStateAsync();
         _configuration.Content = _configurationRows;
         _content.Children.Add(_configuration);
         Id(_configuration, "VC094B.Configuration");
@@ -134,7 +150,7 @@ public sealed class VehicleHomeWindow : Window
         return bytes;
     }
 
-    private (string Path, string Sha)? Candidate(BuiltInVehicle profile)
+    private (string Path, string Sha)? BaseCandidate(BuiltInVehicle profile)
     {
         try
         {
@@ -155,6 +171,137 @@ public sealed class VehicleHomeWindow : Window
                 ? (path, actual) : null;
         }
         catch (Exception) { return null; }
+    }
+
+    private (string Path, string Sha)? Candidate(BuiltInVehicle profile)
+    {
+        var candidate = BaseCandidate(profile);
+        if (candidate is not { } c || profile.Id != LocalVehicleData.Id || _choice.IsOriginal)
+            return candidate;
+        try
+        {
+            byte[] baseline = LocalVehicleData.ReadProfile(AppContext.BaseDirectory);
+            string path = Path.Combine(VehicleStatePackages.Folder(AppContext.BaseDirectory, _choice), "VirtualCarJ2534.dll");
+            if (!VehicleStatePackages.Matches(AppContext.BaseDirectory, _choice, baseline, c.Sha) ||
+                !BuiltInVehicles.IsNativePathSupported(path) ||
+                !DriverRegistration.Fingerprint(path).Equals(c.Sha, StringComparison.OrdinalIgnoreCase)) return null;
+            return (path, c.Sha);
+        }
+        catch (Exception) { return null; }
+    }
+
+    private string IgnitionLabel(NativeIgnitionSelection? state) => state switch
+    {
+        NativeIgnitionSelection.Baseline => T("Baseline position", "Исходное положение"),
+        NativeIgnitionSelection.PositionIICandidate => T("Position II (lab)", "Положение II (эмуляция)"),
+        _ => T("As supplied", "Без изменений")
+    };
+
+    private string EngineLabel(EcmScenario? state) => state switch
+    {
+        EcmScenario.Stationary => T("Stationary", "Двигатель остановлен"),
+        EcmScenario.Cranking => T("Cranking", "Запуск"),
+        EcmScenario.ColdIdle => T("Cold idle", "Холодный холостой ход"),
+        EcmScenario.Warming => T("Warming up", "Прогрев"),
+        EcmScenario.WarmIdle => T("Warm idle", "Прогретый холостой ход"),
+        EcmScenario.Dynamic => T("Dynamic warmup", "Динамический прогрев"),
+        _ => T("As supplied", "Без изменений")
+    };
+
+    private void SelectState()
+    {
+        if (_rendering || _busy || _closed || Selected.Id != LocalVehicleData.Id ||
+            _ignition.SelectedIndex < 0 || _engine.SelectedIndex < 0) return;
+        _choice = new(_ignitions[_ignition.SelectedIndex], _engines[_engine.SelectedIndex]);
+        _resultEn = _resultRu = "";
+        Render();
+    }
+
+    private void RenderState(BuiltInVehicle profile, DriverRegistration.Info registration)
+    {
+        bool local = profile.Id == LocalVehicleData.Id;
+        _statePanel.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+        if (!local) return;
+        byte[]? baseline = null;
+        try
+        {
+            baseline = LocalVehicleData.ReadProfile(AppContext.BaseDirectory);
+            _ignitions = VehicleStatePackages.Ignitions(baseline);
+            _engines = VehicleStatePackages.Engines(baseline);
+        }
+        catch (Exception)
+        {
+            baseline = null;
+            _ignitions = new NativeIgnitionSelection?[] { null };
+            _engines = new EcmScenario?[] { null };
+        }
+        if (!_ignitions.Contains(_choice.Ignition) || !_engines.Contains(_choice.Engine))
+            _choice = VehicleStateChoice.Original;
+        // A registered state must remain identifiable after a process restart.
+        // Path recognition is not connection authentication.
+        if (registration.Status == DriverRegistration.State.Registered)
+            foreach (var i in _ignitions)
+                foreach (var e in _engines)
+                {
+                    var choice = new VehicleStateChoice(i, e);
+                    if (SamePath(registration.Library, Path.Combine(VehicleStatePackages.Folder(AppContext.BaseDirectory, choice), "VirtualCarJ2534.dll")))
+                        _choice = choice;
+                }
+        _ignition.Header = T("Ignition", "Зажигание");
+        _engine.Header = T("Engine", "Двигатель");
+        _ignition.Items.Clear(); _engine.Items.Clear();
+        foreach (var i in _ignitions) _ignition.Items.Add(IgnitionLabel(i));
+        foreach (var e in _engines) _engine.Items.Add(EngineLabel(e));
+        _ignition.SelectedIndex = _ignitions.ToList().IndexOf(_choice.Ignition);
+        _engine.SelectedIndex = _engines.ToList().IndexOf(_choice.Engine);
+        bool editable = !_busy && baseline is not null && registration.Status == DriverRegistration.State.Absent;
+        _ignition.IsEnabled = editable && _ignitions.Count > 1;
+        _engine.IsEnabled = editable && _engines.Count > 1;
+        _prepareState.Content = T("Prepare vehicle state", "Подготовить состояние автомобиля");
+        bool prepared = baseline is not null && Candidate(profile) is not null;
+        _prepareState.IsEnabled = editable && !_choice.IsOriginal && !prepared && BaseCandidate(profile) is not null;
+        _stateStatus.Text = (registration.Status != DriverRegistration.State.Absent ?
+            T("Disable the adapter and close diagnostic clients before changing states.", "Отключите адаптер и закройте диагностические программы перед изменением состояния.") :
+            prepared ? T("Prepared for the next diagnostic connection.", "Подготовлено для следующего диагностического подключения.") :
+            T("State not prepared.", "Состояние не подготовлено.")) +
+            (_engines.Count == 1 ? "\n" + T("Engine scenarios are unavailable for this reviewed baseline.", "Сценарии двигателя недоступны для этого проверенного профиля.") : "") +
+            (_ignitions.Count == 1 ? "\n" + T("Ignition scenarios are unavailable for this baseline.", "Сценарии зажигания недоступны для этого профиля.") : "") +
+            "\n" + T("Configured simulation only; not live vehicle state.", "Настроенная эмуляция, не текущее состояние реального автомобиля.");
+    }
+
+    private async Task PrepareStateAsync()
+    {
+        if (_closed || _busy || !_prepareState.IsEnabled || Selected.Id != LocalVehicleData.Id) return;
+        var choice = _choice;
+        var source = BaseCandidate(Selected);
+        if (source is not { } s || DriverRegistration.Read().Status != DriverRegistration.State.Absent) { Render(); return; }
+        _busy = true; Render();
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = _content.XamlRoot,
+                Title = T("Prepare this vehicle state?", "Подготовить состояние автомобиля?"),
+                Content = IgnitionLabel(choice.Ignition) + "\n" + EngineLabel(choice.Engine) + "\n\n" +
+                    T("Close all diagnostic clients. A separate simulation copy will be created; the original profile is unchanged.",
+                      "Закройте все диагностические программы. Будет создана отдельная копия эмулятора; исходный профиль не изменится."),
+                PrimaryButtonText = T("Prepare", "Подготовить"), CloseButtonText = T("Cancel", "Отмена"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _closed) return;
+            if (DriverRegistration.Read().Status != DriverRegistration.State.Absent || BaseCandidate(Selected) != s)
+                throw new InvalidOperationException();
+            byte[] baseline = LocalVehicleData.ReadProfile(AppContext.BaseDirectory);
+            await Task.Run(() => VehicleStatePackages.Prepare(AppContext.BaseDirectory, choice, baseline, s.Sha));
+            _resultEn = "State prepared. Enable the adapter to use it.";
+            _resultRu = "Состояние подготовлено. Для использования включите адаптер.";
+        }
+        catch (Exception)
+        {
+            _resultEn = "Could not prepare the state. Original profile retained.";
+            _resultRu = "Не удалось подготовить состояние. Исходный профиль сохранён.";
+        }
+        finally { _busy = false; if (!_closed) Render(); }
     }
 
     private void Render()
@@ -185,11 +332,12 @@ public sealed class VehicleHomeWindow : Window
             var slots = local ? 8 : NativeEcuInventory.Inspect(BuiltInVehicles.ReadProfile(profile.Id)).Count;
             _modules.Text = T("Configured diagnostic routes: ", "Настроено диагностических маршрутов: ") + slots +
                 T(" (not ECU discovery)", " (не обнаружение блоков)");
-            _availability.Text = local ? T("Equipment snapshot included. Editing and engine controls remain in advanced mode.", "Комплектация включена. Редактирование и управление двигателем пока в расширенном режиме.") :
+            _availability.Text = local ? T("Equipment snapshot included. Configuration editing remains in advanced mode.", "Комплектация включена. Редактирование пока в расширенном режиме.") :
                 T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
                 "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
-            var candidate = Candidate(profile);
             var registration = DriverRegistration.Read();
+            RenderState(profile, registration);
+            var candidate = Candidate(profile);
             bool own = candidate is { } c && registration.Status == DriverRegistration.State.Registered &&
                 SamePath(registration.Library, c.Path);
             _status.Text = registration.Status switch
