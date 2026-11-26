@@ -16,6 +16,10 @@ public sealed class VehicleHomeWindow : Window
     private readonly TextBlock _description = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _identity = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _modules = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Expander _configuration = new() { Visibility = Visibility.Collapsed };
+    private readonly ListView _configurationRows = new() { MaxHeight = 320, SelectionMode = ListViewSelectionMode.None };
+    private readonly List<BuiltInVehicle> _profiles = new(BuiltInVehicles.All);
+    private readonly LocalVehicleProfile? _localProfile;
     private readonly TextBlock _availability = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _status = new() { FontSize = 18, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _notice = new() { TextWrapping = TextWrapping.Wrap };
@@ -25,7 +29,7 @@ public sealed class VehicleHomeWindow : Window
     private readonly Action _openAdvanced;
     private bool _russian, _busy, _closed, _rendering;
     private string _resultEn = "", _resultRu = "";
-    private BuiltInVehicle Selected => BuiltInVehicles.All[Math.Max(0, _vehicle.SelectedIndex)];
+    private BuiltInVehicle Selected => _profiles[Math.Max(0, _vehicle.SelectedIndex)];
     private string T(string en, string ru) => _russian ? ru : en;
     private string Helper => Path.Combine(AppContext.BaseDirectory, "driver-tools", "VirtualCar.DriverTool.exe");
 
@@ -47,7 +51,13 @@ public sealed class VehicleHomeWindow : Window
         _language.SelectedIndex = _russian ? 1 : 0;
         top.Children.Add(_heading); Grid.SetColumn(_language, 1); top.Children.Add(_language);
         _content.Children.Add(top);
-        foreach (var profile in BuiltInVehicles.All)
+        try
+        {
+            _localProfile = LocalVehicleData.Load(AppContext.BaseDirectory);
+            _profiles.Insert(0, _localProfile.Vehicle);
+        }
+        catch (Exception) { /* An absent or invalid local package is not a selectable vehicle. */ }
+        foreach (var profile in _profiles)
             _vehicle.Items.Add(new ComboBoxItem { Tag = profile.Id, Content = profile.NameEn });
         _vehicle.SelectedIndex = 0;
         _content.Children.Add(_vehicle);
@@ -56,6 +66,10 @@ public sealed class VehicleHomeWindow : Window
             card.Children.Add(item);
         _content.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
             BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray), Child = card });
+        _configuration.Content = _configurationRows;
+        _content.Children.Add(_configuration);
+        Id(_configuration, "VC094B.Configuration");
+        Id(_configurationRows, "VC094B.Configuration.Rows");
         _content.Children.Add(_status);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         actions.Children.Add(_connect); actions.Children.Add(_disconnect); actions.Children.Add(_refresh);
@@ -124,10 +138,16 @@ public sealed class VehicleHomeWindow : Window
     {
         try
         {
-            string path = BuiltInVehicles.PackageLibrary(AppContext.BaseDirectory, profile.Id);
+            bool local = profile.Id == LocalVehicleData.Id;
+            string path = local ? Path.Combine(LocalVehicleData.Folder(AppContext.BaseDirectory), "VirtualCarJ2534.dll") :
+                BuiltInVehicles.PackageLibrary(AppContext.BaseDirectory, profile.Id);
             if (!BuiltInVehicles.IsNativePathSupported(path) || !File.Exists(Helper)) return null;
             string folder = Path.GetDirectoryName(path)!;
-            if (!BuiltInVehicles.MatchesProfile(profile.Id, ReadLocal(Path.Combine(folder, "virtualcar.ini"), 1024 * 1024)))
+            if (local)
+            {
+                if (LocalVehicleData.Load(AppContext.BaseDirectory).Vehicle != profile) return null;
+            }
+            else if (!BuiltInVehicles.MatchesProfile(profile.Id, ReadLocal(Path.Combine(folder, "virtualcar.ini"), 1024 * 1024)))
                 return null;
             string expected = System.Text.Encoding.ASCII.GetString(ReadLocal(Path.Combine(folder, "candidate.sha256"), 128)).Trim();
             string actual = DriverRegistration.Fingerprint(path);
@@ -144,19 +164,29 @@ public sealed class VehicleHomeWindow : Window
         try
         {
             int selection = Math.Max(0, _vehicle.SelectedIndex);
-            for (int i = 0; i < BuiltInVehicles.All.Count; i++)
-                ((ComboBoxItem)_vehicle.Items[i]).Content = T(BuiltInVehicles.All[i].NameEn, BuiltInVehicles.All[i].NameRu);
+            for (int i = 0; i < _profiles.Count; i++)
+                ((ComboBoxItem)_vehicle.Items[i]).Content = T(_profiles[i].NameEn, _profiles[i].NameRu);
             _vehicle.SelectedIndex = -1; _vehicle.SelectedIndex = selection;
             var profile = Selected;
             _heading.Text = T("Virtual Car", "Виртуальный автомобиль");
             _vehicle.Header = T("Choose a vehicle", "Выберите автомобиль");
             _name.Text = T(profile.NameEn, profile.NameRu);
             _description.Text = T(profile.DescriptionEn, profile.DescriptionRu);
-            _identity.Text = T("Demo VIN: ", "Демонстрационный VIN: ") + profile.Vin;
-            var slots = NativeEcuInventory.Inspect(BuiltInVehicles.ReadProfile(profile.Id));
-            _modules.Text = T("Configured diagnostic routes: ", "Настроено диагностических маршрутов: ") + slots.Count +
+            bool local = profile.Id == LocalVehicleData.Id;
+            _identity.Text = (local ? "VIN: " : T("Demo VIN: ", "Демонстрационный VIN: ")) + profile.Vin;
+            _configuration.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+            _configuration.Header = T("Vehicle equipment · read only", "Комплектация автомобиля · просмотр");
+            _configurationRows.Items.Clear();
+            if (local && _localProfile is not null)
+                foreach (var row in _localProfile.Rows)
+                    _configurationRows.Items.Add(new TextBlock { TextWrapping = TextWrapping.Wrap,
+                        Text = row.Name + ": " + row.Value + (row.Locked ? T(" (protected)", " (защищено)") : "") });
+            else _configuration.IsExpanded = false;
+            var slots = local ? 8 : NativeEcuInventory.Inspect(BuiltInVehicles.ReadProfile(profile.Id)).Count;
+            _modules.Text = T("Configured diagnostic routes: ", "Настроено диагностических маршрутов: ") + slots +
                 T(" (not ECU discovery)", " (не обнаружение блоков)");
-            _availability.Text = T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
+            _availability.Text = local ? T("Equipment snapshot included. Editing and engine controls remain in advanced mode.", "Комплектация включена. Редактирование и управление двигателем пока в расширенном режиме.") :
+                T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
                 "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
             var candidate = Candidate(profile);
             var registration = DriverRegistration.Read();

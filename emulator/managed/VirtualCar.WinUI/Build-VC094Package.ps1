@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSha,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [Parameter(Mandatory=$true)][string]$PythonExe,
-    [string]$BashExe
+    [string]$BashExe,
+    [string]$PrivateDirectory
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -62,11 +63,21 @@ foreach ($id in $profiles.Keys) {
         (Get-FileHash -LiteralPath $lib -Algorithm SHA256).Hash -ne $hash) { throw 'Package copy mismatch.' }
     $inventory += [ordered]@{id=$id;profile_sha256=$profileHash;native_sha256=$hash;scope='synthetic_or_historical_demo'}
 }
+$privateIncluded = $false
+if ($PrivateDirectory) {
+    $python = (Resolve-Path -LiteralPath $PythonExe).Path
+    $script = Join-Path $repo 'emulator\tools\prepare_vc094b_local_profile.py'
+    & $python -B $script --private-dir $PrivateDirectory --package $package
+    if ($LASTEXITCODE -ne 0) { throw 'Owner-local profile preparation failed. Do not distribute this output.' }
+    $local = Join-Path $package 'vehicle-data\xc90-v8-2009'
+    $inventory += [ordered]@{id='xc90-v8-2009';profile_sha256=(Get-FileHash -LiteralPath (Join-Path $local 'virtualcar.ini') -Algorithm SHA256).Hash.ToLowerInvariant();native_sha256=$hash;scope='owner_local_private'}
+    $privateIncluded = $true
+}
 Assert-Checkout
 $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
     [ordered]@{path=$_.FullName.Substring($package.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 })
 [ordered]@{schema='vc094a-package-v1';source_sha=$ExpectedSha;native_sha256=$hash;profiles=$inventory;files=$files;
-    original_vida='not_tested';physical_j2534='not_tested';registration='not_tested';private_profile_included=$false;package_ui='not_tested'} |
+    original_vida='not_tested';physical_j2534='not_tested';registration='not_tested';private_profile_included=$privateIncluded;package_ui='not_tested'} |
     ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'package-manifest.json') -Encoding UTF8
 Write-Host 'VC094A_PACKAGE=BUILT_NOT_ACCEPTED'
