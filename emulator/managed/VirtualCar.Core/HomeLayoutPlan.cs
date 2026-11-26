@@ -11,18 +11,19 @@ public readonly record struct HomeLayoutPlan(bool TwoColumns, double LeftWeight,
 }
 
 public enum HomeRegistration { Absent, Registered, Review }
-public enum HomeConnectionState { Ready, Unavailable, Owned, Other, Review }
+public enum HomeConnectionState { Ready, Unavailable, Owned, Other, Review, Recovery }
 
 public readonly record struct HomeConnectionPlan(HomeConnectionState State, bool CanEnable, bool CanDisable)
 {
-    public static HomeConnectionPlan Create(HomeRegistration registration, bool validCandidate, bool owned, bool busy)
+    public static HomeConnectionPlan Create(HomeRegistration registration, bool validCandidate, bool owned, bool busy, bool recoverable = false)
     {
         var state = registration switch
         {
             HomeRegistration.Absent => validCandidate ? HomeConnectionState.Ready : HomeConnectionState.Unavailable,
-            HomeRegistration.Registered => validCandidate && owned ? HomeConnectionState.Owned : HomeConnectionState.Other,
+            HomeRegistration.Registered => validCandidate && owned ? HomeConnectionState.Owned :
+                recoverable ? HomeConnectionState.Recovery : HomeConnectionState.Other,
             _ => HomeConnectionState.Review
         };
-        return new(state, !busy && state == HomeConnectionState.Ready, !busy && state == HomeConnectionState.Owned);
+        return new(state, !busy && state == HomeConnectionState.Ready, !busy && state is (HomeConnectionState.Owned or HomeConnectionState.Recovery));
     }
 }
