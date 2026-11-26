@@ -371,6 +371,12 @@ Before writing the owner-local package, validate all 127 baseline and option row
 
 Eight new synthetic Python checks cover catalog completeness, locks, label limits, invalid options, reference parity, topology exclusions and overlapping paths. Targeted acceptance now requires both packaging suites (8/8 each); full expected discovery is 1264, 1260 passing and four known skips; Core remains expected 176/176. Real private inputs, Windows build, managed parity execution and UI acceptance remain untested. No registry mutation, CI dispatch or release.
 
+## VC095F strict package contract (pending)
+
+The owner-local Python packager rejects non-integer offsets (including booleans and floats), unknown/missing object keys, non-array collections and malformed reference scalars before serializing. The reference selection still excludes topology-review and policy-blocked cases and remains bounded to 256 examined options; completeness against the private compiler has not been independently demonstrated. The local profile manifest is staged, flushed, read back and published exclusively by hard link; a failed publication must not create a new final marker. Filesystem hard-link support (NTFS on Windows) is required. This is not a crash-durability guarantee or an authenticity signature.
+
+Eight additional synthetic checks cover the strict record contract and manifest publication. Expected targeted private package suite 16/16, full Python discovery 1272 (1268 passing and four known skips), Core 176/176. These expectations are not executed results. Windows managed parity and private profile acceptance remain pending. No original VIDA, registry operations, CI dispatch or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
