@@ -8,6 +8,7 @@ public sealed record LocalConfigurationRow(int Offset, string Name, string Value
 public sealed record LocalVehicleProfile(BuiltInVehicle Vehicle, IReadOnlyList<LocalConfigurationRow> Rows)
 {
     public ManagedEquipmentPreview? Editor { get; init; }
+    public EquipmentReferences? References { get; init; }
 }
 
 public static class LocalVehicleData
@@ -63,8 +64,10 @@ public static class LocalVehicleData
         using var manifest = JsonDocument.Parse(Read(Path.Combine(dir, "local-profile.json"), 4096));
         var m = manifest.RootElement;
         string? schema = m.GetProperty("schema").GetString();
-        bool editable = schema == "vc094d-local-profile-v2";
-        if (editable) Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256", "options_sha256");
+        bool referencesIncluded = schema == "vc094d2-local-profile-v3";
+        bool editable = referencesIncluded || schema == "vc094d-local-profile-v2";
+        if (referencesIncluded) Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256", "options_sha256", "references_sha256");
+        else if (editable) Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256", "options_sha256");
         else Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256");
         if ((!editable && schema != "vc094b-local-profile-v1") || Hash(m, "profile_sha256") != PinnedProfile)
             throw new InvalidDataException();
@@ -89,10 +92,19 @@ public static class LocalVehicleData
             editor = new ManagedEquipmentPreview(ManagedEquipmentPreview.ExtractBlock(profile), options);
             if (editor.Preview(new Dictionary<int, string>()).Status != "pass") throw new InvalidDataException();
         }
+        EquipmentReferences? references = null;
+        if (referencesIncluded)
+        {
+            byte[] rawReferences = Read(Path.Combine(dir, "configuration-references.json"), 65536);
+            if (!NativeEcmScenarioApply.Digest(rawReferences).Equals(Hash(m, "references_sha256"), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException();
+            references = new EquipmentReferences(rawReferences);
+            references.VerifyAll(editor!, profile);
+        }
         return new(new BuiltInVehicle(Id, "Volvo XC90 V8 · 2009", "Volvo XC90 V8 · 2009",
             "Owner-local reviewed simulator profile. Original VIDA acceptance remains separate.",
             "Проверенный локальный профиль эмулятора. Фактическая приёмка VIDA проверяется отдельно.",
-            vins[0].Groups[1].Value, false), rows) { Editor = editor };
+            vins[0].Groups[1].Value, false), rows) { Editor = editor, References = references };
     }
 
     public static IReadOnlyList<LocalConfigurationRow> ParseCatalog(byte[] bytes)
