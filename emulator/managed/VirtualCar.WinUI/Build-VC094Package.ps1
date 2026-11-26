@@ -93,7 +93,7 @@ $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object Full
     original_vida='not_tested';physical_j2534='not_tested';registration='not_tested';private_profile_included=$privateIncluded;artwork=$artworkStatus;package_ui='not_tested'} |
     ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'package-manifest.json') -Encoding UTF8
 $audit = Join-Path $repo 'emulator\tools\audit_vc094g_package.py'
-$auditArgs = @('-B',$audit,'--package',$package,'--manifest',(Join-Path $out 'package-manifest.json'),'--build-manifest',(Join-Path $build 'build-manifest.json'),'--expected-head',$ExpectedSha)
+$auditArgs = @('-B',$audit,'--package',$package,'--manifest',(Join-Path $out 'package-manifest.json'),'--build-manifest',(Join-Path $build 'build-manifest.json'),'--native-preflight',(Join-Path $native 'vc090-native-preflight.json'),'--expected-head',$ExpectedSha)
 if ($PublicZip) { $auditArgs += @('--zip',(Join-Path $out 'VirtualCar-Windows-x64-demo.zip')) }
 & $PythonExe @auditArgs
 if ($LASTEXITCODE -ne 0) { throw 'Package integrity failed. Do not distribute partial output.' }
