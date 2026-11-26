@@ -31,6 +31,13 @@ RUNTIME = {
     "driver-tools/VirtualCar.DriverTool.runtimeconfig.json",
     "driver-tools/coreclr.dll", "driver-tools/hostfxr.dll", "driver-tools/hostpolicy.dll",
 }
+# Windows publish output can vary in casing. Match required runtime roles
+# case-insensitively, but keep the original inventory paths and fingerprints.
+RUNTIME_ROLES = {name.casefold() for name in RUNTIME}
+AMD64_ROLES = {name.casefold() for name in (
+    "VirtualCar.exe", "driver-tools/VirtualCar.DriverTool.exe",
+    "Microsoft.UI.Xaml.dll", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll",
+    "driver-tools/coreclr.dll", "driver-tools/hostfxr.dll", "driver-tools/hostpolicy.dll")}
 ART = {"artwork/" + name for name in (
     "xc90-v8.jpg", "xc90-v8.sha256", "p2-reference.jpg", "p2-reference.sha256", "credits.txt")}
 PRIVATE_FILES = {"configuration.json", "configuration-options.json", "configuration-references.json",
@@ -189,7 +196,10 @@ def verify(root, manifest, build, expected_head, emulator):
     if "VirtualCar.WinUI.exe" not in base or "VirtualCar.exe" in base:
         raise ValueError("invalid apphost mapping")
     base["VirtualCar.exe"] = base.pop("VirtualCar.WinUI.exe")
-    if not RUNTIME <= set(base) or any(n.startswith(("vehicle-data/", "artwork/")) for n in base):
+    base_roles = {name.casefold() for name in base}
+    if (not RUNTIME_ROLES <= base_roles or
+            any(n.startswith(("vehicle-data/", "artwork/")) for n in base_roles) or
+            len(base_roles) != len(base)):
         raise ValueError("incomplete managed runtime")
     expected = inventory(manifest["files"])
     profiles = manifest.get("profiles")
@@ -223,9 +233,7 @@ def verify(root, manifest, build, expected_head, emulator):
     for name, item in expected.items():
         raw = frozen(root / name, MAX_FILE)
         verify_bytes(raw, item)
-        if name in {"VirtualCar.exe", "driver-tools/VirtualCar.DriverTool.exe",
-                    "Microsoft.UI.Xaml.dll", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll",
-                    "driver-tools/coreclr.dll", "driver-tools/hostfxr.dll", "driver-tools/hostpolicy.dll"}:
+        if name.casefold() in AMD64_ROLES:
             pe(raw, 0x8664, 0x20b)
         if name.endswith("/VirtualCarJ2534.dll"):
             pe(raw, 0x14c, 0x10b)
