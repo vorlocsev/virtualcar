@@ -120,8 +120,10 @@ def prepare(private_dir, package):
         info = path.lstat()
         if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
             raise ValueError("reparse_path")
-    if private_dir.resolve() == package.resolve() or package.resolve() in private_dir.resolve().parents:
-        raise ValueError("original_inputs_inside_package")
+    private_root, package_root = private_dir.resolve(), package.resolve()
+    if (private_root == package_root or package_root in private_root.parents or
+            private_root in package_root.parents):
+        raise ValueError("overlapping_private_and_package_paths")
     raw, rows, options, cases = checked_inputs(private_dir)
     if len(raw["ini"]) > 1024 * 1024:
         raise ValueError("profile_size")
