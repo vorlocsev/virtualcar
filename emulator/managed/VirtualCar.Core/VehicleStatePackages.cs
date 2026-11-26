@@ -95,6 +95,9 @@ public static class VehicleStatePackages
             return;
         }
         string parent = Path.GetDirectoryName(target)!;
+        for (DirectoryInfo? dir = new DirectoryInfo(Path.GetDirectoryName(parent)!); dir is not null; dir = dir.Parent)
+            if ((dir.Attributes & FileAttributes.ReparsePoint) != 0 || Directory.Exists(Path.Combine(dir.FullName, ".git")) || File.Exists(Path.Combine(dir.FullName, ".git")))
+                throw new InvalidDataException();
         // Source ancestry was checked on read. The state directory is a sibling under vehicle-data.
         if (Directory.Exists(parent) && (File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException();
@@ -105,12 +108,15 @@ public static class VehicleStatePackages
         {
             Write(Path.Combine(temp, "virtualcar.ini"), profile);
             Write(Path.Combine(temp, "VirtualCarJ2534.dll"), dll);
+            if (!ReadFile(Path.Combine(source, "virtualcar.ini"), 1024 * 1024).AsSpan().SequenceEqual(original) ||
+                !ReadFile(Path.Combine(source, "VirtualCarJ2534.dll"), 64 * 1024 * 1024).AsSpan().SequenceEqual(dll))
+                throw new InvalidDataException("Source changed during preparation.");
             Directory.Move(temp, target);
             if (!Matches(root, choice, baseline, nativeSha)) throw new IOException("Prepared state verification failed.");
         }
         finally
         {
-            if (Directory.Exists(temp))
+            if (Directory.Exists(temp) && (File.GetAttributes(temp) & FileAttributes.ReparsePoint) == 0)
             {
                 // Delete only our known temporary files, never recursively traverse a replaced path.
                 foreach (string name in new[] { "virtualcar.ini", "VirtualCarJ2534.dll" })
