@@ -301,15 +301,19 @@ public sealed class VehicleHomeWindow : Window
                 BuiltInVehicles.PackageLibrary(AppContext.BaseDirectory, profile.Id);
             if (!BuiltInVehicles.IsNativePathSupported(path) || !File.Exists(Helper)) return null;
             string folder = Path.GetDirectoryName(path)!;
+            string? validatedNative = null;
             if (local)
             {
-                if (LocalVehicleData.Load(AppContext.BaseDirectory).Vehicle != profile) return null;
+                var loaded = LocalVehicleData.Load(AppContext.BaseDirectory);
+                if (loaded.Vehicle != profile) return null;
+                validatedNative = loaded.NativeSha;
             }
             else if (!BuiltInVehicles.MatchesProfile(profile.Id, ReadLocal(Path.Combine(folder, "virtualcar.ini"), 1024 * 1024)))
                 return null;
             string expected = System.Text.Encoding.ASCII.GetString(ReadLocal(Path.Combine(folder, "candidate.sha256"), 128)).Trim();
             string actual = DriverRegistration.Fingerprint(path);
-            return AcceptanceReportReader.IsHash(expected, 64) && actual.Equals(expected, StringComparison.OrdinalIgnoreCase)
+            return AcceptanceReportReader.IsHash(expected, 64) && actual.Equals(expected, StringComparison.OrdinalIgnoreCase) &&
+                (!local || actual.Equals(validatedNative, StringComparison.OrdinalIgnoreCase))
                 ? (path, actual) : null;
         }
         catch (Exception) { return null; }

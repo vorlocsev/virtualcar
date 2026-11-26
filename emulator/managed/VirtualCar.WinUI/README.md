@@ -383,6 +383,12 @@ The default preparation still rejects an existing target. Explicit `--resume-inc
 
 Eight additional synthetic checks cover the file resume helper. Expected targeted private package 24/24, full Python discovery 1280 (1276 passing and four known skips), Core 176/176. Exact-head execution and actual Windows/private profile resume remain pending; no registry changes, CI dispatch or release.
 
+## VC095H local profile integrity binding (pending)
+
+Local profile load now checks the exact file inventory for each supported schema (v1/v2/v3), rejects additional entries including a pending marker and reparse points, checks the P2 reference INI against the embedded profile and checks its declared and actual DLL SHA256 against the private profile native SHA256. The local manifest and inventory are rechecked after validation. The home connection candidate compares the freshly read native fingerprint to the digest returned by the local loader, including the existing post-confirmation candidate check. The P2 package is an independent consistency anchor, not a publisher signature; simultaneous replacement of both packages or concurrent modification is not covered. Older profiles with extra files or a missing P2 reference now fail closed; no automatic deletion or migration.
+
+Eight synthetic Core tests cover native binding and inventories, not a full private profile or actual Windows adapter operation. Expected Core 184/184, Python 1280 discovered (1276 passing, four known skips), private suite 24/24. Exact-head execution, Windows and original VIDA acceptance remain pending. No registry mutation, CI dispatch or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
