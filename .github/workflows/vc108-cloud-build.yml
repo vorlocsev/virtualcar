@@ -1,29 +1,26 @@
-name: VC108 Windows compile only
+name: VC108 VMware compile only
 on:
   push:
     branches:
-      - 'vc108-build/**'
+      - 'vc108-build/20261126-161559-3b28e0e7'
     paths:
       - '.github/workflows/vc108-cloud-build.yml'
       - 'vc108-build/vc108-source.zip'
 permissions:
   contents: read
+concurrency:
+  group: virtualcar-vmware-development-validation
+  cancel-in-progress: false
 jobs:
   compile:
-    runs-on: windows-latest
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.event_name == 'push' && github.ref == 'refs/heads/vc108-build/20261126-161559-3b28e0e7'
+    runs-on: [self-hosted, Windows, X64, virtualcar-win]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          architecture: x64
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
       - name: Compile x86 J2534 and x64 WinUI
         shell: powershell
         run: |
@@ -31,9 +28,19 @@ jobs:
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc108-build\vc108-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne 'B664148D29BB7B7874AFD274F7E319250788CCDFFB9BB77122019E105D3CD4BC') { throw 'VC108 source archive hash mismatch' }
-          $proto = Join-Path $env:RUNNER_TEMP 'vc108-proto'
-          $repo = Join-Path $env:RUNNER_TEMP 'vc108-base'
-          $candidate = Join-Path $env:RUNNER_TEMP 'vc108-candidate'
+          $work = Join-Path $env:RUNNER_TEMP ("vc108-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
+          New-Item -ItemType Directory -Path $work | Out-Null
+          $proto = Join-Path $work 'proto'
+          $repo = Join-Path $work 'base'
+          $candidate = Join-Path $work 'candidate'
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw 'Runner Python missing' }
+          $env:VC108_PYTHON = $python
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Python failed' }
+          dotnet --list-sdks
+          if ($LASTEXITCODE -ne 0) { throw 'Dotnet unavailable' }
           Expand-Archive -LiteralPath $archive -DestinationPath $proto
           git clone --local --no-hardlinks --no-checkout $env:GITHUB_WORKSPACE $repo
           if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
@@ -50,10 +57,19 @@ jobs:
               if (Test-Path -LiteralPath (Join-Path $bin 'clang-cl.exe')) { $env:PATH = "$bin;$env:PATH"; break }
             }
           }
-          & (Join-Path $proto 'acceptance\build-only.ps1') -Checkout $repo -Output $candidate
+          # Adapt only interpreter invocation to the existing runner manifest.
+          $buildScript = Join-Path $proto 'acceptance\build-only.ps1'
+          $source = [IO.File]::ReadAllText($buildScript)
+          if (-not $source.Contains("'py.exe' @('-3',")) { throw 'Unexpected Python invocation' }
+          $source = $source.Replace("'py.exe',","").Replace("'py.exe' @('-3,", '$env:VC108_PYTHON @(')
+          # The exact invocation includes the closing quote before the comma.
+          $source = $source.Replace("'py.exe' @('-3',", '$env:VC108_PYTHON @(')
+          if ($source.Contains("'py.exe'")) { throw 'Unadapted Python launcher' }
+          [IO.File]::WriteAllText($buildScript,$source,(New-Object System.Text.UTF8Encoding($false)))
+          & $buildScript -Checkout $repo -Output $candidate
           if (-not (Test-Path -LiteralPath (Join-Path $candidate 'provider\VirtualCarJ2534.dll'))) { throw 'Missing DLL' }
           if (-not (Test-Path -LiteralPath (Join-Path $candidate 'app\VirtualCar.WinUI.exe'))) { throw 'Missing apphost' }
-          $package = Join-Path $env:RUNNER_TEMP 'vc108-package'
+          $package = Join-Path $work 'package'
           New-Item -ItemType Directory -Path $package | Out-Null
           Copy-Item -LiteralPath (Join-Path $candidate 'app'),(Join-Path $candidate 'provider') -Destination $package -Recurse
           @(
@@ -72,6 +88,11 @@ jobs:
           $zip = Join-Path $env:RUNNER_TEMP 'VirtualCar-VC108R-development.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC108R-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
+          New-Item -ItemType Directory -Path $saved -Force | Out-Null
+          Copy-Item -LiteralPath $zip -Destination $saved
+          Write-Host ('VC108_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC108R-development.zip'))
       - name: Upload compiled candidate
         uses: actions/upload-artifact@v4
         with:
