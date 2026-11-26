@@ -263,21 +263,33 @@ def archive(root, expected, private, output):
     for parent in output.parents:
         if (parent / ".git").exists():
             raise ValueError("output inside Git")
-    # exclusive file creation, no extraction, no overwrite
-    with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for name, item in sorted(expected.items()):
-            raw = frozen(root / name, MAX_FILE)
-            verify_bytes(raw, item)
-            z.writestr("VirtualCar/" + name, raw)
-    with zipfile.ZipFile(output, "r") as z:
-        if len(z.infolist()) != len(expected) or set(z.namelist()) != {"VirtualCar/"+n for n in expected}:
-            raise ValueError("ZIP inventory mismatch")
+    # Stage in the destination filesystem, verify every entry, then publish
+    # with an exclusive hard link. A failed audit must not leave a final ZIP.
+    if os.path.lexists(output):
+        raise FileExistsError(output)
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix=".vc094g-", dir=output.parent) as staging:
+        staged = Path(staging) / "candidate.zip"
+        with zipfile.ZipFile(staged, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+            for name, item in sorted(expected.items()):
+                raw = frozen(root / name, MAX_FILE)
+                verify_bytes(raw, item)
+                z.writestr("VirtualCar/" + name, raw)
+        with zipfile.ZipFile(staged, "r") as z:
+            if len(z.infolist()) != len(expected) or set(z.namelist()) != {"VirtualCar/"+n for n in expected}:
+                raise ValueError("ZIP inventory mismatch")
+            for name, item in expected.items():
+                info = z.getinfo("VirtualCar/"+name)
+                if info.file_size != item[0]:
+                    raise ValueError("ZIP size mismatch")
+                verify_bytes(z.read(info), item)
+        if scan(root) != set(expected):
+            raise ValueError("package inventory changed during archive")
         for name, item in expected.items():
-            info = z.getinfo("VirtualCar/"+name)
-            if info.file_size != item[0]:
-                raise ValueError("ZIP size mismatch")
-            verify_bytes(z.read(info), item)
-    return digest_file(output)
+            verify_bytes(frozen(root / name, MAX_FILE), item)
+        sha = digest_file(staged)
+        os.link(staged, output)
+        return sha
 
 
 def digest_file(path):

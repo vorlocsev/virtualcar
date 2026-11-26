@@ -191,8 +191,21 @@ class PackageChecks(unittest.TestCase):
         self.manifest["original_vida"] = "not_tested"
         expected, private = self.verify()
         (self.root / "VirtualCar.exe").write_bytes(b"changed")
+        output = self.root.parent / "demo.zip"
         with self.assertRaises(ValueError):
-            audit.archive(self.root, expected, private, self.root.parent / "demo.zip")
+            audit.archive(self.root, expected, private, output)
+        self.assertFalse(output.exists())
+        self.assertFalse(list(output.parent.glob(".vc094g-*")))
+        (self.root / "VirtualCar.exe").write_bytes(pe())
+        (self.root / "unexpected.txt").write_bytes(b"unexpected")
+        with self.assertRaises(ValueError):
+            audit.archive(self.root, expected, private, output)
+        self.assertFalse(output.exists())
+        (self.root / "unexpected.txt").unlink()
+        output.write_bytes(b"existing")
+        with self.assertRaises(FileExistsError):
+            audit.archive(self.root, expected, private, output)
+        self.assertEqual(output.read_bytes(), b"existing")
 
 
 if __name__ == "__main__":
