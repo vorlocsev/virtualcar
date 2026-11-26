@@ -151,9 +151,20 @@ internal static class EquipmentReferenceChecks
     private static void Test11()=>WithVariant((root,b,dll,sha,e,refs,v)=>
     {
         Require(!EquipmentVariantPackages.Matches(root,e,refs,b,sha,v));
+        // The shared reader can reject a missing path during its attribute
+        // checks (InvalidDataException), before File.Open can throw IOException.
         try { EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v); throw new Exception("Missing detached copy accepted."); }
-        catch (IOException) { }
+        catch (Exception ex) when (ex is InvalidDataException or IOException) { }
         Require(!Directory.Exists(EquipmentVariantPackages.Folder(root,v)));
+
+        // A present but corrupted detached copy must also fail without publication.
+        string detached = refs.Prepare(root,e,b,Edit());
+        File.AppendAllText(detached,";changed");
+        byte[] changed = File.ReadAllBytes(detached);
+        Require(!EquipmentVariantPackages.Matches(root,e,refs,b,sha,v));
+        Reject(()=>EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v));
+        Require(!Directory.Exists(EquipmentVariantPackages.Folder(root,v)));
+        Require(File.ReadAllBytes(detached).SequenceEqual(changed));
     });
     private static void Test12()=>WithVariant((root,b,dll,sha,e,refs,v)=>
     {
