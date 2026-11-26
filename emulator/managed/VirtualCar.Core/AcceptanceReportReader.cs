@@ -9,6 +9,8 @@ public enum AcceptanceSourceMatch { Matches, Differs, NotDeclared, NotCompared }
 public sealed record AcceptanceReport(string Stage, string Schema, AcceptanceObservation Observation,
     string? SourceSha, string? NativeSha, string ReportSha, int? Passed, int? Total, string Detail)
 {
+    public BundleSummary? Bundle { get; init; }
+
     public AcceptanceSourceMatch CompareSource(string? expected)
     {
         if (SourceSha is null) return AcceptanceSourceMatch.NotDeclared;
@@ -19,7 +21,7 @@ public sealed record AcceptanceReport(string Stage, string Schema, AcceptanceObs
 }
 
 /// <summary>Imports bounded local report claims, never runtime attestation.</summary>
-public static class AcceptanceReportReader
+public static partial class AcceptanceReportReader
 {
     public const int MaxBytes = 256 * 1024;
 
@@ -65,6 +67,7 @@ public static class AcceptanceReportReader
             "vc090c-explicit-vida-binding-v1" => Binding(root, schema, digest),
             "vc090d-native-readvin-evidence-v1" => Identity(root, schema, digest),
             "vc090e-ecu-identification-evidence-v1" => Ecu(root, schema, digest),
+            "vc092-evidence-bundle-report-v1" => Bundle(root, schema, digest),
             _ => throw new InvalidDataException()
         };
     }
