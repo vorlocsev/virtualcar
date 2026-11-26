@@ -11,6 +11,14 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var arguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
+        if (arguments.SequenceEqual(new[] { "--home-preview" }))
+        {
+            // Explicit read-only UI regression mode. No persistent language
+            // preference, preparation, elevation or advanced workspace.
+            _window = new VehicleHomeWindow(() => { }, homePreview: true);
+            _window.Activate();
+            return;
+        }
         if (arguments.Length == 0)
         {
             VehicleHomeWindow? home = null;
