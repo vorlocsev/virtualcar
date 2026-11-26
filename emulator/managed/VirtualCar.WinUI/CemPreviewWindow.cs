@@ -97,6 +97,8 @@ public sealed class CemPreviewWindow : Window
     private readonly bool _ephemeral;
     private readonly bool _previewOnly;
     private readonly bool _diagnosticsOnly;
+    private readonly bool _registrationOnly;
+    private bool CanManageRegistration => !_ephemeral || _registrationOnly;
     private bool CanReadDiagnostics => !_ephemeral || _diagnosticsOnly;
     private bool CanLoadProfile => !_ephemeral || _previewOnly;
     private bool _languageSaveFailed;
@@ -114,11 +116,12 @@ public sealed class CemPreviewWindow : Window
     private CemPreview? Snapshot => _model?.Snapshot;
     private CemRow? Selected => (_rows.SelectedItem as ListViewItem)?.Tag as CemRow;
 
-    public CemPreviewWindow(bool ephemeral = false, bool previewOnly = false, bool diagnosticsOnly = false)
+    public CemPreviewWindow(bool ephemeral = false, bool previewOnly = false, bool diagnosticsOnly = false, bool registrationOnly = false)
     {
         _previewOnly = previewOnly;
         _diagnosticsOnly = diagnosticsOnly;
-        _ephemeral = ephemeral || previewOnly || diagnosticsOnly;
+        _registrationOnly = registrationOnly;
+        _ephemeral = ephemeral || previewOnly || diagnosticsOnly || registrationOnly;
         ephemeral = _ephemeral;
         if (!ephemeral)
         {
@@ -252,6 +255,8 @@ public sealed class CemPreviewWindow : Window
         _vehicleScenario.SelectionChanged += (_, _) => { if (!_vehicleUpdating) RenderVehicle(); };
         _driverPanel.Children.Add(_driverStatus);
         _driverPanel.Children.Add(_driverPath);
+        AutomationId(_driverPath, "VC090B.Driver.Path");
+        AutomationId(_driverResult, "VC090B.Driver.Result");
         var driverActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         driverActions.Children.Add(_driverRefresh);
         driverActions.Children.Add(_driverInstall);
@@ -1037,7 +1042,7 @@ public sealed class CemPreviewWindow : Window
 
     private void RefreshDriver()
     {
-        if (_ephemeral || _driverBusy || _closed) return;
+        if (!CanManageRegistration || _driverBusy || _closed) return;
         _driverInfo = DriverRegistration.Read();
         RenderDriver();
     }
@@ -1057,12 +1062,13 @@ public sealed class CemPreviewWindow : Window
             _ => T("Registry unavailable", "Реестр недоступен")
         };
         _driverResult.Text = T(_driverResultEn, _driverResultRu);
-        bool enabled = !_ephemeral && !Busy && !_closed && File.Exists(DriverToolPath);
+        bool enabled = CanManageRegistration && !Busy && !_closed && File.Exists(DriverToolPath);
         _driverPath.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
-        _driverRefresh.IsEnabled = !_ephemeral && !Busy && !_closed;
+        _driverRefresh.IsEnabled = CanManageRegistration && !Busy && !_closed;
         _driverInstall.IsEnabled = enabled && _driverInfo.Status == DriverRegistration.State.Absent;
-        _driverRemove.IsEnabled = enabled && (_driverInfo.Status is DriverRegistration.State.Registered or DriverRegistration.State.LegacyRegistered);
-        if (_ephemeral)
+        _driverRemove.IsEnabled = enabled && (_driverInfo.Status == DriverRegistration.State.Registered ||
+            (!_registrationOnly && _driverInfo.Status == DriverRegistration.State.LegacyRegistered));
+        if (!CanManageRegistration)
             _driverResult.Text = T("Driver changes disabled in smoke mode.", "Изменения драйвера отключены в тестовом режиме.");
         else if (!File.Exists(DriverToolPath))
             _driverResult.Text = T("Driver tool not published.", "Утилита регистрации не собрана.");
@@ -1076,17 +1082,18 @@ public sealed class CemPreviewWindow : Window
 
     private async Task ChangeDriverAsync(bool install)
     {
-        if (_ephemeral || Busy || _closed || _section != Section.Connection || !File.Exists(DriverToolPath)) return;
+        if (!CanManageRegistration || Busy || _closed || _section != Section.Connection || !File.Exists(DriverToolPath)) return;
         RefreshDriver();
         if (install ? _driverInfo.Status != DriverRegistration.State.Absent :
             _driverInfo.Status is not (DriverRegistration.State.Registered or DriverRegistration.State.LegacyRegistered)) return;
+        if (_registrationOnly && !install && _driverInfo.Status != DriverRegistration.State.Registered) return;
         string path = install ? _driverPath.Text.Trim() : _driverInfo.Library!;
         _driverBusy = true;
         UpdateControls();
         RenderDriver();
         try
         {
-            string? hash = install ? await Task.Run(() => DriverRegistration.Fingerprint(path)) : null;
+            string? hash = install || _registrationOnly ? await Task.Run(() => DriverRegistration.Fingerprint(path)) : null;
             if (_closed) return;
             var dialog = new ContentDialog
             {
@@ -1100,7 +1107,11 @@ public sealed class CemPreviewWindow : Window
                 CloseButtonText = T("Cancel", "Отмена"),
                 DefaultButton = ContentDialogButton.Close
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _closed) return;
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || _closed)
+            {
+                DriverResult("Registration change cancelled.", "Изменение регистрации отменено.");
+                return;
+            }
             var start = new ProcessStartInfo
             {
                 FileName = DriverToolPath,
@@ -1108,7 +1119,7 @@ public sealed class CemPreviewWindow : Window
                 UseShellExecute = true,
                 Verb = "runas"
             };
-            start.ArgumentList.Add(install ? "install" : "remove");
+            start.ArgumentList.Add(install ? "install" : _registrationOnly ? "remove-canonical" : "remove");
             start.ArgumentList.Add(path);
             if (hash is not null) start.ArgumentList.Add(hash);
             using var process = Process.Start(start) ?? throw new InvalidOperationException();
@@ -1116,7 +1127,8 @@ public sealed class CemPreviewWindow : Window
             var after = DriverRegistration.Read();
             bool verified = install
                 ? after.Status == DriverRegistration.State.Registered &&
-                  string.Equals(after.Library, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase)
+                  string.Equals(after.Library, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase) &&
+                  string.Equals(DriverRegistration.Fingerprint(path), hash, StringComparison.OrdinalIgnoreCase)
                 : after.Status == DriverRegistration.State.Absent;
             if (process.ExitCode == 0 && verified)
                 DriverResult("Registration updated.", "Регистрация обновлена.");
