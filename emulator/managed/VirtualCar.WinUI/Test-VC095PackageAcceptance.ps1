@@ -104,7 +104,7 @@ try {
                     $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
                     if ($null -ne $window -and $window.Current.ProcessId -eq $process.Id) {
                         $ready = $true
-                        foreach ($id in @('VC094A.Vehicle','VC094A.Vehicle.Name','VC094A.Connection.Status','VC094A.Advanced')) {
+                        foreach ($id in @('VC094A.Vehicle','VC094A.Vehicle.Name','VC094A.Connection.Status','VC094A.Advanced','VC094A.Language')) {
                             $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,$id)
                             $element = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
                             if ($null -eq $element -or $element.Current.ProcessId -ne $process.Id) { $ready=$false; break }
@@ -116,6 +116,33 @@ try {
             if (-not $ready) { Start-Sleep -Milliseconds 250 }
         } until ($ready -or $timer.Elapsed.TotalSeconds -ge 60)
         if (-not $ready) { throw 'Normal home automation controls not observed.' }
+        # Inspect the language list without selecting another language or changing settings.
+        $languageCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty,'VC094A.Language')
+        $language = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$languageCondition)
+        if ($null -eq $language -or $language.Current.ProcessId -ne $process.Id) { throw 'Language selector missing.' }
+        $expand = $language.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        $expand.Expand()
+        try {
+            foreach ($choice in @(@{id='VC094A.Language.EN';name='English'},@{id='VC094A.Language.RU';name=[string]([char]0x0420)+[char]0x0443+[char]0x0441+[char]0x0441+[char]0x043A+[char]0x0438+[char]0x0439})) {
+                $condition = [System.Windows.Automation.PropertyCondition]::new(
+                    [System.Windows.Automation.AutomationElement]::AutomationIdProperty,$choice.id)
+                $timerChoice = [Diagnostics.Stopwatch]::StartNew()
+                $item = $null
+                do {
+                    $item = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+                    if ($null -eq $item) { $item = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+                        [System.Windows.Automation.TreeScope]::Descendants,
+                        [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@(
+                            $condition,[System.Windows.Automation.PropertyCondition]::new(
+                                [System.Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)))) }
+                    if ($null -eq $item) { Start-Sleep -Milliseconds 100 }
+                } until ($null -ne $item -or $timerChoice.Elapsed.TotalSeconds -ge 5)
+                if ($null -eq $item -or $item.Current.ProcessId -ne $process.Id -or $item.Current.Name -ne $choice.name) {
+                    throw 'Expected bilingual language option not observed.'
+                }
+            }
+        } finally { $expand.Collapse() }
     } finally {
         try {
             $process.Refresh()
