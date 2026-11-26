@@ -5,7 +5,10 @@ using System.Text.RegularExpressions;
 namespace VirtualCar.Core;
 
 public sealed record LocalConfigurationRow(int Offset, string Name, string Value, bool Locked);
-public sealed record LocalVehicleProfile(BuiltInVehicle Vehicle, IReadOnlyList<LocalConfigurationRow> Rows);
+public sealed record LocalVehicleProfile(BuiltInVehicle Vehicle, IReadOnlyList<LocalConfigurationRow> Rows)
+{
+    public ManagedEquipmentPreview? Editor { get; init; }
+}
 
 public static class LocalVehicleData
 {
@@ -59,8 +62,11 @@ public static class LocalVehicleData
         string dir = Folder(root);
         using var manifest = JsonDocument.Parse(Read(Path.Combine(dir, "local-profile.json"), 4096));
         var m = manifest.RootElement;
-        Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256");
-        if (m.GetProperty("schema").GetString() != "vc094b-local-profile-v1" || Hash(m, "profile_sha256") != PinnedProfile)
+        string? schema = m.GetProperty("schema").GetString();
+        bool editable = schema == "vc094d-local-profile-v2";
+        if (editable) Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256", "options_sha256");
+        else Keys(m, "schema", "profile_sha256", "native_sha256", "catalog_sha256");
+        if ((!editable && schema != "vc094b-local-profile-v1") || Hash(m, "profile_sha256") != PinnedProfile)
             throw new InvalidDataException();
         string native = Hash(m, "native_sha256");
         if (!Encoding.ASCII.GetString(Read(Path.Combine(dir, "candidate.sha256"), 128)).Trim().Equals(native, StringComparison.OrdinalIgnoreCase))
@@ -74,10 +80,19 @@ public static class LocalVehicleData
         if (!NativeEcmScenarioApply.Digest(catalog).Equals(Hash(m, "catalog_sha256"), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException();
         var rows = ParseCatalog(catalog);
+        ManagedEquipmentPreview? editor = null;
+        if (editable)
+        {
+            byte[] options = Read(Path.Combine(dir, "configuration-options.json"), 4 * 1024 * 1024);
+            if (!NativeEcmScenarioApply.Digest(options).Equals(Hash(m, "options_sha256"), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException();
+            editor = new ManagedEquipmentPreview(ManagedEquipmentPreview.ExtractBlock(profile), options);
+            if (editor.Preview(new Dictionary<int, string>()).Status != "pass") throw new InvalidDataException();
+        }
         return new(new BuiltInVehicle(Id, "Volvo XC90 V8 · 2009", "Volvo XC90 V8 · 2009",
             "Owner-local reviewed simulator profile. Original VIDA acceptance remains separate.",
             "Проверенный локальный профиль эмулятора. Фактическая приёмка VIDA проверяется отдельно.",
-            vins[0].Groups[1].Value, false), rows);
+            vins[0].Groups[1].Value, false), rows) { Editor = editor };
     }
 
     public static IReadOnlyList<LocalConfigurationRow> ParseCatalog(byte[] bytes)
