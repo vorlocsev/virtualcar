@@ -35,6 +35,18 @@ public sealed class CemPreviewWindow : Window
     private readonly TextBlock _placeholderHeading = new() { FontSize = 24, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _placeholderText = new() { TextWrapping = TextWrapping.Wrap };
     private readonly StackPanel _monitorPanel = new() { Spacing = 8 };
+    private readonly StackPanel _monitorActions = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+    private readonly StackPanel _acceptancePanel = new() { Spacing = 8, Visibility = Visibility.Collapsed };
+    private readonly TextBox _acceptancePath = new();
+    private readonly TextBox _acceptanceHead = new();
+    private readonly TextBox _acceptanceDll = new();
+    private readonly Button _acceptanceImport = new();
+    private readonly Button _acceptanceClear = new();
+    private readonly TextBlock _acceptanceStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBox _acceptanceSummary = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 140, MaxHeight = 420 };
+    private readonly SortedDictionary<string, AcceptanceReport> _acceptanceReports = new(StringComparer.Ordinal);
+    private bool _acceptanceFailed;
+    private bool AcceptanceView => _monitorView.SelectedIndex == 2;
     private readonly TextBox _monitorPath = new();
     private readonly Button _monitorStart = new();
     private readonly Button _monitorStop = new();
@@ -156,11 +168,10 @@ public sealed class CemPreviewWindow : Window
         _placeholder.Children.Add(_placeholderHeading);
         _placeholder.Children.Add(_placeholderText);
         _monitorPanel.Children.Add(_monitorPath);
-        var monitorActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        monitorActions.Children.Add(_monitorStart);
-        monitorActions.Children.Add(_monitorStop);
-        monitorActions.Children.Add(_monitorRefresh);
-        _monitorPanel.Children.Add(monitorActions);
+        _monitorActions.Children.Add(_monitorStart);
+        _monitorActions.Children.Add(_monitorStop);
+        _monitorActions.Children.Add(_monitorRefresh);
+        _monitorPanel.Children.Add(_monitorActions);
         foreach (string label in new[] { "All", "TX", "RX" })
         {
             var item = new ComboBoxItem { Content = label };
@@ -175,15 +186,34 @@ public sealed class CemPreviewWindow : Window
         AutomationId(journalView, "VC086.View.Journal");
         _monitorView.Items.Add(canView);
         _monitorView.Items.Add(journalView);
+        var acceptanceView = new ComboBoxItem { Content = "Acceptance evidence" };
+        AutomationId(acceptanceView, "VC091.View.Acceptance");
+        _monitorView.Items.Add(acceptanceView);
         _monitorView.SelectedIndex = 0;
         _monitorPanel.Children.Add(_monitorView);
         _monitorPanel.Children.Add(_journalSummary);
         AutomationId(_monitorView, "VC085.Diagnostics.View");
         AutomationId(_journalSummary, "VC085.Diagnostics.Summary");
-        _monitorView.SelectionChanged += (_, _) => RenderMonitor();
+        _monitorView.SelectionChanged += (_, _) => { if (!_rebuilding) RenderMonitor(); };
         _monitorPanel.Children.Add(_monitorFilter);
         _monitorPanel.Children.Add(_monitorStatus);
         _monitorPanel.Children.Add(_monitorRows);
+        foreach (var item in new FrameworkElement[] { _acceptanceHead, _acceptanceDll, _acceptancePath,
+            _acceptanceImport, _acceptanceClear, _acceptanceStatus, _acceptanceSummary })
+            _acceptancePanel.Children.Add(item);
+        AutomationId(_acceptanceHead, "VC091.Acceptance.Head");
+        AutomationId(_acceptanceDll, "VC091.Acceptance.DllSha");
+        AutomationId(_acceptancePath, "VC091.Acceptance.Path");
+        AutomationId(_acceptanceImport, "VC091.Acceptance.Import");
+        AutomationId(_acceptanceClear, "VC091.Acceptance.Clear");
+        AutomationId(_acceptanceStatus, "VC091.Acceptance.Status");
+        AutomationId(_acceptanceSummary, "VC091.Acceptance.Summary");
+        _acceptanceImport.Click += (_, _) => ImportAcceptance();
+        _acceptanceClear.Click += (_, _) => { _acceptanceReports.Clear(); _acceptanceFailed = false; RenderAcceptance(); };
+        _acceptanceHead.TextChanged += (_, _) => RenderAcceptance();
+        _acceptanceDll.TextChanged += (_, _) => RenderAcceptance();
+        _acceptancePath.TextChanged += (_, _) => { _acceptanceFailed = false; RenderAcceptance(); };
+        _monitorPanel.Children.Add(_acceptancePanel);
         _placeholder.Children.Add(_monitorPanel);
         if (!_ephemeral) _monitorPath.Text = Path.Combine(Path.GetTempPath(), NativeCanTrace.LegacyLogFile);
         AutomationId(_monitorPath, "VC088.Monitor.Path");
@@ -492,7 +522,7 @@ public sealed class CemPreviewWindow : Window
         _rebuilding = true;
         try
         {
-            foreach (var combo in new[] { _vehicleScenario, _ignition, _monitorDirection, _filter })
+            foreach (var combo in new[] { _vehicleScenario, _ignition, _monitorDirection, _monitorView, _filter })
             {
                 int index = combo.SelectedIndex;
                 if (index < 0) continue;
@@ -577,7 +607,7 @@ public sealed class CemPreviewWindow : Window
 
     private void StartMonitor()
     {
-        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics || _monitorRunning) return;
+        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics || AcceptanceView || _monitorRunning) return;
         _monitorRunning = true;
         _monitorTimer ??= DispatcherQueue.CreateTimer();
         _monitorTimer.Interval = TimeSpan.FromSeconds(1);
@@ -589,7 +619,7 @@ public sealed class CemPreviewWindow : Window
 
     private void MonitorTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
-        if (_closed || Busy || _section != Section.Diagnostics) { StopMonitor(); RenderMonitor(); return; }
+        if (_closed || Busy || _section != Section.Diagnostics || AcceptanceView) { StopMonitor(); RenderMonitor(); return; }
         ReadMonitor();
     }
 
@@ -601,7 +631,7 @@ public sealed class CemPreviewWindow : Window
 
     private void ReadMonitor()
     {
-        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics) return;
+        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics || AcceptanceView) return;
         _monitorSnapshot = null;
         _monitorFailed = false;
         try { _monitorSnapshot = NativeCanTrace.ReadFile(_monitorPath.Text.Trim()); }
@@ -619,18 +649,26 @@ public sealed class CemPreviewWindow : Window
         if (_monitorDirection.Items.Count > 0 && _monitorDirection.Items[0] is ComboBoxItem all)
             all.Content = T("All", "Все");
         _monitorView.Header = T("View", "Представление");
-        if (_monitorView.Items.Count == 2)
+        if (_monitorView.Items.Count == 3)
         {
             ((ComboBoxItem)_monitorView.Items[0]).Content = "CAN Monitor";
             ((ComboBoxItem)_monitorView.Items[1]).Content = T("Diagnostic journal", "Журнал диагностики");
+            ((ComboBoxItem)_monitorView.Items[2]).Content = T("Acceptance evidence", "Доказательства приёмки");
         }
+        bool acceptance = AcceptanceView;
+        if (acceptance) StopMonitor();
+        foreach (var item in new FrameworkElement[] { _monitorPath, _monitorActions, _monitorDirection,
+            _monitorFilter, _monitorStatus, _monitorRows })
+            item.Visibility = acceptance ? Visibility.Collapsed : Visibility.Visible;
+        _acceptancePanel.Visibility = acceptance ? Visibility.Visible : Visibility.Collapsed;
+        RenderAcceptance();
         bool journal = _monitorView.SelectedIndex == 1;
         _journalSummary.Visibility = journal ? Visibility.Visible : Visibility.Collapsed;
         _journalSummary.Text = journal ? T("No log records available.", "Нет записей журнала.") : "";
         _monitorFilter.Header = journal
             ? T("Filter CAN ID / payload / PID / process / SID / DID / NRC", "Фильтр CAN ID / данных / PID / процесса / SID / DID / NRC")
             : T("Filter CAN ID / payload / PID / process", "Фильтр CAN ID / данных / PID / процесса");
-        bool enabled = CanReadDiagnostics && !Busy && !_closed;
+        bool enabled = CanReadDiagnostics && !Busy && !_closed && !acceptance;
         _monitorPath.IsEnabled = enabled && !_monitorRunning;
         _monitorStart.IsEnabled = _monitorRefresh.IsEnabled = enabled && !_monitorRunning;
         _monitorStop.IsEnabled = _monitorRunning;
@@ -682,6 +720,75 @@ public sealed class CemPreviewWindow : Window
             $" · {shown}/{_monitorSnapshot.Rows.Count} · " +
             T("Latest 500 records max; not a complete capture.", "До 500 последних записей; не полный захват.") +
             (_monitorSnapshot.TailOnly ? T(" Tail only.", " Только конец файла.") : "");
+    }
+
+    private void ImportAcceptance()
+    {
+        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics || !AcceptanceView || !_acceptanceImport.IsEnabled) return;
+        try
+        {
+            var report = AcceptanceReportReader.ReadFile(_acceptancePath.Text.Trim());
+            _acceptanceReports[report.Stage] = report;
+            _acceptanceFailed = false;
+        }
+        catch (Exception) { _acceptanceFailed = true; }
+        RenderAcceptance();
+    }
+
+    private string AcceptanceMatch(AcceptanceSourceMatch match) => match switch
+    {
+        AcceptanceSourceMatch.Matches => T("matches", "совпадает"),
+        AcceptanceSourceMatch.Differs => T("differs", "отличается"),
+        AcceptanceSourceMatch.NotDeclared => T("not declared", "не указан"),
+        _ => T("not compared", "не сравнивался")
+    };
+
+    private void RenderAcceptance()
+    {
+        _acceptanceHead.Header = T("Expected source HEAD (optional, 40 hex)", "Ожидаемый HEAD (необязательно, 40 hex)");
+        _acceptanceDll.Header = T("Expected native DLL SHA256 (optional)", "Ожидаемый SHA256 нативной DLL (необязательно)");
+        _acceptancePath.Header = T("Local JSON report (absolute path)", "Локальный JSON-отчёт (абсолютный путь)");
+        _acceptanceImport.Content = T("Import / replace report", "Импортировать / заменить отчёт");
+        _acceptanceClear.Content = T("Clear reports", "Очистить отчёты");
+        _acceptanceSummary.Header = T("Summary (select and copy)", "Сводка (выделить и скопировать)");
+        bool enabled = CanReadDiagnostics && !Busy && !_closed && _section == Section.Diagnostics && AcceptanceView;
+        string head = _acceptanceHead.Text.Trim(), dll = _acceptanceDll.Text.Trim();
+        bool valid = (head.Length == 0 || AcceptanceReportReader.IsHash(head, 40)) &&
+            (dll.Length == 0 || AcceptanceReportReader.IsHash(dll, 64));
+        _acceptancePath.IsEnabled = _acceptanceHead.IsEnabled = _acceptanceDll.IsEnabled = enabled;
+        _acceptanceImport.IsEnabled = enabled && valid && _acceptancePath.Text.Trim().Length > 0;
+        _acceptanceClear.IsEnabled = enabled && _acceptanceReports.Count > 0;
+        _acceptanceStatus.Text = !valid ? T("Invalid expected fingerprint.", "Некорректный ожидаемый отпечаток.") :
+            _acceptanceFailed ? T("Import rejected; prior reports retained.", "Импорт отклонён; прежние отчёты сохранены.") :
+            T("Imported reports: ", "Импортировано отчётов: ") + _acceptanceReports.Count;
+        var lines = new List<string> { T("Local report claims only. No runtime acceptance is inferred.", "Только сведения из локальных отчётов. Фактическая приёмка не подтверждается.") };
+        foreach (var report in _acceptanceReports.Values)
+        {
+            string status = report.Observation switch
+            {
+                AcceptanceObservation.ReportedPass => T("Reported PASS", "Заявленный PASS"),
+                AcceptanceObservation.ReportedFail => T("Reported FAIL", "Заявленный FAIL"),
+                AcceptanceObservation.Observed => T("Observation", "Наблюдение"),
+                _ => T("Review required", "Требуется проверка")
+            };
+            lines.Add($"{report.Stage} · {status} · {report.Detail}" +
+                (report.Total is int total ? $" · {report.Passed}/{total}" : ""));
+            lines.Add("HEAD: " + (report.SourceSha ?? "—") + " · " + AcceptanceMatch(report.CompareSource(valid ? head : null)));
+            var dllMatch = report.NativeSha is null ? AcceptanceSourceMatch.NotDeclared :
+                !valid || dll.Length == 0 ? AcceptanceSourceMatch.NotCompared :
+                report.NativeSha.Equals(dll, StringComparison.OrdinalIgnoreCase) ? AcceptanceSourceMatch.Matches : AcceptanceSourceMatch.Differs;
+            lines.Add("DLL SHA256: " + (report.NativeSha ?? "—") + " · " + AcceptanceMatch(dllMatch));
+            lines.Add("JSON SHA256: " + report.ReportSha);
+        }
+        lines.Add("");
+        foreach (string stage in new[] { "VC090A", "VC090B/Baseline", "VC090B/InstallCancelled", "VC090B/Installed",
+            "VC090B/RemoveCancelled", "VC090B/Restored", "VC090C", "VC090D", "VC090E" })
+            if (!_acceptanceReports.ContainsKey(stage)) lines.Add(stage + T(" · No report imported", " · Отчёт не импортирован"));
+        lines.Add("");
+        lines.Add(T("Outstanding runtime gates (not verified by these reports):", "Открытые этапы фактической приёмки (не подтверждены этими отчётами):"));
+        lines.Add(T("Registration install/remove; VIDA provider selection; loaded module identity; ReadVin; ECU identification; original T111/T122 catalog; physical J2534 — Not tested.",
+            "Установка/удаление регистрации; выбор адаптера VIDA; идентичность модуля; ReadVin; идентификация ECU; оригинальный каталог T111/T122; физический J2534 — не проверено."));
+        _acceptanceSummary.Text = string.Join(Environment.NewLine, lines);
     }
 
     private string DiagnosticLabel(DiagnosticEntry entry)
