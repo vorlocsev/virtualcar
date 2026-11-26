@@ -15,7 +15,15 @@ internal static class EquipmentReferenceChecks
         ("VC094D2 05 reject absent and wrong references", () => Run(Test05)),
         ("VC094D2 06 reject duplicate reference", () => Run(Test06)),
         ("VC094D2 07 detached copy and repeat", () => Run(Test07)),
-        ("VC094D2 08 reject altered baseline and existing copy", () => Run(Test08))
+        ("VC094D2 08 reject altered baseline and existing copy", () => Run(Test08)),
+        ("VC094D3 01 stable independent variant identity", () => Run(Test09)),
+        ("VC094D3 02 reject forged variant and unsafe names", () => Run(Test10)),
+        ("VC094D3 03 require detached checked copy", () => Run(Test11)),
+        ("VC094D3 04 prepare independent native package", () => Run(Test12)),
+        ("VC094D3 05 repeat without replacement", () => Run(Test13)),
+        ("VC094D3 06 reject corrupt variant profile", () => Run(Test14)),
+        ("VC094D3 07 reject changed native bytes", () => Run(Test15)),
+        ("VC094D3 08 preserve original and reject stale source", () => Run(Test16))
     ];
     private static Task Run(Action a) { a(); return Task.CompletedTask; }
     private static void Require(bool ok) { if (!ok) throw new InvalidOperationException(); }
@@ -112,5 +120,84 @@ internal static class EquipmentReferenceChecks
         Require(File.ReadAllBytes(path).SequenceEqual(changed));
         File.AppendAllText(Path.Combine(LocalVehicleData.Folder(root),"virtualcar.ini"),";changed");
         Reject(()=>refs.Prepare(root,editor,baseline,Edit()));
+    });
+
+    private static void Test09()
+    {
+        var refs=Ref();
+        var variant=refs.Variants.Single();
+        Require(variant.Offset==60 && variant.Code=="01");
+        Require(refs.CompileVariant(Editor(),Ini(Block()),variant).SequenceEqual(Expected()));
+        Require(refs.Variants.Single()==variant);
+    }
+    private static void Test10()
+    {
+        var refs=Ref(); var variant=refs.Variants.Single();
+        Reject(()=>refs.CompileVariant(Editor(),Ini(Block()),variant with {ProfileSha=new string('0',64)}));
+        Reject(()=>refs.CompileVariant(Editor(),Ini(Block()),variant with {Offset=61}));
+        Reject(()=>EquipmentVariantPackages.Folder(Path.GetTempPath(),variant with {Code="../"}));
+        Reject(()=>EquipmentVariantPackages.Folder("relative",variant));
+    }
+    private static void WithVariant(Action<string, byte[], byte[], string, ManagedEquipmentPreview, EquipmentReferences, EquipmentVariant> action)
+    {
+        WithRoot((root,baseline)=>
+        {
+            byte[] dll=Encoding.ASCII.GetBytes("Synthetic fixture only; never loaded.");
+            File.WriteAllBytes(Path.Combine(LocalVehicleData.Folder(root),"VirtualCarJ2534.dll"),dll);
+            var refs=Ref(); var editor=Editor();
+            action(root,baseline,dll,NativeEcmScenarioApply.Digest(dll),editor,refs,refs.Variants.Single());
+        });
+    }
+    private static void Test11()=>WithVariant((root,b,dll,sha,e,refs,v)=>
+    {
+        Require(!EquipmentVariantPackages.Matches(root,e,refs,b,sha,v));
+        try { EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v); throw new Exception("Missing detached copy accepted."); }
+        catch (IOException) { }
+        Require(!Directory.Exists(EquipmentVariantPackages.Folder(root,v)));
+    });
+    private static void Test12()=>WithVariant((root,b,dll,sha,e,refs,v)=>
+    {
+        refs.Prepare(root,e,b,Edit());
+        EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v);
+        Require(EquipmentVariantPackages.Matches(root,e,refs,b,sha,v));
+        Require(File.ReadAllBytes(EquipmentVariantPackages.Library(root,v)).SequenceEqual(dll));
+        Require(File.ReadAllBytes(Path.Combine(EquipmentVariantPackages.Folder(root,v),"virtualcar.ini")).SequenceEqual(Expected()));
+    });
+    private static void Test13()=>WithVariant((root,b,dll,sha,e,refs,v)=>
+    {
+        refs.Prepare(root,e,b,Edit());
+        EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v);
+        string path=EquipmentVariantPackages.Library(root,v);
+        var stamp=File.GetLastWriteTimeUtc(path);
+        EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v);
+        Require(File.GetLastWriteTimeUtc(path)==stamp);
+    });
+    private static void Test14()=>WithVariant((root,b,dll,sha,e,refs,v)=>
+    {
+        refs.Prepare(root,e,b,Edit()); EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v);
+        string path=Path.Combine(EquipmentVariantPackages.Folder(root,v),"virtualcar.ini");
+        File.AppendAllText(path,";changed");
+        byte[] changed=File.ReadAllBytes(path);
+        Require(!EquipmentVariantPackages.Matches(root,e,refs,b,sha,v));
+        Reject(()=>EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v));
+        Require(File.ReadAllBytes(path).SequenceEqual(changed));
+    });
+    private static void Test15()=>WithVariant((root,b,dll,sha,e,refs,v)=>
+    {
+        refs.Prepare(root,e,b,Edit()); EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v);
+        string path=EquipmentVariantPackages.Library(root,v);
+        File.AppendAllText(path,"changed");
+        Require(!EquipmentVariantPackages.Matches(root,e,refs,b,sha,v));
+        Reject(()=>EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v));
+    });
+    private static void Test16()=>WithVariant((root,b,dll,sha,e,refs,v)=>
+    {
+        refs.Prepare(root,e,b,Edit()); EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v);
+        string source=LocalVehicleData.Folder(root);
+        Require(File.ReadAllBytes(Path.Combine(source,"virtualcar.ini")).SequenceEqual(b));
+        Require(File.ReadAllBytes(Path.Combine(source,"VirtualCarJ2534.dll")).SequenceEqual(dll));
+        File.AppendAllText(Path.Combine(source,"virtualcar.ini"),";stale");
+        Require(!EquipmentVariantPackages.Matches(root,e,refs,b,sha,v));
+        Reject(()=>EquipmentVariantPackages.Prepare(root,e,refs,b,sha,v));
     });
 }
