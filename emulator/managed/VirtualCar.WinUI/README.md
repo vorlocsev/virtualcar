@@ -423,6 +423,10 @@ The exact-head VMware run at a50ba13ca3f30049e85d1fe518cf5a388c12c07c reported V
 
 Owner-local VMware execution of 2b36d479bafa154e1c73623eea1928bc3f38478a confirmed VC075 publish and window smoke, VC090 native preflight 8/8, registry absent, and VC094G public demo integrity PASS (714 files). The subsequent acceptance script failed to parse at line 74 because the screenshot function used the C-style logical OR operator. Replaced it with PowerShell -or and added a read-only syntax preflight for WinUI PowerShell scripts using the active engine before the expensive build. The new HEAD must be rebuilt and accepted independently; earlier build evidence is not relabeled. Core 192/192 and Python 1284 discovered / 1280 passing / four known skips remain expectations, not results. The syntax preflight does not replace execution, UI or registry tests. No release or runtime acceptance.
 
+## VC096D detached-copy Core regression (pending)
+
+Owner-local VMware execution at d7e98d65968b1b04f2c3cc5f598b379ea357a9e3 confirmed PowerShell parse, VC075 publish/window smoke, VC090 native preflight 8/8, registry absent, VC094G public demo integrity PASS (714 files), and Core 191/192. VC094D3 03 failed with InvalidDataException: its negative test only caught IOException, although the shared checked reader can reject a missing detached file during attribute validation before opening it. The regression now accepts either rejection type, still requires no variant directory, and also tests a present corrupt detached draft without publication or mutation. Production validation is unchanged. Core expectation remains 192/192; Python not reached on the previous HEAD. New HEAD not executed. No CI dispatch, registry changes or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
