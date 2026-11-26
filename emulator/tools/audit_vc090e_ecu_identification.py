@@ -114,6 +114,8 @@ def audit(summary, catalog=None):
             else:
                 counts["alive_without_positive_identification"] += 1
         elif state == "not_alive":
+            if transport == "not_observed":
+                counts["not_alive_transport_unobserved"] += 1
             if transport == "positive_identification":
                 counts["not_alive_with_reported_positive_identification"] += 1
             if row["catalog_lookup"] == "default_variant":
@@ -127,6 +129,8 @@ def audit(summary, catalog=None):
                 counts["not_present_configuration_unobserved"] += 1
         if state in ("alive", "not_alive") and row["profile"] == "not_in_configuration":
             counts["readout_outside_reported_configuration"] += 1
+        elif state in ("alive", "not_alive") and row["profile"] == "unknown":
+            counts["readout_configuration_unobserved"] += 1
         if state == "not_observed" and transport == "positive_identification":
             counts["positive_identification_without_readout"] += 1
     discrepancy_keys = (
@@ -135,7 +139,8 @@ def audit(summary, catalog=None):
         "not_present_with_reported_positive_identification",
         "not_present_but_in_configuration",
         "readout_outside_reported_configuration")
-    gap_keys = ("alive_transport_unobserved", "not_present_configuration_unobserved",
+    gap_keys = ("alive_transport_unobserved", "not_alive_transport_unobserved",
+                "readout_configuration_unobserved", "not_present_configuration_unobserved",
                 "positive_identification_without_readout", "readout_not_observed")
     if not seen:
         gate = "no_module_observations"
