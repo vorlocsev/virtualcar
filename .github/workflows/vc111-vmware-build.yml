@@ -1,4 +1,4 @@
-name: VC112 VMware publication hotfix
+name: VC113 VMware compact dashboard
 on:
   push:
     branches:
@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/vc111-vmware-build.yml'
       - 'vc111-build/publisher-hotfix.py'
+      - 'vc111-build/compact-ui.py'
 permissions:
   contents: read
 concurrency:
@@ -28,7 +29,7 @@ jobs:
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
-          $work = Join-Path $env:RUNNER_TEMP ("vc112-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $work = Join-Path $env:RUNNER_TEMP ("vc113-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
           New-Item -ItemType Directory -Path $work | Out-Null
           $proto = Join-Path $work 'proto'
@@ -44,6 +45,8 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath $proto
           & $python (Join-Path $env:GITHUB_WORKSPACE 'vc111-build\publisher-hotfix.py') $proto
           if ($LASTEXITCODE -ne 0) { throw 'VC112 publication hotfix staging failed' }
+          & $python (Join-Path $env:GITHUB_WORKSPACE 'vc111-build\compact-ui.py') $proto
+          if ($LASTEXITCODE -ne 0) { throw 'VC113 compact UI patch failed' }
           git clone --local --no-hardlinks --no-checkout $env:GITHUB_WORKSPACE $repo
           if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
           git -C $repo -c core.autocrlf=false checkout --detach $base
@@ -62,6 +65,22 @@ jobs:
           & (Join-Path $proto 'acceptance\build-only.ps1') -Checkout $repo -Output $candidate -Python $python
           if (-not (Test-Path -LiteralPath (Join-Path $candidate 'provider\VirtualCarJ2534.dll'))) { throw 'Missing DLL' }
           if (-not (Test-Path -LiteralPath (Join-Path $candidate 'app\VirtualCar.WinUI.exe'))) { throw 'Missing apphost' }
+          # Portable CPython, isolated from the host installation and user site.
+          $pythonZip = Join-Path $work 'python-3.14.9-embed-amd64.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.14.9/python-3.14.9-embed-amd64.zip' -OutFile $pythonZip
+          if ((Get-FileHash -LiteralPath $pythonZip -Algorithm SHA256).Hash -ne '3C01D7CFC666F746A6F064F60FB2156AB0EC464D3D738AB796371A46A9BB24A2') { throw 'Embedded Python checksum mismatch' }
+          $embedded = Join-Path $candidate 'app\python'
+          Expand-Archive -LiteralPath $pythonZip -DestinationPath $embedded
+          $pth = Join-Path $embedded 'python314._pth'
+          if (-not (Test-Path -LiteralPath $pth -PathType Leaf)) { throw 'Python isolated path file missing' }
+          [IO.File]::WriteAllLines($pth,[string[]]@('python314.zip','.','..\VC109-tools','#import site'),[Text.Encoding]::ASCII)
+          $exe = Join-Path $embedded 'python.exe'
+          & $exe -I -B -c "import sys,ctypes,winreg,zipfile,prepare_profile; assert sys.version_info[:3] == (3,14,9); assert sys.flags.isolated; print('VC113_EMBEDDED_PYTHON=PASS',sys.version)"
+          if ($LASTEXITCODE -ne 0) { throw 'Embedded Python import check failed' }
+          foreach ($helper in @('prepare_profile.py','switch_provider.py')) {
+            & $exe -E -s -B (Join-Path $candidate ('app\VC109-tools\'+$helper)) --help
+            if ($LASTEXITCODE -ne 0) { throw 'Embedded Python helper CLI failed' }
+          }
           $package = Join-Path $work 'package'
           New-Item -ItemType Directory -Path $package | Out-Null
           Copy-Item -LiteralPath (Join-Path $candidate 'app') -Destination $package -Recurse
@@ -72,13 +91,14 @@ jobs:
             if (-not (Test-Path -LiteralPath (Join-Path $package ('app\VC109-tools\'+$helper)))) { throw 'Sealed helper missing' }
           }
           @(
-            'VC112 compile-only development candidate (VC111 + publisher hotfix)',
+            'VC113 compact development candidate (VC112 + embedded Python)',
             "Base: $base", "Build commit: $env:GITHUB_SHA",
             'Source archive SHA256: 0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951',
             'Runtime, WinUI launch and VIDA: NOT TESTED',
             'Run app\VirtualCar.WinUI.exe --live-control for the experimental panel.',
             'DLL x86 is not installed or registered. No working INI is included.',
-            'Keep app, provider and provider-package.zip together. Profile tools require Python.',
+            'Keep app, provider and provider-package.zip together. Python 3.14.9 x64 is bundled in app\python.',
+            'Compact window target 460 x 520 DIP, clamped to work area. No external Python required.',
             'Raw J2534 trace rotation: 4 x 32 MiB; runtime NOT TESTED.',
             'VC112: bounded transient publication retry and exception details; root cause not yet confirmed.',
             'Do not replace a working provider without a backup and explicit approval.'
@@ -87,19 +107,19 @@ jobs:
             ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
           } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = Join-Path $work 'VirtualCar-VC112-hotfix.zip'
+          $zip = Join-Path $work 'VirtualCar-VC113-development.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
-          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC112-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC113-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
           New-Item -ItemType Directory -Path $saved -Force | Out-Null
           Copy-Item -LiteralPath $zip -Destination $saved
-          Write-Host ('VC112_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC112-hotfix.zip'))
+          Write-Host ('VC113_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC113-development.zip'))
       - name: Upload compiled candidate
         uses: actions/upload-artifact@v4
         with:
-          name: VirtualCar-VC112-hotfix
-          path: ${{ runner.temp }}/vc112-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC112-hotfix.zip
+          name: VirtualCar-VC113-development
+          path: ${{ runner.temp }}/vc113-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC113-development.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
