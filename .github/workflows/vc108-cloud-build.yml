@@ -1,0 +1,82 @@
+name: VC108 Windows compile only
+on:
+  push:
+    branches:
+      - 'vc108-build/**'
+    paths:
+      - '.github/workflows/vc108-cloud-build.yml'
+      - 'vc108-build/vc108-source.zip'
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Compile x86 J2534 and x64 WinUI
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
+          $archive = Join-Path $env:GITHUB_WORKSPACE 'vc108-build\vc108-source.zip'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne 'B664148D29BB7B7874AFD274F7E319250788CCDFFB9BB77122019E105D3CD4BC') { throw 'VC108 source archive hash mismatch' }
+          $proto = Join-Path $env:RUNNER_TEMP 'vc108-proto'
+          $repo = Join-Path $env:RUNNER_TEMP 'vc108-base'
+          $candidate = Join-Path $env:RUNNER_TEMP 'vc108-candidate'
+          Expand-Archive -LiteralPath $archive -DestinationPath $proto
+          git clone --local --no-hardlinks --no-checkout $env:GITHUB_WORKSPACE $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
+          git -C $repo -c core.autocrlf=false checkout --detach $base
+          if ($LASTEXITCODE -ne 0) { throw 'Base checkout failed' }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC not available on runner' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x86 -host_arch=x64'
+          if ($env:VSCMD_ARG_TGT_ARCH -ne 'x86') { throw 'Incorrect target architecture' }
+          if (-not (Get-Command clang-cl.exe -ErrorAction SilentlyContinue)) {
+            foreach ($bin in @((Join-Path $vs 'VC\Tools\Llvm\x64\bin'),(Join-Path $env:ProgramFiles 'LLVM\bin'))) {
+              if (Test-Path -LiteralPath (Join-Path $bin 'clang-cl.exe')) { $env:PATH = "$bin;$env:PATH"; break }
+            }
+          }
+          & (Join-Path $proto 'acceptance\build-only.ps1') -Checkout $repo -Output $candidate
+          if (-not (Test-Path -LiteralPath (Join-Path $candidate 'provider\VirtualCarJ2534.dll'))) { throw 'Missing DLL' }
+          if (-not (Test-Path -LiteralPath (Join-Path $candidate 'app\VirtualCar.WinUI.exe'))) { throw 'Missing apphost' }
+          $package = Join-Path $env:RUNNER_TEMP 'vc108-package'
+          New-Item -ItemType Directory -Path $package | Out-Null
+          Copy-Item -LiteralPath (Join-Path $candidate 'app'),(Join-Path $candidate 'provider') -Destination $package -Recurse
+          @(
+            'VC108R compile-only development candidate',
+            "Base: $base", "Build commit: $env:GITHUB_SHA",
+            'Source archive SHA256: B664148D29BB7B7874AFD274F7E319250788CCDFFB9BB77122019E105D3CD4BC',
+            'Runtime, WinUI launch and VIDA: NOT TESTED',
+            'Run app\VirtualCar.WinUI.exe --live-control for the experimental panel.',
+            'DLL x86 is not installed or registered. No working INI is included.',
+            'Do not replace a working provider without a backup and explicit approval.'
+          ) | Set-Content -LiteralPath (Join-Path $package 'BUILD-INFO.txt') -Encoding UTF8
+          Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
+            ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
+          } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Join-Path $env:RUNNER_TEMP 'VirtualCar-VC108R-development.zip'
+          [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
+          Get-FileHash -LiteralPath $zip -Algorithm SHA256
+      - name: Upload compiled candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-VC108R-development
+          path: ${{ runner.temp }}/VirtualCar-VC108R-development.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
