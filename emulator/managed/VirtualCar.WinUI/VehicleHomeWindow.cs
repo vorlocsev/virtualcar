@@ -25,6 +25,14 @@ public sealed class VehicleHomeWindow : Window
     private IReadOnlyList<EcmScenario?> _engines = new EcmScenario?[] { null };
     private VehicleStateChoice _choice = VehicleStateChoice.Original;
     private readonly Expander _configuration = new() { Visibility = Visibility.Collapsed };
+    private readonly ComboBox _equipmentParameter = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _equipmentValue = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button _equipmentReset = new();
+    private readonly TextBlock _equipmentStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel _equipmentEditor = new() { Spacing = 8 };
+    private readonly Dictionary<int, string> _equipmentEdits = new();
+    private int _equipmentOffset = -1;
+    private bool _equipmentRendering;
     private readonly ListView _configurationRows = new() { MaxHeight = 320, SelectionMode = ListViewSelectionMode.None };
     private readonly List<BuiltInVehicle> _profiles = new(BuiltInVehicles.All);
     private readonly LocalVehicleProfile? _localProfile;
@@ -82,7 +90,39 @@ public sealed class VehicleHomeWindow : Window
         _ignition.SelectionChanged += (_, _) => SelectState();
         _engine.SelectionChanged += (_, _) => SelectState();
         _prepareState.Click += async (_, _) => await PrepareStateAsync();
-        _configuration.Content = _configurationRows;
+        var equipmentContent = new StackPanel { Spacing = 8 };
+        equipmentContent.Children.Add(_configurationRows);
+        foreach (var item in new FrameworkElement[] { _equipmentParameter, _equipmentValue, _equipmentReset, _equipmentStatus })
+            _equipmentEditor.Children.Add(item);
+        equipmentContent.Children.Add(_equipmentEditor);
+        _configuration.Content = equipmentContent;
+        Id(_equipmentParameter, "VC094D.Equipment.Parameter"); Id(_equipmentValue, "VC094D.Equipment.Value");
+        Id(_equipmentReset, "VC094D.Equipment.Reset"); Id(_equipmentStatus, "VC094D.Equipment.Status");
+        _equipmentParameter.SelectionChanged += (_, _) =>
+        {
+            if (_equipmentRendering || _rendering || _busy) return;
+            if (_equipmentParameter.SelectedItem is ComboBoxItem item && item.Tag is int offset)
+                _equipmentOffset = offset;
+            Render();
+        };
+        _equipmentValue.SelectionChanged += (_, _) =>
+        {
+            if (_equipmentRendering || _rendering || _busy || _localProfile?.Editor is not { } editor ||
+                !_equipmentValue.IsEnabled || _equipmentValue.SelectedItem is not ComboBoxItem item ||
+                item.Tag is not string code || !editor.Options.TryGetValue(_equipmentOffset, out var row)) return;
+            var candidate = new Dictionary<int, string>(_equipmentEdits);
+            if (code == row.BaselineCode) candidate.Remove(_equipmentOffset);
+            else candidate[_equipmentOffset] = code;
+            try
+            {
+                editor.Preview(candidate);
+                _equipmentEdits.Clear();
+                foreach (var pair in candidate) _equipmentEdits.Add(pair.Key, pair.Value);
+            }
+            catch (Exception) { /* Invalid choices never replace the current draft. */ }
+            Render();
+        };
+        _equipmentReset.Click += (_, _) => { if (!_busy) { _equipmentEdits.Clear(); Render(); } };
         _content.Children.Add(_configuration);
         Id(_configuration, "VC094B.Configuration");
         Id(_configurationRows, "VC094B.Configuration.Rows");
@@ -304,6 +344,56 @@ public sealed class VehicleHomeWindow : Window
         finally { _busy = false; if (!_closed) Render(); }
     }
 
+    private void RenderEquipment(bool local)
+    {
+        _equipmentRendering = true;
+        try
+        {
+            var editor = local ? _localProfile?.Editor : null;
+            _equipmentEditor.Visibility = editor is null ? Visibility.Collapsed : Visibility.Visible;
+            if (editor is null) return;
+            _equipmentParameter.Header = T("Equipment parameter", "Параметр комплектации");
+            _equipmentValue.Header = T("Value", "Значение");
+            _equipmentReset.Content = T("Reset draft", "Сбросить изменения");
+            var rows = _localProfile!.Rows;
+            var selectable = rows.Where(r => editor.Options[r.Offset].Choices.Count > 0).ToList();
+            if (!selectable.Any(r => r.Offset == _equipmentOffset))
+                _equipmentOffset = selectable.FirstOrDefault()?.Offset ?? -1;
+            _equipmentParameter.Items.Clear();
+            foreach (var row in selectable)
+                _equipmentParameter.Items.Add(new ComboBoxItem { Tag = row.Offset,
+                    Content = row.Name + (_equipmentEdits.ContainsKey(row.Offset) ? " *" : "") });
+            _equipmentParameter.SelectedIndex = selectable.FindIndex(r => r.Offset == _equipmentOffset);
+            _equipmentValue.Items.Clear();
+            if (_equipmentOffset >= 0)
+            {
+                var row = rows.Single(r => r.Offset == _equipmentOffset);
+                var options = editor.Options[_equipmentOffset];
+                _equipmentValue.Items.Add(new ComboBoxItem { Tag = options.BaselineCode, Content = row.Value + T(" (original)", " (исходное)") });
+                foreach (var option in options.Choices)
+                    _equipmentValue.Items.Add(new ComboBoxItem { Tag = option.Code, Content = option.Text });
+                string selected = _equipmentEdits.GetValueOrDefault(_equipmentOffset, options.BaselineCode);
+                _equipmentValue.SelectedIndex = _equipmentValue.Items.Cast<ComboBoxItem>().ToList().FindIndex(x => Equals(x.Tag, selected));
+            }
+            var preview = editor.Preview(_equipmentEdits);
+            _equipmentParameter.IsEnabled = !_busy && selectable.Count > 0;
+            _equipmentValue.IsEnabled = !_busy && _equipmentOffset >= 0;
+            _equipmentReset.IsEnabled = !_busy && _equipmentEdits.Count > 0;
+            string status = preview.Status switch
+            {
+                "blocked" => T("Incompatible selection", "Несовместимые параметры"),
+                "review" => T("Review required", "Требуется проверка"),
+                _ => T("Lab checks passed", "Лабораторная проверка пройдена")
+            };
+            _equipmentStatus.Text = T("Draft only · changed: ", "Только черновик · изменено: ") + preview.ChangedCount + " · " + status +
+                (preview.Errors.Count == 0 ? "" : "\n" + T("Errors: ", "Ошибки: ") + string.Join(", ", preview.Errors)) +
+                (preview.Warnings.Count == 0 ? "" : "\n" + T("Warnings: ", "Предупреждения: ") + string.Join(", ", preview.Warnings)) +
+                (preview.TopologyReview ? "\n" + T("Equipment topology requires review.", "Требуется проверка состава оборудования.") : "") +
+                "\n" + T("Nothing is applied to the simulator or vehicle.", "Изменения не применяются к эмулятору или автомобилю.");
+        }
+        finally { _equipmentRendering = false; }
+    }
+
     private void Render()
     {
         if (_closed || _rendering) return;
@@ -322,17 +412,20 @@ public sealed class VehicleHomeWindow : Window
             bool local = profile.Id == LocalVehicleData.Id;
             _identity.Text = (local ? "VIN: " : T("Demo VIN: ", "Демонстрационный VIN: ")) + profile.Vin;
             _configuration.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
-            _configuration.Header = T("Vehicle equipment · read only", "Комплектация автомобиля · просмотр");
+            _configuration.Header = local && _localProfile?.Editor is not null ? T("Vehicle equipment · draft", "Комплектация автомобиля · черновик") : T("Vehicle equipment · read only", "Комплектация автомобиля · просмотр");
             _configurationRows.Items.Clear();
             if (local && _localProfile is not null)
                 foreach (var row in _localProfile.Rows)
                     _configurationRows.Items.Add(new TextBlock { TextWrapping = TextWrapping.Wrap,
-                        Text = row.Name + ": " + row.Value + (row.Locked ? T(" (protected)", " (защищено)") : "") });
+                        Text = row.Name + ": " + (_equipmentEdits.TryGetValue(row.Offset, out var code) && _localProfile.Editor is { } editor
+                            ? editor.Options[row.Offset].Choices.Single(x => x.Code == code).Text + " *" : row.Value) +
+                            (row.Locked ? T(" (protected)", " (защищено)") : "") });
             else _configuration.IsExpanded = false;
+            RenderEquipment(local);
             var slots = local ? 8 : NativeEcuInventory.Inspect(BuiltInVehicles.ReadProfile(profile.Id)).Count;
             _modules.Text = T("Configured diagnostic routes: ", "Настроено диагностических маршрутов: ") + slots +
                 T(" (not ECU discovery)", " (не обнаружение блоков)");
-            _availability.Text = local ? T("Equipment snapshot included. Configuration editing remains in advanced mode.", "Комплектация включена. Редактирование пока в расширенном режиме.") :
+            _availability.Text = local ? T("Equipment snapshot included. Draft changes are not applied to the simulator.", "Комплектация включена. Черновик не применяется к эмулятору.") :
                 T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
                 "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
             var registration = DriverRegistration.Read();
