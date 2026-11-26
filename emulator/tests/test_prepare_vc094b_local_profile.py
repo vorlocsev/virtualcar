@@ -193,5 +193,92 @@ class LocalPackageChecks(unittest.TestCase):
                 self.assertFalse((root / ".local-profile.json.pending").exists())
 
 
+    def with_resume_target(self, check):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp) / "profile"
+            root.mkdir()
+            files = {"virtualcar.ini": b"synthetic ini",
+                     "configuration.json": b"synthetic catalog"}
+            check(root, files)
+
+    def test_17_resume_missing_files(self):
+        def check(root, files):
+            first = root / "virtualcar.ini"
+            first.write_bytes(files[first.name])
+            before = first.stat().st_mtime_ns
+            package.write_profile_files(root, files, resume=True)
+            self.assertEqual(first.stat().st_mtime_ns, before)
+            self.assertEqual((root / "configuration.json").read_bytes(), files["configuration.json"])
+        self.with_resume_target(check)
+
+    def test_18_resume_empty_directory(self):
+        def check(root, files):
+            package.write_profile_files(root, files, resume=True)
+            self.assertEqual({p.name for p in root.iterdir()}, set(files))
+        self.with_resume_target(check)
+
+    def test_19_resume_complete_unpublished_directory(self):
+        def check(root, files):
+            for name, raw in files.items():
+                (root / name).write_bytes(raw)
+            with patch.object(package.os, "fsync", side_effect=AssertionError("unexpected write")):
+                package.write_profile_files(root, files, resume=True)
+        self.with_resume_target(check)
+
+    def test_20_resume_rejects_published_or_pending_marker(self):
+        def check(root, files):
+            for name in ("local-profile.json", ".local-profile.json.pending"):
+                marker = root / name
+                marker.write_bytes(b"synthetic")
+                with self.assertRaisesRegex(ValueError, "unexpected_resume_entry"):
+                    package.write_profile_files(root, files, resume=True)
+                self.assertEqual(list(root.iterdir()), [marker])
+                marker.unlink()
+        self.with_resume_target(check)
+
+    def test_21_resume_rejects_changed_bytes(self):
+        def check(root, files):
+            first = root / "virtualcar.ini"
+            for raw in (b"truncated", b"x" * len(files[first.name])):
+                first.write_bytes(raw)
+                with self.assertRaisesRegex(ValueError, "resume_content_mismatch"):
+                    package.write_profile_files(root, files, resume=True)
+                self.assertEqual(first.read_bytes(), raw)
+                self.assertFalse((root / "configuration.json").exists())
+        self.with_resume_target(check)
+
+    def test_22_resume_rejects_unknown_entry(self):
+        def check(root, files):
+            unknown = root / "unknown.txt"
+            unknown.write_bytes(b"keep")
+            with self.assertRaisesRegex(ValueError, "unexpected_resume_entry"):
+                package.write_profile_files(root, files, resume=True)
+            self.assertEqual(unknown.read_bytes(), b"keep")
+            self.assertEqual(list(root.iterdir()), [unknown])
+        self.with_resume_target(check)
+
+    def test_23_resume_requires_existing_directory(self):
+        def check(root, files):
+            with self.assertRaises(FileNotFoundError):
+                package.write_profile_files(root / "missing", files, resume=True)
+            with self.assertRaises(FileExistsError):
+                package.write_profile_files(root, files)
+            first = root / "file"
+            first.write_bytes(b"keep")
+            with self.assertRaisesRegex(ValueError, "invalid_resume_target"):
+                package.write_profile_files(first, files, resume=True)
+        self.with_resume_target(check)
+
+    def test_24_resume_rejects_nested_directory(self):
+        def check(root, files):
+            nested = root / "virtualcar.ini"
+            nested.mkdir()
+            with self.assertRaises(ValueError):
+                package.write_profile_files(root, files, resume=True)
+            self.assertTrue(nested.is_dir())
+            self.assertFalse((root / "configuration.json").exists())
+        self.with_resume_target(check)
+
+
 if __name__ == "__main__":
     unittest.main()

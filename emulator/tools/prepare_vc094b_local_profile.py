@@ -154,7 +154,37 @@ def publish_manifest(target, manifest):
         staged.unlink()
 
 
-def prepare(private_dir, package):
+def write_profile_files(target, files, resume=False):
+    """Resume only a verified incomplete copy; never replace or remove files."""
+    if resume:
+        info = target.lstat()
+        if (not target.is_dir() or target.is_symlink() or
+                getattr(info, "st_file_attributes", 0) & 0x400):
+            raise ValueError("invalid_resume_target")
+        existing = set()
+        for item in target.iterdir():
+            if item.name not in files:
+                raise ValueError("unexpected_resume_entry")
+            if read_frozen(item, len(files[item.name])) != files[item.name]:
+                raise ValueError("resume_content_mismatch")
+            existing.add(item.name)
+    else:
+        target.mkdir(exist_ok=False)
+        existing = set()
+    for name, data in files.items():
+        if name not in existing:
+            with (target / name).open("xb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+    if {item.name for item in target.iterdir()} != set(files):
+        raise ValueError("unexpected_profile_entry")
+    for name, data in files.items():
+        if read_frozen(target / name, len(data)) != data:
+            raise ValueError("output_changed")
+
+
+def prepare(private_dir, package, resume=False):
     private_dir, package = Path(private_dir), Path(package)
     if not private_dir.is_absolute() or not package.is_absolute():
         raise ValueError("absolute_paths_required")
@@ -194,14 +224,11 @@ def prepare(private_dir, package):
             read_frozen(base / "candidate.sha256", 128).decode("ascii").strip() != declared):
         raise ValueError("native_source_changed")
     target = package / "vehicle-data" / PROFILE_ID
-    target.mkdir(exist_ok=False)
     files = {"virtualcar.ini": raw["ini"], "VirtualCarJ2534.dll": dll,
              "candidate.sha256": declared.lower().encode("ascii"), "configuration.json": catalog,
              "configuration-options.json": editor, "configuration-references.json": parity}
     # Manifest last: partial writes never qualify as a usable installed profile.
-    for name, data in files.items():
-        with (target / name).open("xb") as stream:
-            stream.write(data)
+    write_profile_files(target, files, resume)
     manifest = {"schema": "vc094d2-local-profile-v3", "profile_sha256": digest(raw["ini"]),
                 "native_sha256": digest(dll), "catalog_sha256": digest(catalog),
                 "options_sha256": digest(editor), "references_sha256": digest(parity)}
@@ -219,9 +246,11 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--private-dir", type=Path, required=True)
     p.add_argument("--package", type=Path, required=True)
+    p.add_argument("--resume-incomplete", action="store_true",
+                   help="Offline only, with diagnostic clients closed and provider unregistered; resume exact incomplete files")
     a = p.parse_args(argv)
     try:
-        prepare(a.private_dir, a.package)
+        prepare(a.private_dir, a.package, resume=a.resume_incomplete)
     except (OSError, ValueError, KeyError, TypeError, OverflowError, RecursionError):
         p.exit(2, "VC094B_LOCAL_PROFILE=REJECTED\n")
     print("VC094B_LOCAL_PROFILE=PREPARED_127_ROWS_12_LOCKED_8_ROUTES")
