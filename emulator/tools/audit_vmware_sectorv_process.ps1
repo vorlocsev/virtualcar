@@ -15,6 +15,8 @@ param(
     [ValidateRange(1,2147483647)]
     [int]$VidaProcessId = 0,
     [string]$ReferenceDll,
+    [string]$VidaProviderKey,
+    [string]$ReferenceSha256,
     [string]$OutputFile
 )
 $ErrorActionPreference = 'Stop'
@@ -478,6 +480,87 @@ function Write-ExclusiveOperatorReport {
     }
 }
 
+# VC090C: explicit existing provider only; never discover by guessing or
+# change registration. A legacy comparison is not candidate acceptance.
+function Test-VC090CProviderName([string]$Name) {
+    return (-not [string]::IsNullOrWhiteSpace($Name) -and $Name.Length -le 255 -and
+        $Name -ceq $Name.Trim() -and $Name -notmatch '[\\/\x00-\x1F\x7F]' -and
+        $Name -notin @('.','..'))
+}
+function Get-VC090CLocalDll([string]$Path) {
+    if ($Path -notmatch '^[a-zA-Z]:\\' -or
+        [IO.Path]::GetFileName($Path) -ine 'VirtualCarJ2534.dll') { throw 'Invalid local lab DLL path.' }
+    $full = [IO.Path]::GetFullPath($Path)
+    if ($full -ine $Path -or [IO.DriveInfo]::new([IO.Path]::GetPathRoot($full)).DriveType -ne [IO.DriveType]::Fixed) { throw 'Invalid fixed-drive DLL path.' }
+    $item = Get-Item -LiteralPath $full -ErrorAction Stop
+    if ($item -isnot [IO.FileInfo] -or $item.Length -lt 256 -or $item.Length -gt 67108864) { throw 'Invalid DLL file.' }
+    while ($null -ne $item) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Reparse ancestry unsupported.' }
+        if ($item -is [IO.FileInfo]) { $item = $item.Directory }
+        else { $item = $item.Parent }
+    }
+    return $full
+}
+function Read-VC090CProvider([string]$Name) {
+    $root = $null
+    $key = $null
+    try {
+        $root = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryView]::Registry32)
+        $key = $root.OpenSubKey(('SOFTWARE\PassThruSupport.04.04\' + $Name),$false)
+        if ($null -eq $key) { return [pscustomobject]@{State='absent';Library=$null} }
+        if ($key.GetValueKind('FunctionLibrary') -ne [Microsoft.Win32.RegistryValueKind]::String) {
+            return [pscustomobject]@{State='unsupported_library_value';Library=$null}
+        }
+        $raw = $key.GetValue('FunctionLibrary',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if ($raw -isnot [string]) { return [pscustomobject]@{State='unsupported_library_value';Library=$null} }
+        $full = Get-VC090CLocalDll $raw
+        if ((Get-ReferencePe32State $full) -ne 'x86_pe32_header') {
+            return [pscustomobject]@{State='not_x86_pe32';Library=$null}
+        }
+        $digest = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
+        return [pscustomobject]@{State='local_x86_lab_dll';Library=$full;Digest=$digest}
+    } catch {
+        return [pscustomobject]@{State='unverifiable';Library=$null}
+    } finally {
+        if ($null -ne $key) { $key.Dispose() }
+        if ($null -ne $root) { $root.Dispose() }
+    }
+}
+function Get-VC090CBindingGate([string]$ProviderState,[bool]$Stable,[string]$Comparison,
+    [string]$Observation,[string]$PidStability) {
+    if (-not $Stable) { return 'snapshot_changed_or_unverifiable' }
+    if ($ProviderState -ne 'local_x86_lab_dll') { return 'selected_provider_unavailable' }
+    if ($Comparison -eq 'different_bytes_at_snapshot') { return 'historical_or_different_binary' }
+    if ($Comparison -ne 'exact_bytes_at_snapshot') { return 'binary_equivalence_unverified' }
+    if ($PidStability -ne 'same_pid_process_starttime_after_snapshot') { return 'process_identity_unverified' }
+    if ($Observation -ne 'registered_library_loaded_in_name_matched_client') { return 'module_binding_unverified' }
+    return 'candidate_path_and_disk_bytes_observed'
+}
+function Invoke-VC090CSelfTests {
+    $loaded='registered_library_loaded_in_name_matched_client'
+    $stable='same_pid_process_starttime_after_snapshot'
+    $exact='exact_bytes_at_snapshot'
+    $cases=@(
+        @{S='absent';Stable=$true;C=$exact;O=$loaded;P=$stable;Want='selected_provider_unavailable'},
+        @{S='local_x86_lab_dll';Stable=$false;C=$exact;O=$loaded;P=$stable;Want='snapshot_changed_or_unverifiable'},
+        @{S='local_x86_lab_dll';Stable=$true;C='different_bytes_at_snapshot';O=$loaded;P=$stable;Want='historical_or_different_binary'},
+        @{S='local_x86_lab_dll';Stable=$true;C='comparison_unverifiable';O=$loaded;P=$stable;Want='binary_equivalence_unverified'},
+        @{S='local_x86_lab_dll';Stable=$true;C=$exact;O=$loaded;P='process_exited_after_snapshot';Want='process_identity_unverified'},
+        @{S='local_x86_lab_dll';Stable=$true;C=$exact;O='registered_library_not_in_enumerated_modules';P=$stable;Want='module_binding_unverified'},
+        @{S='local_x86_lab_dll';Stable=$true;C=$exact;O='client_module_list_unavailable';P=$stable;Want='module_binding_unverified'},
+        @{S='local_x86_lab_dll';Stable=$true;C=$exact;O=$loaded;P=$stable;Want='candidate_path_and_disk_bytes_observed'}
+    )
+    foreach ($case in $cases) {
+        if ((Get-VC090CBindingGate $case.S $case.Stable $case.C $case.O $case.P) -cne $case.Want) { throw 'VC090C classification mismatch.' }
+    }
+    if (-not (Test-VC090CProviderName 'J2534 Lab Adapter') -or
+        -not (Test-VC090CProviderName 'J2534 Diagnostic Lab B3A311')) { throw 'VC090C valid key refused.' }
+    foreach ($invalid in @('',' ','..','a\b','a/b',' key','key ')) {
+        if (Test-VC090CProviderName $invalid) { throw 'VC090C invalid key accepted.' }
+    }
+    Write-Host 'PASS: VC090C 8/8 synthetic binding classifications and explicit key validation'
+}
+
 function Invoke-LocalSelfTests {
     $expected = 'C:\VirtualCarLab\VirtualCarJ2534.dll'
     $other = 'C:\VirtualCarLab\OtherJ2534.dll'
@@ -537,6 +620,7 @@ function Invoke-LocalSelfTests {
     Invoke-ModuleSnapshotSelfTests
     Invoke-VidaBindingSelfTests
     Invoke-VidaExactPidSelfTests
+    Invoke-VC090CSelfTests
 
     # Eight additional no-client, no-registry, synthetic operator-mode tests.
     $operatorChecks=0
@@ -695,14 +779,24 @@ function Invoke-ModuleSnapshotSelfTests {
 }
 
 if ($SelfTest) {
-    if ($OperatorSession -or $ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId) {
+    if ($OperatorSession -or $ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId -or $VidaProviderKey -or $ReferenceSha256) {
         throw 'Self-test cannot combine with operator collection'
     }
     Invoke-LocalSelfTests
     exit 0
 }
-if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId)) {
+if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile -or $VidaProcessName -or $VidaProcessId -or $VidaProviderKey -or $ReferenceSha256)) {
     throw 'Operator-only parameters require -OperatorSession'
+}
+$explicitProvider = -not [string]::IsNullOrEmpty($VidaProviderKey)
+if ($PSBoundParameters.ContainsKey('VidaProviderKey') -or $PSBoundParameters.ContainsKey('ReferenceSha256')) {
+    if (-not $explicitProvider -or -not (Test-VC090CProviderName $VidaProviderKey) -or
+        -not $VidaProcessName -or -not $VidaProcessId -or $ReferenceSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        throw 'Explicit provider requires a single registry key name, VIDA name/PID and reference SHA256.'
+    }
+    $ReferenceDll = Get-VC090CLocalDll $ReferenceDll
+    if ((Get-FileHash -LiteralPath $ReferenceDll -Algorithm SHA256).Hash -ine $ReferenceSha256 -or
+        (Get-ReferencePe32State $ReferenceDll) -ne 'x86_pe32_header') { throw 'Reference DLL not verified.' }
 }
 if ($VidaProcessId -and -not $VidaProcessName) {
     throw 'Exact VIDA PID selection requires -VidaProcessName'
@@ -711,10 +805,17 @@ if ($VidaProcessName -and [string]::IsNullOrWhiteSpace($ReferenceDll)) {
     throw 'VIDA operator module observation requires an explicit reference DLL'
 }
 
-# Read ONLY the 32-bit canonical Virtual Car J2534 registry key.
-# Default process observation checks SectorV; operator-only VIDA name
+# Default reads the canonical/legacy Registry32 keys. VC090C reads only
+# the explicitly named Registry32 key. Default process observation checks SectorV; operator-only VIDA name
 # selection stays explicit and does not authenticate any original executable.
 $library = $null
+$selectedBefore = $null
+$comparisonBefore = 'not_compared'
+if ($explicitProvider) {
+    $selectedBefore = Read-VC090CProvider $VidaProviderKey
+    $library = $selectedBefore.Library
+    $comparisonBefore = Get-ByteEquivalence $library $ReferenceDll
+} else {
 try {
     $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
         [Microsoft.Win32.RegistryHive]::LocalMachine,
@@ -742,6 +843,7 @@ try {
     } finally { $base.Dispose() }
 } catch {
     $library = $null
+}
 }
 
 $processes = @()
@@ -801,6 +903,39 @@ if ($OperatorSession) {
     $referencePe32 = Get-ReferencePe32State -ReferencePath $ReferenceDll
     if ($VidaProcessName) {
         $result=New-VidaModuleReport -ProcessName $VidaProcessName -Observation $processObservation -Comparison $comparison -ReferencePe32 $referencePe32 -PidSelection $vidaPidSelection -StarttimeStability $vidaPidStability
+        if ($explicitProvider) {
+            $selectedAfter = Read-VC090CProvider $VidaProviderKey
+            $referenceStable = $false
+            try {
+                $referenceStable = ((Get-FileHash -LiteralPath (Get-VC090CLocalDll $ReferenceDll) -Algorithm SHA256).Hash -ieq $ReferenceSha256)
+            } catch { $referenceStable = $false }
+            $stable = ($selectedBefore.State -ceq $selectedAfter.State -and
+                $selectedBefore.Library -ieq $selectedAfter.Library -and
+                $comparisonBefore -ceq $comparison -and $referenceStable)
+            if ($stable -and $selectedAfter.State -eq 'local_x86_lab_dll') {
+                $stable = ($selectedBefore.Digest -ieq $selectedAfter.Digest)
+                $expectedComparison = if ($selectedAfter.Digest -ieq $ReferenceSha256) { 'exact_bytes_at_snapshot' } else { 'different_bytes_at_snapshot' }
+                if ($comparison -cne $expectedComparison) { $stable = $false }
+            }
+            # Recheck the selected module after the file comparison. Never
+            # turn a name/PID observation into authenticated client identity.
+            if ($null -ne $vidaChosenClient -and $stable -and $library) {
+                $secondObservation = Get-ClientBindingState @($vidaChosenClient) $library
+                $secondPid = Test-VidaExactPidSnapshotStable $vidaChosenClient $vidaBirthTicks
+                if ($secondObservation -cne $processObservation -or $secondPid -cne $vidaPidStability) { $stable = $false }
+            }
+            $result.schema_version = 'vc090c-explicit-vida-binding-v1'
+            $result['selected_provider_scope'] = if ($VidaProviderKey -ieq 'J2534 Lab Adapter') { 'canonical' } else { 'existing_noncanonical' }
+            $result['selected_provider_state'] = $selectedAfter.State
+            $result['selected_provider_snapshot_stable'] = $stable
+            $result['reference_fingerprint_verified'] = $referenceStable
+            $result['candidate_binding_gate'] = Get-VC090CBindingGate $selectedAfter.State $stable $comparison $processObservation $vidaPidStability
+            $result['provider_selection_in_vida_gui_verified'] = $false
+            $result['registry_install_remove_verified'] = $false
+            $result.next_safe_gate = if ($result.candidate_binding_gate -eq 'candidate_path_and_disk_bytes_observed') {
+                'independently_verify_vida_gui_selection_and_active_configuration'
+            } else { 'resolve_candidate_binding_observation_before_client_acceptance' }
+        }
     } else {
     $result = [ordered]@{
         schema_version = 'virtualcar-sectorv-process-binding-operator-v1'
