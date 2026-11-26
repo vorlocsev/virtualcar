@@ -419,6 +419,10 @@ Expected offline gates 8/8, Core 192/192, Python 1280 discovered / 1276 passing 
 
 The exact-head VMware run at a50ba13ca3f30049e85d1fe518cf5a388c12c07c reported VC075 publish/window smoke and VC090 native preflight 8/8 pass, registry absent, then VC094G package integrity rejected. A read-only diagnostic identified Microsoft.ui.xaml.dll in both the Windows publish inventory and expected runtime role Microsoft.UI.Xaml.dll. Runtime role membership and required AMD64 PE checks now use case-insensitive comparison; exact paths, SHA256, sizes, case alias rejection and source/package inventory equality remain enforced. Four new regression tests cover real filename casing, x86 rejection, duplicate aliases and inconsistent manifest spelling. Expected target audit 12/12, full Python 1284 discovered / 1280 passing / four known skips, Core 192/192. New HEAD not executed. No runtime acceptance, registry change or release.
 
+## VC096C Windows PowerShell 5.1 syntax preflight (pending)
+
+Owner-local VMware execution of 2b36d479bafa154e1c73623eea1928bc3f38478a confirmed VC075 publish and window smoke, VC090 native preflight 8/8, registry absent, and VC094G public demo integrity PASS (714 files). The subsequent acceptance script failed to parse at line 74 because the screenshot function used the C-style logical OR operator. Replaced it with PowerShell -or and added a read-only syntax preflight for WinUI PowerShell scripts using the active engine before the expensive build. The new HEAD must be rebuilt and accepted independently; earlier build evidence is not relabeled. Core 192/192 and Python 1284 discovered / 1280 passing / four known skips remain expectations, not results. The syntax preflight does not replace execution, UI or registry tests. No release or runtime acceptance.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
