@@ -19,7 +19,7 @@ internal static class Program
             ("08 Shutdown remains invalid after stop fault", Test08)
         ];
 
-        checks = [..checks, ..CemPreviewChecks.All, ..UiLanguageChecks.All, ..NativeEcmScenarioChecks.All, ..NativeEcmApplyChecks.All, ..NativeEcmRestoreChecks.All, ..NativeIgnitionChecks.All, ..NativeEcuInventoryChecks.All, ..NativeCanTraceChecks.All, ..NativeDiagnosticJournalChecks.All, ..AcceptanceReportChecks.All, ..AcceptanceBundleChecks.All, ..BuiltInVehicleChecks.All, ..LocalVehicleDataChecks.All, ..VehicleStatePackageChecks.All];
+        checks = [..checks, ..CemPreviewChecks.All, ..UiLanguageChecks.All, ..NativeEcmScenarioChecks.All, ..NativeEcmApplyChecks.All, ..NativeEcmRestoreChecks.All, ..NativeIgnitionChecks.All, ..NativeEcuInventoryChecks.All, ..NativeCanTraceChecks.All, ..NativeDiagnosticJournalChecks.All, ..AcceptanceReportChecks.All, ..AcceptanceBundleChecks.All, ..BuiltInVehicleChecks.All, ..LocalVehicleDataChecks.All, ..VehicleStatePackageChecks.All, ..ManagedEquipmentChecks.All];
 
         int passed = 0;
         foreach (var (name, test) in checks)
