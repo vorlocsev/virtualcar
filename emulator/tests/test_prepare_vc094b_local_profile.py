@@ -1,5 +1,6 @@
 """VC095E synthetic checks of the local catalog serialization contract."""
 import copy
+import json
 import pathlib
 import sys
 import tempfile
@@ -111,6 +112,85 @@ class LocalPackageChecks(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "overlapping_private_and_package_paths"):
                     package.prepare(private, target)
                 checked.assert_not_called()
+
+
+    def test_09_noninteger_offsets(self):
+        for row in (self.rows[0], self.options[0], self.cases[0]):
+            original = row["offset"]
+            for invalid in (float(original), str(original), True):
+                with self.subTest(invalid=invalid, original=original):
+                    row["offset"] = invalid
+                    with self.assertRaisesRegex(ValueError, "catalog_offset_type"):
+                        self.validate()
+            row["offset"] = original
+        self.validate()
+
+    def test_10_unexpected_record_keys(self):
+        for row in (self.rows[0], self.options[0], self.row["choices"][0], self.cases[0]):
+            row["extra"] = 1
+            with self.assertRaisesRegex(ValueError, "catalog_shape"):
+                self.validate()
+            del row["extra"]
+        self.validate()
+
+    def test_11_missing_record_keys(self):
+        for row, key in ((self.rows[0], "name"), (self.options[0], "choices"),
+                         (self.row["choices"][0], "text"), (self.cases[0], "ini_sha256")):
+            old = row.pop(key)
+            with self.assertRaisesRegex(ValueError, "catalog_shape"):
+                self.validate()
+            row[key] = old
+        self.validate()
+
+    def test_12_invalid_array_types(self):
+        for i, items in enumerate((self.rows, self.options, self.cases)):
+            args = [self.rows, self.options, self.cases]
+            args[i] = tuple(items)
+            with self.assertRaisesRegex(ValueError, "catalog_shape"):
+                package.validate_catalog(self.ini, *args)
+        self.row["choices"] = tuple(self.row["choices"])
+        with self.assertRaisesRegex(ValueError, "catalog_shape"):
+            self.validate()
+
+    def test_13_invalid_reference_scalar_types(self):
+        case = self.cases[0]
+        for key, invalid in (("code", []), ("code", 1), ("code", "0a"),
+                             ("ini_sha256", None), ("ini_sha256", 123),
+                             ("ini_sha256", "A" * 64)):
+            old = case[key]
+            case[key] = invalid
+            with self.assertRaises(ValueError):
+                self.validate()
+            case[key] = old
+        self.validate()
+
+    def test_14_manifest_complete_publication(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            marker = {"schema": "synthetic", "profile_sha256": "0" * 64}
+            package.publish_manifest(root, marker)
+            self.assertEqual(json.loads((root / "local-profile.json").read_bytes()), marker)
+            self.assertFalse((root / ".local-profile.json.pending").exists())
+
+    def test_15_manifest_no_overwrite(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            final = root / "local-profile.json"
+            final.write_bytes(b"existing")
+            with self.assertRaises(FileExistsError):
+                package.publish_manifest(root, {"schema": "synthetic"})
+            self.assertEqual(final.read_bytes(), b"existing")
+            self.assertFalse((root / ".local-profile.json.pending").exists())
+
+    def test_16_manifest_failed_publication(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            for method in ("fsync", "link"):
+                with patch.object(package.os, method, side_effect=OSError("synthetic failure")):
+                    with self.assertRaises(OSError):
+                        package.publish_manifest(root, {"schema": "synthetic"})
+                self.assertFalse((root / "local-profile.json").exists())
+                self.assertFalse((root / ".local-profile.json.pending").exists())
 
 
 if __name__ == "__main__":

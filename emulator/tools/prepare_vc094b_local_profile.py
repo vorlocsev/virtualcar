@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -21,14 +22,29 @@ def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def exact_keys(value, keys):
+    if type(value) is not dict or set(value) != set(keys):
+        raise ValueError("catalog_shape")
+
+
 def validate_catalog(ini, rows, options, cases):
     """Check the exact managed loader contract before any package files are written."""
     match = locate(ini)
     baseline = bytes.fromhex(match[1].decode("ascii"))
     if not valid_block(baseline):
         raise ValueError("baseline_block")
+    if any(type(items) is not list for items in (rows, options, cases)):
+        raise ValueError("catalog_shape")
     if len(rows) != 127 or len(options) != 127 or len(cases) > 256:
         raise ValueError("catalog_count")
+    for row in rows:
+        exact_keys(row, ("offset", "name", "value", "locked"))
+    for row in options:
+        exact_keys(row, ("offset", "baseline_code", "choices"))
+    for case in cases:
+        exact_keys(case, ("offset", "code", "ini_sha256"))
+    if any(type(r["offset"]) is not int for r in rows + options + cases):
+        raise ValueError("catalog_offset_type")
     if [r["offset"] for r in rows] != sorted(FIELDS) or [r["offset"] for r in options] != sorted(FIELDS):
         raise ValueError("catalog_offsets")
     def text_ok(value, cap, nonempty=False):
@@ -41,7 +57,10 @@ def validate_catalog(ini, rows, options, cases):
                 not text_ok(row["name"], 512, True) or not text_ok(row["value"], 1024) or
                 opts["baseline_code"] != f"{baseline[i]:02X}"):
             raise ValueError("catalog_row")
+        if type(opts["choices"]) is not list:
+            raise ValueError("catalog_shape")
         for option in opts["choices"]:
+            exact_keys(option, ("code", "text"))
             code, label = option["code"], option["text"]
             if (i in LOCKED or not isinstance(code, str) or not re.fullmatch("[0-9A-F]{2}", code) or
                     code in ("FF", opts["baseline_code"]) or (i, code) in choices or
@@ -51,14 +70,16 @@ def validate_catalog(ini, rows, options, cases):
     seen = set()
     for case in cases:
         i, code = case["offset"], case["code"]
-        if (i, code) not in choices or i in EQUIPMENT or (i, code) in seen:
+        if (not isinstance(code, str) or not re.fullmatch("[0-9A-F]{2}", code) or
+                (i, code) not in choices or i in EQUIPMENT or (i, code) in seen):
             raise ValueError("reference_selection")
         seen.add((i, code))
         block = bytearray(baseline)
         block[i] = int(code, 16)
         block[1] = sum(block[2:]) % 256
         candidate = ini[:match.start(1)] + block.hex().encode("ascii") + ini[match.end(1):]
-        if digest(candidate) != case["ini_sha256"]:
+        sha = case["ini_sha256"]
+        if not isinstance(sha, str) or not re.fullmatch("[0-9a-f]{64}", sha) or digest(candidate) != sha:
             raise ValueError("reference_parity")
 
 
@@ -107,6 +128,30 @@ def checked_inputs(folder):
             break
     validate_catalog(raw["ini"], rows, options, cases)
     return raw, rows, options, cases
+
+
+def publish_manifest(target, manifest):
+    """Publish complete manifest exclusively; failed publication leaves no new marker."""
+    data = json.dumps(manifest, sort_keys=True).encode("ascii")
+    staged = target / ".local-profile.json.pending"
+    final = target / "local-profile.json"
+    # Both paths are in the freshly created target directory. Hard-link
+    # publication requires filesystem support (NTFS on Windows).
+    with staged.open("xb") as stream:
+        try:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        except BaseException:
+            stream.close()
+            staged.unlink()
+            raise
+    try:
+        if read_frozen(staged, len(data)) != data:
+            raise ValueError("manifest_changed")
+        os.link(staged, final)
+    finally:
+        staged.unlink()
 
 
 def prepare(private_dir, package):
@@ -166,8 +211,7 @@ def prepare(private_dir, package):
     for key, name in FILES.items():
         if read_frozen(private_dir / name, MAX_INPUT) != raw[key]:
             raise ValueError("source_changed")
-    with (target / "local-profile.json").open("xb") as stream:
-        stream.write(json.dumps(manifest, sort_keys=True).encode("ascii"))
+    publish_manifest(target, manifest)
     return manifest
 
 
