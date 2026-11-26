@@ -16,6 +16,9 @@ public sealed class VehicleHomeWindow : Window
     private readonly TextBlock _description = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _identity = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _modules = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly ComboBox _equipmentVariant = new() { HorizontalAlignment = HorizontalAlignment.Stretch, Visibility = Visibility.Collapsed };
+    private readonly TextBlock _equipmentVariantStatus = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    private EquipmentVariant? _selectedVariant;
     private readonly StackPanel _statePanel = new() { Spacing = 8, Visibility = Visibility.Collapsed };
     private readonly ComboBox _ignition = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ComboBox _engine = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -83,6 +86,20 @@ public sealed class VehicleHomeWindow : Window
             card.Children.Add(item);
         _content.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
             BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray), Child = card });
+        _content.Children.Add(_equipmentVariant);
+        _content.Children.Add(_equipmentVariantStatus);
+        Id(_equipmentVariant, "VC094D3.Variant");
+        Id(_equipmentVariantStatus, "VC094D3.Variant.Status");
+        _equipmentVariant.SelectionChanged += (_, _) =>
+        {
+            if (_rendering || _busy || _closed || !_equipmentVariant.IsEnabled ||
+                Selected.Id != LocalVehicleData.Id || _equipmentVariant.SelectedItem is not ComboBoxItem item ||
+                DriverRegistration.Read().Status != DriverRegistration.State.Absent) return;
+            _selectedVariant = item.Tag as EquipmentVariant;
+            _choice = VehicleStateChoice.Original;
+            _resultEn = _resultRu = "";
+            Render();
+        };
         foreach (var item in new FrameworkElement[] { _ignition, _engine, _prepareState, _stateStatus })
             _statePanel.Children.Add(item);
         _content.Children.Add(_statePanel);
@@ -219,8 +236,21 @@ public sealed class VehicleHomeWindow : Window
     private (string Path, string Sha)? Candidate(BuiltInVehicle profile)
     {
         var candidate = BaseCandidate(profile);
-        if (candidate is not { } c || profile.Id != LocalVehicleData.Id || _choice.IsOriginal)
-            return candidate;
+        if (candidate is not { } c || profile.Id != LocalVehicleData.Id) return candidate;
+        if (_selectedVariant is { } variant)
+        {
+            try
+            {
+                var current = LocalVehicleData.Load(AppContext.BaseDirectory);
+                if (!_choice.IsOriginal || current.Editor is not { } editor || current.References is not { } refs ||
+                    !EquipmentVariantPackages.Matches(AppContext.BaseDirectory, editor, refs,
+                        LocalVehicleData.ReadProfile(AppContext.BaseDirectory), c.Sha, variant)) return null;
+                string library = EquipmentVariantPackages.Library(AppContext.BaseDirectory, variant);
+                return DriverRegistration.Fingerprint(library).Equals(c.Sha, StringComparison.OrdinalIgnoreCase) ? (library, c.Sha) : null;
+            }
+            catch (Exception) { return null; }
+        }
+        if (_choice.IsOriginal) return candidate;
         try
         {
             byte[] baseline = LocalVehicleData.ReadProfile(AppContext.BaseDirectory);
@@ -260,11 +290,60 @@ public sealed class VehicleHomeWindow : Window
         Render();
     }
 
+    private string VariantLabel(EquipmentVariant variant)
+    {
+        var row = _localProfile!.Rows.Single(x => x.Offset == variant.Offset);
+        var value = _localProfile.Editor!.Options[variant.Offset].Choices.Single(x => x.Code == variant.Code);
+        return row.Name + ": " + value.Text;
+    }
+
+    private void RenderVariant(BuiltInVehicle profile, DriverRegistration.Info registration)
+    {
+        var refs = profile.Id == LocalVehicleData.Id ? _localProfile?.References : null;
+        _equipmentVariant.Visibility = _equipmentVariantStatus.Visibility = refs is null ? Visibility.Collapsed : Visibility.Visible;
+        if (refs is null) return;
+        var all = refs.Variants;
+        if (registration.Status == DriverRegistration.State.Registered)
+        {
+            _selectedVariant = all.FirstOrDefault(v => SamePath(registration.Library,
+                EquipmentVariantPackages.Library(AppContext.BaseDirectory, v)));
+            if (_selectedVariant is not null) _choice = VehicleStateChoice.Original;
+        }
+        var visible = all.Where(v => v == _selectedVariant ||
+            Directory.Exists(EquipmentVariantPackages.Folder(AppContext.BaseDirectory, v))).ToList();
+        _equipmentVariant.Header = T("Configuration for next connection", "Комплектация для подключения");
+        _equipmentVariant.Items.Clear();
+        _equipmentVariant.Items.Add(new ComboBoxItem { Content = T("Original equipment", "Исходная комплектация") });
+        foreach (var variant in visible)
+            _equipmentVariant.Items.Add(new ComboBoxItem { Tag = variant, Content = VariantLabel(variant) });
+        _equipmentVariant.SelectedIndex = _selectedVariant is null ? 0 :
+            visible.FindIndex(v => v == _selectedVariant) + 1;
+        _equipmentVariant.IsEnabled = !_busy && registration.Status == DriverRegistration.State.Absent;
+        _equipmentVariantStatus.Text = _selectedVariant is null ?
+            T("Original configuration selected. Draft changes are separate.", "Выбрана исходная комплектация. Черновик отдельно.") :
+            T("Selected configuration: ", "Выбранная комплектация: ") + VariantLabel(_selectedVariant) + "\n" +
+            (Candidate(profile) is null
+                ? T("Copy unavailable or changed. Connection blocked.", "Копия недоступна или изменена. Подключение заблокировано.")
+                : T("Prepared simulator copy. Not proof of a client connection.", "Подготовленная копия эмулятора. Не подтверждение подключения программы."));
+    }
+
     private void RenderState(BuiltInVehicle profile, DriverRegistration.Info registration)
     {
         bool local = profile.Id == LocalVehicleData.Id;
         _statePanel.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
         if (!local) return;
+        if (_selectedVariant is not null)
+        {
+            _choice = VehicleStateChoice.Original;
+            _ignition.IsEnabled = _engine.IsEnabled = _prepareState.IsEnabled = false;
+            _ignition.Header = T("Ignition", "Зажигание"); _engine.Header = T("Engine", "Двигатель");
+            _ignition.Items.Clear(); _engine.Items.Clear();
+            _ignition.Items.Add(IgnitionLabel(null)); _engine.Items.Add(EngineLabel(null));
+            _ignition.SelectedIndex = _engine.SelectedIndex = 0;
+            _prepareState.Content = T("Prepare vehicle state", "Подготовить состояние автомобиля");
+            _stateStatus.Text = T("Combined equipment and engine/ignition changes are not yet supported.", "Совместное изменение комплектации, двигателя и зажигания пока недоступно.");
+            return;
+        }
         byte[]? baseline = null;
         try
         {
@@ -357,9 +436,9 @@ public sealed class VehicleHomeWindow : Window
             var dialog = new ContentDialog
             {
                 XamlRoot = _content.XamlRoot,
-                Title = T("Prepare equipment copy?", "Подготовить копию комплектации?"),
-                Content = T("The original vehicle stays unchanged. This copy is not activated or connected.",
-                    "Исходный автомобиль останется без изменений. Копия не будет активирована или подключена."),
+                Title = T("Prepare and select equipment?", "Подготовить и выбрать комплектацию?"),
+                Content = T("Close all diagnostic clients. The original stays unchanged. A separate simulator copy will be selected for the next connection. The adapter is not enabled automatically.",
+                    "Закройте диагностические программы. Исходный автомобиль останется без изменений. Отдельная копия будет выбрана для следующего подключения. Адаптер автоматически не включается."),
                 PrimaryButtonText = T("Prepare", "Подготовить"),
                 CloseButtonText = T("Cancel", "Отмена"), DefaultButton = ContentDialogButton.Close
             };
@@ -369,9 +448,19 @@ public sealed class VehicleHomeWindow : Window
             if (current.Vehicle != Selected || current.Editor is not { } editor || current.References is not { } refs)
                 throw new InvalidDataException();
             byte[] baseline = LocalVehicleData.ReadProfile(AppContext.BaseDirectory);
-            await Task.Run(() => refs.Prepare(AppContext.BaseDirectory, editor, baseline, edits));
-            _resultEn = "Equipment copy prepared and compared with original compiler. Not activated.";
-            _resultRu = "Копия комплектации подготовлена и сверена с исходным компилятором. Не активирована.";
+            var edit = edits.Single();
+            var variant = refs.Variants.Single(v => v.Offset == edit.Key && v.Code == edit.Value);
+            var source = BaseCandidate(Selected) ?? throw new InvalidDataException();
+            await Task.Run(() =>
+            {
+                refs.Prepare(AppContext.BaseDirectory, editor, baseline, edits);
+                EquipmentVariantPackages.Prepare(AppContext.BaseDirectory, editor, refs, baseline, source.Sha, variant);
+            });
+            if (DriverRegistration.Read().Status != DriverRegistration.State.Absent) throw new InvalidOperationException();
+            _selectedVariant = variant;
+            _choice = VehicleStateChoice.Original;
+            _resultEn = "Equipment copy prepared and selected. Enable the adapter separately.";
+            _resultRu = "Копия комплектации подготовлена и выбрана. Включите адаптер отдельно.";
         }
         catch (Exception)
         {
@@ -437,7 +526,7 @@ public sealed class VehicleHomeWindow : Window
             _equipmentParameter.IsEnabled = !_busy && selectable.Count > 0;
             _equipmentValue.IsEnabled = !_busy && _equipmentOffset >= 0;
             _equipmentReset.IsEnabled = !_busy && _equipmentEdits.Count > 0;
-            _equipmentPrepare.Content = T("Prepare equipment copy", "Подготовить копию комплектации");
+            _equipmentPrepare.Content = T("Prepare and select equipment", "Подготовить и выбрать комплектацию");
             bool eligible = preview.Status == "pass" && _localProfile.References?.Supports(_equipmentEdits) == true;
             _equipmentPrepare.IsEnabled = !_busy && eligible && DriverRegistration.Read().Status == DriverRegistration.State.Absent;
             string status = preview.Status switch
@@ -450,7 +539,7 @@ public sealed class VehicleHomeWindow : Window
                 (preview.Errors.Count == 0 ? "" : "\n" + T("Errors: ", "Ошибки: ") + string.Join("\n", preview.Errors.Select(EquipmentFinding))) +
                 (preview.Warnings.Count == 0 ? "" : "\n" + T("Warnings: ", "Предупреждения: ") + string.Join("\n", preview.Warnings.Select(EquipmentFinding))) +
                 (preview.TopologyReview ? "\n" + T("Equipment topology requires review.", "Требуется проверка состава оборудования.") : "") +
-                "\n" + T("Nothing is applied to the simulator or vehicle.", "Изменения не применяются к эмулятору или автомобилю.") +
+                "\n" + T("Draft selection is separate from the configuration used for connection.", "Черновик не меняет комплектацию, выбранную для подключения.") +
                 "\n" + (eligible ? T("Independent reference available for this selection.", "Есть эталон исходного компилятора для выбранного изменения.") : T("Preparation requires a referenced single change without warnings.", "Подготовка требует одного изменения с эталоном и без предупреждений."));
         }
         finally { _equipmentRendering = false; }
@@ -487,10 +576,11 @@ public sealed class VehicleHomeWindow : Window
             var slots = local ? 8 : NativeEcuInventory.Inspect(BuiltInVehicles.ReadProfile(profile.Id)).Count;
             _modules.Text = T("Configured diagnostic routes: ", "Настроено диагностических маршрутов: ") + slots +
                 T(" (not ECU discovery)", " (не обнаружение блоков)");
-            _availability.Text = local ? T("Equipment snapshot included. Draft changes are not applied to the simulator.", "Комплектация включена. Черновик не применяется к эмулятору.") :
+            _availability.Text = local ? T("Equipment snapshot included. Select prepared configuration separately.", "Комплектация включена. Подготовленная конфигурация выбирается отдельно.") :
                 T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
                 "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
             var registration = DriverRegistration.Read();
+            RenderVariant(profile, registration);
             RenderState(profile, registration);
             var candidate = Candidate(profile);
             bool own = candidate is { } c && registration.Status == DriverRegistration.State.Registered &&
@@ -498,7 +588,7 @@ public sealed class VehicleHomeWindow : Window
             _status.Text = registration.Status switch
             {
                 DriverRegistration.State.Absent when candidate is not null => T("Ready to enable diagnostic adapter", "Готов к включению адаптера"),
-                DriverRegistration.State.Absent => T("Diagnostic component not available in this build", "Диагностический компонент отсутствует в этой сборке"),
+                DriverRegistration.State.Absent => T("Selected simulation unavailable. Check preparation.", "Выбранная эмуляция недоступна. Проверьте подготовку."),
                 DriverRegistration.State.Registered when own => T("Adapter enabled for this vehicle", "Адаптер включён для этого автомобиля"),
                 DriverRegistration.State.Registered => T("Another profile or installation is active", "Активен другой профиль или установка"),
                 _ => T("Connection requires review in advanced mode", "Требуется проверка подключения в расширенном режиме")
