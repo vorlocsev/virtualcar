@@ -407,6 +407,14 @@ Example (demo without artwork; substitute the exact reviewed HEAD and local Pyth
 
 The final vc096-integrated-offline.json is written only after all eight offline gates, exact scope and artwork policy, stable home Refresh observation and final source/evidence checks pass. The UIA test invokes Refresh in the no-write home preview, requires an explicit unchanged snapshot message, retained vehicle label and disabled adapter/advanced actions. It does not simulate changed private files or exercise actual adapter registration. Core expected 192/192, Python 1280 discovered / 1276 passing / four known skips, private suite 24/24. A successful demo run is not owner-local acceptance. Actual Windows execution, visual review, private editor interaction, original VIDA, SectorV, VDASH and physical J2534 remain not tested. No release authorization follows from this report.
 
+## VC096A interactive VMware guest evidence (pending)
+
+Run Invoke-VC096AVmwareGuest.ps1 in an unlocked Windows x64 guest desktop, not in the self-hosted runner service/session 0. The existing trusted-branch CI workflow is unchanged. Use a clean exact-head checkout, close all other diagnostic clients and ensure no provider is registered (operator prerequisites). The guest entrypoint uses the existing E:\VirtualCar\Tools\python312.path manifest unless an absolute PythonExe is supplied. It requires explicit scope and artwork policy, creates a new local directory, runs integrated offline acceptance, and retains a transcript plus a local status report and SHA256 of the integrated report. No upload, registry mutation, VIDA/SectorV/VDASH launch or release is requested.
+
+Optional -CaptureScreenshots captures the preview window bounds at EN/RU/EN and after Refresh. Capture requires a visible window on one monitor, no overlapping windows and an unlocked desktop; the capture code does not establish lack of occlusion or visual correctness. Keep screenshots, transcripts and all private package evidence local; they can contain private vehicle details and desktop pixels. Screenshot status is captured_not_reviewed, not visual acceptance. If omitted, screenshot status is not_requested. No screenshots were actually produced here.
+
+Expected offline gates 8/8, Core 192/192, Python 1280 discovered / 1276 passing / four known skips. All remain unexecuted on the new HEAD. Guest status is an offline result only, never original-client or release acceptance.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
