@@ -3,12 +3,13 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "cem529_config"))
 from vc059 import FILES, outside_checkout
-from vc0591 import PINS
-from vc0592 import Editor, strict_json
+from vc0591 import PINS, FIELDS, locate, valid_block
+from vc0592 import Editor, strict_json, LOCKED, BAD_TEXT
 from vc0594 import IdentityGate, TOPOLOGY_SHA, EQUIPMENT
 from audit_vc090d_readvin_evidence import read_frozen
 
@@ -18,6 +19,47 @@ PROFILE_ID = "xc90-v8-2009"
 
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def validate_catalog(ini, rows, options, cases):
+    """Check the exact managed loader contract before any package files are written."""
+    match = locate(ini)
+    baseline = bytes.fromhex(match[1].decode("ascii"))
+    if not valid_block(baseline):
+        raise ValueError("baseline_block")
+    if len(rows) != 127 or len(options) != 127 or len(cases) > 256:
+        raise ValueError("catalog_count")
+    if [r["offset"] for r in rows] != sorted(FIELDS) or [r["offset"] for r in options] != sorted(FIELDS):
+        raise ValueError("catalog_offsets")
+    def text_ok(value, cap, nonempty=False):
+        # .NET string.Length counts UTF-16 code units, not Unicode code points.
+        return isinstance(value, str) and (not nonempty or bool(value)) and len(value.encode("utf-16-le")) // 2 <= cap
+    choices = {}
+    for row, opts in zip(rows, options):
+        i = row["offset"]
+        if (type(i) is not int or row["locked"] is not (i in LOCKED) or
+                not text_ok(row["name"], 512, True) or not text_ok(row["value"], 1024) or
+                opts["baseline_code"] != f"{baseline[i]:02X}"):
+            raise ValueError("catalog_row")
+        for option in opts["choices"]:
+            code, label = option["code"], option["text"]
+            if (i in LOCKED or not isinstance(code, str) or not re.fullmatch("[0-9A-F]{2}", code) or
+                    code in ("FF", opts["baseline_code"]) or (i, code) in choices or
+                    not text_ok(label, 1024) or label in BAD_TEXT):
+                raise ValueError("catalog_option")
+            choices[i, code] = label
+    seen = set()
+    for case in cases:
+        i, code = case["offset"], case["code"]
+        if (i, code) not in choices or i in EQUIPMENT or (i, code) in seen:
+            raise ValueError("reference_selection")
+        seen.add((i, code))
+        block = bytearray(baseline)
+        block[i] = int(code, 16)
+        block[1] = sum(block[2:]) % 256
+        candidate = ini[:match.start(1)] + block.hex().encode("ascii") + ini[match.end(1):]
+        if digest(candidate) != case["ini_sha256"]:
+            raise ValueError("reference_parity")
 
 
 def checked_inputs(folder):
@@ -63,6 +105,7 @@ def checked_inputs(folder):
             cases.append({"offset": row["offset"], "code": option["code"], "ini_sha256": digest(ini)})
         if checked >= 256:
             break
+    validate_catalog(raw["ini"], rows, options, cases)
     return raw, rows, options, cases
 
 
@@ -77,8 +120,10 @@ def prepare(private_dir, package):
         info = path.lstat()
         if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
             raise ValueError("reparse_path")
-    if private_dir.resolve() == package.resolve() or package.resolve() in private_dir.resolve().parents:
-        raise ValueError("original_inputs_inside_package")
+    private_root, package_root = private_dir.resolve(), package.resolve()
+    if (private_root == package_root or package_root in private_root.parents or
+            private_root in package_root.parents):
+        raise ValueError("overlapping_private_and_package_paths")
     raw, rows, options, cases = checked_inputs(private_dir)
     if len(raw["ini"]) > 1024 * 1024:
         raise ValueError("profile_size")
@@ -100,6 +145,9 @@ def prepare(private_dir, package):
     for key, name in FILES.items():
         if read_frozen(private_dir / name, MAX_INPUT) != raw[key]:
             raise ValueError("source_changed")
+    if (not dll or read_frozen(base / "VirtualCarJ2534.dll", 64 * 1024 * 1024) != dll or
+            read_frozen(base / "candidate.sha256", 128).decode("ascii").strip() != declared):
+        raise ValueError("native_source_changed")
     target = package / "vehicle-data" / PROFILE_ID
     target.mkdir(exist_ok=False)
     files = {"virtualcar.ini": raw["ini"], "VirtualCarJ2534.dll": dll,
@@ -112,6 +160,12 @@ def prepare(private_dir, package):
     manifest = {"schema": "vc094d2-local-profile-v3", "profile_sha256": digest(raw["ini"]),
                 "native_sha256": digest(dll), "catalog_sha256": digest(catalog),
                 "options_sha256": digest(editor), "references_sha256": digest(parity)}
+    for name, data in files.items():
+        if read_frozen(target / name, len(data)) != data:
+            raise ValueError("output_changed")
+    for key, name in FILES.items():
+        if read_frozen(private_dir / name, MAX_INPUT) != raw[key]:
+            raise ValueError("source_changed")
     with (target / "local-profile.json").open("xb") as stream:
         stream.write(json.dumps(manifest, sort_keys=True).encode("ascii"))
     return manifest

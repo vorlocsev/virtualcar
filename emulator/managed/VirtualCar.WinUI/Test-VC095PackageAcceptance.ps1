@@ -80,10 +80,12 @@ try {
     $stage='python_target'
     $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests','-p','test_audit_vc094g_package.py','-v') 'python-target'
     Check-PythonCount $log 8 0
+    $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests','-p','test_prepare_vc094b_local_profile.py','-v') 'python-private-package'
+    Check-PythonCount $log 8 0
     $report.gates[$stage]='pass'
     $stage='python_full'
     $log = Run-Logged $python @('-B','-m','unittest','discover','-s','emulator/tests') 'python-full'
-    Check-PythonCount $log 1256 4
+    Check-PythonCount $log 1264 4
     $report.gates[$stage]='pass'
     $stage='compileall'
     [void](Run-Logged $python @('-X',('pycache_prefix='+(Join-Path $out 'pycache')),'-m','compileall','-q','emulator') 'compileall')
