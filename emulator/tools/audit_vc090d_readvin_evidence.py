@@ -42,9 +42,9 @@ def payload(event, label, maximum, exact=None):
 
 
 def audit(text, pid, host, expected_vin, displayed_vin=None):
-    if not VIN_SHAPE.fullmatch(expected_vin):
+    if not isinstance(expected_vin, str) or not VIN_SHAPE.fullmatch(expected_vin):
         raise ValueError("invalid_expected_vin")
-    if displayed_vin is not None and not VIN_SHAPE.fullmatch(displayed_vin):
+    if displayed_vin is not None and (not isinstance(displayed_vin, str) or not VIN_SHAPE.fullmatch(displayed_vin)):
         raise ValueError("invalid_owner_displayed_vin")
     if not 0 < pid <= 0xffffffff or not re.fullmatch(r"[^\]\r\n]{1,47}", host):
         raise ValueError("invalid_logger_selection")
@@ -105,10 +105,23 @@ def audit(text, pid, host, expected_vin, displayed_vin=None):
         # D2 tag must immediately follow the delivered record for this
         # logger prefix. Intervening selected lines fail closed.
         previous, last_d2 = last_d2, None
+        if previous is not None and not event.startswith(TAG):
+            counts["invalid_d2_sequence"] += 1
+            invalidate(previous[0])
         if event.startswith(TAG):
             tag = payload(event, TAG, 20, 20)
-            if previous is None or tag is None:
+            if previous is None:
+                # Other D2 services also emit tags. Only a tag on a
+                # pending identity channel is relevant to this narrow audit.
+                tagged_channel = int.from_bytes(tag[:4], "big") if tag else None
+                if any(req["kind"] == "b9fb" and (tagged_channel is None or ch == tagged_channel)
+                       for ch, req in pending.items()):
+                    counts["unpaired_d2_tags"] += 1
+                    invalidate(tagged_channel)
+                continue
+            if tag is None:
                 counts["unpaired_d2_tags"] += 1
+                invalidate(previous[0])
                 continue
             channel, generation, index, _, _ = struct.unpack(">5I", tag)
             ch, can_id, frame = previous
