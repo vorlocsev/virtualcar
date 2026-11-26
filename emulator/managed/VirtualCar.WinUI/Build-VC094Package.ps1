@@ -7,7 +7,8 @@ param(
     [string]$BashExe,
     [string]$PrivateDirectory,
     [string]$ArtworkSourceDirectory,
-    [switch]$SkipArtwork
+    [switch]$SkipArtwork,
+    [switch]$PublicZip
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,7 @@ function Assert-Checkout {
     $dirty = @(& git -C $repo status --porcelain --untracked-files=all)
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw 'Clean checkout required.' }
 }
+if ($PublicZip -and $PrivateDirectory) { throw 'Public ZIP must not contain owner-local data.' }
 if ($SkipArtwork -and $ArtworkSourceDirectory) { throw 'Choose artwork source or skip, not both.' }
 Assert-Checkout
 if ($OutputDirectory -notmatch '^[a-zA-Z]:[\\/]') { throw 'Absolute local output required.' }
@@ -90,4 +92,10 @@ $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object Full
 [ordered]@{schema='vc094a-package-v1';source_sha=$ExpectedSha;native_sha256=$hash;profiles=$inventory;files=$files;
     original_vida='not_tested';physical_j2534='not_tested';registration='not_tested';private_profile_included=$privateIncluded;artwork=$artworkStatus;package_ui='not_tested'} |
     ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'package-manifest.json') -Encoding UTF8
-Write-Host 'VC094A_PACKAGE=BUILT_NOT_ACCEPTED'
+$audit = Join-Path $repo 'emulator\tools\audit_vc094g_package.py'
+$auditArgs = @('-B',$audit,'--package',$package,'--manifest',(Join-Path $out 'package-manifest.json'),'--build-manifest',(Join-Path $build 'build-manifest.json'),'--native-preflight',(Join-Path $native 'vc090-native-preflight.json'),'--expected-head',$ExpectedSha)
+if ($PublicZip) { $auditArgs += @('--zip',(Join-Path $out 'VirtualCar-Windows-x64-demo.zip')) }
+& $PythonExe @auditArgs
+if ($LASTEXITCODE -ne 0) { throw 'Package integrity failed. Do not distribute partial output.' }
+Assert-Checkout
+Write-Host 'VC094G_PACKAGE=BUILT_INTEGRITY_CHECKED_NOT_ACCEPTED'
