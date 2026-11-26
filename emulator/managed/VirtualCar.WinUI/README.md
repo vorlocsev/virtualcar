@@ -347,6 +347,10 @@ ZIP output now stages and verifies all entries and repeats source inventory veri
 
 Normal and advanced workspaces expose English / Русский, rather than abbreviated language codes. English is already the default when no valid saved preference exists; both ordinary and advanced workspaces read the same language preference and preserve the existing isolated-mode behavior. The normal workspace now reports a failed preference save instead of silently discarding it. Original vehicle catalog labels and values are retained in their source language; the application does not invent translations for private catalog data. The normal-home acceptance smoke additionally observes the two language options without selecting a different language or writing settings. Existing EN/RU/EN advanced-mode acceptance and Core language persistence checks remain applicable. Windows execution and visual verification are pending. Core count remains 160; Python suite count remains 1256.
 
+## VC095B ordinary home language regression (pending)
+
+The explicit --home-preview mode opens the same ordinary dashboard, defaults to English without reading or saving the language preference, permits in-memory selections, and blocks adapter enable/disable, state and equipment preparation, and opening the advanced workspace. It may read local profile data, artwork and registration; this is an application-level write lockout, not an OS sandbox. No-argument startup is unchanged. The VC095 acceptance script still checks normal startup and additionally launches the isolated home preview, switches EN/RU/EN using stable UI automation IDs, checks localized connection/advanced labels, English vehicle-name round-trip, disabled adapter actions and advanced action. The script is UTF-8 with BOM for Windows PowerShell 5.1. Core/Python expected counts remain unchanged. Windows execution has not been performed. Prior advanced-mode language tests use stable IDs and do not need label changes.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
