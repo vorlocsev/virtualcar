@@ -1,5 +1,4 @@
 """Synthetic distribution integrity checks; no real private data or executable use."""
-import copy
 import json
 from pathlib import Path
 import sys
@@ -117,6 +116,22 @@ class PackageChecks(unittest.TestCase):
             audit.parse(b'{"a":1,"a":2}')
 
     def test_05_native_and_tracked_profile_integrity(self):
+        report = dict(schema="vc090-native-preflight-v1", status="pass", failed_stage="",
+                      source_sha=HEAD, native_dll_sha256=self.native_sha, native_dll_bytes=len(self.native),
+                      gates=dict.fromkeys(("source_and_managed_inventory", "fresh_native_build",
+                          "x86_export_contract", "native_silence_and_evidence", "synthetic_identity_replay",
+                          "can_ms_lifecycle", "registry32_preflight", "final_integrity"), "pass"),
+                      **dict.fromkeys(("registration_install_remove", "vida_provider_selection",
+                          "vida_loaded_module_identity", "vida_readvin", "vida_t111", "vida_t122",
+                          "physical_j2534"), "not_tested"))
+        audit.verify_preflight(report, self.manifest, HEAD)
+        report["gates"]["final_integrity"] = "fail"
+        with self.assertRaises(ValueError):
+            audit.verify_preflight(report, self.manifest, HEAD)
+        report["gates"]["final_integrity"] = "pass"
+        report["native_dll_bytes"] += 1
+        with self.assertRaises(ValueError):
+            audit.verify_preflight(report, self.manifest, HEAD)
         with self.assertRaises(ValueError):
             audit.pe(pe(), 0x14c, 0x10b)
         path = self.emulator / audit.PROFILES["p2"]
