@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
 
@@ -108,7 +107,7 @@ public static partial class AcceptanceReportReader
         ExactKeys(sample, ["status", "sampled_rows", "matching_references", "unmatched_references", "null_references"]);
         int n = Count(sample, "sampled_rows", 1000), matched = Count(sample, "matching_references", 1000);
         int missed = Count(sample, "unmatched_references", 1000), nulls = Count(sample, "null_references", 1000);
-        if (n != matched + missed + nulls || Str(sample, "status") != coverage ||
+        if ((!Has("catalog") && n != 0) || n != matched + missed + nulls || Str(sample, "status") != coverage ||
             coverage != (!Has("catalog") && n == 0 ? "not_supplied" : n == 0 ? "empty_sample" :
                 missed > 0 ? "unmatched_references_observed" : nulls > 0 ? "null_references_observed" : "sample_all_references_matched"))
             throw new InvalidDataException();
@@ -130,6 +129,7 @@ public static class AcceptanceSummaryExport
         if (!Path.IsPathFullyQualified(path) || !Path.GetExtension(path).Equals(".txt", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException();
         string full = Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows() && Path.GetFileName(full).Contains(':')) throw new InvalidDataException();
         if (OperatingSystem.IsWindows() && (full.StartsWith(@"\\", StringComparison.Ordinal) ||
             new DriveInfo(Path.GetPathRoot(full)!).DriveType != DriveType.Fixed)) throw new InvalidDataException();
         for (DirectoryInfo? dir = new FileInfo(full).Directory; dir is not null; dir = dir.Parent)
