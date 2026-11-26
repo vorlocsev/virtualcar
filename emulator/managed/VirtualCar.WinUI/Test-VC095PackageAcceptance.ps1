@@ -235,9 +235,9 @@ try {
         $selector = Find-HomeControl $previewWindow 'VC094A.Language'
         $originalVehicle = (Find-HomeControl $previewWindow 'VC094A.Vehicle.Name').Current.Name
         $cases = @(
-            @{code='EN';advanced='Advanced settings';connection='Connection'},
-            @{code='RU';advanced='Расширенные настройки';connection='Подключение'},
-            @{code='EN';advanced='Advanced settings';connection='Connection'}
+            @{code='EN';advanced='Advanced settings';connection='Connection';status='Read-only preview';notice='Adapter actions and advanced settings are disabled in preview.'},
+            @{code='RU';advanced='Расширенные настройки';connection='Подключение';status='Режим просмотра';notice='В режиме просмотра управление адаптером и расширенные настройки недоступны.'},
+            @{code='EN';advanced='Advanced settings';connection='Connection';status='Read-only preview';notice='Adapter actions and advanced settings are disabled in preview.'}
         )
         $count = 0
         foreach ($case in $cases) {
@@ -252,10 +252,14 @@ try {
             do {
                 $advanced = Find-HomeControl $previewWindow 'VC094A.Advanced'
                 $connection = Find-HomeControl $previewWindow 'VC094F.Connection.Title'
-                if ($advanced.Current.Name -eq $case.advanced -and $connection.Current.Name -eq $case.connection) { break }
+                $status = Find-HomeControl $previewWindow 'VC094A.Connection.Status'
+                $notice = Find-HomeControl $previewWindow 'VC094A.Notice'
+                if ($advanced.Current.Name -eq $case.advanced -and $connection.Current.Name -eq $case.connection -and
+                    $status.Current.Name -eq $case.status -and $notice.Current.Name.StartsWith($case.notice,[StringComparison]::Ordinal)) { break }
                 Start-Sleep -Milliseconds 100
             } until ($timer.Elapsed.TotalSeconds -ge 5)
-            if ($advanced.Current.Name -ne $case.advanced -or $connection.Current.Name -ne $case.connection -or $advanced.Current.IsEnabled) { throw 'Preview localization or advanced lockout failed.' }
+            if ($advanced.Current.Name -ne $case.advanced -or $connection.Current.Name -ne $case.connection -or $advanced.Current.IsEnabled -or
+                $status.Current.Name -ne $case.status -or -not $notice.Current.Name.StartsWith($case.notice,[StringComparison]::Ordinal)) { throw 'Preview localization, status, guidance or advanced lockout failed.' }
             # Model display names can legitimately change across languages. EN must round-trip.
             if ($case.code -eq 'EN' -and (Find-HomeControl $previewWindow 'VC094A.Vehicle.Name').Current.Name -ne $originalVehicle) { throw 'Vehicle selection changed.' }
             $observedActions = 0
@@ -273,6 +277,7 @@ try {
         }
         if ($count -ne 3) { throw 'Incomplete language regression.' }
         Write-Host 'VC095B_HOME_LANGUAGE=PASS 3/3'
+        Write-Host 'VC097_PREVIEW_STATUS_GUIDANCE=PASS 3/3'
         $refresh = Find-HomeControl $previewWindow 'VC094A.Refresh'
         $notice = Find-HomeControl $previewWindow 'VC094A.Notice'
         if (-not $refresh.Current.IsEnabled -or $notice.Current.Name -like '*Local profile checked. No changes.*') {
@@ -286,6 +291,8 @@ try {
             Start-Sleep -Milliseconds 100
         } until ($refreshTimer.Elapsed.TotalSeconds -ge 15)
         if ($notice.Current.Name -notlike '*Local profile checked. No changes.*' -or
+            -not $notice.Current.Name.StartsWith('Adapter actions and advanced settings are disabled in preview.',[StringComparison]::Ordinal) -or
+            (Find-HomeControl $previewWindow 'VC094A.Connection.Status').Current.Name -ne 'Read-only preview' -or
             (Find-HomeControl $previewWindow 'VC094A.Vehicle.Name').Current.Name -ne $originalVehicle -or
             (Find-HomeControl $previewWindow 'VC094A.Advanced').Current.IsEnabled) {
             throw 'Stable local refresh or selection preservation failed.'

@@ -830,8 +830,9 @@ public sealed class VehicleHomeWindow : Window
             _modules.Text = T("Configured routes: ", "Настроено маршрутов: ") + slots +
                 T(" · not an ECU discovery result", " · не результат поиска блоков");
             _availability.Text = local ? T("Equipment snapshot included. Select prepared configuration separately.", "Комплектация включена. Подготовленная конфигурация выбирается отдельно.") :
-                T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
-                "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
+                T("Engine and ignition controls require a reviewed vehicle profile.",
+                "Управление двигателем и зажиганием требует проверенного профиля.") +
+                (_homePreview ? "" : " " + T("Advanced configuration remains available.", "Расширенная настройка доступна отдельно."));
             RenderVariant(profile, registration);
             RenderState(profile, registration);
             var candidate = Candidate(profile);
@@ -845,7 +846,7 @@ public sealed class VehicleHomeWindow : Window
                 DriverRegistration.State.Registered => HomeRegistration.Registered,
                 _ => HomeRegistration.Review
             }, activationCandidate, own, _busy, disconnectCandidate is not null);
-            _status.Text = connection.State switch
+            _status.Text = _homePreview ? T("Read-only preview", "Режим просмотра") : connection.State switch
             {
                 HomeConnectionState.Ready => T("Ready to connect", "Готов к подключению"),
                 HomeConnectionState.Unavailable => T("Simulation not ready", "Эмуляция не подготовлена"),
@@ -866,7 +867,10 @@ public sealed class VehicleHomeWindow : Window
             bool showDisconnect = connection.State is HomeConnectionState.Owned or HomeConnectionState.Recovery;
             _connect.Visibility = showDisconnect ? Visibility.Collapsed : Visibility.Visible;
             _disconnect.Visibility = showDisconnect ? Visibility.Visible : Visibility.Collapsed;
-            _notice.Text = (connection.State switch
+            _notice.Text = (_homePreview ?
+                T("Adapter actions and advanced settings are disabled in preview.",
+                    "В режиме просмотра управление адаптером и расширенные настройки недоступны.") :
+                connection.State switch
             {
                 HomeConnectionState.Ready => T("Enable the adapter, then open your diagnostic program.", "Включите адаптер, затем откройте диагностическую программу."),
                 HomeConnectionState.Owned => T("Open your diagnostic program. Close it before disabling the adapter.", "Откройте диагностическую программу. Закройте её перед отключением адаптера."),
