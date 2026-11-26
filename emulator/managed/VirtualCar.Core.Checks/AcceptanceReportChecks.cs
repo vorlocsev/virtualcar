@@ -121,6 +121,9 @@ internal static class AcceptanceReportChecks
             "original_vida_readvin_accepted", "original_vida_ecu_identification_accepted", "physical_j2534_verified");
         data["readout_reconciliation_gate"] = "reported_categories_consistent_only";
         data["same_run_reported"] = true; data["module_count"] = 2;
+        data["evidence_source"] = "synthetic";
+        data["catalog_reference_coverage"] = new { status = "sample_all_references_matched", sampled_rows = 10,
+            matching_references = 10, unmatched_references = 0, null_references = 0 };
         data["readout_counts"] = new { alive = 1, not_alive = 1, not_present = 0, not_observed = 0 };
         data["discrepancies"] = new { test = 0 }; data["evidence_gaps"] = new { test = 0 };
         Require(Parse(data).Observation == AcceptanceObservation.Observed);
