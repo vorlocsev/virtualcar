@@ -38,8 +38,8 @@ public sealed class CemPreviewWindow : Window
     private readonly StackPanel _monitorActions = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly StackPanel _acceptancePanel = new() { Spacing = 8, Visibility = Visibility.Collapsed };
     private readonly TextBox _acceptancePath = new();
-    private readonly TextBox _acceptanceHead = new() { MaxLength = 40 };
-    private readonly TextBox _acceptanceDll = new() { MaxLength = 64 };
+    private readonly TextBox _acceptanceHead = new();
+    private readonly TextBox _acceptanceDll = new();
     private readonly Button _acceptanceImport = new();
     private readonly Button _acceptanceClear = new();
     private readonly TextBlock _acceptanceStatus = new() { TextWrapping = TextWrapping.Wrap };
@@ -724,7 +724,7 @@ public sealed class CemPreviewWindow : Window
 
     private void ImportAcceptance()
     {
-        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics || !AcceptanceView) return;
+        if (!CanReadDiagnostics || Busy || _closed || _section != Section.Diagnostics || !AcceptanceView || !_acceptanceImport.IsEnabled) return;
         try
         {
             var report = AcceptanceReportReader.ReadFile(_acceptancePath.Text.Trim());
@@ -780,6 +780,10 @@ public sealed class CemPreviewWindow : Window
             lines.Add("DLL SHA256: " + (report.NativeSha ?? "—") + " · " + AcceptanceMatch(dllMatch));
             lines.Add("JSON SHA256: " + report.ReportSha);
         }
+        lines.Add("");
+        foreach (string stage in new[] { "VC090A", "VC090B/Baseline", "VC090B/InstallCancelled", "VC090B/Installed",
+            "VC090B/RemoveCancelled", "VC090B/Restored", "VC090C", "VC090D", "VC090E" })
+            if (!_acceptanceReports.ContainsKey(stage)) lines.Add(stage + T(" · No report imported", " · Отчёт не импортирован"));
         lines.Add("");
         lines.Add(T("Outstanding runtime gates (not verified by these reports):", "Открытые этапы фактической приёмки (не подтверждены этими отчётами):"));
         lines.Add(T("Registration install/remove; VIDA provider selection; loaded module identity; ReadVin; ECU identification; original T111/T122 catalog; physical J2534 — Not tested.",
