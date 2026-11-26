@@ -321,6 +321,14 @@ Both normalized images are resized/re-encoded; attribution is included in the UI
 
 Owner-local validation: exact clean checkout, expected Core 152/152, Python 1248 discovered / 1244 PASS / four known skips, compileall. Build the package with artwork, verify both source pins and normalized SHA256, JPEG dimensions (960x538 and 960x701), absence of copied EXIF GPS, credits and package inventory. Launch with network disconnected; test rapid profile switching, RU/EN, generic OBD, missing or corrupted image on a disposable package copy, refresh and restart; confirm no stale photo, no network requests and no registry or profile mutation. Test local source packaging and intentional SkipArtwork. Previous VC093/094A–D.3 remain pending. No actual VIDA/SQL, registry changes, CI dispatch or release.
 
+## VC094F responsive casual dashboard (pending)
+
+The normal home screen now uses a dark card-based layout: vehicle and connection on the left, vehicle state and equipment on the right. At an available dashboard width of 880 DIP or greater the detail-capable profile has two columns; at smaller widths, the same controls flow into one vertically scrollable column. Profiles without equipment/state controls use a single column without an empty detail pane. Initial window targets 1180x800 DIP, bounded by the actual monitor work area. The advanced workspace and launch modes are unchanged. Existing automation IDs for actions are retained; VC094F.Dashboard and section titles are new.
+
+The connection card displays readiness separately from enabled adapter state and shows only the appropriate enable or disable action, still gated by the exact candidate, registry status and busy flag. No change to confirmation, registry helper or actual connection policy. No VIDA compatibility or live ECU claim. Original equipment options and prepared configuration selection remain independent. Existing artwork behavior is unchanged; no new network requests.
+
+Owner-local checks: exact clean checkout, expected Core 160/160 (eight new presentation groups), Python 1248 discovered / 1244 PASS / four known skips, compileall. Rebuild the local package including artwork and private inputs, then inspect normal home at 100%, 125%, 150% and 200% display scaling. Capture actual EN/RU wide and compact layouts; resize across 880 DIP of dashboard content with an open equipment panel and nonempty draft, verify no reset of selections, accessible actions, scrolling and no horizontal clipping. Verify demo-only layout, artwork switching, missing photo fallback, all connection readiness states, confirmation/cancel and no mutation in the offline check. Repeat prior VC093/094A–E acceptance; actual source photos, Windows compilation and visual acceptance remain pending. No registry change, original VIDA/SQL, CI dispatch or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
