@@ -71,7 +71,7 @@ function Check-PythonCount([string]$log,[int]$count,[int]$skips) {
 function Capture-PreviewWindow($window, [string]$name) {
     if (-not $CaptureScreenshots) { return }
     Add-Type -AssemblyName System.Drawing,System.Windows.Forms
-    if ($window.Current.ProcessId -ne $process.Id || $window.Current.IsOffscreen) {
+    if ($window.Current.ProcessId -ne $process.Id -or $window.Current.IsOffscreen) {
         throw 'Preview window not visible for capture.'
     }
     $r = $window.Current.BoundingRectangle
