@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [Parameter(Mandatory=$true)][string]$PythonExe,
     [ValidateSet('Any','Demo','OwnerLocal')][string]$ExpectedScope = 'Any',
-    [switch]$RequireArtwork
+    [switch]$RequireArtwork,
+    [switch]$CaptureScreenshots
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -50,7 +51,7 @@ $native = Join-Path $build 'native\vc090-native-preflight.json'
 $audit = Join-Path $repo 'emulator\tools\audit_vc094g_package.py'
 $report = [ordered]@{schema='vc095-offline-acceptance-v1';source_sha=$ExpectedSha;status='fail';failed_stage='';
     gates=[ordered]@{source='pass';package_before='not_tested';core='not_tested';python_target='not_tested';python_full='not_tested';compileall='not_tested';normal_home_smoke='not_tested';final_integrity='not_tested'};
-    package_scope='not_tested';artwork='not_tested';home_refresh='not_tested';visual_review='not_tested';private_editor_interaction='not_tested';registration='not_tested';original_vida='not_tested';physical_j2534='not_tested';release_ready=$false}
+    screenshots='not_requested';package_scope='not_tested';artwork='not_tested';home_refresh='not_tested';visual_review='not_tested';private_editor_interaction='not_tested';registration='not_tested';original_vida='not_tested';physical_j2534='not_tested';release_ready=$false}
 function Run-Logged([string]$exe,[string[]]$arguments,[string]$name) {
     $log = Join-Path $out ($name+'.log')
     $exitCode = Invoke-VCNativeLogged -Executable $exe -Arguments $arguments -WorkingDirectory $repo -Log $log
@@ -66,6 +67,32 @@ function Check-PythonCount([string]$log,[int]$count,[int]$skips) {
     if (@($lines | Where-Object { $_ -match ('^Ran '+$count+' tests? in ') }).Count -ne 1) { throw 'Unexpected Python discovery count.' }
     $expected = if ($skips) { 'OK (skipped='+$skips+')' } else { 'OK' }
     if ($lines -notcontains $expected) { throw 'Unexpected Python test summary.' }
+}
+function Capture-PreviewWindow($window, [string]$name) {
+    if (-not $CaptureScreenshots) { return }
+    Add-Type -AssemblyName System.Drawing,System.Windows.Forms
+    if ($window.Current.ProcessId -ne $process.Id || $window.Current.IsOffscreen) {
+        throw 'Preview window not visible for capture.'
+    }
+    $r = $window.Current.BoundingRectangle
+    if ($r.IsEmpty -or $r.Width -lt 1 -or $r.Height -lt 1 -or
+        $r.Width -gt 8192 -or $r.Height -gt 8192) { throw 'Invalid capture bounds.' }
+    $x = [int][Math]::Floor($r.X); $y = [int][Math]::Floor($r.Y)
+    $w = [int][Math]::Ceiling($r.Right) - $x; $h = [int][Math]::Ceiling($r.Bottom) - $y
+    $rect = [Drawing.Rectangle]::new($x,$y,$w,$h)
+    # One screen only; do not capture pixels outside the preview window bounds.
+    $screen = [Windows.Forms.Screen]::FromRectangle($rect)
+    if (-not $screen.Bounds.Contains($rect)) { throw 'Preview window crosses screen bounds.' }
+    $file = Join-Path $out ($name + '.png')
+    $bitmap = [Drawing.Bitmap]::new($w,$h)
+    try {
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        try { $graphics.CopyFromScreen($x,$y,0,0,$bitmap.Size) }
+        finally { $graphics.Dispose() }
+        $stream = [IO.File]::Open($file,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try { $bitmap.Save($stream,[Drawing.Imaging.ImageFormat]::Png) }
+        finally { $stream.Dispose() }
+    } finally { $bitmap.Dispose() }
 }
 $stage = 'package_before'
 try {
@@ -238,6 +265,7 @@ try {
                 }
             }
             if ($observedActions -eq 0) { throw 'No adapter control observed.' }
+            Capture-PreviewWindow $previewWindow ('home-language-' + $count + '-' + $case.code)
             $count++
         }
         if ($count -ne 3) { throw 'Incomplete language regression.' }
@@ -269,6 +297,8 @@ try {
             }
         }
         if ($observedActions -eq 0) { throw 'No adapter action observed after refresh.' }
+        Capture-PreviewWindow $previewWindow 'home-refresh-en'
+        if ($CaptureScreenshots) { $report.screenshots = 'captured_not_reviewed' }
         $report.home_refresh = 'pass'
         Write-Host 'VC096_HOME_STABLE_REFRESH=PASS'
     } finally {

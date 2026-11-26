@@ -8,7 +8,8 @@ param(
     [string]$BashExe,
     [string]$PrivateDirectory,
     [string]$ArtworkSourceDirectory,
-    [switch]$SkipArtwork
+    [switch]$SkipArtwork,
+    [switch]$CaptureScreenshots
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -48,7 +49,7 @@ if ($SkipArtwork) { $buildArgs.SkipArtwork = $true }
 & (Join-Path $PSScriptRoot 'Build-VC094Package.ps1') @buildArgs
 Assert-Source
 $checkArgs = @{ExpectedSha=$ExpectedSha;PackageBuildDirectory=$packageBuild;OutputDirectory=$acceptance;
-    PythonExe=$PythonExe;ExpectedScope=$Scope;RequireArtwork=(-not $SkipArtwork)}
+    PythonExe=$PythonExe;ExpectedScope=$Scope;RequireArtwork=(-not $SkipArtwork);CaptureScreenshots=$CaptureScreenshots}
 & (Join-Path $PSScriptRoot 'Test-VC095PackageAcceptance.ps1') @checkArgs
 Assert-Source
 $reportPath = Join-Path $acceptance 'vc095-offline-acceptance.json'
@@ -66,10 +67,12 @@ if ($gateNames.Count -ne $expectedGates.Count) { throw 'Unexpected gate count.' 
 foreach ($gate in $expectedGates) {
     if ($gateNames -cnotcontains $gate -or $result.gates.$gate -ne 'pass') { throw 'Offline gate not passed.' }
 }
+$expectedCapture = if ($CaptureScreenshots) { 'captured_not_reviewed' } else { 'not_requested' }
+if ($result.screenshots -ne $expectedCapture) { throw 'Unexpected screenshot scope.' }
 $expectedArtwork = if ($SkipArtwork) { 'skipped' } else { 'two_reference_photos' }
 if ($result.artwork -ne $expectedArtwork) { throw 'Unexpected artwork scope.' }
 [ordered]@{schema='vc096-integrated-offline-v1';source_sha=$ExpectedSha;scope=$Scope;
-    status='pass';offline_gates=8;home_refresh='pass';artwork=$result.artwork;
+    status='pass';offline_gates=8;home_refresh='pass';artwork=$result.artwork;screenshots=$result.screenshots;
     acceptance_sha256=(Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant();
     registration='not_tested';original_vida='not_tested';sectorv='not_tested';vdash='not_tested';
     physical_j2534='not_tested';visual_review='not_tested';private_editor_interaction='not_tested';release_ready=$false} |
