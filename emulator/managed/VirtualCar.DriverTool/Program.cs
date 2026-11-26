@@ -35,6 +35,8 @@ try
         if (!entered) return 4;
         if (args.Length == 3 && args[0] == "install" && Path.IsPathFullyQualified(args[1]))
             DriverRegistration.Install(args[1], args[2]);
+        else if (args.Length == 3 && args[0] == "remove-canonical" && Path.IsPathFullyQualified(args[1]))
+            DriverRegistration.Remove(args[1], canonicalOnly: true, expectedSha256: args[2]);
         else if (args.Length == 2 && args[0] == "remove" && Path.IsPathFullyQualified(args[1]))
             DriverRegistration.Remove(args[1]);
         else return 2;

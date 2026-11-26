@@ -13,8 +13,9 @@ public partial class App : Application
         var arguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
         bool previewOnly = arguments.SequenceEqual(new[] { "--preview-only" });
         bool diagnosticsOnly = arguments.SequenceEqual(new[] { "--diagnostics-only" });
-        bool ephemeral = previewOnly || diagnosticsOnly || arguments.SequenceEqual(new[] { "--ephemeral-settings" });
-        _window = new CemPreviewWindow(ephemeral, previewOnly, diagnosticsOnly);
+        bool registrationOnly = arguments.SequenceEqual(new[] { "--registration-only" });
+        bool ephemeral = previewOnly || diagnosticsOnly || registrationOnly || arguments.SequenceEqual(new[] { "--ephemeral-settings" });
+        _window = new CemPreviewWindow(ephemeral, previewOnly, diagnosticsOnly, registrationOnly);
         _window.Activate();
     }
 }
