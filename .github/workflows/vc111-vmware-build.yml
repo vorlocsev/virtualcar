@@ -1,12 +1,11 @@
-name: VC113 VMware compact dashboard
+name: VC114 VMware autonomous provider
 on:
   push:
     branches:
       - 'vc111-build/20261126'
     paths:
       - '.github/workflows/vc111-vmware-build.yml'
-      - 'vc111-build/publisher-hotfix.py'
-      - 'vc111-build/compact-ui.py'
+      - 'vc111-build/no-session.py'
 permissions:
   contents: read
 concurrency:
@@ -29,7 +28,7 @@ jobs:
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
-          $work = Join-Path $env:RUNNER_TEMP ("vc113-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $work = Join-Path $env:RUNNER_TEMP ("vc114-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
           New-Item -ItemType Directory -Path $work | Out-Null
           $proto = Join-Path $work 'proto'
@@ -43,10 +42,8 @@ jobs:
           dotnet --list-sdks
           if ($LASTEXITCODE -ne 0) { throw 'Dotnet unavailable' }
           Expand-Archive -LiteralPath $archive -DestinationPath $proto
-          & $python (Join-Path $env:GITHUB_WORKSPACE 'vc111-build\publisher-hotfix.py') $proto
-          if ($LASTEXITCODE -ne 0) { throw 'VC112 publication hotfix staging failed' }
-          & $python (Join-Path $env:GITHUB_WORKSPACE 'vc111-build\compact-ui.py') $proto
-          if ($LASTEXITCODE -ne 0) { throw 'VC113 compact UI patch failed' }
+          & $python (Join-Path $env:GITHUB_WORKSPACE 'vc111-build\no-session.py') $proto
+          if ($LASTEXITCODE -ne 0) { throw 'VC114 no-session staging failed' }
           git clone --local --no-hardlinks --no-checkout $env:GITHUB_WORKSPACE $repo
           if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
           git -C $repo -c core.autocrlf=false checkout --detach $base
@@ -91,35 +88,35 @@ jobs:
             if (-not (Test-Path -LiteralPath (Join-Path $package ('app\VC109-tools\'+$helper)))) { throw 'Sealed helper missing' }
           }
           @(
-            'VC113 compact development candidate (VC112 + embedded Python)',
+            'VC114 autonomous development candidate (ordinary INI, no external session)',
             "Base: $base", "Build commit: $env:GITHUB_SHA",
             'Source archive SHA256: 0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951',
             'Runtime, WinUI launch and VIDA: NOT TESTED',
             'Run app\VirtualCar.WinUI.exe --live-control for the experimental panel.',
             'DLL x86 is not installed or registered. No working INI is included.',
             'Keep app, provider and provider-package.zip together. Python 3.14.9 x64 is bundled in app\python.',
-            'Compact window target 460 x 520 DIP, clamped to work area. No external Python required.',
+            'Compact window target 420 x 360 DIP, clamped to work area. No external Python required.',
             'Raw J2534 trace rotation: 4 x 32 MiB; runtime NOT TESTED.',
-            'VC112: bounded transient publication retry and exception details; root cause not yet confirmed.',
+            'No IPC publisher, credentials, worker or external state mode. Legacy autonomous model uses copied INI.',
             'Do not replace a working provider without a backup and explicit approval.'
           ) | Set-Content -LiteralPath (Join-Path $package 'BUILD-INFO.txt') -Encoding UTF8
           Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
             ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
           } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = Join-Path $work 'VirtualCar-VC113-development.zip'
+          $zip = Join-Path $work 'VirtualCar-VC114-development.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
-          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC113-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC114-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
           New-Item -ItemType Directory -Path $saved -Force | Out-Null
           Copy-Item -LiteralPath $zip -Destination $saved
-          Write-Host ('VC113_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC113-development.zip'))
+          Write-Host ('VC114_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC114-development.zip'))
       - name: Upload compiled candidate
         uses: actions/upload-artifact@v4
         with:
-          name: VirtualCar-VC113-development
-          path: ${{ runner.temp }}/vc113-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC113-development.zip
+          name: VirtualCar-VC114-development
+          path: ${{ runner.temp }}/vc114-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC114-development.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
