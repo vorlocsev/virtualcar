@@ -415,6 +415,10 @@ Optional -CaptureScreenshots captures the preview window bounds at EN/RU/EN and 
 
 Expected offline gates 8/8, Core 192/192, Python 1280 discovered / 1276 passing / four known skips. All remain unexecuted on the new HEAD. Guest status is an offline result only, never original-client or release acceptance.
 
+## VC096B Windows runtime filename casing (pending)
+
+The exact-head VMware run at a50ba13ca3f30049e85d1fe518cf5a388c12c07c reported VC075 publish/window smoke and VC090 native preflight 8/8 pass, registry absent, then VC094G package integrity rejected. A read-only diagnostic identified Microsoft.ui.xaml.dll in both the Windows publish inventory and expected runtime role Microsoft.UI.Xaml.dll. Runtime role membership and required AMD64 PE checks now use case-insensitive comparison; exact paths, SHA256, sizes, case alias rejection and source/package inventory equality remain enforced. Four new regression tests cover real filename casing, x86 rejection, duplicate aliases and inconsistent manifest spelling. Expected target audit 12/12, full Python 1284 discovered / 1280 passing / four known skips, Core 192/192. New HEAD not executed. No runtime acceptance, registry change or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.

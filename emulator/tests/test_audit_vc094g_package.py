@@ -208,5 +208,45 @@ class PackageChecks(unittest.TestCase):
         self.assertEqual(output.read_bytes(), b"existing")
 
 
+    def lower_xaml(self, raw=None):
+        original = "Microsoft.UI.Xaml.dll"
+        renamed = "Microsoft.ui.xaml.dll"
+        path = self.root / original
+        if raw is None:
+            raw = path.read_bytes()
+        # Unlink then write, so the actual directory entry changes on NTFS too.
+        path.unlink()
+        (self.root / renamed).write_bytes(raw)
+        for rows in (self.base, self.files):
+            row = next(r for r in rows if r["path"] == original)
+            row.update(self.row(renamed, raw))
+        return renamed
+
+    def test_09_windows_xaml_casing(self):
+        name = self.lower_xaml()
+        expected, private = self.verify()
+        self.assertIn(name, expected)
+        self.assertNotIn("Microsoft.UI.Xaml.dll", expected)
+        self.assertFalse(private)
+
+    def test_10_lowercase_xaml_still_requires_amd64(self):
+        self.lower_xaml(pe(0x14c, 0x10b))
+        with self.assertRaisesRegex(ValueError, "unexpected PE architecture"):
+            self.verify()
+
+    def test_11_case_alias_in_manifest_rejected(self):
+        self.lower_xaml()
+        self.files.append(self.row("Microsoft.UI.Xaml.dll", pe()))
+        with self.assertRaisesRegex(ValueError, "duplicate path"):
+            self.verify()
+
+    def test_12_manifest_spelling_must_match_build(self):
+        name = self.lower_xaml()
+        row = next(r for r in self.files if r["path"] == name)
+        row["path"] = "Microsoft.UI.Xaml.dll"
+        with self.assertRaisesRegex(ValueError, "unexpected packaged file"):
+            self.verify()
+
+
 if __name__ == "__main__":
     unittest.main()
