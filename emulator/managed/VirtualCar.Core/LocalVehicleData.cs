@@ -40,7 +40,7 @@ public static class LocalVehicleData
             profile = Load(root);
             return Availability.Ready;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or
             System.Security.SecurityException or JsonException or InvalidOperationException or
             ArgumentException or FormatException or OverflowException or KeyNotFoundException)
         {
