@@ -65,18 +65,20 @@ public sealed class VehicleHomeWindow : Window
     private readonly StackPanel _content = new() { Spacing = 16, Padding = new Thickness(20), HorizontalAlignment = HorizontalAlignment.Stretch, RequestedTheme = ElementTheme.Dark };
     private readonly UiLanguageSettings? _settings;
     private readonly Action _openAdvanced;
+    private readonly bool _homePreview;
     private bool _russian, _busy, _closed, _rendering;
     private string _resultEn = "", _resultRu = "";
     private BuiltInVehicle Selected => _profiles[Math.Max(0, _vehicle.SelectedIndex)];
     private string T(string en, string ru) => _russian ? ru : en;
     private string Helper => Path.Combine(AppContext.BaseDirectory, "driver-tools", "VirtualCar.DriverTool.exe");
 
-    public VehicleHomeWindow(Action openAdvanced)
+    public VehicleHomeWindow(Action openAdvanced, bool homePreview = false)
     {
+        _homePreview = homePreview;
         _openAdvanced = openAdvanced;
         Title = "Virtual Car";
         string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (Path.IsPathFullyQualified(local))
+        if (!_homePreview && Path.IsPathFullyQualified(local))
         {
             _settings = new UiLanguageSettings(Path.Combine(local, "VirtualCar", "WinUI", "language.v1"));
             _russian = _settings.Load() == UiLanguage.Russian;
@@ -216,13 +218,13 @@ public sealed class VehicleHomeWindow : Window
         {
             if (_language.SelectedIndex < 0 || _busy || _closed || _rendering) return;
             _russian = _language.SelectedIndex == 1;
-            _languageSaveFailed = !(_settings?.TrySave(_russian ? UiLanguage.Russian : UiLanguage.English) ?? false);
+            _languageSaveFailed = !_homePreview && !(_settings?.TrySave(_russian ? UiLanguage.Russian : UiLanguage.English) ?? false);
             Render();
         };
         _refresh.Click += (_, _) => { _photoVehicleId = null; Render(); };
         _connect.Click += async (_, _) => await ChangeAsync(true);
         _disconnect.Click += async (_, _) => await ChangeAsync(false);
-        _advanced.Click += (_, _) => { if (!_busy && !_closed) _openAdvanced(); };
+        _advanced.Click += (_, _) => { if (!_homePreview && !_busy && !_closed) _openAdvanced(); };
         Closed += (_, _) => _closed = true;
         Render();
         ResizeForDisplay();
@@ -460,7 +462,7 @@ public sealed class VehicleHomeWindow : Window
         _engine.IsEnabled = editable && _engines.Count > 1;
         _prepareState.Content = T("Prepare vehicle state", "Подготовить состояние автомобиля");
         bool prepared = baseline is not null && Candidate(profile) is not null;
-        _prepareState.IsEnabled = editable && !_choice.IsOriginal && !prepared && BaseCandidate(profile) is not null;
+        _prepareState.IsEnabled = !_homePreview && editable && !_choice.IsOriginal && !prepared && BaseCandidate(profile) is not null;
         _stateStatus.Text = (registration.Status != DriverRegistration.State.Absent ?
             T("Disable the adapter and close diagnostic clients before changing states.", "Отключите адаптер и закройте диагностические программы перед изменением состояния.") :
             prepared ? T("Prepared for the next diagnostic connection.", "Подготовлено для следующего диагностического подключения.") :
@@ -472,7 +474,7 @@ public sealed class VehicleHomeWindow : Window
 
     private async Task PrepareStateAsync()
     {
-        if (_closed || _busy || !_prepareState.IsEnabled || Selected.Id != LocalVehicleData.Id) return;
+        if (_homePreview || _closed || _busy || !_prepareState.IsEnabled || Selected.Id != LocalVehicleData.Id) return;
         var choice = _choice;
         var source = BaseCandidate(Selected);
         if (source is not { } s || DriverRegistration.Read().Status != DriverRegistration.State.Absent) { Render(); return; }
@@ -507,7 +509,7 @@ public sealed class VehicleHomeWindow : Window
 
     private async Task PrepareEquipmentAsync()
     {
-        if (_busy || _closed || !_equipmentPrepare.IsEnabled || Selected.Id != LocalVehicleData.Id) return;
+        if (_homePreview || _busy || _closed || !_equipmentPrepare.IsEnabled || Selected.Id != LocalVehicleData.Id) return;
         var edits = new Dictionary<int, string>(_equipmentEdits);
         _busy = true; Render();
         try
@@ -607,7 +609,7 @@ public sealed class VehicleHomeWindow : Window
             _equipmentReset.IsEnabled = !_busy && _equipmentEdits.Count > 0;
             _equipmentPrepare.Content = T("Prepare and select equipment", "Подготовить и выбрать комплектацию");
             bool eligible = preview.Status == "pass" && _localProfile.References?.Supports(_equipmentEdits) == true;
-            _equipmentPrepare.IsEnabled = !_busy && eligible && DriverRegistration.Read().Status == DriverRegistration.State.Absent;
+            _equipmentPrepare.IsEnabled = !_homePreview && !_busy && eligible && DriverRegistration.Read().Status == DriverRegistration.State.Absent;
             string status = preview.Status switch
             {
                 "blocked" => T("Incompatible selection", "Несовместимые параметры"),
@@ -696,7 +698,7 @@ public sealed class VehicleHomeWindow : Window
             _heading.Text = "Virtual Car";
             _languageNotice.Text = T("Language preference could not be saved.", "Не удалось сохранить выбранный язык.");
             _languageNotice.Visibility = _languageSaveFailed ? Visibility.Visible : Visibility.Collapsed;
-            _subheading.Text = T("Your virtual vehicle", "Ваш виртуальный автомобиль");
+            _subheading.Text = _homePreview ? T("Read-only interface preview", "Просмотр интерфейса без записи") : T("Your virtual vehicle", "Ваш виртуальный автомобиль");
             _connectionTitle.Text = T("Connection", "Подключение");
             _stateTitle.Text = T("Vehicle state", "Состояние автомобиля");
             _equipmentTitle.Text = T("Equipment", "Комплектация");
@@ -755,8 +757,9 @@ public sealed class VehicleHomeWindow : Window
             _refresh.Content = T("Refresh", "Обновить");
             _advanced.Content = T("Advanced settings", "Расширенные настройки");
             _vehicle.IsEnabled = _language.IsEnabled = _advanced.IsEnabled = _refresh.IsEnabled = !_busy;
-            _connect.IsEnabled = connection.CanEnable;
-            _disconnect.IsEnabled = connection.CanDisable;
+            _advanced.IsEnabled = !_homePreview && !_busy;
+            _connect.IsEnabled = !_homePreview && connection.CanEnable;
+            _disconnect.IsEnabled = !_homePreview && connection.CanDisable;
             _connect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Collapsed : Visibility.Visible;
             _disconnect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Visible : Visibility.Collapsed;
             _notice.Text = (connection.State switch
@@ -773,7 +776,7 @@ public sealed class VehicleHomeWindow : Window
 
     private async Task ChangeAsync(bool enable)
     {
-        if (_busy || _closed || !(enable ? _connect.IsEnabled : _disconnect.IsEnabled)) return;
+        if (_homePreview || _busy || _closed || !(enable ? _connect.IsEnabled : _disconnect.IsEnabled)) return;
         var profile = Selected;
         var candidate = Candidate(profile);
         if (candidate is not { } c) { Render(); return; }
