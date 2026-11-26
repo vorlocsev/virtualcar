@@ -517,7 +517,8 @@ function Read-VC090CProvider([string]$Name) {
         if ((Get-ReferencePe32State $full) -ne 'x86_pe32_header') {
             return [pscustomobject]@{State='not_x86_pe32';Library=$null}
         }
-        return [pscustomobject]@{State='local_x86_lab_dll';Library=$full}
+        $digest = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
+        return [pscustomobject]@{State='local_x86_lab_dll';Library=$full;Digest=$digest}
     } catch {
         return [pscustomobject]@{State='unverifiable';Library=$null}
     } finally {
@@ -788,7 +789,7 @@ if (-not $OperatorSession -and ($ReferenceDll -or $OutputFile -or $VidaProcessNa
     throw 'Operator-only parameters require -OperatorSession'
 }
 $explicitProvider = -not [string]::IsNullOrEmpty($VidaProviderKey)
-if ($explicitProvider -or $ReferenceSha256) {
+if ($PSBoundParameters.ContainsKey('VidaProviderKey') -or $PSBoundParameters.ContainsKey('ReferenceSha256')) {
     if (-not $explicitProvider -or -not (Test-VC090CProviderName $VidaProviderKey) -or
         -not $VidaProcessName -or -not $VidaProcessId -or $ReferenceSha256 -notmatch '^[0-9a-fA-F]{64}$') {
         throw 'Explicit provider requires a single registry key name, VIDA name/PID and reference SHA256.'
@@ -804,8 +805,8 @@ if ($VidaProcessName -and [string]::IsNullOrWhiteSpace($ReferenceDll)) {
     throw 'VIDA operator module observation requires an explicit reference DLL'
 }
 
-# Read ONLY the 32-bit canonical Virtual Car J2534 registry key.
-# Default process observation checks SectorV; operator-only VIDA name
+# Default reads the canonical/legacy Registry32 keys. VC090C reads only
+# the explicitly named Registry32 key. Default process observation checks SectorV; operator-only VIDA name
 # selection stays explicit and does not authenticate any original executable.
 $library = $null
 $selectedBefore = $null
@@ -911,6 +912,11 @@ if ($OperatorSession) {
             $stable = ($selectedBefore.State -ceq $selectedAfter.State -and
                 $selectedBefore.Library -ieq $selectedAfter.Library -and
                 $comparisonBefore -ceq $comparison -and $referenceStable)
+            if ($stable -and $selectedAfter.State -eq 'local_x86_lab_dll') {
+                $stable = ($selectedBefore.Digest -ieq $selectedAfter.Digest)
+                $expectedComparison = if ($selectedAfter.Digest -ieq $ReferenceSha256) { 'exact_bytes_at_snapshot' } else { 'different_bytes_at_snapshot' }
+                if ($comparison -cne $expectedComparison) { $stable = $false }
+            }
             # Recheck the selected module after the file comparison. Never
             # turn a name/PID observation into authenticated client identity.
             if ($null -ne $vidaChosenClient -and $stable -and $library) {
