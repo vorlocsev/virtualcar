@@ -49,9 +49,8 @@ $dll = Join-Path $native 'source\emulator\VirtualCarJ2534.dll'
 $hash = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($hash -ne $preflight.native_dll_sha256) { throw 'Native candidate changed.' }
 Copy-Item -LiteralPath (Join-Path $build 'app') -Destination $package -Recurse
-# Preserve original managed apphost target and dependency filenames; change only
-# the public executable filename in this separate package.
-Rename-Item -LiteralPath (Join-Path $package 'VirtualCar.WinUI.exe') -NewName 'VirtualCar.exe'
+# Preserve the published apphost filename: renaming it breaks WinUI startup.
+if (-not (Test-Path -LiteralPath (Join-Path $package 'VirtualCar.WinUI.exe') -PathType Leaf)) { throw 'Published apphost missing.' }
 $profiles = [ordered]@{'p2'='virtualcar-p2.ini';'obd'='virtualcar-default.ini';'p2-vin-demo'='virtualcar-p2-b9fb-lab-vin.ini'}
 $inventory = @()
 foreach ($id in $profiles.Keys) {
