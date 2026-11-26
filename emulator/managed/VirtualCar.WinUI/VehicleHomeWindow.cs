@@ -57,8 +57,8 @@ public sealed class VehicleHomeWindow : Window
     private bool _equipmentRendering;
     private readonly ListView _configurationRows = new() { MaxHeight = 320, SelectionMode = ListViewSelectionMode.None };
     private readonly List<BuiltInVehicle> _profiles = new(BuiltInVehicles.All);
-    private readonly LocalVehicleProfile? _localProfile;
-    private readonly LocalVehicleData.Availability _localAvailability;
+    private LocalVehicleProfile? _localProfile;
+    private LocalVehicleData.Availability _localAvailability;
     private readonly TextBlock _localNotice = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly TextBlock _availability = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _status = new() { FontSize = 18, TextWrapping = TextWrapping.Wrap };
@@ -222,7 +222,13 @@ public sealed class VehicleHomeWindow : Window
             _languageSaveFailed = !_homePreview && !(_settings?.TrySave(_russian ? UiLanguage.Russian : UiLanguage.English) ?? false);
             Render();
         };
-        _refresh.Click += (_, _) => { _photoVehicleId = null; Render(); };
+        _refresh.Click += (_, _) =>
+        {
+            if (_busy || _closed) return;
+            RefreshLocalProfile();
+            _photoVehicleId = null;
+            Render();
+        };
         _connect.Click += async (_, _) => await ChangeAsync(true);
         _disconnect.Click += async (_, _) => await ChangeAsync(false);
         _advanced.Click += (_, _) => { if (!_homePreview && !_busy && !_closed) _openAdvanced(); };
@@ -305,7 +311,9 @@ public sealed class VehicleHomeWindow : Window
             if (local)
             {
                 var loaded = LocalVehicleData.Load(AppContext.BaseDirectory);
-                if (loaded.Vehicle != profile) return null;
+                if (loaded.Vehicle != profile ||
+                    !LocalVehicleData.SameSnapshot(_localAvailability, _localProfile,
+                        LocalVehicleData.Availability.Ready, loaded)) return null;
                 validatedNative = loaded.NativeSha;
             }
             else if (!BuiltInVehicles.MatchesProfile(profile.Id, ReadLocal(Path.Combine(folder, "virtualcar.ini"), 1024 * 1024)))
@@ -720,6 +728,46 @@ public sealed class VehicleHomeWindow : Window
         }
     }
 
+    private bool RefreshLocalProfile()
+    {
+        var availability = LocalVehicleData.Probe(AppContext.BaseDirectory, out var profile);
+        if (LocalVehicleData.SameSnapshot(_localAvailability, _localProfile, availability, profile))
+            return false;
+        string selectedId = Selected.Id;
+        bool wasRendering = _rendering;
+        _rendering = true;
+        try
+        {
+            _localAvailability = availability;
+            _localProfile = profile;
+            // Never silently reuse draft/variant selections from another snapshot.
+            _equipmentEdits.Clear();
+            _equipmentOffset = -1;
+            _selectedVariant = null;
+            _choice = VehicleStateChoice.Original;
+            _configuration.IsExpanded = false;
+            _profiles.Clear();
+            _profiles.AddRange(BuiltInVehicles.All);
+            if (profile is not null) _profiles.Insert(0, profile.Vehicle);
+            _vehicle.Items.Clear();
+            foreach (var item in _profiles)
+                _vehicle.Items.Add(new ComboBoxItem { Tag = item.Id, Content = T(item.NameEn, item.NameRu) });
+            int index = _profiles.FindIndex(v => v.Id == selectedId);
+            _vehicle.SelectedIndex = index >= 0 ? index : _profiles.FindIndex(v => v.Id == "p2");
+            _resultEn = "Local profile changed. Review the selection before connecting.";
+            _resultRu = "Локальный профиль изменился. Проверьте выбор перед подключением.";
+        }
+        finally { _rendering = wasRendering; }
+        return true;
+    }
+
+    private bool LocalSnapshotStillCurrent()
+    {
+        var availability = LocalVehicleData.Probe(AppContext.BaseDirectory, out var profile);
+        return availability != LocalVehicleData.Availability.Invalid &&
+            LocalVehicleData.SameSnapshot(_localAvailability, _localProfile, availability, profile);
+    }
+
     private void Render()
     {
         if (_closed || _rendering) return;
@@ -743,8 +791,8 @@ public sealed class VehicleHomeWindow : Window
             _languageNotice.Visibility = _languageSaveFailed ? Visibility.Visible : Visibility.Collapsed;
             _subheading.Text = _homePreview ? T("Read-only interface preview", "Просмотр интерфейса без записи") : T("Your virtual vehicle", "Ваш виртуальный автомобиль");
             _localNotice.Visibility = _localAvailability == LocalVehicleData.Availability.Invalid ? Visibility.Visible : Visibility.Collapsed;
-            _localNotice.Text = T("The local XC90 V8 profile could not be validated. Demonstration profiles are visible, but enabling the adapter is blocked. Repair the package and restart Virtual Car.",
-                "Локальный профиль XC90 V8 не прошёл проверку. Демонстрационные профили доступны для просмотра, но включение адаптера заблокировано. Восстановите пакет и перезапустите Virtual Car.");
+            _localNotice.Text = T("The local XC90 V8 profile could not be validated. Demonstration profiles are visible, but enabling the adapter is blocked. Repair the package and select Refresh.",
+                "Локальный профиль XC90 V8 не прошёл проверку. Демонстрационные профили доступны для просмотра, но включение адаптера заблокировано. Восстановите пакет и нажмите «Обновить».");
             _connectionTitle.Text = T("Connection", "Подключение");
             _stateTitle.Text = T("Vehicle state", "Состояние автомобиля");
             _equipmentTitle.Text = T("Equipment", "Комплектация");
@@ -827,8 +875,14 @@ public sealed class VehicleHomeWindow : Window
 
     private async Task ChangeAsync(bool enable)
     {
-        if (_homePreview || _busy || _closed || (enable && _localAvailability == LocalVehicleData.Availability.Invalid) ||
-            !(enable ? _connect.IsEnabled : _disconnect.IsEnabled)) return;
+        if (_homePreview || _busy || _closed) return;
+        if (enable && !LocalSnapshotStillCurrent())
+        {
+            RefreshLocalProfile();
+            Render();
+            return;
+        }
+        if (!(enable ? _connect.IsEnabled : _disconnect.IsEnabled)) return;
         var profile = Selected;
         var candidate = enable ? Candidate(profile) : DisconnectCandidate(DriverRegistration.Read(), Candidate(profile));
         if (candidate is not { } c) { Render(); return; }
@@ -851,6 +905,7 @@ public sealed class VehicleHomeWindow : Window
             {
                 _resultEn = "Cancelled."; _resultRu = "Отменено."; return;
             }
+            if (enable && !LocalSnapshotStillCurrent()) throw new InvalidOperationException();
             var before = DriverRegistration.Read();
             var now = enable ? Candidate(profile) : DisconnectCandidate(before, Candidate(profile));
             if (now is not { } n || n != c ||
@@ -865,7 +920,8 @@ public sealed class VehicleHomeWindow : Window
             await process.WaitForExitAsync();
             var after = DriverRegistration.Read();
             if (process.ExitCode != 0 || (enable ?
-                    after.Status != DriverRegistration.State.Registered || !SamePath(after.Library, c.Path) || Candidate(profile) != c :
+                    after.Status != DriverRegistration.State.Registered || !SamePath(after.Library, c.Path) ||
+                    !LocalSnapshotStillCurrent() || Candidate(profile) != c :
                     after.Status != DriverRegistration.State.Absent)) throw new InvalidOperationException();
             _resultEn = enable ? "Adapter enabled. Open your diagnostic client manually." : "Adapter disabled.";
             _resultRu = enable ? "Адаптер включён. Откройте диагностическую программу самостоятельно." : "Адаптер отключён.";
@@ -874,6 +930,19 @@ public sealed class VehicleHomeWindow : Window
         { _resultEn = "Administrator approval cancelled."; _resultRu = "Запрос прав администратора отменён."; }
         catch (Exception)
         { _resultEn = "Operation not confirmed. Review advanced settings."; _resultRu = "Операция не подтверждена. Проверьте расширенные настройки."; }
-        finally { _busy = false; if (!_closed) Render(); }
+        finally
+        {
+            _busy = false;
+            if (!_closed)
+            {
+                string operationEn = _resultEn, operationRu = _resultRu;
+                if (RefreshLocalProfile() && !string.IsNullOrEmpty(operationEn))
+                {
+                    _resultEn = operationEn + "\n" + _resultEn;
+                    _resultRu = operationRu + "\n" + _resultRu;
+                }
+                Render();
+            }
+        }
     }
 }

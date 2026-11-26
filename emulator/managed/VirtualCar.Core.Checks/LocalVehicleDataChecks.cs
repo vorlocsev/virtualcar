@@ -30,7 +30,15 @@ internal static class LocalVehicleDataChecks
         ("VC095H 05 reject missing or invalid reference marker", () => Run(Test21)),
         ("VC095H 06 exact inventory for all supported schemas", () => Run(Test22)),
         ("VC095H 07 reject incomplete inventory", () => Run(Test23)),
-        ("VC095H 08 reject extra, pending or directory entries", () => Run(Test24))
+        ("VC095H 08 reject extra, pending or directory entries", () => Run(Test24)),
+        ("VC095I 01 stable missing snapshot", () => Run(Test25)),
+        ("VC095I 02 stable invalid snapshot", () => Run(Test26)),
+        ("VC095I 03 missing to ready is changed", () => Run(Test27)),
+        ("VC095I 04 ready to missing or invalid is changed", () => Run(Test28)),
+        ("VC095I 05 repaired profile is changed", () => Run(Test29)),
+        ("VC095I 06 identical manifest digest is stable", () => Run(Test30)),
+        ("VC095I 07 changed manifest is different", () => Run(Test31)),
+        ("VC095I 08 reject inconsistent or missing snapshot identity", () => Run(Test32))
     ];
     private static Task Run(Action action) { action(); return Task.CompletedTask; }
     private static void Require(bool value) { if (!value) throw new InvalidOperationException(); }
@@ -234,4 +242,39 @@ internal static class LocalVehicleDataChecks
         Directory.CreateDirectory(nested);
         Reject(() => LocalVehicleData.ValidateInventory(folder, schema));
     });
+
+    private static LocalVehicleProfile Snapshot(string sha) =>
+        new(BuiltInVehicles.All[0], Array.Empty<LocalConfigurationRow>()) { ManifestSha = sha };
+    private static bool Same(LocalVehicleData.Availability oldState, LocalVehicleProfile? oldProfile,
+        LocalVehicleData.Availability newState, LocalVehicleProfile? newProfile) =>
+        LocalVehicleData.SameSnapshot(oldState, oldProfile, newState, newProfile);
+    private const LocalVehicleData.Availability Missing = LocalVehicleData.Availability.Missing;
+    private const LocalVehicleData.Availability Ready = LocalVehicleData.Availability.Ready;
+    private const LocalVehicleData.Availability Invalid = LocalVehicleData.Availability.Invalid;
+    private static string HashA => new string('a', 64);
+    private static void Test25() => Require(Same(Missing, null, Missing, null));
+    private static void Test26() => Require(Same(Invalid, null, Invalid, null));
+    private static void Test27() => Require(!Same(Missing, null, Ready, Snapshot(HashA)));
+    private static void Test28()
+    {
+        Require(!Same(Ready, Snapshot(HashA), Missing, null));
+        Require(!Same(Ready, Snapshot(HashA), Invalid, null));
+    }
+    private static void Test29()
+    {
+        Require(!Same(Invalid, null, Ready, Snapshot(HashA)));
+        Require(!Same(Invalid, null, Missing, null));
+    }
+    private static void Test30() =>
+        Require(Same(Ready, Snapshot(HashA), Ready, Snapshot(HashA.ToUpperInvariant())));
+    private static void Test31() =>
+        Require(!Same(Ready, Snapshot(HashA), Ready, Snapshot(new string('b', 64))));
+    private static void Test32()
+    {
+        Require(!Same(Ready, null, Ready, Snapshot(HashA)));
+        Require(!Same(Ready, Snapshot(HashA), Ready, null));
+        Require(!Same(Ready, Snapshot(""), Ready, Snapshot("")));
+        Require(!Same(Missing, Snapshot(HashA), Missing, null));
+        Require(!Same(Invalid, null, Invalid, Snapshot(HashA)));
+    }
 }

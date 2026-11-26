@@ -389,6 +389,12 @@ Local profile load now checks the exact file inventory for each supported schema
 
 Eight synthetic Core tests cover native binding and inventories, not a full private profile or actual Windows adapter operation. Expected Core 184/184, Python 1280 discovered (1276 passing, four known skips), private suite 24/24. Exact-head execution, Windows and original VIDA acceptance remain pending. No registry mutation, CI dispatch or release.
 
+## VC095I local profile refresh (pending)
+
+The home window now refreshes the verified local snapshot on explicit Refresh and after an adapter operation. The selection is retained by vehicle ID where available; a removed selection falls back to P2, while registered-provider recognition still takes precedence. Changed availability or manifest SHA resets draft selections, variant and ignition/engine state to original. Unchanged verified snapshots preserve draft state. Invalid profiles continue to block activation. Before activation, after confirmation and when confirming the operation result, the current local snapshot must agree with the displayed one; a changed snapshot requires review, not automatic activation. Disconnect-only recovery remains available under its existing restrictions. The check is point-in-time, not a file watcher or an atomic lock across elevation. Refresh may discard unsaved drafts; no profile data is written.
+
+Eight synthetic Core snapshot tests added; expected Core 192/192, Python 1280 discovered / 1276 passing / four known skips, private suite 24/24. Actual WinUI refresh, Windows and VIDA remain untested; no registry mutation, CI dispatch or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
