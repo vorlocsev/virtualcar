@@ -1,11 +1,11 @@
-name: VC114 VMware autonomous provider
+name: VC115 native C++ x86
 on:
   push:
     branches:
       - 'vc111-build/20261126'
     paths:
       - '.github/workflows/vc111-vmware-build.yml'
-      - 'vc111-build/no-session.py'
+      - 'vc111-build/vc115.cpp'
 permissions:
   contents: read
 concurrency:
@@ -21,14 +21,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Compile x86 J2534 and x64 WinUI
+      - name: Compile x86 J2534 and native Win32
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
-          $work = Join-Path $env:RUNNER_TEMP ("vc114-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $work = Join-Path $env:RUNNER_TEMP ("vc115-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
           New-Item -ItemType Directory -Path $work | Out-Null
           $proto = Join-Path $work 'proto'
@@ -39,8 +39,6 @@ jobs:
           $env:VC108_PYTHON = $python
           & $python --version
           if ($LASTEXITCODE -ne 0) { throw 'Python failed' }
-          dotnet --list-sdks
-          if ($LASTEXITCODE -ne 0) { throw 'Dotnet unavailable' }
           Expand-Archive -LiteralPath $archive -DestinationPath $proto
           & $python (Join-Path $env:GITHUB_WORKSPACE 'vc111-build\no-session.py') $proto
           if ($LASTEXITCODE -ne 0) { throw 'VC114 no-session staging failed' }
@@ -59,64 +57,58 @@ jobs:
               if (Test-Path -LiteralPath (Join-Path $bin 'clang-cl.exe')) { $env:PATH = "$bin;$env:PATH"; break }
             }
           }
-          & (Join-Path $proto 'acceptance\build-only.ps1') -Checkout $repo -Output $candidate -Python $python
-          if (-not (Test-Path -LiteralPath (Join-Path $candidate 'provider\VirtualCarJ2534.dll'))) { throw 'Missing DLL' }
-          if (-not (Test-Path -LiteralPath (Join-Path $candidate 'app\VirtualCar.WinUI.exe'))) { throw 'Missing apphost' }
-          # Portable CPython, isolated from the host installation and user site.
-          $pythonZip = Join-Path $work 'python-3.14.9-embed-amd64.zip'
-          Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.14.9/python-3.14.9-embed-amd64.zip' -OutFile $pythonZip
-          if ((Get-FileHash -LiteralPath $pythonZip -Algorithm SHA256).Hash -ne '3C01D7CFC666F746A6F064F60FB2156AB0EC464D3D738AB796371A46A9BB24A2') { throw 'Embedded Python checksum mismatch' }
-          $embedded = Join-Path $candidate 'app\python'
-          Expand-Archive -LiteralPath $pythonZip -DestinationPath $embedded
-          $pth = Join-Path $embedded 'python314._pth'
-          if (-not (Test-Path -LiteralPath $pth -PathType Leaf)) { throw 'Python isolated path file missing' }
-          [IO.File]::WriteAllLines($pth,[string[]]@('python314.zip','.','..\VC109-tools','#import site'),[Text.Encoding]::ASCII)
-          $exe = Join-Path $embedded 'python.exe'
-          & $exe -I -B -c "import sys,ctypes,winreg,zipfile,prepare_profile; assert sys.version_info[:3] == (3,14,9); assert sys.flags.isolated; print('VC113_EMBEDDED_PYTHON=PASS',sys.version)"
-          if ($LASTEXITCODE -ne 0) { throw 'Embedded Python import check failed' }
-          foreach ($helper in @('prepare_profile.py','switch_provider.py')) {
-            & $exe -E -s -B (Join-Path $candidate ('app\VC109-tools\'+$helper)) --help
-            if ($LASTEXITCODE -ne 0) { throw 'Embedded Python helper CLI failed' }
-          }
+          # Reuse the proven native prefix of VC114, stop before the WinUI seal/publish.
+          $build = Join-Path $proto 'acceptance\build-only.ps1'
+          $lines = @(Get-Content -LiteralPath $build)
+          $hits = @(for($i=0;$i -lt $lines.Count;$i++){if($lines[$i] -match 'seal_provider\.py'){ $i }})
+          if ($hits.Count -ne 1 -or $hits[0] -lt 1) { throw 'Native build prefix anchor mismatch' }
+          $prefix = @($lines[0..($hits[0]-1)])
+          if (-not (($prefix -join "`n") -match 'audit_pe\.py')) { throw 'PE audit must precede seal' }
+          $nativeBuild = Join-Path $proto 'acceptance\build-native-only.ps1'
+          [IO.File]::WriteAllLines($nativeBuild,[string[]]$prefix,(New-Object Text.UTF8Encoding($false)))
+          & $nativeBuild -Checkout $repo -Output $candidate -Python $python
+          $dll = Join-Path $candidate 'provider\VirtualCarJ2534.dll'
+          if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw 'Missing DLL' }
           $package = Join-Path $work 'package'
           New-Item -ItemType Directory -Path $package | Out-Null
-          Copy-Item -LiteralPath (Join-Path $candidate 'app') -Destination $package -Recurse
-          New-Item -ItemType Directory -Path (Join-Path $package 'provider') | Out-Null
-          Copy-Item -LiteralPath (Join-Path $candidate 'provider\VirtualCarJ2534.dll') -Destination (Join-Path $package 'provider')
-          Copy-Item -LiteralPath (Join-Path $candidate 'provider-package.zip') -Destination $package
-          foreach ($helper in @('prepare_profile.py','switch_provider.py')) {
-            if (-not (Test-Path -LiteralPath (Join-Path $package ('app\VC109-tools\'+$helper)))) { throw 'Sealed helper missing' }
-          }
+          Copy-Item -LiteralPath $dll -Destination $package
+          $hash = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+          ('#define VC115_PROVIDER_SHA L"'+$hash+'"') | Set-Content -LiteralPath (Join-Path $work 'provider_hash.h') -Encoding ASCII
+          $source = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc115.cpp'
+          $out = Join-Path $package 'VirtualCar.exe'
+          & cl.exe /nologo /std:c++17 /EHsc /O1 /GL /MT /W4 /utf-8 "/I$work" "/Fo$work\vc115.obj" $source /link /LTCG /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /MACHINE:X86 /DYNAMICBASE /NXCOMPAT "/OUT:$out"
+          if ($LASTEXITCODE -ne 0) { throw 'Native C++ compile/link failed' }
+          $dump = (& dumpbin.exe /headers /imports $out | Out-String)
+          if ($LASTEXITCODE -ne 0 -or $dump -notmatch '14C machine \(x86\)' -or $dump -match '(?im)^\s*(mscoree|vcruntime[^ ]*|msvcp[^ ]*|python[^ ]*|Microsoft\.UI\.Xaml)\.dll\s*$') { throw 'Native PE architecture/import check failed' }
+          $dump | Write-Host
+          Write-Host "VC115_NATIVE_PE=PASS x86 static CRT"
           @(
-            'VC114 autonomous development candidate (ordinary INI, no external session)',
+            'VC115 native C++ Win32 x86 development candidate',
             "Base: $base", "Build commit: $env:GITHUB_SHA",
-            'Source archive SHA256: 0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951',
-            'Runtime, WinUI launch and VIDA: NOT TESTED',
-            'Run app\VirtualCar.WinUI.exe --live-control for the experimental panel.',
-            'DLL x86 is not installed or registered. No working INI is included.',
-            'Keep app, provider and provider-package.zip together. Python 3.14.9 x64 is bundled in app\python.',
-            'Compact window target 420 x 360 DIP, clamped to work area. No external Python required.',
-            'Raw J2534 trace rotation: 4 x 32 MiB; runtime NOT TESTED.',
-            'No IPC publisher, credentials, worker or external state mode. Legacy autonomous model uses copied INI.',
-            'Do not replace a working provider without a backup and explicit approval.'
+            "Provider SHA256: $hash",
+            'Portable package; no Python, .NET or Windows App SDK required at runtime.',
+            'Existing VC107 registration only; expected path C:\VC099-VIDA-511\provider\VirtualCarJ2534.dll.',
+            'Close all diagnostic clients before clicking Connect to VIDA or Restore previous driver.',
+            'Keep this directory intact while the driver is selected. No working INI is included.',
+            'Compile and PE audit only; GUI, registry switch, rollback and VIDA NOT TESTED.'
           ) | Set-Content -LiteralPath (Join-Path $package 'BUILD-INFO.txt') -Encoding UTF8
           Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
             ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
           } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = Join-Path $work 'VirtualCar-VC114-development.zip'
+          $zip = Join-Path $work 'VirtualCar-VC115-native.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
-          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC114-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC115-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
           New-Item -ItemType Directory -Path $saved -Force | Out-Null
           Copy-Item -LiteralPath $zip -Destination $saved
-          Write-Host ('VC114_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC114-development.zip'))
+          Write-Host ('VC115_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC115-native.zip'))
       - name: Upload compiled candidate
         uses: actions/upload-artifact@v4
         with:
-          name: VirtualCar-VC114-development
-          path: ${{ runner.temp }}/vc114-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC114-development.zip
+          name: VirtualCar-VC115-native
+          path: ${{ runner.temp }}/vc115-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC115-native.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
