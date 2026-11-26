@@ -343,6 +343,10 @@ Test-VC095PackageAcceptance.ps1 consumes a fresh exact-head output from Build-VC
 
 ZIP output now stages and verifies all entries and repeats source inventory verification before exclusive publication using a hard link on the destination filesystem (use NTFS on Windows). Failed checks do not publish a final ZIP, and existing ZIPs remain unchanged. Regression assertions cover altered/extra input and existing output. Isolated Linux reproduction of the new archive function with small synthetic files and simplified scan helper passed five scenarios; this is not the exact-head full suite. Windows build and tests still pending.
 
+## VC095A explicit English / Russian localization
+
+Normal and advanced workspaces expose English / Русский, rather than abbreviated language codes. English is already the default when no valid saved preference exists; both ordinary and advanced workspaces read the same language preference and preserve the existing isolated-mode behavior. The normal workspace now reports a failed preference save instead of silently discarding it. Original vehicle catalog labels and values are retained in their source language; the application does not invent translations for private catalog data. The normal-home acceptance smoke additionally observes the two language options without selecting a different language or writing settings. Existing EN/RU/EN advanced-mode acceptance and Core language persistence checks remain applicable. Windows execution and visual verification are pending. Core count remains 160; Python suite count remains 1256.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.

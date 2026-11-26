@@ -26,7 +26,7 @@ public sealed class CemPreviewWindow : Window
     private readonly Button _preview = new() { Content = "Preview selection" };
     private readonly Button _revert = new() { Content = "Revert to baseline" };
     private readonly Button _clear = new() { Content = "Reset all changes" };
-    private readonly ComboBox _language = new() { MinWidth = 88 };
+    private readonly ComboBox _language = new() { MinWidth = 120 };
     private readonly TextBlock _heading = new() { FontSize = 28, TextWrapping = TextWrapping.Wrap };
     private readonly ListView _navigation = new() { SelectionMode = ListViewSelectionMode.Single, MinWidth = 180 };
     private readonly Grid _editor = new() { RowSpacing = 12 };
@@ -330,8 +330,8 @@ public sealed class CemPreviewWindow : Window
         var heading = new StackPanel { Spacing = 4 };
         heading.Children.Add(_heading);
         heading.Children.Add(_subtitle);
-        var english = new ComboBoxItem { Content = "EN" };
-        var russian = new ComboBoxItem { Content = "RU" };
+        var english = new ComboBoxItem { Content = "English" };
+        var russian = new ComboBoxItem { Content = "Русский" };
         AutomationId(english, "VC075.Language.EN");
         AutomationId(russian, "VC075.Language.RU");
         _language.Items.Add(english);

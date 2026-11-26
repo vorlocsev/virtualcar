@@ -10,7 +10,9 @@ namespace VirtualCar.WinUI;
 public sealed class VehicleHomeWindow : Window
 {
     private readonly ComboBox _vehicle = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly ComboBox _language = new() { MinWidth = 88 };
+    private readonly ComboBox _language = new() { MinWidth = 120 };
+    private readonly TextBlock _languageNotice = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    private bool _languageSaveFailed;
     private readonly TextBlock _heading = new() { FontSize = 28, TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private readonly TextBlock _subheading = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _connectionTitle = new() { FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
@@ -83,12 +85,19 @@ public sealed class VehicleHomeWindow : Window
         var top = new Grid { ColumnSpacing = 12 };
         top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        _language.Items.Add("EN"); _language.Items.Add("RU");
+        var english = new ComboBoxItem { Content = "English" };
+        var russian = new ComboBoxItem { Content = "Русский" };
+        Id(english, "VC094A.Language.EN"); Id(russian, "VC094A.Language.RU");
+        _language.Items.Add(english); _language.Items.Add(russian);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_language, "Language / Язык");
         _language.SelectedIndex = _russian ? 1 : 0;
         var headingGroup = new StackPanel { Spacing = 3 };
         headingGroup.Children.Add(_heading); headingGroup.Children.Add(_subheading);
-        top.Children.Add(headingGroup); Grid.SetColumn(_language, 1); top.Children.Add(_language);
-        _language.VerticalAlignment = VerticalAlignment.Center;
+        top.Children.Add(headingGroup);
+        var languagePanel = new StackPanel { Spacing = 4, MaxWidth = 160, VerticalAlignment = VerticalAlignment.Center };
+        languagePanel.Children.Add(_language); languagePanel.Children.Add(_languageNotice);
+        Grid.SetColumn(languagePanel, 1); top.Children.Add(languagePanel);
+        Id(_languageNotice, "VC095A.Language.Notice");
         _content.Children.Add(top);
         try
         {
@@ -205,9 +214,9 @@ public sealed class VehicleHomeWindow : Window
         _vehicle.SelectionChanged += (_, _) => { if (!_rendering) { _resultEn = _resultRu = ""; Render(); } };
         _language.SelectionChanged += (_, _) =>
         {
-            if (_language.SelectedIndex < 0 || _busy || _closed) return;
+            if (_language.SelectedIndex < 0 || _busy || _closed || _rendering) return;
             _russian = _language.SelectedIndex == 1;
-            _settings?.TrySave(_russian ? UiLanguage.Russian : UiLanguage.English);
+            _languageSaveFailed = !(_settings?.TrySave(_russian ? UiLanguage.Russian : UiLanguage.English) ?? false);
             Render();
         };
         _refresh.Click += (_, _) => { _photoVehicleId = null; Render(); };
@@ -685,6 +694,8 @@ public sealed class VehicleHomeWindow : Window
             _vehicle.SelectedIndex = -1; _vehicle.SelectedIndex = selection;
             var profile = Selected;
             _heading.Text = "Virtual Car";
+            _languageNotice.Text = T("Language preference could not be saved.", "Не удалось сохранить выбранный язык.");
+            _languageNotice.Visibility = _languageSaveFailed ? Visibility.Visible : Visibility.Collapsed;
             _subheading.Text = T("Your virtual vehicle", "Ваш виртуальный автомобиль");
             _connectionTitle.Text = T("Connection", "Подключение");
             _stateTitle.Text = T("Vehicle state", "Состояние автомобиля");
@@ -701,7 +712,8 @@ public sealed class VehicleHomeWindow : Window
             if (_stateCard is not null) _stateCard.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
             if (_equipmentCard is not null) _equipmentCard.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
             _equipmentHint.Text = local && _localProfile is not null ? T("Equipment parameters: ", "Параметры комплектации: ") + _localProfile.Rows.Count +
-                T(" · protected: ", " · защищено: ") + _localProfile.Rows.Count(x => x.Locked) : "";
+                T(" · protected: ", " · защищено: ") + _localProfile.Rows.Count(x => x.Locked) +
+                "\n" + T("Equipment names and values retain their original catalog language.", "Названия и значения сохраняются на языке исходного каталога.") : "";
             _configuration.Header = local && _localProfile?.Editor is not null ? T("Vehicle equipment · draft", "Комплектация автомобиля · черновик") : T("Vehicle equipment · read only", "Комплектация автомобиля · просмотр");
             _configurationRows.Items.Clear();
             if (local && _localProfile is not null)
@@ -714,7 +726,7 @@ public sealed class VehicleHomeWindow : Window
             RenderEquipment(local);
             var slots = local ? 8 : NativeEcuInventory.Inspect(BuiltInVehicles.ReadProfile(profile.Id)).Count;
             _modules.Text = T("Configured routes: ", "Настроено маршрутов: ") + slots +
-                T(" · not detected ECUs", " · не обнаруженные блоки");
+                T(" · not an ECU discovery result", " · не результат поиска блоков");
             _availability.Text = local ? T("Equipment snapshot included. Select prepared configuration separately.", "Комплектация включена. Подготовленная конфигурация выбирается отдельно.") :
                 T("Engine and ignition controls require a reviewed vehicle profile. Advanced configuration remains available.",
                 "Управление двигателем и зажиганием требует проверенного профиля. Расширенная настройка доступна отдельно.");
