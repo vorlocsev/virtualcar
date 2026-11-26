@@ -1,0 +1,101 @@
+name: VC111 VMware compile only
+on:
+  push:
+    branches:
+      - 'vc111-build/20261126'
+    paths:
+      - 'vc111-build/vc110-source.zip'
+permissions:
+  contents: read
+concurrency:
+  group: virtualcar-vmware-development-validation
+  cancel-in-progress: false
+jobs:
+  compile:
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.event_name == 'push' && github.ref == 'refs/heads/vc111-build/20261126'
+    runs-on: [self-hosted, Windows, X64, virtualcar-win]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compile x86 J2534 and x64 WinUI
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
+          $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
+          $work = Join-Path $env:RUNNER_TEMP ("vc111-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
+          New-Item -ItemType Directory -Path $work | Out-Null
+          $proto = Join-Path $work 'proto'
+          $repo = Join-Path $work 'base'
+          $candidate = Join-Path $work 'candidate'
+          $python = (Get-Content -LiteralPath 'E:\VirtualCar\Tools\python312.path' -Raw).Trim()
+          if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw 'Runner Python missing' }
+          $env:VC108_PYTHON = $python
+          & $python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Python failed' }
+          dotnet --list-sdks
+          if ($LASTEXITCODE -ne 0) { throw 'Dotnet unavailable' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $proto
+          git clone --local --no-hardlinks --no-checkout $env:GITHUB_WORKSPACE $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
+          git -C $repo -c core.autocrlf=false checkout --detach $base
+          if ($LASTEXITCODE -ne 0) { throw 'Base checkout failed' }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC not available on runner' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x86 -host_arch=x64'
+          if ($env:VSCMD_ARG_TGT_ARCH -ne 'x86') { throw 'Incorrect target architecture' }
+          if (-not (Get-Command clang-cl.exe -ErrorAction SilentlyContinue)) {
+            foreach ($bin in @((Join-Path $vs 'VC\Tools\Llvm\x64\bin'),(Join-Path $env:ProgramFiles 'LLVM\bin'))) {
+              if (Test-Path -LiteralPath (Join-Path $bin 'clang-cl.exe')) { $env:PATH = "$bin;$env:PATH"; break }
+            }
+          }
+          & (Join-Path $proto 'acceptance\build-only.ps1') -Checkout $repo -Output $candidate -Python $python
+          if (-not (Test-Path -LiteralPath (Join-Path $candidate 'provider\VirtualCarJ2534.dll'))) { throw 'Missing DLL' }
+          if (-not (Test-Path -LiteralPath (Join-Path $candidate 'app\VirtualCar.WinUI.exe'))) { throw 'Missing apphost' }
+          $package = Join-Path $work 'package'
+          New-Item -ItemType Directory -Path $package | Out-Null
+          Copy-Item -LiteralPath (Join-Path $candidate 'app') -Destination $package -Recurse
+          New-Item -ItemType Directory -Path (Join-Path $package 'provider') | Out-Null
+          Copy-Item -LiteralPath (Join-Path $candidate 'provider\VirtualCarJ2534.dll') -Destination (Join-Path $package 'provider')
+          Copy-Item -LiteralPath (Join-Path $candidate 'provider-package.zip') -Destination $package
+          foreach ($helper in @('prepare_profile.py','switch_provider.py')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $package ('app\VC109-tools\'+$helper)))) { throw 'Sealed helper missing' }
+          }
+          @(
+            'VC111 compile-only development candidate (VC108R + VC109C + VC110)',
+            "Base: $base", "Build commit: $env:GITHUB_SHA",
+            'Source archive SHA256: 0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951',
+            'Runtime, WinUI launch and VIDA: NOT TESTED',
+            'Run app\VirtualCar.WinUI.exe --live-control for the experimental panel.',
+            'DLL x86 is not installed or registered. No working INI is included.',
+            'Keep app, provider and provider-package.zip together. Profile tools require Python.',
+            'Raw J2534 trace rotation: 4 x 32 MiB; runtime NOT TESTED.',
+            'Do not replace a working provider without a backup and explicit approval.'
+          ) | Set-Content -LiteralPath (Join-Path $package 'BUILD-INFO.txt') -Encoding UTF8
+          Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
+            ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
+          } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Join-Path $work 'VirtualCar-VC111-development.zip'
+          [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
+          Get-FileHash -LiteralPath $zip -Algorithm SHA256
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC111-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
+          New-Item -ItemType Directory -Path $saved -Force | Out-Null
+          Copy-Item -LiteralPath $zip -Destination $saved
+          Write-Host ('VC111_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC111-development.zip'))
+      - name: Upload compiled candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: VirtualCar-VC111-development
+          path: ${{ runner.temp }}/vc111-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC111-development.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
