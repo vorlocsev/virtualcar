@@ -20,11 +20,11 @@ namespace VirtualCar.WinUI;
 // No background state publisher or vehicle session is created.
 internal sealed class LiveControlWindow : Window
 {
-    private readonly TextBox sourcePath = new() { Header = "Рабочий провайдер", Text = @"C:\VC099-VIDA-511\provider" };
-    private readonly TextBox buildPath = new() { IsReadOnly = true, Header = "Original VC108R inner ZIP / Исходный ZIP VC108R", Text = @"E:\VirtualCar\Builds\VC108R-45858063194-1\VirtualCar-VC108R-development.zip" };
-    private readonly CheckBox closed = new() { Content = "VIDA и клиенты закрыты" };
-    private readonly Button connect = new() { Content = "Подключить VIDA", HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly Button restore = new() { Content = "Вернуть прежний драйвер", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly TextBox sourcePath = new() { Header = "Current provider", Text = @"C:\VC099-VIDA-511\provider" };
+    private readonly TextBox buildPath = new() { IsReadOnly = true, Header = "Provider package", Text = @"E:\VirtualCar\Builds\VC108R-45858063194-1\VirtualCar-VC108R-development.zip" };
+    private readonly CheckBox closed = new() { Content = "VIDA and other clients are closed" };
+    private readonly Button connect = new() { Content = "Connect to VIDA", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button restore = new() { Content = "Restore previous driver", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 14 };
     private readonly TextBlock detail = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private ProviderFlow? flow;
@@ -49,12 +49,12 @@ internal sealed class LiveControlWindow : Window
         Title="Virtual Car · XC90";
         var panel=new StackPanel{Padding=new Thickness(16),Spacing=10};
         panel.Children.Add(new TextBlock{Text="XC90 V8",FontSize=26});
-        panel.Children.Add(new TextBlock{Text="Автономный автомобиль · без IPC",FontSize=12});
+        panel.Children.Add(new TextBlock{Text="Standalone virtual car",FontSize=12});
         panel.Children.Add(status);
         panel.Children.Add(closed);panel.Children.Add(connect);panel.Children.Add(restore);
         var settings=new StackPanel{Spacing=6};
         settings.Children.Add(sourcePath);settings.Children.Add(buildPath);settings.Children.Add(detail);
-        panel.Children.Add(new Expander{Header="Подробности",Content=settings,HorizontalAlignment=HorizontalAlignment.Stretch,HorizontalContentAlignment=HorizontalAlignment.Stretch});
+        panel.Children.Add(new Expander{Header="Details",Content=settings,HorizontalAlignment=HorizontalAlignment.Stretch,HorizontalContentAlignment=HorizontalAlignment.Stretch});
         var scroll=new ScrollViewer{Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
         bool sized=false;
         scroll.Loaded+=(_,_)=>{if(!sized){sized=true;SizeCompact();}};
@@ -69,21 +69,21 @@ internal sealed class LiveControlWindow : Window
             flow=ProviderFlow.Recover(python,tools,buildPath.Text);
             if(flow is not null) sourcePath.Text=Path.GetDirectoryName(flow.Original)!;
         }
-        catch(Exception ex){notice="Проверка регистрации: "+ex.Message;}
+        catch(Exception ex){notice="Registration check: "+ex.Message;}
         Render();
     }
     private void Render()
     {
         bool active=flow?.Active()==true;
         bool original=flow?.Restored()??ProviderFlow.IsOriginal(sourcePath.Text);
-        status.Text=(busy?"Выполняется…":active?"Драйвер выбран · можно открыть VIDA":original?"Готов к подключению":"Другая регистрация · проверьте путь")
+        status.Text=(busy?"Working…":active?"Driver selected · open VIDA":original?"Ready to connect":"Different registration · check provider path")
             +(notice.Length>0?"\n"+notice:"");
         connect.IsEnabled=!busy && closed.IsChecked==true && original && (flow is null||flow.CanApply);
         restore.IsEnabled=!busy && closed.IsChecked==true && active;
         closed.IsEnabled=!busy;
         sourcePath.IsEnabled=!busy && flow is null;
-        detail.Text=flow is null?"Используется текущий INI. Двигатель моделируется внутри DLL; показания читаются в VIDA.":
-            "Кандидат: "+flow.Target+"\nЖурнал отката: "+flow.Journal;
+        detail.Text=flow is null?"Uses the current INI profile. The DLL simulates the engine; readings are available in VIDA.":
+            "Candidate: "+flow.Target+"\nRollback journal: "+flow.Journal;
     }
     private async Task ChangeAsync(bool undo)
     {
@@ -93,8 +93,8 @@ internal sealed class LiveControlWindow : Window
         {
             if(undo)
             {
-                if(flow is null)throw new InvalidOperationException("Нет журнала отката");
-                await flow.RollbackAsync();flow=null;notice="Прежний драйвер восстановлен";
+                if(flow is null)throw new InvalidOperationException("Rollback journal not found");
+                await flow.RollbackAsync();flow=null;notice="Previous driver restored";
             }
             else
             {
@@ -104,7 +104,7 @@ internal sealed class LiveControlWindow : Window
                     await candidate.PrepareAsync();
                     flow=candidate;
                 }
-                await flow.ApplyAsync();notice="Подключено. В VIDA: J2534 Lab Adapter";
+                await flow.ApplyAsync();notice="Connected. Select J2534 Lab Adapter in VIDA";
             }
         }
         catch(Exception ex){notice=ex.Message;}
