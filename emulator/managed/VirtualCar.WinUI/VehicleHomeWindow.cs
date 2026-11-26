@@ -58,6 +58,8 @@ public sealed class VehicleHomeWindow : Window
     private readonly ListView _configurationRows = new() { MaxHeight = 320, SelectionMode = ListViewSelectionMode.None };
     private readonly List<BuiltInVehicle> _profiles = new(BuiltInVehicles.All);
     private readonly LocalVehicleProfile? _localProfile;
+    private readonly LocalVehicleData.Availability _localAvailability;
+    private readonly TextBlock _localNotice = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly TextBlock _availability = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _status = new() { FontSize = 18, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _notice = new() { TextWrapping = TextWrapping.Wrap };
@@ -101,12 +103,11 @@ public sealed class VehicleHomeWindow : Window
         Grid.SetColumn(languagePanel, 1); top.Children.Add(languagePanel);
         Id(_languageNotice, "VC095A.Language.Notice");
         _content.Children.Add(top);
-        try
-        {
-            _localProfile = LocalVehicleData.Load(AppContext.BaseDirectory);
-            _profiles.Insert(0, _localProfile.Vehicle);
-        }
-        catch (Exception) { /* An absent or invalid local package is not a selectable vehicle. */ }
+        _localAvailability = LocalVehicleData.Probe(AppContext.BaseDirectory, out var loadedProfile);
+        _localProfile = loadedProfile;
+        if (_localProfile is not null) _profiles.Insert(0, _localProfile.Vehicle);
+        Id(_localNotice, "VC095C.LocalProfile.Notice");
+        _content.Children.Add(_localNotice);
         foreach (var profile in _profiles)
             _vehicle.Items.Add(new ComboBoxItem { Tag = profile.Id, Content = profile.NameEn });
         _vehicle.SelectedIndex = 0;
@@ -699,6 +700,9 @@ public sealed class VehicleHomeWindow : Window
             _languageNotice.Text = T("Language preference could not be saved.", "Не удалось сохранить выбранный язык.");
             _languageNotice.Visibility = _languageSaveFailed ? Visibility.Visible : Visibility.Collapsed;
             _subheading.Text = _homePreview ? T("Read-only interface preview", "Просмотр интерфейса без записи") : T("Your virtual vehicle", "Ваш виртуальный автомобиль");
+            _localNotice.Visibility = _localAvailability == LocalVehicleData.Availability.Invalid ? Visibility.Visible : Visibility.Collapsed;
+            _localNotice.Text = T("The local XC90 V8 profile could not be validated. Demonstration profiles are visible, but enabling the adapter is blocked. Repair the package and restart Virtual Car.",
+                "Локальный профиль XC90 V8 не прошёл проверку. Демонстрационные профили доступны для просмотра, но включение адаптера заблокировано. Восстановите пакет и перезапустите Virtual Car.");
             _connectionTitle.Text = T("Connection", "Подключение");
             _stateTitle.Text = T("Vehicle state", "Состояние автомобиля");
             _equipmentTitle.Text = T("Equipment", "Комплектация");
@@ -738,12 +742,13 @@ public sealed class VehicleHomeWindow : Window
             var candidate = Candidate(profile);
             bool own = candidate is { } c && registration.Status == DriverRegistration.State.Registered &&
                 SamePath(registration.Library, c.Path);
+            bool activationCandidate = candidate is not null && (_localAvailability != LocalVehicleData.Availability.Invalid || own);
             var connection = HomeConnectionPlan.Create(registration.Status switch
             {
                 DriverRegistration.State.Absent => HomeRegistration.Absent,
                 DriverRegistration.State.Registered => HomeRegistration.Registered,
                 _ => HomeRegistration.Review
-            }, candidate is not null, own, _busy);
+            }, activationCandidate, own, _busy);
             _status.Text = connection.State switch
             {
                 HomeConnectionState.Ready => T("Ready to connect", "Готов к подключению"),
@@ -758,7 +763,7 @@ public sealed class VehicleHomeWindow : Window
             _advanced.Content = T("Advanced settings", "Расширенные настройки");
             _vehicle.IsEnabled = _language.IsEnabled = _advanced.IsEnabled = _refresh.IsEnabled = !_busy;
             _advanced.IsEnabled = !_homePreview && !_busy;
-            _connect.IsEnabled = !_homePreview && connection.CanEnable;
+            _connect.IsEnabled = !_homePreview && _localAvailability != LocalVehicleData.Availability.Invalid && connection.CanEnable;
             _disconnect.IsEnabled = !_homePreview && connection.CanDisable;
             _connect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Collapsed : Visibility.Visible;
             _disconnect.Visibility = connection.State == HomeConnectionState.Owned ? Visibility.Visible : Visibility.Collapsed;
@@ -776,7 +781,8 @@ public sealed class VehicleHomeWindow : Window
 
     private async Task ChangeAsync(bool enable)
     {
-        if (_homePreview || _busy || _closed || !(enable ? _connect.IsEnabled : _disconnect.IsEnabled)) return;
+        if (_homePreview || _busy || _closed || (enable && _localAvailability == LocalVehicleData.Availability.Invalid) ||
+            !(enable ? _connect.IsEnabled : _disconnect.IsEnabled)) return;
         var profile = Selected;
         var candidate = Candidate(profile);
         if (candidate is not { } c) { Render(); return; }

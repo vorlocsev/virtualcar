@@ -14,7 +14,15 @@ internal static class LocalVehicleDataChecks
         ("VC094B 05 reject unknown schema and extra keys", () => Run(Test05)),
         ("VC094B 06 bound data size", () => Run(Test06)),
         ("VC094B 07 missing local package is not a vehicle", () => Run(Test07)),
-        ("VC094B 08 reject unpinned simulator profile", () => Run(Test08))
+        ("VC094B 08 reject unpinned simulator profile", () => Run(Test08)),
+        ("VC095C 01 missing package is distinct from invalid", () => Run(Test09)),
+        ("VC095C 02 incomplete local package rejected", () => Run(Test10)),
+        ("VC095C 03 malformed local manifest rejected", () => Run(Test11)),
+        ("VC095C 04 vehicle VIN scoped to Vehicle", () => Run(Test12)),
+        ("VC095C 05 reject missing or duplicate vehicle identity", () => Run(Test13)),
+        ("VC095C 06 reject wrong year and VIN syntax", () => Run(Test14)),
+        ("VC095C 07 reject duplicate Vehicle section", () => Run(Test15)),
+        ("VC095C 08 reject invalid identity encoding and oversized bytes", () => Run(Test16))
     ];
     private static Task Run(Action action) { action(); return Task.CompletedTask; }
     private static void Require(bool value) { if (!value) throw new InvalidOperationException(); }
@@ -79,5 +87,64 @@ internal static class LocalVehicleDataChecks
             Reject(() => LocalVehicleData.ReadProfile(root));
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    private const string SyntheticVin = "YV1CZ000290000001";
+    private static byte[] Ini(string text) => System.Text.Encoding.ASCII.GetBytes(text);
+    private static string Identity => "[Vehicle]\r\nVIN=" + SyntheticVin + "\r\nModelYear=2009\r\n";
+    private static void WithFolder(Action<string,string> check)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "VC095C-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try { check(root, LocalVehicleData.Folder(root)); }
+        finally { Directory.Delete(root, true); }
+    }
+    private static void Test09() => WithFolder((root, folder) =>
+    {
+        Require(LocalVehicleData.Probe(root, out var profile) == LocalVehicleData.Availability.Missing && profile is null);
+        Directory.CreateDirectory(Path.GetDirectoryName(folder)!);
+        File.WriteAllText(folder, "not a directory");
+        Require(LocalVehicleData.Probe(root, out profile) == LocalVehicleData.Availability.Invalid && profile is null);
+    });
+    private static void Test10() => WithFolder((root, folder) =>
+    {
+        Directory.CreateDirectory(folder);
+        Require(LocalVehicleData.Probe(root, out var profile) == LocalVehicleData.Availability.Invalid && profile is null);
+    });
+    private static void Test11() => WithFolder((root, folder) =>
+    {
+        Directory.CreateDirectory(folder);
+        string file = Path.Combine(folder,"local-profile.json");
+        foreach (string bad in new[] { "{", "[]", "{}", "{\"schema\":null}", "{\"schema\":\"unknown\"}" })
+        {
+            File.WriteAllText(file,bad);
+            Require(LocalVehicleData.Probe(root,out var profile) == LocalVehicleData.Availability.Invalid && profile is null);
+            Require(File.ReadAllText(file)==bad);
+        }
+    });
+    private static void Test12()
+    {
+        Require(LocalVehicleData.ReadVehicleVin(Ini("[ECU0]\nVIN=UNRELATED\n" + Identity + "[ECU1]\nVIN=OTHER\n")) == SyntheticVin);
+        Require(LocalVehicleData.ReadVehicleVin(Ini("[vehicle]\n vin = " + SyntheticVin + "\n modelyear = 2009\n")) == SyntheticVin);
+    }
+    private static void Test13()
+    {
+        foreach (string bad in new[] { "[ECU0]\nVIN="+SyntheticVin+"\nModelYear=2009\n",
+            Identity+"vin="+SyntheticVin+"\n",Identity+"ModelYear=2009\n",
+            "[Vehicle]\nVIN="+SyntheticVin+"\n", "[Vehicle]\nModelYear=2009\n" })
+            Reject(()=>LocalVehicleData.ReadVehicleVin(Ini(bad)));
+    }
+    private static void Test14()
+    {
+        foreach (string bad in new[] { Identity.Replace("2009","2010"), Identity.Replace(SyntheticVin,"YV1CZ0002A0000001"),
+            Identity.Replace(SyntheticVin,"YV1CZ000I90000001"), Identity.Replace(SyntheticVin,"short") })
+            Reject(()=>LocalVehicleData.ReadVehicleVin(Ini(bad)));
+    }
+    private static void Test15() => Reject(()=>LocalVehicleData.ReadVehicleVin(Ini(Identity+Identity)));
+    private static void Test16()
+    {
+        Reject(()=>LocalVehicleData.ReadVehicleVin(new byte[1024*1024+1]));
+        Reject(()=>LocalVehicleData.ReadVehicleVin(Ini(Identity+"\0")));
+        Reject(()=>LocalVehicleData.ReadVehicleVin(Ini(Identity).Concat(new byte[]{0xff}).ToArray()));
     }
 }

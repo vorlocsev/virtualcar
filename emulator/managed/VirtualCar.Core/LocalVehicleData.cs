@@ -24,17 +24,68 @@ public static class LocalVehicleData
         return Path.Combine(root, "vehicle-data", Id);
     }
 
-    private static byte[] Read(string path, int cap)
+    private static byte[] Read(string path, int cap) => VehicleStatePackages.ReadFile(path, cap);
+
+    public enum Availability { Missing, Ready, Invalid }
+
+    public static Availability Probe(string root, out LocalVehicleProfile? profile)
     {
-        for (FileSystemInfo? item = new FileInfo(path); item is not null;
-            item = item is FileInfo f ? f.Directory : ((DirectoryInfo)item).Parent)
-            if ((item.Attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException();
-        using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        if (file.Length < 1 || file.Length > cap) throw new InvalidDataException();
-        byte[] bytes = new byte[(int)file.Length];
-        file.ReadExactly(bytes);
-        if (file.ReadByte() != -1) throw new InvalidDataException();
-        return bytes;
+        profile = null;
+        try
+        {
+            string folder = Folder(root);
+            try { _ = File.GetAttributes(folder); }
+            catch (FileNotFoundException) { return Availability.Missing; }
+            catch (DirectoryNotFoundException) { return Availability.Missing; }
+            profile = Load(root);
+            return Availability.Ready;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or
+            System.Security.SecurityException or JsonException or InvalidOperationException or
+            ArgumentException or FormatException or OverflowException or KeyNotFoundException)
+        {
+            return Availability.Invalid;
+        }
+    }
+
+    // Identity is read only from the Vehicle section, not an unrelated ECU
+    // or diagnostic fixture. The actual owner profile must still match its pin.
+    public static string ReadVehicleVin(byte[] bytes)
+    {
+        if (bytes.Length is < 1 or > 1024 * 1024 || bytes.Any(b => b == 0 || b > 127))
+            throw new InvalidDataException();
+        bool vehicle = false, seen = false;
+        string? vin = null, year = null;
+        foreach (string raw in Encoding.ASCII.GetString(bytes).Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith(';') || line.StartsWith('#')) continue;
+            if (line.StartsWith('['))
+            {
+                if (!line.EndsWith(']') || line.IndexOf(']') != line.Length - 1) throw new InvalidDataException();
+                vehicle = line[1..^1].Trim().Equals("Vehicle", StringComparison.OrdinalIgnoreCase);
+                if (vehicle && seen) throw new InvalidDataException();
+                if (vehicle) seen = true;
+                continue;
+            }
+            if (!vehicle) continue;
+            int eq = line.IndexOf('=');
+            if (eq < 1) continue;
+            string key = line[..eq].Trim(), value = line[(eq+1)..].Trim();
+            if (key.Equals("VIN", StringComparison.OrdinalIgnoreCase))
+            {
+                if (vin is not null) throw new InvalidDataException();
+                vin = value;
+            }
+            if (key.Equals("ModelYear", StringComparison.OrdinalIgnoreCase))
+            {
+                if (year is not null) throw new InvalidDataException();
+                year = value;
+            }
+        }
+        if (vin is null || !Regex.IsMatch(vin, @"\A[A-HJ-NPR-Z0-9]{17}\z") || vin[9] != '9' || year != "2009")
+            throw new InvalidDataException();
+        return vin;
     }
 
     public static byte[] ReadProfile(string root)
@@ -76,9 +127,10 @@ public static class LocalVehicleData
             throw new InvalidDataException();
         byte[] profile = ReadProfile(root);
         if (NativeEcuInventory.Inspect(profile).Count != 8) throw new InvalidDataException();
-        string text = Encoding.ASCII.GetString(profile);
-        var vins = Regex.Matches(text, @"(?m)^VIN\s*=\s*([A-HJ-NPR-Z0-9]{17})[ \t]*\r?$");
-        if (vins.Count != 1 || vins[0].Groups[1].Value[9] != '9') throw new InvalidDataException();
+        string vin = ReadVehicleVin(profile);
+        byte[] library = Read(Path.Combine(dir, "VirtualCarJ2534.dll"), 64 * 1024 * 1024);
+        if (!NativeEcmScenarioApply.Digest(library).Equals(native, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException();
         byte[] catalog = Read(Path.Combine(dir, "configuration.json"), 1024 * 1024);
         if (!NativeEcmScenarioApply.Digest(catalog).Equals(Hash(m, "catalog_sha256"), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException();
@@ -104,7 +156,7 @@ public static class LocalVehicleData
         return new(new BuiltInVehicle(Id, "Volvo XC90 V8 · 2009", "Volvo XC90 V8 · 2009",
             "Owner-local reviewed simulator profile. Original VIDA acceptance remains separate.",
             "Проверенный локальный профиль эмулятора. Фактическая приёмка VIDA проверяется отдельно.",
-            vins[0].Groups[1].Value, false), rows) { Editor = editor, References = references };
+            vin, false), rows) { Editor = editor, References = references };
     }
 
     public static IReadOnlyList<LocalConfigurationRow> ParseCatalog(byte[] bytes)

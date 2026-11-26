@@ -351,6 +351,12 @@ Normal and advanced workspaces expose English / Русский, rather than abbr
 
 The explicit --home-preview mode opens the same ordinary dashboard, defaults to English without reading or saving the language preference, permits in-memory selections, and blocks adapter enable/disable, state and equipment preparation, and opening the advanced workspace. It may read local profile data, artwork and registration; this is an application-level write lockout, not an OS sandbox. No-argument startup is unchanged. The VC095 acceptance script still checks normal startup and additionally launches the isolated home preview, switches EN/RU/EN using stable UI automation IDs, checks localized connection/advanced labels, English vehicle-name round-trip, disabled adapter actions and advanced action. The script is UTF-8 with BOM for Windows PowerShell 5.1. Core/Python expected counts remain unchanged. Windows execution has not been performed. Prior advanced-mode language tests use stable IDs and do not need label changes.
 
+## VC095C local profile startup regression (pending)
+
+LocalVehicleData now distinguishes a missing optional owner-local profile from a present but invalid package. Loading uses the shared bounded fixed-drive/reparse-aware reader and additionally verifies the actual native DLL bytes against the declared digest. VIN and model year are read from the Vehicle section only, with duplicate/missing fields, wrong year, malformed VIN and non-ASCII inputs rejected; the exact pinned source profile remains mandatory. No new identity is inferred or substituted. An invalid local package shows a bilingual warning at startup; demo profiles remain viewable but ordinary adapter enable is blocked until the package is repaired and the app restarted. A missing optional profile preserves the original demo-only behavior. Existing advanced mode is unchanged.
+
+Eight additional Core checks exercise missing/incomplete/malformed local packages and section-scoped identity parsing using synthetic input. Expected Core total is now 168/168; Python counts unchanged. The real private package and Windows startup remain unverified. No registry writes, private input modifications, CI dispatch or release.
+
 ## Owner-local acceptance (pending)
 
 1. Compile and launch the separate window on Windows x64; no provider install.
