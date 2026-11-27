@@ -71,12 +71,21 @@ static S regstr(HKEY h,const wchar_t*n){
 static DWORD regnum(HKEY h,const wchar_t*n){
     DWORD v=0,t=0,z=sizeof(v);require(RegQueryValueExW(h,n,nullptr,&t,reinterpret_cast<BYTE*>(&v),&z)==ERROR_SUCCESS&&t==REG_DWORD&&z==4,"Invalid registry DWORD");return v;
 }
-static S owned(Key&k,bool write=false){
-    Key l;auto rc=RegOpenKeyExW(HKEY_LOCAL_MACHINE,legacy,0,KEY_READ|KEY_WOW64_32KEY,&l.h);require(rc==ERROR_FILE_NOT_FOUND||rc==ERROR_PATH_NOT_FOUND,"Legacy adapter conflict");
-    require(RegOpenKeyExW(HKEY_LOCAL_MACHINE,keyName,0,(write?KEY_READ|KEY_SET_VALUE:KEY_READ)|KEY_WOW64_32KEY,&k.h)==ERROR_SUCCESS,"Canonical J2534 adapter unavailable");
+static S ownedAt(Key&k,HKEY hive,const wchar_t*canonical,const wchar_t*previous,bool write=false){
+    Key l;auto rc=RegOpenKeyExW(hive,previous,0,KEY_READ|KEY_WOW64_32KEY,&l.h);require(rc==ERROR_FILE_NOT_FOUND||rc==ERROR_PATH_NOT_FOUND,"Legacy adapter conflict");
+    require(RegOpenKeyExW(hive,canonical,0,(write?KEY_READ|KEY_SET_VALUE:KEY_READ)|KEY_WOW64_32KEY,&k.h)==ERROR_SUCCESS,"Canonical J2534 adapter unavailable");
     DWORD sub=0,vals=0;require(RegQueryInfoKeyW(k.h,nullptr,nullptr,nullptr,&sub,nullptr,nullptr,&vals,nullptr,nullptr,nullptr,nullptr)==ERROR_SUCCESS&&sub==0&&vals==7,"Unexpected adapter registry layout");
     require(regstr(k.h,L"Vendor")==L"J2534 Lab"&&regstr(k.h,L"Name")==L"J2534 Lab Adapter"&&regstr(k.h,L"ConfigApplication").empty()&&regnum(k.h,L"CAN")==1&&regnum(k.h,L"ISO15765")==1&&regnum(k.h,L"MessageVersion")==0x0404,"Adapter ownership check failed");
     return regstr(k.h,L"FunctionLibrary");
+}
+#ifdef VC119_SELFTEST
+static HKEY testRegistry=nullptr;
+#endif
+static S owned(Key&k,bool write=false){
+#ifdef VC119_SELFTEST
+    if(testRegistry)return ownedAt(k,testRegistry,L"Adapter",L"Legacy",write);
+#endif
+    return ownedAt(k,HKEY_LOCAL_MACHINE,keyName,legacy,write);
 }
 static S ini(const S&p,const wchar_t*section,const wchar_t*key){wchar_t buf[512];auto n=GetPrivateProfileStringW(section,key,L"",buf,512,p.c_str());require(n<511,"INI value too long");return buf;}
 static void validateProfile(const S&p){
@@ -112,10 +121,10 @@ static void prepareFiles(const S&oldHash){
     saveJournal(oldHash);
 }
 static void verifyRollback(const S&oldHash){require(readJournal()==oldHash,"Original DLL changed since backup");}
-static void change(bool undo){
-    Handle mutex;mutex.h=CreateMutexW(nullptr,FALSE,L"Local\\VirtualCarVC115Provider");require(mutex.h!=nullptr,"Mutex failed");auto wait=WaitForSingleObject(mutex.h,0);require(wait==WAIT_OBJECT_0||wait==WAIT_ABANDONED,"Another operation is running");
+static void changeAt(bool undo,HKEY hive,const wchar_t*canonical,const wchar_t*previous,const wchar_t*mutexName){
+    Handle mutex;mutex.h=CreateMutexW(nullptr,FALSE,mutexName);require(mutex.h!=nullptr,"Mutex failed");auto wait=WaitForSingleObject(mutex.h,0);require(wait==WAIT_OBJECT_0||wait==WAIT_ABANDONED,"Another operation is running");
     struct Release{HANDLE h;~Release(){ReleaseMutex(h);}} release{mutex.h};
-    Key k;S selected=owned(k,true);
+    Key k;S selected=ownedAt(k,hive,canonical,previous,true);
     require(same(selected,undo?candidate:original),"Registration is not the expected source");
     local(original);local(candidate);require(digest(candidate)==VC115_PROVIDER_SHA,"Candidate DLL checksum mismatch");
     S oldHash=digest(original);
@@ -127,6 +136,9 @@ static void change(bool undo){
     require(same(regstr(k.h,L"FunctionLibrary"),selected),"Adapter changed concurrently");
     require(RegSetValueExW(k.h,L"FunctionLibrary",0,REG_SZ,reinterpret_cast<const BYTE*>(next.c_str()),static_cast<DWORD>((next.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS,"Cannot update adapter");
     require(RegFlushKey(k.h)==ERROR_SUCCESS&&same(regstr(k.h,L"FunctionLibrary"),next),"Registry readback failed; review adapter before retrying");
+}
+static void change(bool undo){
+    changeAt(undo,HKEY_LOCAL_MACHINE,keyName,legacy,L"Local\\VirtualCarVC115Provider");
 }
 static HWND status,check,connectBtn,restoreBtn,details;static HFONT font,titleFont;static int scale=96;
 static int px(int v){return MulDiv(v,scale,96);}
@@ -199,6 +211,97 @@ template<class F>static void reject(F&&fn,const char*expected){
     try{fn();}catch(const std::runtime_error&e){require(std::string(e.what())==expected,"Unexpected rejection reason");return;}
     throw std::runtime_error("Expected rejection but operation succeeded");
 }
+static void testRegString(HKEY h,const wchar_t*n,const S&v){
+    require(RegSetValueExW(h,n,0,REG_SZ,reinterpret_cast<const BYTE*>(v.c_str()),static_cast<DWORD>((v.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS,"Test registry write failed");
+}
+static void testRegNumber(HKEY h,const wchar_t*n,DWORD v){
+    require(RegSetValueExW(h,n,0,REG_DWORD,reinterpret_cast<const BYTE*>(&v),sizeof(v))==ERROR_SUCCESS,"Test registry DWORD write failed");
+}
+static void registryTests(const S&dir,const S&dll,const std::string&valid){
+    // Unique private HKCU key. Never create or open a production adapter for writing.
+    const S name=L"Software\\VirtualCarVC120-Test-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64());
+    Key base;
+    DWORD disposition=0;
+    require(RegCreateKeyExW(HKEY_CURRENT_USER,name.c_str(),0,nullptr,REG_OPTION_VOLATILE,KEY_ALL_ACCESS|KEY_WOW64_32KEY,nullptr,&base.h,&disposition)==ERROR_SUCCESS,"Test registry root failed");
+    require(disposition==REG_CREATED_NEW_KEY,"Test registry root already exists");
+    struct Cleanup{
+        Key&key;const S&name;
+        ~Cleanup(){
+            testRegistry=nullptr;
+            if(key.h){
+                RegDeleteKeyW(key.h,L"Legacy");
+                RegDeleteKeyW(key.h,L"Adapter");
+                RegCloseKey(key.h);key.h=nullptr;
+                RegDeleteKeyExW(HKEY_CURRENT_USER,name.c_str(),KEY_WOW64_32KEY,0);
+            }
+        }
+    }cleanup{base,name};
+    testRegistry=base.h;
+    const S mutexName=L"Local\\VC120-test-"+std::to_wstring(GetCurrentProcessId());
+    auto select=[&](){Key k;return ownedAt(k,base.h,L"Adapter",L"Legacy");};
+    auto changeTest=[&](bool undo){changeAt(undo,base.h,L"Adapter",L"Legacy",mutexName.c_str());};
+    int count=0;auto pass=[&](const char*n){++count;std::printf("VC120_TEST %02d PASS %s\n",count,n);};
+    reject([&]{select();},"Canonical J2534 adapter unavailable");pass("Missing adapter refused");
+    const S old=join(dir,L"old-provider"),next=join(dir,L"new-provider");
+    require(CreateDirectoryW(old.c_str(),nullptr)&&CreateDirectoryW(next.c_str(),nullptr),"Test provider directory creation failed");
+    original=join(old,dllName);candidate=join(next,dllName);sourceProfile=join(old,L"virtualcar.ini");profile=join(next,L"virtualcar.ini");journal=join(next,L"rollback.sha256");
+    fixture(original,ascii("abc"));fixture(sourceProfile,ascii(valid));fixture(candidate,bytes(dll));
+    {
+        Key k;require(RegCreateKeyExW(base.h,L"Adapter",0,nullptr,REG_OPTION_VOLATILE,KEY_ALL_ACCESS,nullptr,&k.h,nullptr)==ERROR_SUCCESS,"Test adapter creation failed");
+        testRegString(k.h,L"Vendor",L"J2534 Lab");testRegString(k.h,L"Name",L"J2534 Lab Adapter");
+        testRegString(k.h,L"ConfigApplication",L"");testRegString(k.h,L"FunctionLibrary",original);
+        testRegNumber(k.h,L"CAN",1);testRegNumber(k.h,L"ISO15765",1);testRegNumber(k.h,L"MessageVersion",0x0404);
+    }
+    require(select()==original,"Owned fixture mismatch");pass("Canonical registry layout recognized");
+    changeTest(false);
+    require(select()==candidate&&bytes(profile)==bytes(sourceProfile)&&readJournal()==digest(original),"Connect readback mismatch");pass("Connect changes only FunctionLibrary");
+    reject([&]{changeTest(false);},"Registration is not the expected source");require(select()==candidate,"Repeated connect changed selection");pass("Repeated connect refused");
+    require(DeleteFileW(original.c_str())!=0,"Test original removal failed");fixture(original,ascii("modified"));
+    reject([&]{changeTest(true);},"Original DLL changed since backup");require(select()==candidate,"Rejected rollback changed selection");
+    require(DeleteFileW(original.c_str())!=0,"Test original reset failed");fixture(original,ascii("abc"));pass("Changed original blocks rollback");
+    changeTest(true);require(select()==original,"Rollback readback mismatch");pass("Rollback restores original path");
+    {
+        Key k;require(RegCreateKeyExW(base.h,L"Legacy",0,nullptr,REG_OPTION_VOLATILE,KEY_ALL_ACCESS,nullptr,&k.h,nullptr)==ERROR_SUCCESS,"Legacy fixture failed");
+    }
+    reject([&]{changeTest(false);},"Legacy adapter conflict");
+    require(RegDeleteKeyW(base.h,L"Legacy")==ERROR_SUCCESS&&select()==original,"Legacy cleanup failed");pass("Legacy conflict refused");
+    {
+        Key k;require(RegOpenKeyExW(base.h,L"Adapter",0,KEY_ALL_ACCESS,&k.h)==ERROR_SUCCESS,"Test key open failed");testRegString(k.h,L"Unexpected",L"value");
+        reject([&]{changeTest(false);},"Unexpected adapter registry layout");
+        require(RegDeleteValueW(k.h,L"Unexpected")==ERROR_SUCCESS,"Extra value cleanup failed");
+    }
+    require(select()==original,"Extra value refusal changed selection");pass("Extra registry value refused");
+    {
+        Key k;require(RegOpenKeyExW(base.h,L"Adapter",0,KEY_ALL_ACCESS,&k.h)==ERROR_SUCCESS,"Test key open failed");
+        testRegString(k.h,L"FunctionLibrary",join(dir,L"unrelated.dll"));
+        reject([&]{changeTest(false);},"Registration is not the expected source");
+        require(regstr(k.h,L"FunctionLibrary")==join(dir,L"unrelated.dll"),"Unexpected provider overwritten");
+        testRegString(k.h,L"FunctionLibrary",original);
+    }
+    pass("Unexpected provider preserved");
+    require(DeleteFileW(candidate.c_str())!=0,"Test candidate removal failed");fixture(candidate,ascii("modified"));
+    reject([&]{changeTest(false);},"Candidate DLL checksum mismatch");require(select()==original,"Bad DLL changed selection");
+    require(DeleteFileW(candidate.c_str())!=0,"Test candidate reset failed");fixture(candidate,bytes(dll));pass("Changed candidate blocks connect");
+    // Exercise the same WM_CREATE, controls and refresh logic, without showing
+    // a window or invoking the elevated helper. No desktop screenshot claim.
+    HINSTANCE instance=GetModuleHandleW(nullptr);WNDCLASSW wc{};
+    wc.lpfnWndProc=wnd;wc.hInstance=instance;wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+    wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);wc.lpszClassName=L"VC120TestWindow";
+    require(RegisterClassW(&wc)!=0,"Test window class failed");
+    HWND w=CreateWindowW(wc.lpszClassName,L"Virtual Car",WS_OVERLAPPEDWINDOW,0,0,430,350,nullptr,nullptr,instance,nullptr);
+    require(w!=nullptr,"Hidden window creation failed");
+    struct WindowCleanup{HWND w;~WindowCleanup(){DestroyWindow(w);}} windowCleanup{w};
+    require(IsWindow(check)&&IsWindow(status)&&IsWindow(connectBtn)&&IsWindow(restoreBtn)&&!IsWindowVisible(w),"Control creation failed");
+    require(!IsWindowEnabled(connectBtn)&&!IsWindowEnabled(restoreBtn),"Unchecked controls enabled");pass("Hidden Win32 window and initial control states");
+    SendMessageW(check,BM_SETCHECK,BST_CHECKED,0);refresh();
+    require(IsWindowEnabled(connectBtn)&&!IsWindowEnabled(restoreBtn),"Ready control state incorrect");
+    changeTest(false);refresh();
+    require(!IsWindowEnabled(connectBtn)&&IsWindowEnabled(restoreBtn),"Connected control state incorrect");
+    changeTest(true);refresh();
+    require(IsWindowEnabled(connectBtn)&&!IsWindowEnabled(restoreBtn)&&select()==original,"Restored control state incorrect");pass("Connect and restore control states");
+    require(count==12,"Registry/UI test count mismatch");
+    std::puts("VC120_REGISTRY_UI_SELFTEST=PASS 12/12; private HKCU and hidden window only");
+}
 int wmain(int argc,wchar_t**argv){
     try{
         require(argc==3,"Expected new test directory and packaged DLL");
@@ -234,7 +337,8 @@ int wmain(int argc,wchar_t**argv){
         journal=join(dir,L"missing.sha256");reject([&]{saveJournal(S(64,L'Z'));},"Invalid rollback hash character");
         require(!exists(journal),"Invalid hash created journal");pass("Invalid journal hash refused before write");
         require(count==12,"Self-test count mismatch");
-        std::puts("VC119_CONTROLLER_SELFTEST=PASS 12/12; no registry, no VIDA");return 0;
+        std::puts("VC119_CONTROLLER_SELFTEST=PASS 12/12; no registry, no VIDA");
+        registryTests(dir,dll,valid);return 0;
     }catch(const std::exception&e){std::fprintf(stderr,"VC119_CONTROLLER_SELFTEST=FAIL %s\n",e.what());return 1;}
 }
 #endif
