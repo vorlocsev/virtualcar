@@ -140,7 +140,7 @@ static void changeAt(bool undo,HKEY hive,const wchar_t*canonical,const wchar_t*p
 static void change(bool undo){
     changeAt(undo,HKEY_LOCAL_MACHINE,keyName,legacy,L"Local\\VirtualCarVC115Provider");
 }
-static HWND status,check,connectBtn,restoreBtn,details;static HFONT font,titleFont;static int scale=96;
+static HWND status,check,connectBtn,restoreBtn,details,subtitle,detailLabel;static HFONT font,titleFont,statusFont,detailFont;static int scale=96;
 static int px(int v){return MulDiv(v,scale,96);}
 static S error(const std::exception&e){std::string t=e.what();return S(t.begin(),t.end());}
 static void refresh(){
@@ -159,24 +159,41 @@ static void invoke(HWND w,bool undo){
 }
 static HWND control(HWND w,const wchar_t*cls,const wchar_t*txt,DWORD style,int x,int y,int width,int h,int id=0){
     HWND c=CreateWindowExW(0,cls,txt,WS_CHILD|WS_VISIBLE|style,px(x),px(y),px(width),px(h),w,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
-    SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return c;
+    if(c)SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return c;
 }
 static LRESULT CALLBACK wnd(HWND w,UINT m,WPARAM wp,LPARAM lp){
     switch(m){
     case WM_CREATE:{
-        font=CreateFontW(-px(15),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+        font=CreateFontW(-px(14),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
         titleFont=CreateFontW(-px(27),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-        auto title=control(w,L"STATIC",L"XC90 V8",0,18,14,350,35);SendMessageW(title,WM_SETFONT,reinterpret_cast<WPARAM>(titleFont),TRUE);
-        control(w,L"STATIC",L"Standalone virtual car",0,18,52,350,24);
-        status=control(w,L"STATIC",L"",0,18,86,350,38);
-        check=control(w,L"BUTTON",L"VIDA and other clients are closed",BS_AUTOCHECKBOX|WS_TABSTOP,18,130,350,26,101);
-        connectBtn=control(w,L"BUTTON",L"Connect to VIDA",BS_PUSHBUTTON|WS_TABSTOP,18,166,350,38,102);
-        restoreBtn=control(w,L"BUTTON",L"Restore previous driver",BS_PUSHBUTTON|WS_TABSTOP,18,212,350,38,103);
-        details=control(w,L"STATIC",L"",SS_PATHELLIPSIS,18,264,350,22);
+        statusFont=CreateFontW(-px(16),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+        detailFont=CreateFontW(-px(12),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+        if(!font||!titleFont||!statusFont||!detailFont)return -1;
+        auto title=control(w,L"STATIC",L"XC90 V8",0,20,16,346,35);
+        subtitle=control(w,L"STATIC",L"Standalone virtual car",0,20,52,346,22);
+        status=control(w,L"STATIC",L"",0,20,91,346,38);
+        check=control(w,L"BUTTON",L"VIDA and other clients are closed",BS_AUTOCHECKBOX|WS_TABSTOP,20,132,346,26,101);
+        connectBtn=control(w,L"BUTTON",L"Connect to VIDA",BS_PUSHBUTTON|WS_TABSTOP,20,166,346,38,102);
+        restoreBtn=control(w,L"BUTTON",L"Restore previous driver",BS_PUSHBUTTON|WS_TABSTOP,20,212,346,36,103);
+        detailLabel=control(w,L"STATIC",L"SELECTED DRIVER",0,20,259,346,17);
+        details=control(w,L"STATIC",L"",SS_PATHELLIPSIS|SS_NOPREFIX,20,277,346,20);
+        if(!title||!subtitle||!status||!check||!connectBtn||!restoreBtn||!detailLabel||!details)return -1;
+        SendMessageW(title,WM_SETFONT,reinterpret_cast<WPARAM>(titleFont),TRUE);
+        SendMessageW(status,WM_SETFONT,reinterpret_cast<WPARAM>(statusFont),TRUE);
+        SendMessageW(detailLabel,WM_SETFONT,reinterpret_cast<WPARAM>(detailFont),TRUE);
+        SendMessageW(details,WM_SETFONT,reinterpret_cast<WPARAM>(detailFont),TRUE);
         refresh();return 0;}
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:{
+        auto dc=reinterpret_cast<HDC>(wp);
+        SetTextColor(dc,GetSysColor(COLOR_WINDOWTEXT));
+        SetBkColor(dc,GetSysColor(COLOR_WINDOW));
+        SetBkMode(dc,OPAQUE);
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));}
+    case WM_SYSCOLORCHANGE:InvalidateRect(w,nullptr,TRUE);return DefWindowProcW(w,m,wp,lp);
     case WM_COMMAND:if(HIWORD(wp)==BN_CLICKED){if(LOWORD(wp)==101)refresh();if(LOWORD(wp)==102)invoke(w,false);if(LOWORD(wp)==103)invoke(w,true);}return 0;
     case WM_ACTIVATE:if(status&&LOWORD(wp)!=WA_INACTIVE)refresh();return 0;
-    case WM_DESTROY:DeleteObject(font);DeleteObject(titleFont);PostQuitMessage(0);return 0;
+    case WM_DESTROY:DeleteObject(font);DeleteObject(titleFont);DeleteObject(statusFont);DeleteObject(detailFont);PostQuitMessage(0);return 0;
     default:return DefWindowProcW(w,m,wp,lp);}
 }
 int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int show){
@@ -187,12 +204,16 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int show){
         if(argc==2){
             require(arg==L"--connect"||arg==L"--restore","Unknown argument");
             bool undo=arg==L"--restore";
-            if(MessageBoxW(nullptr,undo?L"Restore the original VC107 adapter? All diagnostic clients must be closed.":L"Connect the standalone VC115 adapter? All diagnostic clients must be closed.",L"Virtual Car",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2)!=IDYES)return 2;
+            if(MessageBoxW(nullptr,undo?L"Restore the original VC107 adapter? All diagnostic clients must be closed.":L"Connect the standalone Virtual Car adapter? All diagnostic clients must be closed.",L"Virtual Car",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2)!=IDYES)return 2;
             change(undo);MessageBoxW(nullptr,undo?L"Previous driver restored.":L"Connected. Select J2534 Lab Adapter in VIDA.",L"Virtual Car",MB_OK|MB_ICONINFORMATION);return 0;
         }
         SetProcessDPIAware();HDC dc=GetDC(nullptr);if(dc){scale=GetDeviceCaps(dc,LOGPIXELSX);ReleaseDC(nullptr,dc);}
-        WNDCLASSW wc{};wc.lpfnWndProc=wnd;wc.hInstance=h;wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);wc.lpszClassName=L"VirtualCarVC115";require(RegisterClassW(&wc)!=0,"Window class failed");
-        RECT r{0,0,px(386),px(304)};DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;AdjustWindowRect(&r,style,FALSE);
+        WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.lpfnWndProc=wnd;wc.hInstance=h;wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+        wc.hIcon=static_cast<HICON>(LoadImageW(h,MAKEINTRESOURCEW(101),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_SHARED));
+        wc.hIconSm=static_cast<HICON>(LoadImageW(h,MAKEINTRESOURCEW(101),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_SHARED));
+        require(wc.hIcon&&wc.hIconSm,"Application icon missing");
+        wc.hbrBackground=GetSysColorBrush(COLOR_WINDOW);wc.lpszClassName=L"VirtualCarVC115";require(RegisterClassExW(&wc)!=0,"Window class failed");
+        RECT r{0,0,px(386),px(312)};DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;AdjustWindowRect(&r,style,FALSE);
         HWND w=CreateWindowW(wc.lpszClassName,L"Virtual Car",style,CW_USEDEFAULT,CW_USEDEFAULT,r.right-r.left,r.bottom-r.top,nullptr,nullptr,h,nullptr);require(w!=nullptr,"Window creation failed");
         ShowWindow(w,show);MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){if(!IsDialogMessageW(w,&msg)){TranslateMessage(&msg);DispatchMessageW(&msg);}}return static_cast<int>(msg.wParam);
     }catch(const std::exception&e){MessageBoxW(nullptr,error(e).c_str(),L"Virtual Car",MB_OK|MB_ICONERROR);return 1;}
@@ -300,6 +321,11 @@ static void registryTests(const S&dir,const S&dll,const std::string&valid){
     changeTest(true);refresh();
     require(IsWindowEnabled(connectBtn)&&!IsWindowEnabled(restoreBtn)&&select()==original,"Restored control state incorrect");pass("Connect and restore control states");
     require(count==12,"Registry/UI test count mismatch");
+    HDC dc=GetDC(status);require(dc!=nullptr,"Test device context failed");
+    LRESULT brush=SendMessageW(w,WM_CTLCOLORSTATIC,reinterpret_cast<WPARAM>(dc),reinterpret_cast<LPARAM>(status));
+    bool colors=brush==reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW))&&GetBkColor(dc)==GetSysColor(COLOR_WINDOW)&&GetTextColor(dc)==GetSysColor(COLOR_WINDOWTEXT);
+    ReleaseDC(status,dc);require(colors,"Static background does not match window");
+    std::puts("VC122_UI_COLORS=PASS");
     std::puts("VC120_REGISTRY_UI_SELFTEST=PASS 12/12; private HKCU and hidden window only");
 }
 int wmain(int argc,wchar_t**argv){
