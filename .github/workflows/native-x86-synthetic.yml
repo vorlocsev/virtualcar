@@ -15,5 +15,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Native build and isolated tests
-        shell: pwsh
-        run: python native-release/native-ci/Run-NativeCI.py --source native-release
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Do not pass a PowerShell 7 or runner-customized module path to
+          # Windows PowerShell 5.1 children. They reconstruct their defaults.
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+          foreach ($relative in @('System32\WindowsPowerShell\v1.0\powershell.exe','SysWOW64\WindowsPowerShell\v1.0\powershell.exe')) {
+            $child = Join-Path $env:WINDIR $relative
+            if (-not (Test-Path -LiteralPath $child -PathType Leaf)) { throw 'Windows PowerShell missing' }
+            & $child -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Command Get-FileHash -ErrorAction Stop | Out-Null; Write-Output ("VC127C4_PS_PREFLIGHT=PASS " + $PSVersionTable.PSVersion + " bits=" + ([IntPtr]::Size * 8))'
+            if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell module preflight failed' }
+          }
+          python native-release/native-ci/Run-NativeCI.py --source native-release
+          if ($LASTEXITCODE -ne 0) { throw 'Native CI failed' }
