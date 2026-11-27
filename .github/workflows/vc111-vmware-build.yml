@@ -1,4 +1,4 @@
-name: VC115 native C++ x86
+name: VC116 native warning audit
 on:
   push:
     branches:
@@ -17,7 +17,7 @@ jobs:
     runs-on: [self-hosted, Windows, X64, virtualcar-win]
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -28,7 +28,7 @@ jobs:
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
-          $work = Join-Path $env:RUNNER_TEMP ("vc115-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $work = Join-Path $env:RUNNER_TEMP ("vc116-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
           New-Item -ItemType Directory -Path $work | Out-Null
           $proto = Join-Path $work 'proto'
@@ -76,14 +76,14 @@ jobs:
           ('#define VC115_PROVIDER_SHA L"'+$hash+'"') | Set-Content -LiteralPath (Join-Path $work 'provider_hash.h') -Encoding ASCII
           $source = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc115.cpp'
           $out = Join-Path $package 'VirtualCar.exe'
-          & cl.exe /nologo /std:c++17 /EHsc /O1 /GL /MT /W4 /utf-8 "/I$work" "/Fo$work\vc115.obj" $source /link /LTCG /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /MACHINE:X86 /DYNAMICBASE /NXCOMPAT "/OUT:$out"
+          & cl.exe /nologo /std:c++17 /EHsc /O1 /GL /MT /W4 /WX /utf-8 "/I$work" "/Fo$work\vc115.obj" $source /link /LTCG /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /MACHINE:X86 /DYNAMICBASE /NXCOMPAT "/OUT:$out"
           if ($LASTEXITCODE -ne 0) { throw 'Native C++ compile/link failed' }
           $dump = (& dumpbin.exe /headers /imports $out | Out-String)
           if ($LASTEXITCODE -ne 0 -or $dump -notmatch '14C machine \(x86\)' -or $dump -match '(?im)^\s*(mscoree|vcruntime[^ ]*|msvcp[^ ]*|python[^ ]*|Microsoft\.UI\.Xaml)\.dll\s*$') { throw 'Native PE architecture/import check failed' }
           $dump | Write-Host
-          Write-Host "VC115_NATIVE_PE=PASS x86 static CRT"
+          Write-Host "VC116_NATIVE_PE=PASS x86 static CRT /W4 /WX"
           @(
-            'VC115 native C++ Win32 x86 development candidate',
+            'VC116 native C++ Win32 x86 development candidate',
             "Base: $base", "Build commit: $env:GITHUB_SHA",
             "Provider SHA256: $hash",
             'Portable package; no Python, .NET or Windows App SDK required at runtime.',
@@ -96,19 +96,19 @@ jobs:
             ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
           } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = Join-Path $work 'VirtualCar-VC115-native.zip'
+          $zip = Join-Path $work 'VirtualCar-VC116-native.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
-          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC115-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC116-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
           New-Item -ItemType Directory -Path $saved -Force | Out-Null
           Copy-Item -LiteralPath $zip -Destination $saved
-          Write-Host ('VC115_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC115-native.zip'))
+          Write-Host ('VC116_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC116-native.zip'))
       - name: Upload compiled candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: VirtualCar-VC115-native
-          path: ${{ runner.temp }}/vc115-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC115-native.zip
+          name: VirtualCar-VC116-native
+          path: ${{ runner.temp }}/vc116-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC116-native.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
