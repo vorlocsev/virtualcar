@@ -90,7 +90,13 @@ static S readJournal(){
 }
 static void saveJournal(const S&hash){
     if(exists(journal)){require(readJournal()==hash,"Existing rollback journal differs");return;}
-    std::string b(hash.begin(),hash.end());Handle f;f.h=CreateFileW(journal.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+    require(hash.size()==64,"Invalid rollback hash length");
+    std::string b; b.reserve(hash.size());
+    for(wchar_t c:hash){
+        require((c>=L'0'&&c<=L'9')||(c>=L'A'&&c<=L'F'),"Invalid rollback hash character");
+        b.push_back(static_cast<char>(c)); // checked ASCII hex, lossless
+    }
+    Handle f;f.h=CreateFileW(journal.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
     require(f.h!=INVALID_HANDLE_VALUE,"Cannot create rollback journal");DWORD n=0;require(WriteFile(f.h,b.data(),64,&n,nullptr)&&n==64&&FlushFileBuffers(f.h),"Cannot persist rollback journal");
 }
 static void paths(){
