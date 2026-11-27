@@ -21,11 +21,26 @@ jobs:
           # Do not pass a PowerShell 7 or runner-customized module path to
           # Windows PowerShell 5.1 children. They reconstruct their defaults.
           Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
-          foreach ($relative in @('System32\WindowsPowerShell\v1.0\powershell.exe','SysWOW64\WindowsPowerShell\v1.0\powershell.exe')) {
-            $child = Join-Path $env:WINDIR $relative
-            if (-not (Test-Path -LiteralPath $child -PathType Leaf)) { throw 'Windows PowerShell missing' }
-            & $child -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Command Get-FileHash -ErrorAction Stop | Out-Null; Write-Output ("VC127C4_PS_PREFLIGHT=PASS " + $PSVersionTable.PSVersion + " bits=" + ([IntPtr]::Size * 8))'
-            if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell module preflight failed' }
+          $preflight = Join-Path $env:RUNNER_TEMP ('vc127-preflight-' + [guid]::NewGuid().ToString('N') + '.ps1')
+          @'
+          param([int]$ExpectedBits)
+          $ErrorActionPreference = 'Stop'
+          if (([IntPtr]::Size * 8) -ne $ExpectedBits) { throw 'Unexpected PowerShell bitness' }
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Windows PowerShell 5 required' }
+          Get-Command Get-FileHash -ErrorAction Stop | Out-Null
+          $hash = Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256
+          if ($hash.Hash -notmatch '^[0-9A-Fa-f]{64}$') { throw 'SHA256 preflight failed' }
+          Write-Output ('VC127C5_PS_PREFLIGHT=PASS bits=' + $ExpectedBits)
+          '@ | Set-Content -LiteralPath $preflight -Encoding UTF8
+          try {
+            foreach ($item in @(@{Path='System32\WindowsPowerShell\v1.0\powershell.exe';Bits=64},@{Path='SysWOW64\WindowsPowerShell\v1.0\powershell.exe';Bits=32})) {
+              $child = Join-Path $env:WINDIR $item.Path
+              if (-not (Test-Path -LiteralPath $child -PathType Leaf)) { throw 'Windows PowerShell missing' }
+              & $child -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $preflight -ExpectedBits $item.Bits
+              if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell module preflight failed' }
+            }
+          } finally {
+            Remove-Item -LiteralPath $preflight -ErrorAction SilentlyContinue
           }
           python native-release/native-ci/Run-NativeCI.py --source native-release
           if ($LASTEXITCODE -ne 0) { throw 'Native CI failed' }
