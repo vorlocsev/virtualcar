@@ -51,11 +51,12 @@ static std::vector<unsigned char> bytes(const S&p,DWORD max=64*1024*1024){
     std::vector<unsigned char>b(static_cast<size_t>(n.QuadPart));DWORD got=0;require(ReadFile(f.h,b.data(),static_cast<DWORD>(b.size()),&got,nullptr)&&got==b.size(),"Cannot read file");return b;
 }
 static S sha(const std::vector<unsigned char>&b){
+    std::vector<unsigned char>obj; // buffer outlives the hash handle, including exception paths
     BCRYPT_ALG_HANDLE alg=nullptr;BCRYPT_HASH_HANDLE hash=nullptr;
     struct Cleanup{BCRYPT_ALG_HANDLE&a;BCRYPT_HASH_HANDLE&h;~Cleanup(){if(h)BCryptDestroyHash(h);if(a)BCryptCloseAlgorithmProvider(a,0);}} cleanup{alg,hash};
     require(BCryptOpenAlgorithmProvider(&alg,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0,"SHA256 unavailable");
     DWORD len=0,n=0;require(BCryptGetProperty(alg,BCRYPT_OBJECT_LENGTH,reinterpret_cast<PUCHAR>(&len),sizeof(len),&n,0)>=0&&len>0,"SHA256 object");
-    std::vector<unsigned char>obj(len);std::array<unsigned char,32>out{};
+    obj.resize(len);std::array<unsigned char,32>out{};
     require(BCryptCreateHash(alg,&hash,obj.data(),len,nullptr,0,0)>=0,"SHA256 init");
     require(BCryptHashData(hash,const_cast<PUCHAR>(b.data()),static_cast<ULONG>(b.size()),0)>=0&&BCryptFinishHash(hash,out.data(),32,0)>=0,"SHA256 failed");
     BCryptDestroyHash(hash);hash=nullptr; // hash object must not outlive its buffer
@@ -104,6 +105,13 @@ static void paths(){
     local(exe);original=join(oldDir,dllName);candidate=join(root,dllName);sourceProfile=join(oldDir,L"virtualcar.ini");profile=join(root,L"virtualcar.ini");journal=join(root,L"rollback.sha256");
     require(!same(original,candidate),"Use a separate extracted directory");
 }
+static void prepareFiles(const S&oldHash){
+    validateProfile(sourceProfile);
+    if(!exists(profile))require(CopyFileW(sourceProfile.c_str(),profile.c_str(),TRUE)!=0,"Cannot copy profile");
+    validateProfile(profile);require(bytes(profile,8*1024*1024)==bytes(sourceProfile,8*1024*1024),"Candidate INI differs; extract a fresh package");
+    saveJournal(oldHash);
+}
+static void verifyRollback(const S&oldHash){require(readJournal()==oldHash,"Original DLL changed since backup");}
 static void change(bool undo){
     Handle mutex;mutex.h=CreateMutexW(nullptr,FALSE,L"Local\\VirtualCarVC115Provider");require(mutex.h!=nullptr,"Mutex failed");auto wait=WaitForSingleObject(mutex.h,0);require(wait==WAIT_OBJECT_0||wait==WAIT_ABANDONED,"Another operation is running");
     struct Release{HANDLE h;~Release(){ReleaseMutex(h);}} release{mutex.h};
@@ -111,12 +119,9 @@ static void change(bool undo){
     require(same(selected,undo?candidate:original),"Registration is not the expected source");
     local(original);local(candidate);require(digest(candidate)==VC115_PROVIDER_SHA,"Candidate DLL checksum mismatch");
     S oldHash=digest(original);
-    if(undo){require(readJournal()==oldHash,"Original DLL changed since backup");}
+    if(undo){verifyRollback(oldHash);}
     else{
-        validateProfile(sourceProfile);
-        if(!exists(profile))require(CopyFileW(sourceProfile.c_str(),profile.c_str(),TRUE)!=0,"Cannot copy profile");
-        validateProfile(profile);require(bytes(profile,8*1024*1024)==bytes(sourceProfile,8*1024*1024),"Candidate INI differs; extract a fresh package");
-        saveJournal(oldHash);
+        prepareFiles(oldHash);
     }
     const S&next=undo?original:candidate;
     require(same(regstr(k.h,L"FunctionLibrary"),selected),"Adapter changed concurrently");
@@ -180,3 +185,56 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR,int show){
         ShowWindow(w,show);MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){if(!IsDialogMessageW(w,&msg)){TranslateMessage(&msg);DispatchMessageW(&msg);}}return static_cast<int>(msg.wParam);
     }catch(const std::exception&e){MessageBoxW(nullptr,error(e).c_str(),L"Virtual Car",MB_OK|MB_ICONERROR);return 1;}
 }
+
+
+#ifdef VC119_SELFTEST
+#include <cstdio>
+static void fixture(const S&p,const std::vector<unsigned char>&b){
+    Handle f;f.h=CreateFileW(p.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+    require(f.h!=INVALID_HANDLE_VALUE,"Test fixture already exists or cannot be created");
+    DWORD n=0;require(WriteFile(f.h,b.data(),static_cast<DWORD>(b.size()),&n,nullptr)&&n==b.size()&&FlushFileBuffers(f.h),"Fixture write failed");
+}
+static std::vector<unsigned char> ascii(const std::string&s){return {s.begin(),s.end()};}
+template<class F>static void reject(F&&fn,const char*expected){
+    try{fn();}catch(const std::runtime_error&e){require(std::string(e.what())==expected,"Unexpected rejection reason");return;}
+    throw std::runtime_error("Expected rejection but operation succeeded");
+}
+int wmain(int argc,wchar_t**argv){
+    try{
+        require(argc==3,"Expected new test directory and packaged DLL");
+        const S dir=argv[1],dll=argv[2];
+        require(!exists(dir),"Self-test requires a new directory");
+        local(parent(dir),false);
+        require(CreateDirectoryW(dir.c_str(),nullptr)!=0,"Cannot create test directory");
+        local(dir,false);
+        const S expected=L"BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD";
+        const S other(64,L'0');
+        const std::string valid="[Vehicle]\r\nVIN=YV1CZ0002A0000001\r\n[J2534_2]\r\nEnabled=1\r\n[Diagnostics]\r\nEnableGGDCemLab=1\r\n";
+        int count=0;
+        auto pass=[&](const char*name){++count;std::printf("VC119_TEST %02d PASS %s\n",count,name);};
+        require(sha(ascii("abc"))==expected,"SHA256 known answer mismatch");pass("SHA256 known answer");
+        require(digest(dll)==VC115_PROVIDER_SHA,"Packaged DLL mismatch");pass("Exact packaged DLL hash");
+        sourceProfile=join(dir,L"ansi-source.ini");profile=join(dir,L"ansi-copy.ini");journal=join(dir,L"ansi-journal.sha256");
+        fixture(sourceProfile,ascii(valid));prepareFiles(expected);
+        require(bytes(profile)==ascii(valid)&&readJournal()==expected,"ANSI preservation failed");pass("ANSI byte-exact preparation");
+        prepareFiles(expected);verifyRollback(expected);pass("Idempotent preparation and rollback guard");
+        reject([&]{verifyRollback(other);},"Original DLL changed since backup");pass("Changed original DLL hash refused");
+        reject([&]{saveJournal(other);},"Existing rollback journal differs");pass("Conflicting journal refused");
+        sourceProfile=join(dir,L"utf16-source.ini");profile=join(dir,L"utf16-copy.ini");journal=join(dir,L"utf16-journal.sha256");
+        std::vector<unsigned char>wide{0xff,0xfe};for(unsigned char c:valid){wide.push_back(c);wide.push_back(0);}
+        fixture(sourceProfile,wide);prepareFiles(expected);require(bytes(profile)==wide,"UTF16 preservation failed");pass("UTF16LE byte-exact preparation");
+        const S ipc=join(dir,L"ipc.ini");fixture(ipc,ascii(valid+"[VC108N_ExternalStateLab]\r\nEnabled=1\r\n"));
+        reject([&]{validateProfile(ipc);},"External IPC profile is not supported");pass("External IPC profile refused");
+        const S bad=join(dir,L"invalid-vin.ini");auto invalid=valid;invalid.replace(invalid.find("YV1CZ0002A0000001"),17,"INVALID");
+        fixture(bad,ascii(invalid));reject([&]{validateProfile(bad);},"Valid VIN required");pass("Invalid VIN refused");
+        profile=join(dir,L"different.ini");fixture(profile,ascii(valid+";different\r\n"));sourceProfile=join(dir,L"ansi-source.ini");
+        reject([&]{prepareFiles(expected);},"Candidate INI differs; extract a fresh package");pass("Modified candidate profile refused");
+        journal=join(dir,L"corrupt.sha256");fixture(journal,ascii(std::string(64,'x')));
+        reject([&]{readJournal();},"Invalid rollback hash");pass("Corrupt journal refused");
+        journal=join(dir,L"missing.sha256");reject([&]{saveJournal(S(64,L'Z'));},"Invalid rollback hash character");
+        require(!exists(journal),"Invalid hash created journal");pass("Invalid journal hash refused before write");
+        require(count==12,"Self-test count mismatch");
+        std::puts("VC119_CONTROLLER_SELFTEST=PASS 12/12; no registry, no VIDA");return 0;
+    }catch(const std::exception&e){std::fprintf(stderr,"VC119_CONTROLLER_SELFTEST=FAIL %s\n",e.what());return 1;}
+}
+#endif
