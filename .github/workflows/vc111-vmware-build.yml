@@ -1,4 +1,4 @@
-name: VC118 native isolated transport acceptance
+name: VC119 native controller self-test
 on:
   workflow_dispatch:
     inputs:
@@ -35,7 +35,7 @@ jobs:
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
-          $work = Join-Path $env:RUNNER_TEMP ("vc118-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $work = Join-Path $env:RUNNER_TEMP ("vc119-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
           New-Item -ItemType Directory -Path $work | Out-Null
           $proto = Join-Path $work 'proto'
@@ -88,7 +88,7 @@ jobs:
           $dump = (& dumpbin.exe /headers /imports $out | Out-String)
           if ($LASTEXITCODE -ne 0 -or $dump -notmatch '14C machine \(x86\)' -or $dump -match '(?im)^\s*(mscoree|vcruntime[^ ]*|msvcp[^ ]*|python[^ ]*|Microsoft\.UI\.Xaml)\.dll\s*$') { throw 'Native PE architecture/import check failed' }
           $dump | Write-Host
-          Write-Host "VC118_NATIVE_PE=PASS x86 static CRT /W4 /WX"
+          Write-Host "VC119_NATIVE_PE=PASS x86 static CRT /W4 /WX"
           # Run existing exact-base synthetic transport fixtures on the actual
           # compiled DLL, never the registered adapter or real vehicle profile.
           $route = Join-Path $repo 'emulator\tools\verify_native_routes.ps1'
@@ -101,6 +101,17 @@ jobs:
           }
           $testRoot = Join-Path $work 'isolated-tests'
           New-Item -ItemType Directory -Path $testRoot | Out-Null
+          # Compile the actual controller source with a separate console test
+          # entry point. Production VirtualCar.exe has no self-test mode.
+          $selftest = Join-Path $work 'vc119-controller-test.exe'
+          & cl.exe /nologo /std:c++17 /EHsc /O1 /GL /MT /W4 /WX /utf-8 /DVC119_SELFTEST "/I$work" "/Fo$work\vc119-test.obj" $source /link /LTCG /OPT:REF /OPT:ICF /SUBSYSTEM:CONSOLE /MACHINE:X86 /DYNAMICBASE /NXCOMPAT "/OUT:$selftest"
+          if ($LASTEXITCODE -ne 0) { throw 'Controller test build failed' }
+          $testOutput = @(& $selftest (Join-Path $testRoot 'controller') $dll)
+          $testExit = $LASTEXITCODE
+          $testOutput | Write-Host
+          $testOutput | Set-Content -LiteralPath (Join-Path $testRoot 'controller.log') -Encoding UTF8
+          if ($testExit -ne 0 -or @($testOutput | Where-Object { $_ -match '^VC119_TEST \d{2} PASS ' }).Count -ne 12 -or -not ($testOutput -contains 'VC119_CONTROLLER_SELFTEST=PASS 12/12; no registry, no VIDA')) { throw 'Controller self-test failed' }
+
           $modes = @(
             @{name='silence'; flags=@(); markers=@(1..8 | ForEach-Object {"PASS group $($_):"})},
             @{name='identity'; flags=@('-IdentityReplay'); markers=@('PASS group 4: synthetic 13-frame B9FB native x86 replay','PASS group 9: isolated synthetic ECM F190 native ISO15765 VIN')},
@@ -127,41 +138,41 @@ jobs:
           Write-Host 'VC118_ISOLATED_NATIVE=PASS; original VIDA/registry/physical hardware NOT TESTED'
 
           @(
-            'VC118 native C++ Win32 x86 development candidate',
+            'VC119 native C++ Win32 x86 development candidate',
             "Base: $base", "Build commit: $env:GITHUB_SHA",
             "Provider SHA256: $hash",
             'Portable package; no Python, .NET or Windows App SDK required at runtime.',
             'Existing VC107 registration only; expected path C:\VC099-VIDA-511\provider\VirtualCarJ2534.dll.',
             'Close all diagnostic clients before clicking Connect to VIDA or Restore previous driver.',
             'Keep this directory intact while the driver is selected. No working INI is included.',
-            'Compile, PE audit and isolated synthetic transport tests passed; GUI, registry switch, rollback and VIDA NOT TESTED.'
+            'Compile, PE audit, isolated synthetic transport and controller file/rollback-guard tests passed; GUI, real registry switch, real rollback and VIDA NOT TESTED.'
           ) | Set-Content -LiteralPath (Join-Path $package 'BUILD-INFO.txt') -Encoding UTF8
           Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
             ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
           } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = Join-Path $work 'VirtualCar-VC118-native.zip'
+          $zip = Join-Path $work 'VirtualCar-VC119-native.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
-          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC118-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC119-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
           New-Item -ItemType Directory -Path $saved -Force | Out-Null
           Copy-Item -LiteralPath $zip -Destination $saved
-          Write-Host ('VC118_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC118-native.zip'))
+          Write-Host ('VC119_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC119-native.zip'))
           Copy-Item -LiteralPath $testRoot -Destination (Join-Path $saved 'isolated-tests') -Recurse
-          $localZip = Join-Path $saved 'VirtualCar-VC118-native.zip'
+          $localZip = Join-Path $saved 'VirtualCar-VC119-native.zip'
           $localHash = (Get-FileHash -LiteralPath $localZip -Algorithm SHA256).Hash
           if ($localHash -ne (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash) { throw 'Saved ZIP hash mismatch' }
           $size = (Get-Item -LiteralPath $localZip).Length
-          @('## VC118 native isolated transport acceptance', '', 'Local VMware package: `' + $localZip + '`', '', 'SHA256: `' + $localHash + '`', '', "ZIP bytes: $size", '', 'GitHub artifact upload is opt-in via manual workflow dispatch.', '', 'Compile, PE audit and isolated synthetic native transport passed. GUI, registry and VIDA not tested.') | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          Write-Host "VC118_LOCAL_ZIP=PASS bytes=$size SHA256=$localHash"
+          @('## VC119 native controller and transport acceptance', '', 'Local VMware package: `' + $localZip + '`', '', 'SHA256: `' + $localHash + '`', '', "ZIP bytes: $size", '', 'GitHub artifact upload is opt-in via manual workflow dispatch.', '', 'Compile, PE audit, isolated synthetic transport and controller self-test passed. GUI, real registry and VIDA not tested.') | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          Write-Host "VC119_LOCAL_ZIP=PASS bytes=$size SHA256=$localHash"
 
       - name: Upload compiled candidate (optional)
         if: github.event_name == 'workflow_dispatch' && inputs.upload_artifact == true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: VirtualCar-VC118-native
-          path: ${{ runner.temp }}/vc118-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC118-native.zip
+          name: VirtualCar-VC119-native
+          path: ${{ runner.temp }}/vc119-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC119-native.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
