@@ -1,13 +1,13 @@
 name: Native x86 synthetic CI
 on:
   push:
-    branches: [vc127-public-native]
+    branches: [vc127-public-native, vc128-native-integration, main]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   native:
-    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.ref == 'refs/heads/vc127-public-native'
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && (github.ref == 'refs/heads/vc127-public-native' || github.ref == 'refs/heads/vc128-native-integration' || github.ref == 'refs/heads/main')
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
