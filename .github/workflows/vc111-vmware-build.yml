@@ -1,5 +1,12 @@
-name: VC116 native warning audit
+name: VC117 native local-first build
 on:
+  workflow_dispatch:
+    inputs:
+      upload_artifact:
+        description: 'Also upload ZIP to GitHub (requires available storage quota)'
+        type: boolean
+        required: false
+        default: false
   push:
     branches:
       - 'vc111-build/20261126'
@@ -13,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   compile:
-    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && github.event_name == 'push' && github.ref == 'refs/heads/vc111-build/20261126'
+    if: github.repository == 'vorlocsev/virtualcar' && github.actor == 'vorlocsev' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/vc111-build/20261126'
     runs-on: [self-hosted, Windows, X64, virtualcar-win]
     timeout-minutes: 45
     steps:
@@ -28,7 +35,7 @@ jobs:
           $base = 'b5671a5f0662d9be75e66314fb7968b2cca61a81'
           $archive = Join-Path $env:GITHUB_WORKSPACE 'vc111-build\vc110-source.zip'
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '0B573DF8E710FDC96394153E17D4D31CCA60D04533FF0383F119B87DBB29E951') { throw 'VC108 source archive hash mismatch' }
-          $work = Join-Path $env:RUNNER_TEMP ("vc116-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $work = Join-Path $env:RUNNER_TEMP ("vc117-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $work) { throw 'Refusing reused build directory' }
           New-Item -ItemType Directory -Path $work | Out-Null
           $proto = Join-Path $work 'proto'
@@ -81,9 +88,9 @@ jobs:
           $dump = (& dumpbin.exe /headers /imports $out | Out-String)
           if ($LASTEXITCODE -ne 0 -or $dump -notmatch '14C machine \(x86\)' -or $dump -match '(?im)^\s*(mscoree|vcruntime[^ ]*|msvcp[^ ]*|python[^ ]*|Microsoft\.UI\.Xaml)\.dll\s*$') { throw 'Native PE architecture/import check failed' }
           $dump | Write-Host
-          Write-Host "VC116_NATIVE_PE=PASS x86 static CRT /W4 /WX"
+          Write-Host "VC117_NATIVE_PE=PASS x86 static CRT /W4 /WX"
           @(
-            'VC116 native C++ Win32 x86 development candidate',
+            'VC117 native C++ Win32 x86 development candidate',
             "Base: $base", "Build commit: $env:GITHUB_SHA",
             "Provider SHA256: $hash",
             'Portable package; no Python, .NET or Windows App SDK required at runtime.',
@@ -96,19 +103,27 @@ jobs:
             ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash + '  ' + $_.FullName.Substring($package.Length+1))
           } | Set-Content -LiteralPath (Join-Path $package 'SHA256SUMS.txt') -Encoding UTF8
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = Join-Path $work 'VirtualCar-VC116-native.zip'
+          $zip = Join-Path $work 'VirtualCar-VC117-native.zip'
           [IO.Compression.ZipFile]::CreateFromDirectory($package,$zip)
           Get-FileHash -LiteralPath $zip -Algorithm SHA256
-          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC116-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          $saved = Join-Path 'E:\VirtualCar\Builds' ("VC117-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $saved) { throw 'Refusing to overwrite previous package' }
           New-Item -ItemType Directory -Path $saved -Force | Out-Null
           Copy-Item -LiteralPath $zip -Destination $saved
-          Write-Host ('VC116_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC116-native.zip'))
-      - name: Upload compiled candidate
+          Write-Host ('VC117_VMWARE_BUILD=' + (Join-Path $saved 'VirtualCar-VC117-native.zip'))
+          $localZip = Join-Path $saved 'VirtualCar-VC117-native.zip'
+          $localHash = (Get-FileHash -LiteralPath $localZip -Algorithm SHA256).Hash
+          if ($localHash -ne (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash) { throw 'Saved ZIP hash mismatch' }
+          $size = (Get-Item -LiteralPath $localZip).Length
+          @('## VC117 native build', '', 'Local VMware package: `' + $localZip + '`', '', 'SHA256: `' + $localHash + '`', '', "ZIP bytes: $size", '', 'GitHub artifact upload is opt-in via manual workflow dispatch.', '', 'Compile/PE audit only. GUI, registry and VIDA not tested.') | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          Write-Host "VC117_LOCAL_ZIP=PASS bytes=$size SHA256=$localHash"
+
+      - name: Upload compiled candidate (optional)
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_artifact == true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: VirtualCar-VC116-native
-          path: ${{ runner.temp }}/vc116-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC116-native.zip
+          name: VirtualCar-VC117-native
+          path: ${{ runner.temp }}/vc117-${{ github.run_id }}-${{ github.run_attempt }}/VirtualCar-VC117-native.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
